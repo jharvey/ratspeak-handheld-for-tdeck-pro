@@ -2,8 +2,8 @@
 setlocal
 
 echo ===================================================
-echo 1. Compile Firmware Only (DO THIS FIRST)
-echo 2. Flash Already-Built Binaries (INSTANT/NO BUILD)
+echo 1. Compile T-Deck Pro Only (DO THIS FIRST)
+echo 2. Flash Already-Built Pro Binaries (INSTANT)
 echo 3. Clean Build Files
 echo 4. WIPE ALL FIRMWARE (Factory Erase)
 echo ===================================================
@@ -16,19 +16,21 @@ if "%choice%"=="4" goto do_wipe
 goto end
 
 :do_build
-echo Building firmware...
-pio run
+echo Building T-Deck Pro firmware...
+:: Added the "-e tdeck_pro" flag to command PlatformIO to run your custom block
+pio run -e tdeck_pro
 echo.
 echo ---------------------------------------------------
-echo Compilation complete. Your binaries are cached!
+echo Compilation complete. Your Pro binaries are cached!
 echo Force bootloader mode (Hold Wheel + Click RST)
 echo and run Option 2 to flash instantly.
 echo ---------------------------------------------------
 goto end
 
 :do_flash
-echo Flashing firmware instantly via esptool...
-pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 115200 write_flash 0x0000 .pio/build/tdeck/bootloader.bin 0x8000 .pio/build/tdeck/partitions.bin 0x10000 .pio/build/tdeck/firmware.bin
+echo Flashing T-Deck Pro firmware instantly via esptool...
+:: Updated folder paths to pull from your new .pio/build/tdeck_pro directory
+pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 115200 write_flash 0x0000 .pio/build/tdeck_pro/bootloader.bin 0x8000 .pio/build/tdeck_pro/partitions.bin 0x10000 .pio/build/tdeck_pro/firmware.bin
 goto end
 
 :do_clean
