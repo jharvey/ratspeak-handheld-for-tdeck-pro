@@ -2,15 +2,17 @@
 setlocal
 
 echo ===================================================
-echo 1. Compile Firmware Only
-echo 2. Flash Firmware (PlatformIO Native)
+echo 1. Compile Firmware Only (DO THIS FIRST)
+echo 2. Flash Already-Built Binaries (INSTANT/NO BUILD)
 echo 3. Clean Build Files
+echo 4. WIPE ALL FIRMWARE (Factory Erase)
 echo ===================================================
-set /p choice="Select an option (1-3): "
+set /p choice="Select an option (1-4): "
 
 if "%choice%"=="1" goto do_build
 if "%choice%"=="2" goto do_flash
 if "%choice%"=="3" goto do_clean
+if "%choice%"=="4" goto do_wipe
 goto end
 
 :do_build
@@ -18,19 +20,33 @@ echo Building firmware...
 pio run
 echo.
 echo ---------------------------------------------------
-echo Compilation complete.
+echo Compilation complete. Your binaries are cached!
+echo Force bootloader mode (Hold Wheel + Click RST)
+echo and run Option 2 to flash instantly.
 echo ---------------------------------------------------
 goto end
 
 :do_flash
-echo Flashing firmware via PlatformIO...
-:: Uses PlatformIO's native deployment routine to manage the CDC port timing
-pio run --target upload
+echo Flashing firmware instantly via esptool...
+pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 115200 write_flash 0x0000 .pio/build/tdeck/bootloader.bin 0x8000 .pio/build/tdeck/partitions.bin 0x10000 .pio/build/tdeck/firmware.bin
 goto end
 
 :do_clean
 echo Cleaning build directory...
 pio run --target clean
+goto end
+
+:do_wipe
+echo [WARNING] This will completely erase all firmware and settings!
+echo Ensure your T-Deck is connected in Bootloader mode (Hold trackwheel + Click RST).
+pause
+echo Erasing Flash Memory...
+pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 115200 erase_flash
+echo.
+echo ---------------------------------------------------
+echo WIPE COMPLETE. Your T-Deck is now completely empty.
+echo Run this script again and select Option 2 to flash.
+echo ---------------------------------------------------
 goto end
 
 :end
