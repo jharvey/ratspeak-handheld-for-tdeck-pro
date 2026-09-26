@@ -3,7 +3,7 @@ setlocal
 
 echo ===================================================
 echo 1. Compile Firmware Only
-echo 2. Flash Firmware Manually
+echo 2. Flash Firmware (PlatformIO Native)
 echo 3. Clean Build Files
 echo ===================================================
 set /p choice="Select an option (1-3): "
@@ -23,9 +23,9 @@ echo ---------------------------------------------------
 goto end
 
 :do_flash
-echo Flashing firmware to ESP32-S3...
-:: Uses PlatformIO's built-in toolchain at a stable fallback speed
-pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 115200 --no-stub write_flash 0x0000 .pio/build/tdeck/bootloader.bin 0x8000 .pio/build/tdeck/partitions.bin 0x10000 .pio/build/tdeck/firmware.bin
+echo Flashing firmware via PlatformIO...
+:: Uses PlatformIO's native deployment routine to manage the CDC port timing
+pio run --target upload
 goto end
 
 :do_clean
