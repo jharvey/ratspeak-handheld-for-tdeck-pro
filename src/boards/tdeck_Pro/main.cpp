@@ -6,6 +6,7 @@
 #include "config/BoardConfig.h"
 #include "hal/Power.h"
 #include "hal/Keyboard.h"
+#include "hal/EinkDisplay.h"
 
 // =============================================================================
 // Global hardware objects
@@ -1138,6 +1139,9 @@ void setup() {
   Serial.println(
       "[BOOT] ready - keyboard, GPS, SPI, haptic and battery checks active");
 }
+
+  tdeck_pro::eink::begin();
+  tdeck_pro::eink::showTestScreen();
 
 // =============================================================================
 // Loop
