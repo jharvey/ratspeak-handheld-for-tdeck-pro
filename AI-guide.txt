@@ -17,12 +17,9 @@ Progress
 -- SD card mount/read/write basic test
 -- LoRa after SD activity basic test
 -- Haptic motor vibrate
+-- Battery guage, read voltage basic tests complete. 
 
 Planned Next steps
-
-Battery gauge (BQ27220 @ 0x55)
-Read voltage / SOC over I2C
-Replaces Plus ADC model later
 
 Touch (CST328 @ 0x1A)
 You see it on I2C; a short “touched yes/no” poll is enough for now
