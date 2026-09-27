@@ -1,0 +1,46 @@
+Overall goals
+-- port ratspeak from tdeck-plus to tdeck-pro node mode "Cooperative"
+-- port standalone mode
+
+Progress
+-- blinking keyboard LED heart beat hello world equiv
+-- USB Serial OK output seen in putty. 
+-- Misc config files updated correcting pinouts for powers etc. 
+-- Keyboard LED (GPIO 42) Heartbeat keyboard blinks in 1 sec rate / hello world
+-- Power gates (LORA/GPS/1V8)OK smoke test seems to have passed. 
+-- I2C bus 6 devices basic tests confirmed
+-- Keyboard TCA8418 Press/release basic tests confirmed
+-- LoRa SX1262 SPI Sync word responds
+-- GPS NMEA + fixOK Lat and Long decoded echo'ed to putty. 
+-- SD card inserted basic tests confirmed stats echo'ed to putty. 
+-- Keyboard kmap confirmed and echo'ed to putty. Normal caps, dbl tap lower sym etc
+
+
+Planned Next steps
+
+CS=48, same SPI as LoRa/EPD
+Mount, list root, or print “no card”
+Proves SPI sharing + CS isolation with radio
+
+Battery gauge (BQ27220 @ 0x55)
+Read voltage / SOC over I2C
+Replaces Plus ADC model later
+
+Haptics (DRV2605 @ 0x5A) — optional buzz once
+
+Touch (CST328 @ 0x1A)
+You see it on I2C; a short “touched yes/no” poll is enough for now
+
+E-paper — only when you start the display port (slow, separate milestone)
+
+3. Bring core/ back carefully
+
+Widen build_src_filter to include core/ again
+Still exclude ui/lvgl/ (or guard all display)
+Headless: protocol + LoRa + identity + messages over Serial
+HAS_DISPLAY false so nothing touches ST7789/LVGL
+
+4. Serial “UI” for a while
+Commands like status, peers, msg, gps — enough to prove messaging before e-ink.
+5. E-ink last
+GDEQ031T10 driver → then LVGL or a simpler UI → HAS_DISPLAY true → full tdeck_pro env.
