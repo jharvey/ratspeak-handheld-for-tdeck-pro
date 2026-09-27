@@ -18,11 +18,9 @@ Progress
 -- LoRa after SD activity basic test
 -- Haptic motor vibrate
 -- Battery guage, read voltage basic tests complete. 
+-- Touch screen basic tested
 
 Planned Next steps
-
-Touch (CST328 @ 0x1A)
-You see it on I2C; a short “touched yes/no” poll is enough for now
 
 E-paper — only when you start the display port (slow, separate milestone)
 

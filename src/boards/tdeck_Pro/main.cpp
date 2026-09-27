@@ -43,6 +43,115 @@ static void scanI2C() {
   Serial.printf("[I2C] %u device(s)\r\n", found);
 }
 
+
+// =============================================================================
+// CST328 touch controller
+// =============================================================================
+//
+// T-Deck Pro V1.1:
+//   I2C address : 0x1A
+//   INT         : GPIO 12
+//   RESET       : GPIO 45
+//
+// For the current headless bring-up milestone, the touch test intentionally
+// stays simple: verify the controller responds and poll the finger-count
+// register for a touched yes/no result. No display or LVGL dependency.
+//
+// CST328 register:
+//   0xD005 = finger count
+// =============================================================================
+
+#define CST328_REG_FINGER_COUNT 0xD005
+
+static bool cst328Read(
+    uint16_t reg,
+    uint8_t* data,
+    size_t length) {
+
+  Wire.beginTransmission(TOUCH_I2C_ADDR);
+  Wire.write((uint8_t)(reg >> 8));
+  Wire.write((uint8_t)(reg & 0xFF));
+
+  if (Wire.endTransmission(false) != 0) {
+    return false;
+  }
+
+  if (Wire.requestFrom(
+          (int)TOUCH_I2C_ADDR,
+          (int)length,
+          (int)true) != (int)length) {
+    return false;
+  }
+
+  for (size_t i = 0; i < length; i++) {
+    data[i] = Wire.read();
+  }
+
+  return true;
+}
+
+static bool cst328BeginSmoke() {
+  Serial.println("[TOUCH] Starting CST328 test...");
+
+  uint8_t fingerCount = 0;
+
+  if (!cst328Read(
+          CST328_REG_FINGER_COUNT,
+          &fingerCount,
+          1)) {
+
+    Serial.printf(
+        "[TOUCH] CST328 @0x%02X read FAIL\r\n",
+        TOUCH_I2C_ADDR);
+
+    return false;
+  }
+
+  Serial.printf(
+      "[TOUCH] CST328 @0x%02X OK fingers=%u\r\n",
+      TOUCH_I2C_ADDR,
+      fingerCount & 0x0F);
+
+  return true;
+}
+
+static void cst328Poll() {
+  static uint32_t lastPoll = 0;
+  static bool lastTouched = false;
+
+  uint32_t now = millis();
+
+  // Poll at 50 Hz. The guide only calls for a short touched yes/no test,
+  // so there is no need to continuously read the full touch packet yet.
+  if (now - lastPoll < 20) {
+    return;
+  }
+
+  lastPoll = now;
+
+  uint8_t fingerCount = 0;
+
+  if (!cst328Read(
+          CST328_REG_FINGER_COUNT,
+          &fingerCount,
+          1)) {
+    return;
+  }
+
+  bool touched = (fingerCount & 0x0F) != 0;
+
+  // Only print on state changes so Serial remains usable for the other
+  // headless bring-up tests.
+  if (touched != lastTouched) {
+    lastTouched = touched;
+
+    Serial.printf(
+        "[TOUCH] touched=%s fingers=%u\r\n",
+        touched ? "YES" : "NO",
+        fingerCount & 0x0F);
+  }
+}
+
 // =============================================================================
 // Shared SPI / LoRa
 // =============================================================================
@@ -956,6 +1065,12 @@ void setup() {
   scanI2C();
 
   // ---------------------------------------------------------------------------
+  // CST328 touch
+  // ---------------------------------------------------------------------------
+
+  cst328BeginSmoke();
+
+  // ---------------------------------------------------------------------------
   // Keyboard
   // ---------------------------------------------------------------------------
 
@@ -1067,6 +1182,12 @@ void loop() {
           "[KEY] (modifier/other)");
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Touch
+  // ---------------------------------------------------------------------------
+
+  cst328Poll();
 
   // ---------------------------------------------------------------------------
   // GPS
