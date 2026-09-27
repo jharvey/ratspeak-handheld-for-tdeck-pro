@@ -1135,13 +1135,17 @@ void setup() {
   }
 
   gpsPrintSummary("boot");
+  
+  // ---------------------------------------------------------------------------
+  // Eink
+  // ---------------------------------------------------------------------------
+
+  tdeck_pro::eink::begin();
+  tdeck_pro::eink::showTestScreen();
 
   Serial.println(
       "[BOOT] ready - keyboard, GPS, SPI, haptic and battery checks active");
 }
-
-  tdeck_pro::eink::begin();
-  tdeck_pro::eink::showTestScreen();
 
 // =============================================================================
 // Loop

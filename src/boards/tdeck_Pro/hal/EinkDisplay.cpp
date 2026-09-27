@@ -185,7 +185,8 @@ void tdeck_pro::eink::showTestScreen() {
         10,
         80,
         display.width() - 20,
-        100);
+        100,
+        GxEPD_BLACK);
 
     display.setCursor(20, 110);
     display.print("E-INK DRIVER");

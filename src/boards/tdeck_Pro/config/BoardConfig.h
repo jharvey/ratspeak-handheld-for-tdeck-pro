@@ -37,7 +37,7 @@
 #define HAS_CONTACT_RENAME       true
 
 // --- Feature Flags ---
-#define HAS_DISPLAY       false
+#define HAS_DISPLAY       true
 #define HAS_KEYBOARD      true
 #define HAS_TOUCH         true
 #define HAS_TRACKBALL     false
@@ -114,6 +114,11 @@
 
 #define EPD_WIDTH               320
 #define EPD_HEIGHT              240
+
+#define TDECK_PRO_EPD_CS    EPD_CS
+#define TDECK_PRO_EPD_DC    EPD_DC
+#define TDECK_PRO_EPD_RST   EPD_RST
+#define TDECK_PRO_EPD_BUSY  EPD_BUSY
 
 // Compatibility aliases.
 #define TFT_CS                  EPD_CS
