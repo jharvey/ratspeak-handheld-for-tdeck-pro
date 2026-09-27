@@ -110,7 +110,7 @@
 #define EPD_CS                  34
 #define EPD_DC                  35
 #define EPD_BUSY                37
-#define EPD_RST                 -1
+#define EPD_RST                 16
 
 #define EPD_WIDTH               320
 #define EPD_HEIGHT              240
