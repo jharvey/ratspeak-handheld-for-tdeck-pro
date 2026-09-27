@@ -29,25 +29,18 @@ namespace eink {
 #endif
 
 // -----------------------------------------------------------------------------
-// LilyGO T-Deck Pro V1.1
+// GDEQ031T10 / UC8253
+// T-Deck Pro V1.1
 //
-// Display:
-//   GDEQ031T10
-//   240 x 320
-//   UC8253
-//
-// Official LilyGO V1.1 wiring:
-//   SCK  = 36
-//   MOSI = 33
-//   MISO = 47
-//   CS   = 34
-//   DC   = 35
-//   BUSY = 37
-//   RST  = 16
-//
-// The official LilyGO V1.1 factory firmware uses:
-//   SPISettings(2000000, MSBFIRST, SPI_MODE0)
-//   display.init(115200, true, 2, false)
+// Known-good configuration verified on hardware:
+//   CS   = GPIO 34
+//   DC   = GPIO 35
+//   BUSY = GPIO 37
+//   RST  = GPIO 16
+//   SCK  = GPIO 36
+//   MOSI = GPIO 33
+//   MISO = GPIO 47
+//   SPI  = 2 MHz, MODE0
 // -----------------------------------------------------------------------------
 
 using InkPanel = GxEPD2_310_GDEQ031T10;
@@ -64,35 +57,15 @@ static InkDisplay display(
 
 static bool initialized = false;
 
+// -----------------------------------------------------------------------------
+// Initialize display
+// -----------------------------------------------------------------------------
+
 bool begin() {
-    Serial.println();
-    Serial.println("[EINK] ========================================");
-    Serial.println("[EINK] Starting GDEQ031T10 diagnostic");
-    Serial.println("[EINK] ========================================");
+    Serial.println("[EINK] Initializing GDEQ031T10...");
 
-    Serial.printf(
-        "[EINK] SPI SCK=%d MOSI=%d MISO=%d\n",
-        SPI_SCK,
-        SPI_MOSI,
-        SPI_MISO);
-
-    Serial.printf(
-        "[EINK] EPD CS=%d DC=%d BUSY=%d RST=%d\n",
-        TDECK_PRO_EPD_CS,
-        TDECK_PRO_EPD_DC,
-        TDECK_PRO_EPD_BUSY,
-        TDECK_PRO_EPD_RST);
-
-    Serial.printf(
-        "[EINK] SD CS=%d LORA CS=%d\n",
-        SD_CS,
-        LORA_CS);
-
-    // -------------------------------------------------------------------------
-    // Explicitly isolate every other device on the shared SPI bus.
-    // This mirrors the LilyGO factory firmware.
-    // -------------------------------------------------------------------------
-
+    // Shared SPI bus:
+    // Keep the other devices deselected while initializing the e-paper.
     pinMode(LORA_CS, OUTPUT);
     digitalWrite(LORA_CS, HIGH);
 
@@ -102,48 +75,23 @@ bool begin() {
     pinMode(TDECK_PRO_EPD_CS, OUTPUT);
     digitalWrite(TDECK_PRO_EPD_CS, HIGH);
 
-    // -------------------------------------------------------------------------
-    // EPD control pins.
-    // -------------------------------------------------------------------------
-
     pinMode(TDECK_PRO_EPD_DC, OUTPUT);
     digitalWrite(TDECK_PRO_EPD_DC, LOW);
 
     pinMode(TDECK_PRO_EPD_BUSY, INPUT);
 
-    // RST is physically connected on V1.1.
-    // GxEPD2 will control it during display.init().
 #if TDECK_PRO_EPD_RST >= 0
     pinMode(TDECK_PRO_EPD_RST, OUTPUT);
     digitalWrite(TDECK_PRO_EPD_RST, HIGH);
 #endif
 
-    Serial.printf(
-        "[EINK] BUSY before SPI = %d\n",
-        digitalRead(TDECK_PRO_EPD_BUSY));
-
-    // -------------------------------------------------------------------------
-    // Start the shared SPI bus.
-    //
-    // LilyGO's factory firmware does this before EPD initialization.
-    // -------------------------------------------------------------------------
-
+    // Use the ESP32 SPI bus with the T-Deck Pro V1.1 pin assignment.
     SPI.begin(
         SPI_SCK,
         SPI_MISO,
         SPI_MOSI);
 
-    Serial.printf(
-        "[EINK] BUSY after SPI = %d\n",
-        digitalRead(TDECK_PRO_EPD_BUSY));
-
-    // -------------------------------------------------------------------------
-    // IMPORTANT:
-    //
-    // LilyGO's official V1.1 firmware explicitly selects SPI for the EPD at
-    // 2 MHz, MODE0.
-    // -------------------------------------------------------------------------
-
+    // This exact SPI configuration is known-good with the V1.1 display.
     display.epd2.selectSPI(
         SPI,
         SPISettings(
@@ -151,34 +99,14 @@ bool begin() {
             MSBFIRST,
             SPI_MODE0));
 
-    Serial.println("[EINK] EPD SPI selected: 2 MHz MODE0");
-
-    // -------------------------------------------------------------------------
-    // Official LilyGO V1.1 initialization:
+    // Hardware reset enabled.
     //
-    //     display.init(115200, true, 2, false);
-    //
-    // The 'true' enables the initial hardware-reset sequence.
-    // -------------------------------------------------------------------------
-
-    Serial.println("[EINK] Calling display.init()...");
-
+    // This is important for the V1.1 GDEQ031T10.
     display.init(
         115200,
         true,
         2,
         false);
-
-    Serial.println("[EINK] display.init() returned");
-
-    Serial.printf(
-        "[EINK] BUSY after init = %d\n",
-        digitalRead(TDECK_PRO_EPD_BUSY));
-
-    Serial.printf(
-        "[EINK] display size = %d x %d\n",
-        display.width(),
-        display.height());
 
     display.setRotation(0);
 
@@ -187,18 +115,24 @@ bool begin() {
 
     initialized = true;
 
-    Serial.println("[EINK] Initialization finished");
+    Serial.printf(
+        "[EINK] Ready (%d x %d)\n",
+        display.width(),
+        display.height());
 
     return true;
 }
 
+// -----------------------------------------------------------------------------
+// Clear display
+// -----------------------------------------------------------------------------
+
 void clear() {
     if (!initialized) {
-        Serial.println("[EINK] clear() skipped - display not initialized");
         return;
     }
 
-    Serial.println("[EINK] Clearing display...");
+    Serial.println("[EINK] Clearing...");
 
     display.setFullWindow();
 
@@ -208,15 +142,17 @@ void clear() {
         display.fillScreen(GxEPD_WHITE);
     } while (display.nextPage());
 
-    Serial.println("[EINK] Clear complete");
-
     display.powerOff();
+
+    Serial.println("[EINK] Clear complete");
 }
+
+// -----------------------------------------------------------------------------
+// Boot screen
+// -----------------------------------------------------------------------------
 
 void showBootScreen() {
     if (!initialized) {
-        Serial.println(
-            "[EINK] showBootScreen() skipped - display not initialized");
         return;
     }
 
@@ -247,31 +183,27 @@ void showBootScreen() {
     display.powerOff();
 }
 
+// -----------------------------------------------------------------------------
+// Diagnostic test screen
+// -----------------------------------------------------------------------------
+//
+// Kept intentionally simple. This can be removed later once the normal
+// Ratspeak UI is being rendered on the display.
+// -----------------------------------------------------------------------------
+
 void showTestScreen() {
     if (!initialized) {
-        Serial.println(
-            "[EINK] showTestScreen() skipped - display not initialized");
+        Serial.println("[EINK] Test skipped - not initialized");
         return;
     }
 
-    Serial.println();
-    Serial.println("[EINK] ========================================");
-    Serial.println("[EINK] E-INK TEST");
-    Serial.println("[EINK] ========================================");
-
-    Serial.printf(
-        "[EINK] BUSY before test = %d\n",
-        digitalRead(TDECK_PRO_EPD_BUSY));
+    Serial.println("[EINK] Running display test...");
 
     display.setFullWindow();
-
-    Serial.println("[EINK] firstPage()");
 
     display.firstPage();
 
     do {
-        Serial.println("[EINK] drawing test page");
-
         display.fillScreen(GxEPD_WHITE);
 
         display.setTextColor(GxEPD_BLACK);
@@ -300,38 +232,35 @@ void showTestScreen() {
 
     } while (display.nextPage());
 
-    Serial.println("[EINK] test page complete");
-
-    Serial.printf(
-        "[EINK] BUSY after test = %d\n",
-        digitalRead(TDECK_PRO_EPD_BUSY));
-
-    // Do not use hibernate here.
-    //
-    // LilyGO's V1.1 firmware uses powerOff() because of the display-reset
-    // behavior on this hardware revision.
     display.powerOff();
 
-    Serial.println("[EINK] display powerOff() complete");
+    Serial.println("[EINK] Test complete");
 }
+
+// -----------------------------------------------------------------------------
+// Sleep
+// -----------------------------------------------------------------------------
 
 void sleep() {
     if (!initialized) {
         return;
     }
 
-    // The official V1.1 firmware uses powerOff(), not hibernate().
     display.powerOff();
 }
+
+// -----------------------------------------------------------------------------
+// Wake
+// -----------------------------------------------------------------------------
 
 void wake() {
     if (!initialized) {
         return;
     }
 
-    Serial.println("[EINK] Waking display...");
+    Serial.println("[EINK] Waking...");
 
-    // Reinitialize using the same sequence as LilyGO V1.1.
+    // Re-select the known-good SPI configuration.
     display.epd2.selectSPI(
         SPI,
         SPISettings(
@@ -346,13 +275,16 @@ void wake() {
         false);
 
     display.setRotation(0);
+
     display.setFont(&FreeMonoBold9pt7b);
     display.setTextColor(GxEPD_BLACK);
 
-    Serial.printf(
-        "[EINK] BUSY after wake = %d\n",
-        digitalRead(TDECK_PRO_EPD_BUSY));
+    Serial.println("[EINK] Awake");
 }
+
+// -----------------------------------------------------------------------------
+// Status
+// -----------------------------------------------------------------------------
 
 bool isReady() {
     return initialized;
