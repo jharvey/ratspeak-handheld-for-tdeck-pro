@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
 #include "EinkDisplay.h"
+#include "config/BoardConfig.h"
 
 void einkTest() {
 

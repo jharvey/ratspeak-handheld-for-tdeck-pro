@@ -115,10 +115,10 @@
 #define EPD_WIDTH               320
 #define EPD_HEIGHT              240
 
-#define TDECK_PRO_EPD_CS    EPD_CS
-#define TDECK_PRO_EPD_DC    EPD_DC
-#define TDECK_PRO_EPD_RST   EPD_RST
-#define TDECK_PRO_EPD_BUSY  EPD_BUSY
+#define TDECK_PRO_EPD_CS        EPD_CS
+#define TDECK_PRO_EPD_DC        EPD_DC
+#define TDECK_PRO_EPD_RST       EPD_RST
+#define TDECK_PRO_EPD_BUSY      EPD_BUSY
 
 // Compatibility aliases.
 #define TFT_CS                  EPD_CS
