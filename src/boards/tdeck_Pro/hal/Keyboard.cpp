@@ -1,136 +1,94 @@
 #include "Keyboard.h"
-#include <ctype.h>
 
-Keyboard* Keyboard::_instance = nullptr;
 int Keyboard::_debugCount = 0;
 
 bool Keyboard::begin() {
-    _instance = this;
-    _mode = InputMode::Navigation;
-    _hasEvent = false;
+  _mode = InputMode::Navigation;
+  _hasEvent = false;
+  _debugCount = 0;
 
-    // KB interrupt pin
-    pinMode(KB_INT, INPUT_PULLUP);
+  pinMode(KB_INT, INPUT_PULLUP);
+  pinMode(KB_LED, OUTPUT);
+  digitalWrite(KB_LED, LOW);
+  _backlightLit = false;
+  _backlightDuty = 0;
 
-    // Verify I2C communication with keyboard controller
-    Wire.beginTransmission(KB_I2C_ADDR);
-    uint8_t err = Wire.endTransmission();
-    if (err != 0) {
-        Serial.printf("[KEYBOARD] ESP32-C3 not found at 0x%02X (err=%d)\n", KB_I2C_ADDR, err);
-        return false;
-    }
+  Wire.beginTransmission(KB_I2C_ADDR);
+  uint8_t err = Wire.endTransmission();
+  if (err != 0) {
+    Serial.printf("[KEYBOARD] TCA8418 not found at 0x%02X (err=%d)\n", KB_I2C_ADDR, err);
+    // Still usable for backlight-only tests
+    return false;
+  }
 
-    Serial.println("[KEYBOARD] ESP32-C3 keyboard ready");
-    return true;
-}
+  // Minimal TCA8418 bring-up: 4x10 matrix (LilyGO factory uses same size).
+  // Full key decoding can be expanded later; presence check is enough for now.
+  Wire.beginTransmission(KB_I2C_ADDR);
+  Wire.write(0x01);  // CFG
+  Wire.write(0x01);  // AI enabled-ish / keep simple; refine with datasheet as needed
+  Wire.endTransmission();
 
-uint8_t Keyboard::readKey(uint8_t* modOut) {
-    *modOut = 0;
-    // The stock LilyGO keyboard firmware returns one translated key byte.
-    // Requesting extra bytes can read undefined data and create phantom modifiers.
-    Wire.requestFrom((uint8_t)KB_I2C_ADDR, (uint8_t)1);
-    uint8_t key = 0;
-    if (Wire.available()) key = Wire.read();
-    return key;
+  Serial.println("[KEYBOARD] TCA8418 present; backlight on GPIO 42");
+  return true;
 }
 
 void Keyboard::update() {
-    _hasEvent = false;
-
-    uint8_t mod = 0;
-    uint8_t key = readKey(&mod);
-    // The C3 clears its pending-byte flag on each I2C read. Equal adjacent
-    // nonzero bytes are distinct presses, even without an intervening zero.
-    if (key == 0) return;
-
-    // Debug logging for first 50 keypresses to help diagnose key mapping
-    if (_debugCount < 50) {
-        _debugCount++;
-        Serial.printf("[KB] raw: key=0x%02X ('%c') mod=0x%02X\n",
-                      key, (key >= 0x20 && key < 0x7F) ? (char)key : '?', mod);
-    }
-
-    _event = {};
-
-    // Check for Alt in modifier byte (try common bit positions)
-    // Optional custom keyboard firmwares may expose modifier bits, but the
-    // default T-Deck path above intentionally reads only the translated key.
-    // BBQ-style keyboards: bit 1=Alt, bit 2=Sym, bit 0=Ctrl
-    // Also try bit 3, bit 4 as some firmwares use those
-    bool ctrlFromMod = (mod & 0x01);
-    bool altFromMod = (mod & 0x02) || (mod & 0x08);
-
-    // Track Alt state: if the keyboard sends Alt as a standalone keypress,
-    // it might come as a specific byte. Common values:
-    // 0x1B = Esc (unlikely to be Alt), but some controllers use high bytes
-    // The T-Deck Alt key might send no byte at all when pressed alone.
-
-    if (ctrlFromMod) {
-        _event.ctrl = true;
-    }
-    if (altFromMod) {
-        _event.alt = true;
-    }
-
-    // Standard key decoding
-    if (key == 0x0D || key == '\n') {
-        _event.enter = true;
-        _event.character = '\n';
-    } else if (key == 0x08 || key == 0x7F) {
-        _event.del = true;
-        _event.character = 0x08;
-    } else if (key == 0x09) {
-        _event.tab = true;
-    } else if (key == ' ') {
-        _event.space = true;
-        _event.character = ' ';
-    } else if (key >= 0x20 && key <= 0x7E) {
-        _event.character = ctrlFromMod ? (char)tolower(key) : key;
-    }
-
-    _hasEvent = true;
-}
-
-bool Keyboard::setBacklightBrightness(uint8_t percent) {
-    percent = constrain(percent, 0, 100);
-    if (percent == 0) {
-        _backlightBrightness = 0;
-        return true;
-    }
-    // [1, 100] % -> [31, 255] PWM
-    constexpr uint16_t SCALE = 255 - 31;
-    constexpr uint16_t DIV   = 100 - 1;
-    uint16_t tmp = (uint16_t)(percent - 1) * SCALE;
-    tmp = (tmp + DIV / 2) / DIV; // +DIV/2 for nearest‑integer rounding
-    _backlightBrightness = (uint8_t)(31 + tmp);
-
-    Wire.beginTransmission(KB_I2C_ADDR);
-    Wire.write(0x02); // LILYGO_KB_ALT_B_BRIGHTNESS_CMD
-    Wire.write(_backlightBrightness);
-    return Wire.endTransmission() == 0;
-}
-
-bool Keyboard::backlightOn() {
-    _backlightLit = _backlightBrightness > 0;
-    return setBrightness(_backlightBrightness);
-}
-
-bool Keyboard::backlightOff() {
-    _backlightLit = false;
-    return setBrightness(0);
-}
-
-bool Keyboard::setBrightness(uint8_t pwm) {
-    Wire.beginTransmission(KB_I2C_ADDR);
-    Wire.write(0x01); // LILYGO_KB_BRIGHTNESS_CMD
-    Wire.write(pwm);
-    return Wire.endTransmission() == 0;
+  // Stub: no key synthesis yet. Expand with TCA8418 event FIFO later.
+  _hasEvent = false;
 }
 
 void Keyboard::discardPending() {
-    uint8_t modifiers = 0;
-    for (unsigned i = 0; i < 16; ++i) {
-        if (readKey(&modifiers) == 0) break;
+  _hasEvent = false;
+}
+
+void Keyboard::applyLedPwm(uint8_t duty) {
+  // Prefer digital for full on/off; use LEDC for partial brightness.
+  if (duty == 0) {
+    if (_ledcReady) {
+      ledcWrite(0, 0);
     }
-    _hasEvent = false;
+    pinMode(KB_LED, OUTPUT);
+    digitalWrite(KB_LED, LOW);
+    return;
+  }
+  if (duty >= 255) {
+    if (_ledcReady) {
+      ledcWrite(0, 255);
+    }
+    pinMode(KB_LED, OUTPUT);
+    digitalWrite(KB_LED, HIGH);
+    return;
+  }
+  if (!_ledcReady) {
+    ledcSetup(0, 5000, 8);
+    ledcAttachPin(KB_LED, 0);
+    _ledcReady = true;
+  }
+  ledcWrite(0, duty);
+}
+
+bool Keyboard::setBacklightBrightness(uint8_t percent) {
+  percent = constrain(percent, 0, 100);
+  if (percent == 0) {
+    _backlightDuty = 0;
+    return true;
+  }
+  // Map 1..100 -> ~16..255
+  _backlightDuty = (uint8_t)(16 + (uint16_t)(percent - 1) * 239 / 99);
+  return true;
+}
+
+bool Keyboard::backlightOn() {
+  if (_backlightDuty == 0) {
+    _backlightDuty = 255;
+  }
+  applyLedPwm(_backlightDuty);
+  _backlightLit = true;
+  return true;
+}
+
+bool Keyboard::backlightOff() {
+  applyLedPwm(0);
+  _backlightLit = false;
+  return true;
 }

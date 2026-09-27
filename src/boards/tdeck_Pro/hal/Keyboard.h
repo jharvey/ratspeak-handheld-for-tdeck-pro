@@ -3,49 +3,37 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include "config/BoardConfig.h"
-
 #include "input/KeyEvent.h"
 
+// T-Deck Pro: TCA8418 @ 0x34 + GPIO keyboard backlight (BOARD_KEYBOARD_LED).
 class Keyboard {
 public:
-    bool begin();
-    void update();
-    // Consume the wake burst and cancel synthesis until a fresh press.
-    void discardPending();
+  bool begin();
+  void update();
+  void discardPending();
 
-    // Mode control
-    InputMode getMode() const { return _mode; }
-    void setMode(InputMode mode) { _mode = mode; }
+  InputMode getMode() const { return _mode; }
+  void setMode(InputMode mode) { _mode = mode; }
 
-    // State queries
-    bool hasEvent() const { return _hasEvent; }
-    const KeyEvent& getEvent() const { return _event; }
+  bool hasEvent() const { return _hasEvent; }
+  const KeyEvent& getEvent() const { return _event; }
 
-    // Backlight control
-    // NOTES:
-    // - Backlight control has been added to the ESP32-C3 F/W on 2024-12-25,
-    //   there's no way to detect if the installed F/W supports it
-    //   (no I2C reads except for key states, I2C writes are always ACK'ed).
-    // - Backlight toggle via <Alt>+<B> is implemented in the ESP32-C3 F/W,
-    //   we can't track the actual backlight ON/OFF state.
-    // - The ESP32-C3 F/W uses 2 brightness settings, one for <Alt>+<B> (which doesn't
-    //   change the current brightness), the other one for the current brightness.
-    //   The range for the 1st one is limited to [31, 255], we use it for the 2nd one, too.
-    bool setBacklightBrightness(uint8_t percent); // 0 stores off; non-zero doesn't change current brightness
-    bool backlightOn();
-    bool backlightOff();
-    bool backlightIsLit() const { return _backlightLit; }
+  // percent 0..100 — drives GPIO 42 PWM/digital (not Plus ESP32-C3 I2C cmds)
+  bool setBacklightBrightness(uint8_t percent);
+  bool backlightOn();
+  bool backlightOff();
+  bool backlightIsLit() const { return _backlightLit; }
 
 private:
-    uint8_t readKey(uint8_t* modOut);
-    static bool setBrightness(uint8_t pwm);
+  void applyLedPwm(uint8_t duty /*0..255*/);
 
-    InputMode _mode = InputMode::Navigation;
-    KeyEvent _event = {};
-    bool _hasEvent = false;
-    uint8_t _backlightBrightness = 255; // [31, 255]
-    bool _backlightLit = false;         // last host-commanded state; C3 <Alt>+<B> toggles are invisible
+  InputMode _mode = InputMode::Navigation;
+  KeyEvent _event = {};
+  bool _hasEvent = false;
 
-    static Keyboard* _instance;
-    static int _debugCount;          // Log first N keypresses
+  uint8_t _backlightDuty = 0;   // 0..255
+  bool _backlightLit = false;
+  bool _ledcReady = false;
+
+  static int _debugCount;
 };
