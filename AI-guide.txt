@@ -14,19 +14,15 @@ Progress
 -- GPS NMEA + fixOK Lat and Long decoded echo'ed to putty. 
 -- SD card inserted basic tests confirmed stats echo'ed to putty. 
 -- Keyboard kmap confirmed and echo'ed to putty. Normal caps, dbl tap lower sym etc
-
+-- SD card mount/read/write basic test
+-- LoRa after SD activity basic test
+-- Haptic motor vibrate
 
 Planned Next steps
-
-CS=48, same SPI as LoRa/EPD
-Mount, list root, or print “no card”
-Proves SPI sharing + CS isolation with radio
 
 Battery gauge (BQ27220 @ 0x55)
 Read voltage / SOC over I2C
 Replaces Plus ADC model later
-
-Haptics (DRV2605 @ 0x5A) — optional buzz once
 
 Touch (CST328 @ 0x1A)
 You see it on I2C; a short “touched yes/no” poll is enough for now
