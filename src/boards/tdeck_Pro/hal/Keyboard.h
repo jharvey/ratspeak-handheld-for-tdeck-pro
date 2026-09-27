@@ -2,18 +2,10 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+
 #include "config/BoardConfig.h"
 #include "input/KeyEvent.h"
 
-// T-Deck Pro keyboard HAL.
-//
-// Hardware:
-//   TCA8418 keyboard matrix controller
-//   GPIO keyboard backlight
-//
-// The public interface intentionally follows the original T-Deck
-// Keyboard HAL so the rest of Ratspeak does not need to know about
-// the TCA8418.
 class Keyboard {
 public:
   bool begin();
@@ -43,18 +35,22 @@ private:
   KeyEvent _event = {};
   bool _hasEvent = false;
 
-  // Backlight
   uint8_t _backlightDuty = 128;
   bool _backlightLit = false;
   bool _ledcReady = false;
 
   // Physical modifier state.
-  //
-  // These are deliberately kept inside the HAL rather than generating
-  // standalone KeyEvents for modifier keys.
   bool _shiftHeld = false;
   bool _altHeld = false;
   bool _symHeld = false;
+
+  // Keyboard starts in uppercase/caps-lock mode.
+  bool _capsLock = true;
+
+  // Used for double-tap Shift detection.
+  unsigned long _lastShiftPressMs = 0;
+
+  static constexpr unsigned long SHIFT_DOUBLE_TAP_MS = 400;
 
   static int _debugCount;
 };
