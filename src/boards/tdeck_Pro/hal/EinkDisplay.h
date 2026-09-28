@@ -23,6 +23,10 @@ void showStatusScreen(
     unsigned pathCount,
     const char* version);
 
+// Small once-per-second uptime display.
+// This updates only a small partial e-ink window.
+void showUptime(uint32_t elapsedSeconds);
+
 void sleep();
 void wake();
 bool isReady();
