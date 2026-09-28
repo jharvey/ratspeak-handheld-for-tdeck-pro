@@ -6,15 +6,17 @@
 #include "hal/Keyboard.h"
 #include "hal/EinkDisplay.h"
 
-// Protocol core
+// Protocol + radio
 #include "protocol/ProtocolRuntime.h"
 #include "reticulum/IdentityManager.h"
 #include "storage/FlashStore.h"
 #include "storage/MessageStore.h"
 #include "reticulum/AnnounceManager.h"
+#include "radio/BoardRadio.h"
+#include "transport/LoRaInterface.h"
 
 // =============================================================================
-// T-Deck Pro — Cooperative / Headless + Protocol
+// T-Deck Pro — Cooperative / Headless + Protocol + LoRa
 // =============================================================================
 
 static Keyboard keyboard;
@@ -24,6 +26,10 @@ static MessageStore messageStore;
 static AnnounceManager* announceMgr = nullptr;
 static ProtocolRuntime protocolRuntime;
 static bool protocolReady = false;
+
+// Radio stack
+static BoardRadio* boardRadio = nullptr;
+static LoRaInterface* loraIface = nullptr;
 
 // -----------------------------------------------------------------------------
 // LED
@@ -77,6 +83,62 @@ static bool readBattery(float& voltage, int& percent) {
 }
 
 // -----------------------------------------------------------------------------
+// Radio bring-up
+// -----------------------------------------------------------------------------
+
+static bool initRadio() {
+    Serial.println("[RADIO] Starting SX1262...");
+
+    // Ensure LoRa power gate is on
+    pinMode(BOARD_LORA_EN, OUTPUT);
+    digitalWrite(BOARD_LORA_EN, HIGH);
+    delay(20);
+
+    // Keep other SPI CS high
+    pinMode(LORA_CS, OUTPUT);
+    digitalWrite(LORA_CS, HIGH);
+    pinMode(SD_CS, OUTPUT);
+    digitalWrite(SD_CS, HIGH);
+    pinMode(EPD_CS, OUTPUT);
+    digitalWrite(EPD_CS, HIGH);
+
+    boardRadio = new BoardRadio(
+        &SPI,
+        LORA_CS,
+        SPI_SCK,
+        SPI_MOSI,
+        SPI_MISO,
+        LORA_RST,
+        LORA_IRQ,
+        LORA_BUSY,
+        LORA_RXEN,
+        LORA_HAS_TCXO,
+        LORA_DIO2_AS_RF_SWITCH);
+
+    if (!boardRadio->begin(LORA_DEFAULT_FREQ)) {
+        Serial.println("[RADIO] SX1262 begin failed");
+        return false;
+    }
+
+    // Apply default Long Fast-style settings
+    boardRadio->setSpreadingFactor(LORA_DEFAULT_SF);
+    boardRadio->setSignalBandwidth(LORA_DEFAULT_BW);
+    boardRadio->setCodingRate4(LORA_DEFAULT_CR);
+    boardRadio->setTxPower(LORA_DEFAULT_TX_POWER);
+    boardRadio->setPreambleLength(LORA_DEFAULT_PREAMBLE);
+    boardRadio->enableCrc();
+
+    loraIface = new LoRaInterface(boardRadio, "LoRa");
+    if (!loraIface->start()) {
+        Serial.println("[RADIO] LoRaInterface start failed");
+        return false;
+    }
+
+    Serial.println("[RADIO] SX1262 + LoRaInterface online");
+    return true;
+}
+
+// -----------------------------------------------------------------------------
 // Protocol init
 // -----------------------------------------------------------------------------
 
@@ -93,7 +155,7 @@ static void initProtocol() {
         return;
     }
 
-    // Prefer internal RAM — SPIRAM node alloc was failing on this path
+    // Prefer internal RAM — SPIRAM node alloc was failing earlier
     const int32_t profile = RS_HANDHELD_PROFILE_SMALL;
     const uint32_t nodeHeapCaps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
 
@@ -101,6 +163,14 @@ static void initProtocol() {
                                announceMgr, profile, nodeHeapCaps)) {
         Serial.println("[PROTO] ProtocolRuntime begin failed");
         return;
+    }
+
+    // Attach LoRa so announces have an interface
+    if (loraIface) {
+        protocolRuntime.pump().attachLoRa(loraIface);
+        Serial.println("[PROTO] LoRa attached to pump");
+    } else {
+        Serial.println("[PROTO] WARNING: no LoRa interface to attach");
     }
 
     protocolReady = protocolRuntime.protocolReady();
@@ -121,6 +191,7 @@ static void printHelp() {
     Serial.println("  identity  - local destination hash");
     Serial.println("  peers     - path / link counts");
     Serial.println("  announce  - send presence announce");
+    Serial.println("  radio     - radio online / RSSI");
 }
 
 static void handleCommand(const String& cmd) {
@@ -137,6 +208,8 @@ static void handleCommand(const String& cmd) {
         Serial.printf("Uptime   : %lu s\r\n", millis() / 1000UL);
         Serial.printf("Free heap: %u bytes\r\n", ESP.getFreeHeap());
         Serial.printf("Protocol : %s\r\n", protocolReady ? "ready" : "not ready");
+        Serial.printf("LoRa     : %s\r\n",
+                      (loraIface && loraIface->isOnline()) ? "online" : "offline");
         Serial.println("Mode     : Cooperative / Headless");
     }
     else if (c == "battery") {
@@ -173,6 +246,15 @@ static void handleCommand(const String& cmd) {
         }
         Serial.printf("Paths : %u\r\n", (unsigned)protocolRuntime.pathCount());
         Serial.printf("Links : %u\r\n", (unsigned)protocolRuntime.linkCount());
+    }
+    else if (c == "radio") {
+        if (!loraIface) {
+            Serial.println("LoRa interface not created");
+            return;
+        }
+        Serial.printf("Online : %s\r\n", loraIface->isOnline() ? "yes" : "no");
+        Serial.printf("RSSI   : %d\r\n", loraIface->lastRxRssi());
+        Serial.printf("SNR    : %.1f\r\n", loraIface->lastRxSnr());
     }
     else {
         Serial.printf("Unknown command: %s\r\n", c.c_str());
@@ -240,6 +322,11 @@ void setup() {
         Serial.printf("[BAT] %.2f V  %d%%\r\n", v, pct);
     }
 
+    // Radio first, then protocol (so we can attach LoRa)
+    if (!initRadio()) {
+        Serial.println("[BOOT] Radio init failed — continuing without LoRa");
+    }
+
     initProtocol();
 
     Serial.println();
@@ -256,6 +343,11 @@ void loop() {
     if (protocolReady) {
         protocolRuntime.loop();
         protocolRuntime.pollReceive();
+    }
+
+    // Keep the LoRa driver ticking
+    if (loraIface) {
+        loraIface->loop();
     }
 
     keyboard.update();
