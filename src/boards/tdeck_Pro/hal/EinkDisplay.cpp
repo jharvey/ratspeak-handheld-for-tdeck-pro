@@ -116,7 +116,7 @@ bool begin() {
     initialized = true;
 
     Serial.printf(
-        "[EINK] Ready (%d x %d)\n",
+        "[EINK] Ready (%d x %d)\r\n",
         display.width(),
         display.height());
 
