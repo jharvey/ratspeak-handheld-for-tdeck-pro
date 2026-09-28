@@ -2,9 +2,9 @@
 
 #include <Arduino.h>
 #include <SPI.h>
-
 #include <GxEPD2_BW.h>
 #include <Fonts/FreeMonoBold9pt7b.h>
+#include <Fonts/FreeMono9pt7b.h>
 
 #include "config/BoardConfig.h"
 
@@ -24,10 +24,6 @@ namespace eink {
 #error "TDECK_PRO_EPD_BUSY must be defined"
 #endif
 
-// -----------------------------------------------------------------------------
-// GDEQ031T10 / UC8253 — T-Deck Pro V1.1
-// -----------------------------------------------------------------------------
-
 using InkPanel = GxEPD2_310_GDEQ031T10;
 using InkDisplay = GxEPD2_BW<InkPanel, InkPanel::HEIGHT>;
 
@@ -41,13 +37,31 @@ static InkDisplay display(
 static bool initialized = false;
 
 // -----------------------------------------------------------------------------
-// Initialize display
+// Helpers
+// -----------------------------------------------------------------------------
+
+static void drawBatteryBar(int x, int y, int w, int h, int percent) {
+    // Outer frame
+    display.drawRect(x, y, w, h, GxEPD_BLACK);
+    // Terminal nub
+    display.fillRect(x + w, y + h / 4, 3, h / 2, GxEPD_BLACK);
+
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+
+    int fillW = (w - 4) * percent / 100;
+    if (fillW > 0) {
+        display.fillRect(x + 2, y + 2, fillW, h - 4, GxEPD_BLACK);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Initialize
 // -----------------------------------------------------------------------------
 
 bool begin() {
     Serial.println("[EINK] Initializing GDEQ031T10...");
 
-    // Keep other SPI devices deselected
     pinMode(LORA_CS, OUTPUT);
     digitalWrite(LORA_CS, HIGH);
     pinMode(SD_CS, OUTPUT);
@@ -70,7 +84,7 @@ bool begin() {
         SPI,
         SPISettings(2000000, MSBFIRST, SPI_MODE0));
 
-    // First argument 0 = disable GxEPD2 diagnostic Serial output
+    // 0 = quiet diagnostics
     display.init(0, true, 2, false);
 
     display.setRotation(0);
@@ -81,7 +95,6 @@ bool begin() {
 
     Serial.printf("[EINK] Ready (%d x %d)\r\n",
                   display.width(), display.height());
-
     return true;
 }
 
@@ -91,7 +104,6 @@ bool begin() {
 
 void clear() {
     if (!initialized) return;
-
     Serial.println("[EINK] Clearing...");
     display.setFullWindow();
     display.firstPage();
@@ -103,7 +115,7 @@ void clear() {
 }
 
 // -----------------------------------------------------------------------------
-// Boot / status screen (headless)
+// Simple boot screen (pre-protocol)
 // -----------------------------------------------------------------------------
 
 void showBootScreen() {
@@ -132,7 +144,7 @@ void showBootScreen() {
 }
 
 // -----------------------------------------------------------------------------
-// Simple test screen (kept for diagnostics)
+// Diagnostic test screen
 // -----------------------------------------------------------------------------
 
 void showTestScreen() {
@@ -142,7 +154,6 @@ void showTestScreen() {
     }
 
     Serial.println("[EINK] Running display test...");
-
     display.setFullWindow();
     display.firstPage();
     do {
@@ -171,6 +182,84 @@ void showTestScreen() {
 }
 
 // -----------------------------------------------------------------------------
+// Headless status screen
+// -----------------------------------------------------------------------------
+
+void showStatusScreen(
+    const char* destShort,
+    int batteryPct,
+    bool loraOnline,
+    unsigned pathCount,
+    const char* version) {
+
+    if (!initialized) return;
+
+    Serial.println("[EINK] Updating status screen...");
+
+    display.setFullWindow();
+    display.firstPage();
+    do {
+        display.fillScreen(GxEPD_WHITE);
+        display.setTextColor(GxEPD_BLACK);
+
+        // Title
+        display.setFont(&FreeMonoBold9pt7b);
+        display.setCursor(12, 28);
+        display.print("RATSPEAK");
+        display.setCursor(12, 48);
+        display.print("T-Deck Pro");
+
+        display.setFont(&FreeMono9pt7b);
+        display.setCursor(12, 72);
+        display.print("HEADLESS / COOP");
+
+        // Version
+        display.setCursor(12, 96);
+        display.print(version ? version : "----");
+
+        // Divider
+        display.drawFastHLine(10, 108, 220, GxEPD_BLACK);
+
+        // Destination
+        display.setCursor(12, 132);
+        display.print("Dest ");
+        if (destShort && destShort[0]) {
+            display.print(destShort);
+        } else {
+            display.print("(none)");
+        }
+
+        // LoRa
+        display.setCursor(12, 156);
+        display.print("LoRa ");
+        display.print(loraOnline ? "ONLINE" : "OFFLINE");
+
+        // Battery bar + percent
+        display.setCursor(12, 180);
+        display.print("Batt ");
+        drawBatteryBar(70, 168, 100, 16, batteryPct);
+        display.setCursor(180, 180);
+        if (batteryPct >= 0) {
+            display.printf("%d%%", batteryPct);
+        } else {
+            display.print("--");
+        }
+
+        // Paths
+        display.setCursor(12, 204);
+        display.printf("Paths %u", pathCount);
+
+        // Footer hint
+        display.setCursor(12, 240);
+        display.print("Serial: help");
+
+    } while (display.nextPage());
+
+    display.powerOff();
+    Serial.println("[EINK] Status screen done");
+}
+
+// -----------------------------------------------------------------------------
 // Sleep / Wake
 // -----------------------------------------------------------------------------
 
@@ -181,12 +270,11 @@ void sleep() {
 
 void wake() {
     if (!initialized) return;
-
     Serial.println("[EINK] Waking...");
     display.epd2.selectSPI(
         SPI,
         SPISettings(2000000, MSBFIRST, SPI_MODE0));
-    display.init(0, true, 2, false);   // quiet
+    display.init(0, true, 2, false);
     display.setRotation(0);
     display.setFont(&FreeMonoBold9pt7b);
     display.setTextColor(GxEPD_BLACK);

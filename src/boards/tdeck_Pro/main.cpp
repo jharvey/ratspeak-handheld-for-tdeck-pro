@@ -178,6 +178,38 @@ static void initProtocol() {
 }
 
 // -----------------------------------------------------------------------------
+// EINK 
+// -----------------------------------------------------------------------------
+static void updateStatusScreen() {
+    char destShort[20] = {0};
+    if (protocolReady) {
+        String full = protocolRuntime.destinationHashHex();
+        // Show first 12 hex chars in groups: a78c:6388:7d9d
+        if (full.length() >= 12) {
+            snprintf(destShort, sizeof(destShort), "%c%c%c%c:%c%c%c%c:%c%c%c%c",
+                     full[0], full[1], full[2], full[3],
+                     full[4], full[5], full[6], full[7],
+                     full[8], full[9], full[10], full[11]);
+        }
+    }
+
+    float v = 0;
+    int pct = -1;
+    readBattery(v, pct);
+
+    bool loraOk = loraIface && loraIface->isOnline();
+    unsigned paths = protocolReady ? (unsigned)protocolRuntime.pathCount() : 0;
+
+    tdeck_pro::eink::showStatusScreen(
+        destShort[0] ? destShort : nullptr,
+        pct,
+        loraOk,
+        paths,
+        FIRMWARE_VERSION);
+}
+
+
+// -----------------------------------------------------------------------------
 // Serial command interface
 // -----------------------------------------------------------------------------
 
@@ -328,6 +360,9 @@ void setup() {
     }
 
     initProtocol();
+	
+	// Now that we know real state, draw the full status screen
+    updateStatusScreen();
 
     Serial.println();
     Serial.println("[BOOT] ready — type 'help' for commands");
@@ -383,6 +418,12 @@ void loop() {
         if (readBattery(v, pct)) {
             Serial.printf("[BAT] %.2f V  %d%%\r\n", v, pct);
         }
+    }
+
+    static uint32_t lastScreen = 0;
+    if (now - lastScreen >= 60000UL) {
+        lastScreen = now;
+        updateStatusScreen();
     }
 
     delay(5);
