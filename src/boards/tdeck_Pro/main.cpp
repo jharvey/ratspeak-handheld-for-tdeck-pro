@@ -8,12 +8,13 @@
 
 // =============================================================================
 // T-Deck Pro — Cooperative / Headless
+// Next milestone: protocol core (identity / announce / peers)
 // =============================================================================
 
 static Keyboard keyboard;
 
 // -----------------------------------------------------------------------------
-// LED heartbeat
+// LED
 // -----------------------------------------------------------------------------
 
 static void heartbeatLed(bool on) {
@@ -39,7 +40,7 @@ static void powerGatesOn() {
     digitalWrite(BOARD_6609_EN, HIGH);
 
     pinMode(BOARD_MOTOR_PIN, OUTPUT);
-    digitalWrite(BOARD_MOTOR_PIN, LOW);   // haptic off
+    digitalWrite(BOARD_MOTOR_PIN, LOW);
 }
 
 // -----------------------------------------------------------------------------
@@ -47,17 +48,15 @@ static void powerGatesOn() {
 // -----------------------------------------------------------------------------
 
 static bool readBattery(float& voltage, int& percent) {
-    // Voltage 0x08 (mV)
     Wire.beginTransmission(BQ27220_I2C_ADDR);
-    Wire.write(0x08);
+    Wire.write(0x08);                       // Voltage (mV)
     if (Wire.endTransmission(false) != 0) return false;
     if (Wire.requestFrom((int)BQ27220_I2C_ADDR, 2) != 2) return false;
     uint16_t mv = Wire.read() | (Wire.read() << 8);
     voltage = mv / 1000.0f;
 
-    // Relative SOC 0x2C (%)
     Wire.beginTransmission(BQ27220_I2C_ADDR);
-    Wire.write(0x2C);
+    Wire.write(0x2C);                       // Relative SOC (%)
     if (Wire.endTransmission(false) != 0) return false;
     if (Wire.requestFrom((int)BQ27220_I2C_ADDR, 2) != 2) return false;
     percent = Wire.read() | (Wire.read() << 8);
@@ -158,7 +157,7 @@ void setup() {
         Serial.println("[KEY] TCA8418 init failed");
     }
 
-    // Short LED blink to show we are alive
+    // Short LED blink
     for (int i = 0; i < 3; i++) {
         heartbeatLed(true);
         delay(70);
@@ -170,7 +169,6 @@ void setup() {
     tdeck_pro::eink::begin();
     tdeck_pro::eink::showBootScreen();
 
-    // Battery info
     float v = 0;
     int pct = -1;
     if (readBattery(v, pct)) {
@@ -188,7 +186,6 @@ void setup() {
 // -----------------------------------------------------------------------------
 
 void loop() {
-    // Keyboard echo
     keyboard.update();
     if (keyboard.hasEvent()) {
         const KeyEvent& e = keyboard.getEvent();
@@ -203,10 +200,9 @@ void loop() {
         }
     }
 
-    // Serial commands
     pollSerial();
 
-    // 1 Hz LED heartbeat
+    // 1 Hz heartbeat
     static uint32_t lastLed = 0;
     static bool ledOn = false;
     uint32_t now = millis();
@@ -216,7 +212,7 @@ void loop() {
         heartbeatLed(ledOn);
     }
 
-    // Optional periodic battery (every 30 s)
+    // Battery every 30 s
     static uint32_t lastBat = 0;
     if (now - lastBat >= 30000UL) {
         lastBat = now;
