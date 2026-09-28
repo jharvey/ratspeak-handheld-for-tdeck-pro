@@ -14,14 +14,14 @@
 #include "reticulum/AnnounceManager.h"
 
 // =============================================================================
-// T-Deck Pro — Cooperative / Headless + Protocol Step A
+// T-Deck Pro — Cooperative / Headless + Protocol
 // =============================================================================
 
 static Keyboard keyboard;
 static FlashStore flash;
 static IdentityManager identityMgr;
 static MessageStore messageStore;
-static AnnounceManager* announceMgr = nullptr;   // optional for now
+static AnnounceManager* announceMgr = nullptr;
 static ProtocolRuntime protocolRuntime;
 static bool protocolReady = false;
 
@@ -77,7 +77,7 @@ static bool readBattery(float& voltage, int& percent) {
 }
 
 // -----------------------------------------------------------------------------
-// Protocol init (matches real signatures)
+// Protocol init
 // -----------------------------------------------------------------------------
 
 static void initProtocol() {
@@ -88,26 +88,13 @@ static void initProtocol() {
         return;
     }
 
-    // IdentityManager::begin(FlashStore*, SDStore* = nullptr)
     if (!identityMgr.begin(&flash, nullptr)) {
         Serial.println("[PROTO] IdentityManager begin failed");
         return;
     }
 
-    // MessageStore is required by ProtocolRuntime::begin
-    // (signature may accept null in some paths, but we pass a real one)
-    // We keep it minimal for now.
-
-    // ProtocolRuntime::begin(
-    //   FlashStore*, SDStore*, IdentityManager*, MessageStore*,
-    //   AnnounceManager*, int32_t profile, uint32_t nodeHeapCaps)
-    //
-    // profile: RS_HANDHELD_PROFILE_SMALL for tdeck-class boards
-    // nodeHeapCaps: MALLOC_CAP_SPIRAM for SMALL profile
-
+    // Prefer internal RAM — SPIRAM node alloc was failing on this path
     const int32_t profile = RS_HANDHELD_PROFILE_SMALL;
-    // Prefer internal RAM for headless cooperative bring-up.
-    // SPIRAM allocation of the ~200 KB node is failing on this boot path.
     const uint32_t nodeHeapCaps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
 
     if (!protocolRuntime.begin(&flash, nullptr, &identityMgr, &messageStore,
@@ -132,8 +119,8 @@ static void printHelp() {
     Serial.println("  status    - firmware + uptime + heap");
     Serial.println("  battery   - voltage and SOC");
     Serial.println("  identity  - local destination hash");
-    Serial.println("  peers     - (next milestone)");
-    Serial.println("  announce  - (next milestone)");
+    Serial.println("  peers     - path / link counts");
+    Serial.println("  announce  - send presence announce");
 }
 
 static void handleCommand(const String& cmd) {
@@ -166,12 +153,26 @@ static void handleCommand(const String& cmd) {
             Serial.println("Protocol not ready");
             return;
         }
-        // Use the methods that actually exist on ProtocolRuntime
         Serial.printf("Dest hash : %s\r\n", protocolRuntime.destinationHashHex().c_str());
         Serial.printf("Identity  : %s\r\n", protocolRuntime.identityHashHex().c_str());
     }
-    else if (c == "peers" || c == "announce") {
-        Serial.println("(coming in next milestone)");
+    else if (c == "announce") {
+        if (!protocolReady) {
+            Serial.println("Protocol not ready");
+            return;
+        }
+        auto result = protocolRuntime.announce(nullptr, 0);
+        Serial.printf("Announce result: %d\r\n", (int)result);
+        Serial.printf("Paths known   : %u\r\n", (unsigned)protocolRuntime.pathCount());
+        Serial.printf("Links         : %u\r\n", (unsigned)protocolRuntime.linkCount());
+    }
+    else if (c == "peers") {
+        if (!protocolReady) {
+            Serial.println("Protocol not ready");
+            return;
+        }
+        Serial.printf("Paths : %u\r\n", (unsigned)protocolRuntime.pathCount());
+        Serial.printf("Links : %u\r\n", (unsigned)protocolRuntime.linkCount());
     }
     else {
         Serial.printf("Unknown command: %s\r\n", c.c_str());
@@ -252,9 +253,8 @@ void setup() {
 // -----------------------------------------------------------------------------
 
 void loop() {
-    // Cooperative protocol work
     if (protocolReady) {
-        protocolRuntime.loop();          // correct method name
+        protocolRuntime.loop();
         protocolRuntime.pollReceive();
     }
 
