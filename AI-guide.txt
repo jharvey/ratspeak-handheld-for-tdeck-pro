@@ -20,6 +20,8 @@ Progress
 -- Battery guage, read voltage basic tests complete. 
 -- Touch screen basic tested
 -- Eink static screen displayed
+-- Speaker makes some noise
+-- Mic registers diffent RMS values if you tap vs leave it quite. 
 
 Planned Next steps
 
@@ -34,7 +36,3 @@ HAS_DISPLAY false so nothing touches ST7789/LVGL
 Commands like status, peers, msg, gps — enough to prove messaging before e-ink.
 5. E-ink last
 GDEQ031T10 driver → then LVGL or a simpler UI → HAS_DISPLAY true → full tdeck_pro env.
-
-Microphone???
-
-Speaker ???

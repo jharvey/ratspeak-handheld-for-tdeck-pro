@@ -21,10 +21,13 @@ public:
     void setVolume(uint8_t vol) { _volume = vol; }
     uint8_t volume() const { return _volume; }
 
-private:
+    // Direct tone helpers (used by serial tests)
     void writeTone(uint16_t freq, uint16_t durationMs);
     void writeSilence(uint16_t durationMs);
 
+    bool isReady() const { return _i2sReady; }
+
+private:
     bool _enabled = true;
     bool _i2sReady = false;
     volatile bool _messagePending = false;

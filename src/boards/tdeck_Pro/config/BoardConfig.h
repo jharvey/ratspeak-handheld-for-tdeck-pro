@@ -20,6 +20,10 @@
 //     0x48 = SD CS
 //
 // GPIO 2 is the direct motor enable on the Pro V1.1 hardware.
+//
+// Audio (PCM5102A Voice variant only — not A7682E 4G):
+//     I2S BCLK=7  DOUT=8  LRC/WS=9
+//     PDM MIC DATA=17  CLOCK=18
 // =============================================================================
 
 // --- Board Identity / Branding ---
@@ -45,7 +49,7 @@
 #define HAS_LORA          true
 #define HAS_WIFI          true
 #define HAS_SD            true
-#define HAS_AUDIO         false
+#define HAS_AUDIO         true
 #define HAS_GPS           true
 
 // Battery is handled by BQ27220/BQ25896 over I2C.
@@ -178,13 +182,18 @@
 // BQ25896 charger / power-management IC.
 #define BQ25896_I2C_ADDR        0x6B
 
-// --- Audio ---
-#define I2S_WS                  -1
-#define I2S_DOUT                -1
-#define I2S_BCK                 -1
+// --- Audio (PCM5102A Voice variant) ---
+// I2S TX → PCM5102A DAC → speaker / 3.5 mm jack
+#define I2S_BCK                 7
+#define I2S_DOUT                8
+#define I2S_WS                  9
 #define I2S_DIN                 -1
 #define I2S_SCK                 -1
 #define I2S_MCLK                -1
+
+// PDM microphone
+#define MIC_DATA                17
+#define MIC_CLOCK               18
 
 // --- Boot ---
 #define BOARD_BOOT_PIN           0

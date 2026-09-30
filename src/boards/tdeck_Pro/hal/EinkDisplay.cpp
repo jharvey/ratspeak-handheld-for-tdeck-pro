@@ -178,7 +178,7 @@ void showBootScreen() {
         display.print("RATSPEAK");
 
         display.setCursor(20, 70);
-        display.print("T-Deck Pro");
+        display.print("T-Deck Pro V1.1 (not V1l.0)");
 
         display.setCursor(20, 110);
         display.print("HEADLESS");
