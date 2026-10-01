@@ -19,6 +19,10 @@
 #include "radio/BoardRadio.h"
 #include "transport/LoRaInterface.h"
 
+// Protocol / LXMF RX needs more than the default 8KB Arduino loop stack.
+// Without this, inbound LXMF often trips: Stack canary watchpoint (loopTask).
+SET_LOOP_TASK_STACK_SIZE(32 * 1024);
+
 // =============================================================================
 // T-Deck Pro — Cooperative / Headless + Protocol + LoRa + Audio tests
 // =============================================================================
@@ -244,7 +248,6 @@ static void testSpeaker() {
         delay(20);
     }
 
-    // Re-init in case a previous mic test tore the driver down
     audio.end();
     audio.begin();
     audio.setEnabled(true);
@@ -266,7 +269,6 @@ static void testSpeaker() {
 static void testMicrophone(uint16_t durationMs = 1500) {
     Serial.println("[AUDIO] Microphone PDM test starting...");
 
-    // Free the TX driver so we can reuse I2S_NUM_0 for PDM RX
     audio.end();
 
     if (MIC_DATA < 0 || MIC_CLOCK < 0) {
@@ -523,7 +525,6 @@ void setup() {
         Serial.printf("[BAT] %.2f V  %d%%\r\n", v, pct);
     }
 
-    // Audio bring-up (I2S TX only; mic is on-demand via serial)
 #if HAS_AUDIO
     audio.begin();
     audio.setEnabled(true);

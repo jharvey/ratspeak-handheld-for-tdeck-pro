@@ -22,6 +22,7 @@ Progress
 -- Eink static screen displayed
 -- Speaker makes some noise
 -- Mic registers diffent RMS values if you tap vs leave it quite. 
+-- node mode seems to be working. Can see other radio, didn't both to link but has a path. 
 
 Planned Next steps
 
