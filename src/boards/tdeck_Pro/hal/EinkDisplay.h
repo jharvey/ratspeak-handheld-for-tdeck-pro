@@ -10,12 +10,6 @@ void clear();
 void showBootScreen();
 void showTestScreen();
 
-// Headless status screen
-// destShort  – first 12–16 hex chars of destination hash (or nullptr)
-// batteryPct – 0..100, or -1 if unknown
-// loraOnline – true if radio is up
-// pathCount  – known paths
-// version    – firmware version string
 void showStatusScreen(
     const char* destShort,
     int batteryPct,
@@ -23,8 +17,15 @@ void showStatusScreen(
     unsigned pathCount,
     const char* version);
 
-// Small once-per-second uptime display.
-// This updates only a small partial e-ink window.
+void showNodeHome(
+    const char* destShort,
+    int batteryPct,
+    bool loraOnline,
+    unsigned pathCount,
+    unsigned linkCount,
+    const char* lastEvent,
+    const char* version);
+
 void showUptime(uint32_t elapsedSeconds);
 
 void sleep();

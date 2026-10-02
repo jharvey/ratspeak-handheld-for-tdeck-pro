@@ -2,51 +2,58 @@
 setlocal
 
 echo ===================================================
-echo 1. Compile T-Deck Pro Cooperative (DO THIS FIRST)
-echo 2. Flash Already-Built Cooperative Binaries (INSTANT)
-echo 3. Clean Build Files
-echo 4. WIPE ALL FIRMWARE (Factory Erase)
+echo 1. Build Cooperative (headless serial tests)
+echo 2. Flash Cooperative
+echo 3. Build Display Node (e-ink status + protocol)
+echo 4. Flash Display Node
+echo 5. Clean Build Files
+echo 6. WIPE ALL FIRMWARE (Factory Erase)
 echo ===================================================
-set /p choice="Select an option (1-4): "
+set /p choice="Select an option (1-6): "
 
-if "%choice%"=="1" goto do_build
-if "%choice%"=="2" goto do_flash
-if "%choice%"=="3" goto do_clean
-if "%choice%"=="4" goto do_wipe
+if "%choice%"=="1" goto do_build_coop
+if "%choice%"=="2" goto do_flash_coop
+if "%choice%"=="3" goto do_build_node
+if "%choice%"=="4" goto do_flash_node
+if "%choice%"=="5" goto do_clean
+if "%choice%"=="6" goto do_wipe
 goto end
 
-:do_build
-echo Building T-Deck Pro Cooperative firmware...
+:do_build_coop
+echo Building T-Deck Pro Cooperative...
 pio run -e tdeck_pro_cooperative
 echo.
-echo ---------------------------------------------------
-echo Compilation complete. Cooperative binaries are cached!
-echo Force bootloader mode (Hold Wheel + Click RST)
-echo and run Option 2 to flash instantly.
-echo ---------------------------------------------------
+echo Build done. Use option 2 to flash.
 goto end
 
-:do_flash
-echo Flashing T-Deck Pro Cooperative firmware instantly via esptool...
+:do_flash_coop
+echo Flashing Cooperative...
 pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 115200 write_flash 0x0000 .pio/build/tdeck_pro_cooperative/bootloader.bin 0x8000 .pio/build/tdeck_pro_cooperative/partitions.bin 0x10000 .pio/build/tdeck_pro_cooperative/firmware.bin
 goto end
 
+:do_build_node
+echo Building T-Deck Pro Display Node...
+pio run -e tdeck_pro_node
+echo.
+echo Build done. Use option 4 to flash.
+goto end
+
+:do_flash_node
+echo Flashing Display Node...
+pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 115200 write_flash 0x0000 .pio/build/tdeck_pro_node/bootloader.bin 0x8000 .pio/build/tdeck_pro_node/partitions.bin 0x10000 .pio/build/tdeck_pro_node/firmware.bin
+goto end
+
 :do_clean
-echo Cleaning build directory...
+echo Cleaning...
 pio run --target clean
 goto end
 
 :do_wipe
-echo [WARNING] This will completely erase all firmware and settings!
-echo Ensure your T-Deck is connected in Bootloader mode (Hold trackwheel + Click RST).
+echo [WARNING] Erases all firmware and settings!
+echo Bootloader mode: Hold trackwheel + Click RST
 pause
-echo Erasing Flash Memory...
 pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 115200 erase_flash
-echo.
-echo ---------------------------------------------------
-echo WIPE COMPLETE. Your T-Deck is now completely empty.
-echo Run this script again and select Option 2 to flash.
-echo ---------------------------------------------------
+echo WIPE COMPLETE.
 goto end
 
 :end
