@@ -1,68 +1,67 @@
 #include <Arduino.h>
-#include "Eink/DisplayEink.h"
-#include "Eink/LvglPort.h"
+#include <SPI.h>
+#include <GxEPD2_BW.h>
+#include <gdeq/GxEPD2_310_GDEQ031T10.h>
 #include "config/BoardConfig.h"
 
-DisplayEink display;
+// GxEPD2: CS, DC, RST, BUSY — BUSY is active LOW on this panel
+GxEPD2_BW<GxEPD2_310_GDEQ031T10, GxEPD2_310_GDEQ031T10::HEIGHT>
+  display(GxEPD2_310_GDEQ031T10(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
 
 void setup() {
-    Serial.begin(115200);
-    delay(400);
-    Serial.println();
-    Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  E-INK BRING-UP");
-    Serial.println("========================================");
+  Serial.begin(115200);
+  delay(400);
+  Serial.println();
+  Serial.println("========================================");
+  Serial.println(" RATSPEAK  T-Deck Pro  GxEPD2 TEST");
+  Serial.println("========================================");
 
-    // Power gates
-    pinMode(BOARD_1V8_EN, OUTPUT);
-    pinMode(BOARD_LORA_EN, OUTPUT);
-    digitalWrite(BOARD_1V8_EN, HIGH);
-    digitalWrite(BOARD_LORA_EN, HIGH);
-    delay(50);
+  pinMode(BOARD_1V8_EN, OUTPUT);
+  pinMode(BOARD_LORA_EN, OUTPUT);
+  digitalWrite(BOARD_1V8_EN, HIGH);
+  digitalWrite(BOARD_LORA_EN, HIGH);
+  delay(50);
 
-    // Shared SPI (same pins as cooperative build)
-    SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
+  // Shared SPI bus (LoRa + e-ink)
+  SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
 
-    if (!LvglPort::begin(display)) {
-        Serial.println("[BOOT] Display / LVGL init FAILED");
-        while (true) delay(1000);
-    }
+  // Keep LoRa CS high so it does not steal the bus
+  pinMode(LORA_CS, OUTPUT);
+  digitalWrite(LORA_CS, HIGH);
+  pinMode(SD_CS, OUTPUT);
+  digitalWrite(SD_CS, HIGH);
 
-    Serial.println("[BOOT] Drawing test pattern...");
+  Serial.println("[BOOT] init GxEPD2 GDEQ031T10...");
+  display.init(115200, true, 50, false);
+  display.setRotation(0);
 
-    // White background
-    display.fillScreen(false);
+  Serial.println("[BOOT] clear white...");
+  display.setFullWindow();
+  display.firstPage();
+  do {
+    display.fillScreen(GxEPD_WHITE);
+  } while (display.nextPage());
 
-    // Black title bar
-    for (int y = 0; y < 28; y++)
-        for (int x = 0; x < EPD_WIDTH; x++)
-            display.setPixel(x, y, true);
+  delay(500);
 
-    // Horizontal test bars
-    for (int y = 60; y < 80; y++)
-        for (int x = 20; x < 300; x++)
-            display.setPixel(x, y, true);
-
-    for (int y = 100; y < 120; y++)
-        for (int x = 20; x < 300; x++)
-            display.setPixel(x, y, (x / 8) & 1);   // checker
-
+  Serial.println("[BOOT] draw test pattern...");
+  display.setFullWindow();
+  display.firstPage();
+  do {
+    display.fillScreen(GxEPD_WHITE);
+    // Title bar
+    display.fillRect(0, 0, display.width(), 28, GxEPD_BLACK);
+    // Bars
+    display.fillRect(20, 60, 280, 20, GxEPD_BLACK);
+    display.fillRect(20, 100, 280, 20, GxEPD_BLACK);
     // Border
-    for (int x = 0; x < EPD_WIDTH; x++) {
-        display.setPixel(x, 0, true);
-        display.setPixel(x, EPD_HEIGHT - 1, true);
-    }
-    for (int y = 0; y < EPD_HEIGHT; y++) {
-        display.setPixel(0, y, true);
-        display.setPixel(EPD_WIDTH - 1, y, true);
-    }
+    display.drawRect(0, 0, display.width(), display.height(), GxEPD_BLACK);
+    display.drawRect(1, 1, display.width() - 2, display.height() - 2, GxEPD_BLACK);
+  } while (display.nextPage());
 
-    display.fullRefresh();
-    Serial.println("[BOOT] Test pattern sent to panel");
-    Serial.println("[BOOT] If you see black bars / border on the e-ink, driver works");
+  Serial.println("[BOOT] done — check e-ink panel for black bars/border");
 }
 
 void loop() {
-    LvglPort::tick();
-    delay(50);
+  delay(1000);
 }
