@@ -1,62 +1,47 @@
 #include "LvglPort.h"
-#include <Arduino.h>
-#include "config/BoardConfig.h"
+#include <lvgl.h>
 
-DisplayEink* LvglPort::disp_ = nullptr;
-
-static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf1[EPD_WIDTH * 20];
+DisplayEink* LvglPort::display_ = nullptr;
+lv_disp_draw_buf_t LvglPort::draw_buf_;
+lv_color_t* LvglPort::buf1_ = nullptr;
+lv_disp_drv_t LvglPort::disp_drv_;
 
 bool LvglPort::begin(DisplayEink& display) {
-    disp_ = &display;
-    if (!disp_->begin()) return false;
+    display_ = &display;
 
     lv_init();
 
-    lv_disp_draw_buf_init(&draw_buf, buf1, NULL, EPD_WIDTH * 20);
+    // Partial buffer: 20 lines (enough for labels; full frame would be large at 16-bit)
+    const size_t lines = 20;
+    const size_t pixels = (size_t)EPD_WIDTH * lines;
+    buf1_ = (lv_color_t*)ps_malloc(pixels * sizeof(lv_color_t));
+    if (!buf1_) buf1_ = (lv_color_t*)malloc(pixels * sizeof(lv_color_t));
+    if (!buf1_) {
+        Serial.println("[LVGL] draw buffer alloc failed");
+        return false;
+    }
 
-    static lv_disp_drv_t disp_drv;
-    lv_disp_drv_init(&disp_drv);
-    disp_drv.hor_res = EPD_WIDTH;
-    disp_drv.ver_res = EPD_HEIGHT;
-    disp_drv.flush_cb = flush_cb;
-    disp_drv.draw_buf = &draw_buf;
-    disp_drv.antialiasing = 0;
-    lv_disp_drv_register(&disp_drv);
+    lv_disp_draw_buf_init(&draw_buf_, buf1_, nullptr, pixels);
 
-    static lv_indev_drv_t indev_drv;
-    lv_indev_drv_init(&indev_drv);
-    indev_drv.type = LV_INDEV_TYPE_POINTER;
-    indev_drv.read_cb = touch_read_cb;
-    lv_indev_drv_register(&indev_drv);
+    lv_disp_drv_init(&disp_drv_);
+    disp_drv_.hor_res = EPD_WIDTH;
+    disp_drv_.ver_res = EPD_HEIGHT;
+    disp_drv_.flush_cb = flush_cb;
+    disp_drv_.draw_buf = &draw_buf_;
+    // E-ink: no rounder needed for bring-up
+    lv_disp_drv_register(&disp_drv_);
 
-    Serial.println("[LVGL] port ready");
+    Serial.println("[LVGL] port ready (GxEPD2 backend)");
     return true;
 }
 
 void LvglPort::flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_map) {
-    if (disp_) disp_->flush(area, color_map);
+    if (display_) {
+        display_->flush(area, color_map);
+    }
     lv_disp_flush_ready(drv);
 }
 
-void LvglPort::touch_read_cb(lv_indev_drv_t*, lv_indev_data_t* data) {
-    data->state = LV_INDEV_STATE_RELEASED;
-}
-
 void LvglPort::tick() {
-    // Safe for LVGL 8.3 whether LV_TICK_CUSTOM is on or off
-    static uint32_t last = 0;
-    uint32_t now = millis();
-    uint32_t diff = now - last;
-    if (diff >= 5) {
-#if LV_TICK_CUSTOM == 0
-        lv_tick_inc(diff);
-#endif
-        last = now;
-    }
     lv_timer_handler();
-}
-
-DisplayEink* LvglPort::display() {
-    return disp_;
 }
