@@ -1,59 +1,141 @@
-#include "LvglPort.h"
-#include <Arduino.h>
-#include "config/BoardConfig.h"
+#include "DisplayEink.h"
+#include <string.h>
 
-DisplayEink* LvglPort::disp_ = nullptr;
+DisplayEink::DisplayEink() : spi_(nullptr), framebuffer_(nullptr) {}
 
-static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf1[EPD_WIDTH * 20];
+bool DisplayEink::begin() {
+    pinMode(BOARD_1V8_EN, OUTPUT);
+    pinMode(BOARD_LORA_EN, OUTPUT);
+    digitalWrite(BOARD_1V8_EN, HIGH);
+    digitalWrite(BOARD_LORA_EN, HIGH);
+    delay(50);
 
-bool LvglPort::begin(DisplayEink& display) {
-    disp_ = &display;
-    if (!disp_->begin()) return false;
+    pinMode(EPD_CS, OUTPUT);
+    pinMode(EPD_DC, OUTPUT);
+    pinMode(EPD_BUSY, INPUT);
+    if (EPD_RST >= 0) {
+        pinMode(EPD_RST, OUTPUT);
+        digitalWrite(EPD_RST, HIGH);
+    }
+    digitalWrite(EPD_CS, HIGH);
 
-    lv_init();
+    spi_ = &SPI;
 
-    lv_disp_draw_buf_init(&draw_buf, buf1, NULL, EPD_WIDTH * 20);
+    framebuffer_ = (uint8_t*)ps_malloc(EPD_WIDTH * EPD_HEIGHT / 8);
+    if (!framebuffer_) {
+        Serial.println("[EINK] framebuffer alloc failed");
+        return false;
+    }
+    memset(framebuffer_, 0xFF, EPD_WIDTH * EPD_HEIGHT / 8);
 
-    static lv_disp_drv_t disp_drv;
-    lv_disp_drv_init(&disp_drv);
-    disp_drv.hor_res = EPD_WIDTH;
-    disp_drv.ver_res = EPD_HEIGHT;
-    disp_drv.flush_cb = flush_cb;
-    disp_drv.draw_buf = &draw_buf;
-    disp_drv.antialiasing = 0;
-    lv_disp_drv_register(&disp_drv);
+    if (EPD_RST >= 0) {
+        digitalWrite(EPD_RST, LOW);
+        delay(10);
+        digitalWrite(EPD_RST, HIGH);
+        delay(10);
+    }
 
-    static lv_indev_drv_t indev_drv;
-    lv_indev_drv_init(&indev_drv);
-    indev_drv.type = LV_INDEV_TYPE_POINTER;
-    indev_drv.read_cb = touch_read_cb;
-    lv_indev_drv_register(&indev_drv);
+    sendCommand(0x04);
+    waitBusy();
+    sendCommand(0x00);
+    sendData(0x1F);
+    sendCommand(0x50);
+    sendData(0x97);
 
-    Serial.println("[LVGL] port ready");
+    Serial.println("[EINK] DisplayEink ready");
     return true;
 }
 
-void LvglPort::flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_map) {
-    if (disp_) disp_->flush(area, color_map);
-    lv_disp_flush_ready(drv);
+void DisplayEink::sendCommand(uint8_t cmd) {
+    digitalWrite(EPD_DC, LOW);
+    digitalWrite(EPD_CS, LOW);
+    spi_->beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+    spi_->transfer(cmd);
+    spi_->endTransaction();
+    digitalWrite(EPD_CS, HIGH);
 }
 
-void LvglPort::touch_read_cb(lv_indev_drv_t*, lv_indev_data_t* data) {
-    data->state = LV_INDEV_STATE_RELEASED;
+void DisplayEink::sendData(uint8_t data) {
+    digitalWrite(EPD_DC, HIGH);
+    digitalWrite(EPD_CS, LOW);
+    spi_->beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+    spi_->transfer(data);
+    spi_->endTransaction();
+    digitalWrite(EPD_CS, HIGH);
 }
 
-void LvglPort::tick() {
-    // Provide the tick manually (works with LVGL 8.3)
-    static uint32_t last = 0;
-    uint32_t now = millis();
-    if (now - last >= 5) {
-        lv_tick_inc(now - last);   // declared in lvgl.h
-        last = now;
+void DisplayEink::waitBusy(uint32_t timeoutMs) {
+    uint32_t start = millis();
+    while (digitalRead(EPD_BUSY) == HIGH) {
+        if (millis() - start > timeoutMs) break;
+        delay(1);
     }
-    lv_timer_handler();
 }
 
-DisplayEink* LvglPort::display() {
-    return disp_;
+void DisplayEink::setWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    sendCommand(0x44);
+    sendData(x / 8);
+    sendData((x + w - 1) / 8);
+    sendCommand(0x45);
+    sendData(y & 0xFF);
+    sendData((y >> 8) & 0xFF);
+    sendData((y + h - 1) & 0xFF);
+    sendData(((y + h - 1) >> 8) & 0xFF);
+    sendCommand(0x4E);
+    sendData(x / 8);
+    sendCommand(0x4F);
+    sendData(y & 0xFF);
+    sendData((y >> 8) & 0xFF);
+}
+
+void DisplayEink::fillScreen(bool black) {
+    memset(framebuffer_, black ? 0x00 : 0xFF, EPD_WIDTH * EPD_HEIGHT / 8);
+}
+
+void DisplayEink::setPixel(uint16_t x, uint16_t y, bool black) {
+    if (x >= EPD_WIDTH || y >= EPD_HEIGHT) return;
+    uint32_t idx = (y * EPD_WIDTH + x) / 8;
+    uint8_t  mask = 0x80 >> (x % 8);
+    if (black) framebuffer_[idx] &= ~mask;
+    else       framebuffer_[idx] |=  mask;
+}
+
+void DisplayEink::fullRefresh() {
+    setWindow(0, 0, EPD_WIDTH, EPD_HEIGHT);
+    sendCommand(0x24);
+    digitalWrite(EPD_DC, HIGH);
+    digitalWrite(EPD_CS, LOW);
+    spi_->beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+    for (int i = 0; i < EPD_WIDTH * EPD_HEIGHT / 8; i++) {
+        spi_->transfer(framebuffer_[i]);
+    }
+    spi_->endTransaction();
+    digitalWrite(EPD_CS, HIGH);
+
+    sendCommand(0x22);
+    sendData(0xF7);
+    sendCommand(0x20);
+    waitBusy(8000);
+}
+
+void DisplayEink::partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    fullRefresh();
+}
+
+void DisplayEink::flush(const lv_area_t* area, lv_color_t* color_map) {
+    int32_t w = area->x2 - area->x1 + 1;
+    int32_t h = area->y2 - area->y1 + 1;
+
+    for (int32_t y = 0; y < h; y++) {
+        for (int32_t x = 0; x < w; x++) {
+            lv_color_t c = color_map[y * w + x];
+            bool black = (c.full == 0);
+            setPixel(area->x1 + x, area->y1 + y, black);
+        }
+    }
+
+    if ((uint32_t)(w * h) > (EPD_WIDTH * EPD_HEIGHT / 4))
+        fullRefresh();
+    else
+        partialRefresh(area->x1, area->y1, w, h);
 }

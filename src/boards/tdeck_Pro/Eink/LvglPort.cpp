@@ -1,12 +1,11 @@
 #include "LvglPort.h"
 #include <Arduino.h>
 #include "config/BoardConfig.h"
-#include "lvgl/src/hal/lv_hal_tick.h"   // for lv_tick_inc
 
 DisplayEink* LvglPort::disp_ = nullptr;
 
 static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf1[EINK_WIDTH * 20];
+static lv_color_t buf1[EPD_WIDTH * 20];
 
 bool LvglPort::begin(DisplayEink& display) {
     disp_ = &display;
@@ -14,18 +13,17 @@ bool LvglPort::begin(DisplayEink& display) {
 
     lv_init();
 
-    lv_disp_draw_buf_init(&draw_buf, buf1, NULL, EINK_WIDTH * 20);
+    lv_disp_draw_buf_init(&draw_buf, buf1, NULL, EPD_WIDTH * 20);
 
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
-    disp_drv.hor_res = EINK_WIDTH;
-    disp_drv.ver_res = EINK_HEIGHT;
+    disp_drv.hor_res = EPD_WIDTH;
+    disp_drv.ver_res = EPD_HEIGHT;
     disp_drv.flush_cb = flush_cb;
     disp_drv.draw_buf = &draw_buf;
     disp_drv.antialiasing = 0;
     lv_disp_drv_register(&disp_drv);
 
-    // Touch stub (wire CST328 later)
     static lv_indev_drv_t indev_drv;
     lv_indev_drv_init(&indev_drv);
     indev_drv.type = LV_INDEV_TYPE_POINTER;
@@ -41,15 +39,19 @@ void LvglPort::flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* c
     lv_disp_flush_ready(drv);
 }
 
-void LvglPort::touch_read_cb(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
+void LvglPort::touch_read_cb(lv_indev_drv_t*, lv_indev_data_t* data) {
     data->state = LV_INDEV_STATE_RELEASED;
 }
 
 void LvglPort::tick() {
+    // Safe for LVGL 8.3 whether LV_TICK_CUSTOM is on or off
     static uint32_t last = 0;
     uint32_t now = millis();
-    if (now - last >= 5) {
-        lv_tick_inc(now - last);
+    uint32_t diff = now - last;
+    if (diff >= 5) {
+#if LV_TICK_CUSTOM == 0
+        lv_tick_inc(diff);
+#endif
         last = now;
     }
     lv_timer_handler();
