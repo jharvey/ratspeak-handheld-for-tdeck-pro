@@ -21,12 +21,22 @@ bool DisplayEink::begin() {
 
     spi_ = &SPI;
 
-    framebuffer_ = (uint8_t*)ps_malloc(EPD_WIDTH * EPD_HEIGHT / 8);
+    // 320 * 240 / 8 = 9600 bytes
+    const size_t fb_bytes = (size_t)EPD_WIDTH * EPD_HEIGHT / 8;
+
+    framebuffer_ = (uint8_t*)ps_malloc(fb_bytes);
     if (!framebuffer_) {
-        Serial.println("[EINK] framebuffer alloc failed");
+        framebuffer_ = (uint8_t*)malloc(fb_bytes);
+        if (framebuffer_) {
+            Serial.println("[EINK] ps_malloc failed, using malloc (internal heap)");
+        }
+    }
+    if (!framebuffer_) {
+        Serial.printf("[EINK] framebuffer alloc failed (%u bytes)\n", (unsigned)fb_bytes);
         return false;
     }
-    memset(framebuffer_, 0xFF, EPD_WIDTH * EPD_HEIGHT / 8);
+    memset(framebuffer_, 0xFF, fb_bytes); // white
+    Serial.printf("[EINK] framebuffer %u bytes OK\n", (unsigned)fb_bytes);
 
     if (EPD_RST >= 0) {
         digitalWrite(EPD_RST, LOW);
@@ -35,11 +45,11 @@ bool DisplayEink::begin() {
         delay(10);
     }
 
-    sendCommand(0x04);
+    sendCommand(0x04); // Power on
     waitBusy();
-    sendCommand(0x00);
+    sendCommand(0x00); // Panel setting
     sendData(0x1F);
-    sendCommand(0x50);
+    sendCommand(0x50); // VCOM
     sendData(0x97);
 
     Serial.println("[EINK] DisplayEink ready");
@@ -89,10 +99,12 @@ void DisplayEink::setWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
 }
 
 void DisplayEink::fillScreen(bool black) {
-    memset(framebuffer_, black ? 0x00 : 0xFF, EPD_WIDTH * EPD_HEIGHT / 8);
+    if (!framebuffer_) return;
+    memset(framebuffer_, black ? 0x00 : 0xFF, (size_t)EPD_WIDTH * EPD_HEIGHT / 8);
 }
 
 void DisplayEink::setPixel(uint16_t x, uint16_t y, bool black) {
+    if (!framebuffer_) return;
     if (x >= EPD_WIDTH || y >= EPD_HEIGHT) return;
     uint32_t idx = (y * EPD_WIDTH + x) / 8;
     uint8_t  mask = 0x80 >> (x % 8);
@@ -101,6 +113,8 @@ void DisplayEink::setPixel(uint16_t x, uint16_t y, bool black) {
 }
 
 void DisplayEink::fullRefresh() {
+    if (!framebuffer_ || !spi_) return;
+
     setWindow(0, 0, EPD_WIDTH, EPD_HEIGHT);
     sendCommand(0x24);
     digitalWrite(EPD_DC, HIGH);
@@ -119,10 +133,13 @@ void DisplayEink::fullRefresh() {
 }
 
 void DisplayEink::partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
-    fullRefresh();
+    (void)x; (void)y; (void)w; (void)h;
+    fullRefresh(); // bring-up: always full
 }
 
 void DisplayEink::flush(const lv_area_t* area, lv_color_t* color_map) {
+    if (!framebuffer_) return;
+
     int32_t w = area->x2 - area->x1 + 1;
     int32_t h = area->y2 - area->y1 + 1;
 
