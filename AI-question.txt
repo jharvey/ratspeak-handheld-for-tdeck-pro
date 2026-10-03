@@ -1,0 +1,12 @@
+Continue the T-Deck Pro Ratspeak port. Read https://github.com/jharvey/ratspeak-handheld-for-tdeck-pro/blob/main/AI-guide.txt in the repo root first — it has goals, hardware pins, current state, standalone build rules, and the upstream rebase plan.
+
+Current focus: standalone e-ink bring-up (not full Plus UI).
+- Cooperative/node messaging already works on hardware.
+- Standalone must EXCLUDE LvglApplication.cpp and ui/lvgl sources; INCLUDE boards/tdeck_Pro (DisplayEink, LvglPort, LvglStubs, main).
+- Last work: fixing LvglStubs.cpp to match LvMemory.h / LvFailure.h (handheld_lvgl_fail is void, no args) and lv_font_rsdeck_14 stand-in (montserrat_16).
+
+I pushed the latest files to GitHub. Here’s the latest build_log.txt / error:
+
+[paste build_log.txt or last error]
+
+Please provide full fixed files only (not diffs). Prefer small, compile-ready changes so we can flash a test pattern on the GDEQ031T10 before any full UI port.
