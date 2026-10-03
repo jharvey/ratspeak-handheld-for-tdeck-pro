@@ -7,48 +7,84 @@
 
 static DisplayEink g_display;
 
-static void build_demo_ui() {
+// High-contrast mono home layout (dummy data)
+static void build_home_ui() {
     lv_obj_t* scr = lv_scr_act();
     lv_obj_set_style_bg_color(scr, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(scr, 0, 0);
 
-    // Title bar
-    lv_obj_t* bar = lv_obj_create(scr);
-    lv_obj_set_size(bar, EPD_WIDTH, 32);
-    lv_obj_align(bar, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_bg_color(bar, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(bar, 0, 0);
-    lv_obj_set_style_radius(bar, 0, 0);
-    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    // ---- Header strip (thin black bar, white title) ----
+    lv_obj_t* header = lv_obj_create(scr);
+    lv_obj_set_size(header, EPD_WIDTH, 28);
+    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(header, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(header, 0, 0);
+    lv_obj_set_style_radius(header, 0, 0);
+    lv_obj_set_style_pad_all(header, 0, 0);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* title = lv_label_create(bar);
-    lv_label_set_text(title, "Ratspeak Pro");
+    lv_obj_t* title = lv_label_create(header);
+    lv_label_set_text(title, "Ratspeak");
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
-    lv_obj_center(title);
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 8, 0);
 
-    // Body labels
-    lv_obj_t* line1 = lv_label_create(scr);
-    lv_label_set_text(line1, "E-ink LVGL bring-up");
-    lv_obj_set_style_text_color(line1, lv_color_black(), 0);
-    lv_obj_set_style_text_font(line1, &lv_font_montserrat_16, 0);
-    lv_obj_align(line1, LV_ALIGN_TOP_LEFT, 12, 48);
+    lv_obj_t* mode = lv_label_create(header);
+    lv_label_set_text(mode, "Pro");
+    lv_obj_set_style_text_color(mode, lv_color_white(), 0);
+    lv_obj_set_style_text_font(mode, &lv_font_montserrat_16, 0);
+    lv_obj_align(mode, LV_ALIGN_RIGHT_MID, -8, 0);
 
-    lv_obj_t* line2 = lv_label_create(scr);
-    lv_label_set_text(line2, "GxEPD2 + LVGL 8.3");
-    lv_obj_set_style_text_color(line2, lv_color_black(), 0);
-    lv_obj_align(line2, LV_ALIGN_TOP_LEFT, 12, 72);
+    // ---- Body: black text on white ----
+    const lv_font_t* font = &lv_font_montserrat_16;
+    int y = 40;
 
-    lv_obj_t* line3 = lv_label_create(scr);
-    lv_label_set_text(line3, "Phase B: text on panel");
-    lv_obj_set_style_text_color(line3, lv_color_black(), 0);
-    lv_obj_align(line3, LV_ALIGN_TOP_LEFT, 12, 96);
+    auto add_row = [&](const char* left, const char* right) {
+        lv_obj_t* l = lv_label_create(scr);
+        lv_label_set_text(l, left);
+        lv_obj_set_style_text_color(l, lv_color_black(), 0);
+        lv_obj_set_style_text_font(l, font, 0);
+        lv_obj_align(l, LV_ALIGN_TOP_LEFT, 12, y);
 
-    lv_obj_t* footer = lv_label_create(scr);
-    lv_label_set_text(footer, "320x240 mono");
-    lv_obj_set_style_text_color(footer, lv_color_black(), 0);
-    lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -12);
+        lv_obj_t* r = lv_label_create(scr);
+        lv_label_set_text(r, right);
+        lv_obj_set_style_text_color(r, lv_color_black(), 0);
+        lv_obj_set_style_text_font(r, font, 0);
+        lv_obj_align(r, LV_ALIGN_TOP_RIGHT, -12, y);
+        y += 22;
+    };
+
+    add_row("Battery", "4.14 V  69%");
+    add_row("LoRa",    "online");
+    add_row("RSSI",    "-86 dBm");
+    add_row("SNR",     "6.2 dB");
+    y += 6;
+    add_row("Paths",   "1");
+    add_row("Links",   "0");
+    add_row("LXMF Q",  "0");
+
+    y += 10;
+    lv_obj_t* dest_lbl = lv_label_create(scr);
+    lv_label_set_text(dest_lbl, "LOCAL_DEST");
+    lv_obj_set_style_text_color(dest_lbl, lv_color_black(), 0);
+    lv_obj_set_style_text_font(dest_lbl, font, 0);
+    lv_obj_align(dest_lbl, LV_ALIGN_TOP_LEFT, 12, y);
+    y += 20;
+
+    lv_obj_t* dest_val = lv_label_create(scr);
+    lv_label_set_text(dest_val, "ca53afea5f8f1fbc");
+    lv_obj_set_style_text_color(dest_val, lv_color_black(), 0);
+    lv_obj_set_style_text_font(dest_val, font, 0);
+    lv_obj_align(dest_val, LV_ALIGN_TOP_LEFT, 12, y);
+
+    // ---- Footer ----
+    lv_obj_t* foot = lv_label_create(scr);
+    lv_label_set_text(foot, "Phase C  |  dummy home");
+    lv_obj_set_style_text_color(foot, lv_color_black(), 0);
+    lv_obj_set_style_text_font(foot, font, 0);
+    lv_obj_align(foot, LV_ALIGN_BOTTOM_MID, 0, -8);
 }
 
 void setup() {
@@ -56,27 +92,29 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  E-INK LVGL");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase C");
     Serial.println("========================================");
 
     if (!g_display.begin()) {
         Serial.println("[BOOT] Display init FAILED");
         return;
     }
-
     if (!LvglPort::begin(g_display)) {
         Serial.println("[BOOT] LVGL init FAILED");
         return;
     }
 
-    build_demo_ui();
+    build_home_ui();
 
-    // Force first paint (e-ink is slow — one full refresh is fine)
+    // Paint into FB (many flush strips, no panel I/O yet)
     lv_refr_now(nullptr);
-    Serial.println("[BOOT] Demo UI sent to panel");
+    // One full refresh to the e-ink
+    g_display.refreshIfDirty();
+
+    Serial.println("[BOOT] Home UI on panel (single refresh)");
 }
 
 void loop() {
-    LvglPort::tick();
-    delay(50);
+    // Idle: no continuous refresh (e-ink should stay static)
+    delay(500);
 }

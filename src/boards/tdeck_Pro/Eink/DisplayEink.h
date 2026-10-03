@@ -5,26 +5,30 @@
 #include <lvgl.h>
 #include "config/BoardConfig.h"
 
-// Thin wrapper around GxEPD2 GDEQ031T10 (UC8253).
-// Panel was verified with the GxEPD2 test pattern.
-
 class DisplayEink {
 public:
     DisplayEink();
 
     bool begin();
-    void fillScreen(bool black);          // true = black, false = white
+    void fillScreen(bool black);
     void setPixel(uint16_t x, uint16_t y, bool black);
-    void fullRefresh();
+
+    // Only update the 1-bit buffer (no panel I/O)
     void flush(const lv_area_t* area, lv_color_t* color_map);
+
+    // Push buffer to panel once (full refresh)
+    void fullRefresh();
+
+    // Call after a batch of LVGL draws to refresh at most once
+    void refreshIfDirty();
+    void markDirty() { dirty_ = true; }
 
     uint16_t width()  const { return EPD_WIDTH; }
     uint16_t height() const { return EPD_HEIGHT; }
-
-    // 1-bit framebuffer: 1 = white, 0 = black (GxEPD convention for mono)
     uint8_t* framebuffer() { return framebuffer_; }
 
 private:
     uint8_t* framebuffer_;
     bool     ready_;
+    bool     dirty_;
 };

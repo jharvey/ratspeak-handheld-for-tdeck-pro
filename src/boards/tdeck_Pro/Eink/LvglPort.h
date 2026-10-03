@@ -8,6 +8,9 @@ public:
     static void tick();
     static DisplayEink* display() { return display_; }
 
+    // Run LVGL handlers then push panel if FB dirty
+    static void updateAndRefresh();
+
 private:
     static void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_map);
 

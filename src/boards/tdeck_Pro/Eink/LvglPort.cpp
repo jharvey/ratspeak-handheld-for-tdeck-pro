@@ -11,8 +11,7 @@ bool LvglPort::begin(DisplayEink& display) {
 
     lv_init();
 
-    // Partial buffer: 20 lines (enough for labels; full frame would be large at 16-bit)
-    const size_t lines = 20;
+    const size_t lines = 40;  // a bit more buffer → fewer flush strips
     const size_t pixels = (size_t)EPD_WIDTH * lines;
     buf1_ = (lv_color_t*)ps_malloc(pixels * sizeof(lv_color_t));
     if (!buf1_) buf1_ = (lv_color_t*)malloc(pixels * sizeof(lv_color_t));
@@ -28,20 +27,22 @@ bool LvglPort::begin(DisplayEink& display) {
     disp_drv_.ver_res = EPD_HEIGHT;
     disp_drv_.flush_cb = flush_cb;
     disp_drv_.draw_buf = &draw_buf_;
-    // E-ink: no rounder needed for bring-up
     lv_disp_drv_register(&disp_drv_);
 
-    Serial.println("[LVGL] port ready (GxEPD2 backend)");
+    Serial.println("[LVGL] port ready (batched refresh)");
     return true;
 }
 
 void LvglPort::flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_map) {
-    if (display_) {
-        display_->flush(area, color_map);
-    }
+    if (display_) display_->flush(area, color_map);
     lv_disp_flush_ready(drv);
 }
 
 void LvglPort::tick() {
     lv_timer_handler();
+}
+
+void LvglPort::updateAndRefresh() {
+    lv_timer_handler();
+    if (display_) display_->refreshIfDirty();
 }
