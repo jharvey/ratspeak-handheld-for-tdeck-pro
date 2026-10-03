@@ -30,6 +30,16 @@
 #define EINK_WIDTH         320
 #define EINK_HEIGHT        240
 
+// --- Audio (PCM5102A Voice variant) ---
+#define I2S_BCK                 7
+#define I2S_DOUT                8
+#define I2S_WS                  9
+#define I2S_DIN                 -1
+#define I2S_SCK                 -1
+#define I2S_MCLK                -1
+
+#define BOARD_6609_EN           41
+
 namespace Board {
     void powerOn();
     void powerOff();

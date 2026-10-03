@@ -17,7 +17,6 @@ public:
     uint16_t width()  const { return EINK_WIDTH; }
     uint16_t height() const { return EINK_HEIGHT; }
 
-    // Called by LVGL flush
     void flush(const lv_area_t* area, lv_color_t* color_map);
 
 private:

@@ -4,33 +4,26 @@
 DisplayEink::DisplayEink() : spi_(nullptr), framebuffer_(nullptr) {}
 
 bool DisplayEink::begin() {
-    // Power gates – use the names that exist in YOUR BoardConfig.h
-    #ifdef BOARD_1V8_EN_PIN
-        pinMode(BOARD_1V8_EN_PIN, OUTPUT);
-        digitalWrite(BOARD_1V8_EN_PIN, HIGH);
-    #elif defined(BOARD_1V8_EN)
-        pinMode(BOARD_1V8_EN, OUTPUT);
-        digitalWrite(BOARD_1V8_EN, HIGH);
-    #endif
+    // Power gates – use the name that exists in YOUR BoardConfig
+#ifdef BOARD_1V8_EN_PIN
+    pinMode(BOARD_1V8_EN_PIN, OUTPUT);
+    digitalWrite(BOARD_1V8_EN_PIN, HIGH);
+#elif defined(BOARD_1V8_EN)
+    pinMode(BOARD_1V8_EN, OUTPUT);
+    digitalWrite(BOARD_1V8_EN, HIGH);
+#endif
 
-    #ifdef BOARD_LORA_EN_PIN
-        pinMode(BOARD_LORA_EN_PIN, OUTPUT);
-        digitalWrite(BOARD_LORA_EN_PIN, HIGH);
-    #elif defined(BOARD_LORA_EN)
-        pinMode(BOARD_LORA_EN, OUTPUT);
-        digitalWrite(BOARD_LORA_EN, HIGH);
-    #endif
+#ifdef BOARD_LORA_EN
+    pinMode(BOARD_LORA_EN, OUTPUT);
+    digitalWrite(BOARD_LORA_EN, HIGH);
+#elif defined(BOARD_LORA_EN_PIN)
+    pinMode(BOARD_LORA_EN_PIN, OUTPUT);
+    digitalWrite(BOARD_LORA_EN_PIN, HIGH);
+#endif
 
     delay(50);
 
-    // E-ink pins – support both naming styles
-    #ifndef EPD_CS
-        #define EPD_CS   EINK_CS
-        #define EPD_DC   EINK_DC
-        #define EPD_BUSY EINK_BUSY
-        #define EPD_RST  EINK_RST
-    #endif
-
+    // E-ink control pins (these names exist in your BoardConfig)
     pinMode(EPD_CS, OUTPUT);
     pinMode(EPD_DC, OUTPUT);
     pinMode(EPD_BUSY, INPUT);
@@ -68,7 +61,6 @@ bool DisplayEink::begin() {
 }
 
 void DisplayEink::sendCommand(uint8_t cmd) {
-    digitalWrite(EPD_CS, HIGH); // safety
     digitalWrite(EPD_DC, LOW);
     digitalWrite(EPD_CS, LOW);
     spi_->beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
@@ -141,7 +133,7 @@ void DisplayEink::fullRefresh() {
 }
 
 void DisplayEink::partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
-    // First bring-up: always full refresh
+    // First bring-up: always do a full refresh
     fullRefresh();
 }
 

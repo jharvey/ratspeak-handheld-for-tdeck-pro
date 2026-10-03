@@ -1,6 +1,7 @@
 #include "LvglPort.h"
 #include <Arduino.h>
 #include "config/BoardConfig.h"
+#include "lvgl/src/hal/lv_hal_tick.h"   // for lv_tick_inc
 
 DisplayEink* LvglPort::disp_ = nullptr;
 
@@ -24,7 +25,7 @@ bool LvglPort::begin(DisplayEink& display) {
     disp_drv.antialiasing = 0;
     lv_disp_drv_register(&disp_drv);
 
-    // Touch stub
+    // Touch stub (wire CST328 later)
     static lv_indev_drv_t indev_drv;
     lv_indev_drv_init(&indev_drv);
     indev_drv.type = LV_INDEV_TYPE_POINTER;
@@ -45,7 +46,6 @@ void LvglPort::touch_read_cb(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
 }
 
 void LvglPort::tick() {
-    // LVGL 8.x – provide the tick ourselves
     static uint32_t last = 0;
     uint32_t now = millis();
     if (now - last >= 5) {

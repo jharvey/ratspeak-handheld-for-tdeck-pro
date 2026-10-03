@@ -1,6 +1,6 @@
 // Audio output for T-Deck Pro via I2S → PCM5102A DAC → speaker / jack
-#include "AudioNotify.h"
 #include "config/BoardConfig.h"
+#include "AudioNotify.h"
 #include <driver/i2s.h>
 #include <math.h>
 #include <string.h>
