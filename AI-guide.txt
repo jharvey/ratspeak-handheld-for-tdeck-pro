@@ -1,39 +1,135 @@
-Overall goals
--- port ratspeak from tdeck-plus to tdeck-pro node mode "Cooperative"
--- port standalone mode
+================================================================================
+AI-GUIDE — ratspeak-handheld-for-tdeck-pro
+Last updated: 2026-10-03
+================================================================================
 
-Progress
--- blinking keyboard LED heart beat hello world equiv
--- USB Serial OK output seen in putty. 
--- Misc config files updated correcting pinouts for powers etc. 
--- Keyboard LED (GPIO 42) Heartbeat keyboard blinks in 1 sec rate / hello world
--- Power gates (LORA/GPS/1V8)OK smoke test seems to have passed. 
--- I2C bus 6 devices basic tests confirmed
--- Keyboard TCA8418 Press/release basic tests confirmed
--- LoRa SX1262 SPI Sync word responds
--- GPS NMEA + fixOK Lat and Long decoded echo'ed to putty. 
--- SD card inserted basic tests confirmed stats echo'ed to putty. 
--- Keyboard kmap confirmed and echo'ed to putty. Normal caps, dbl tap lower sym etc
--- SD card mount/read/write basic test
--- LoRa after SD activity basic test
--- Haptic motor vibrate
--- Battery guage, read voltage basic tests complete. 
--- Touch screen basic tested
--- Eink static screen displayed
--- Speaker makes some noise
--- Mic registers diffent RMS values if you tap vs leave it quite. 
--- node mode seems to be working. Can see other radio, didn't both to link but has a path. 
+OVERALL GOALS
+-------------
+1. Port Ratspeak from T-Deck Plus to T-Deck Pro.
+2. Keep Cooperative / Node mode working (messaging, LoRa, identity, storage).
+3. Bring up a Standalone mode that uses the Pro’s 3.1" GDEQ031T10 e-ink
+   (320×240) instead of the Plus ST7789 IPS panel.
+4. Eventually offer the same high-level UX as Plus (Home / Messages / Contacts /
+   Nodes / Settings) adapted for monochrome e-ink (partial refresh, high
+   contrast, keyboard + touch).
 
-Planned Next steps
+HARDWARE (T-Deck Pro v1.1 — verified)
+-------------------------------------
+MCU          ESP32-S3 (16 MB flash, 8 MB PSRAM)
+Display      GDEQ031T10 e-paper 320×240 (UC8253 family)
+             pins: CS=34 DC=35 BUSY=37 RST=16
+             shared SPI with LoRa (SCK=36 MOSI=33 MISO=47)
+Keyboard     TCA8418 @ 0x34
+Touch        CST328 @ 0x1A
+LoRa         SX1262 (CS=3 IRQ=5 RST=4 BUSY=6)
+Power gates  1V8_EN=38  LORA_EN=46  GPS_EN=39  6609_EN=41
+Audio        PCM5102A (I2S BCK=7 DOUT=8 WS=9) on Voice variant
+Battery      BQ27220 gauge + BQ25896 charger
+GPS          MIA-M10Q
+Other        SD CS=48, motor=2, kbd LED=42
 
-3. Bring core/ back carefully
+Canonical pin/feature definitions live in:
+  src/boards/tdeck_Pro/config/BoardConfig.h
+Do NOT replace this file with a simplified stub.
 
-Widen build_src_filter to include core/ again
-Still exclude ui/lvgl/ (or guard all display)
-Headless: protocol + LoRa + identity + messages over Serial
-HAS_DISPLAY false so nothing touches ST7789/LVGL
+CURRENT STATE (2026-10-03)
+--------------------------
+DONE / WORKING
+  - Cooperative / Node mode builds and runs (tdeck_pro_cooperative,
+    tdeck_pro_node). Messaging, announce, known_dests, LXMF queue, battery,
+    LoRa RX/TX, basic e-ink “node home” updates are proven on hardware.
+  - PlatformIO envs and build.bat support Cooperative + Standalone targets.
+  - New e-ink driver skeleton exists:
+      src/boards/tdeck_Pro/Eink/DisplayEink.{h,cpp}
+      src/boards/tdeck_Pro/Eink/LvglPort.{h,cpp}
+    These compile when LvglApplication is excluded.
+  - Standalone env can be configured to exclude the full Plus UI and only
+    exercise the e-ink driver + a minimal main.cpp test pattern.
 
-4. Serial “UI” for a while
-Commands like status, peers, msg, gps — enough to prove messaging before e-ink.
-5. E-ink last
-GDEQ031T10 driver → then LVGL or a simpler UI → HAS_DISPLAY true → full tdeck_pro env.
+NOT DONE / BLOCKED
+  - Full Standalone UI (real Plus-style screens + LvglApplication) is NOT
+    ported. The Plus LvglApplication.cpp expects the complete UIManager API
+    (LvScreen base, lvTabBar, lvStatusBar, setScreen, service wiring, etc.).
+    Simplified dummy screens do not satisfy that API; pulling LvglApplication
+    into the standalone build produces hundreds of errors.
+  - Real partial refresh, ghosting control, and SPI arbitration under load
+    still need hardware validation.
+  - Touch (CST328) and full keyboard navigation for Standalone UI not wired
+    into LVGL yet.
+  - Live data (messages, contacts, battery, RSSI) not yet bound to any
+    Standalone screens.
+
+BUILD TARGETS (platformio.ini)
+------------------------------
+  tdeck_pro_cooperative   — headless/node messaging (WORKING)
+  tdeck_pro_node          — node UI on e-ink (WORKING path)
+  tdeck_pro_standalone    — e-ink bring-up (exclude LvglApplication for now)
+
+Critical filter for standalone bring-up:
+  build_src_filter =
+      +<core/>
+      -<core/runtime/LvglApplication.cpp>
+      -<ui/lvgl/>
+      +<boards/tdeck_Pro/>
+      -<boards/cardputer/> -<boards/tdeck/> -<boards/tpager/> -<boards/m9/>
+
+build.bat options:
+  1 Compile Cooperative
+  2 Flash Cooperative
+  3 Compile Standalone
+  4 Flash Standalone
+  5 Clean
+  6 Wipe flash
+
+NEAR-TERM ROADMAP (recommended order)
+-------------------------------------
+Phase A — E-ink driver proven on hardware (CURRENT FOCUS)
+  1. Standalone build excludes LvglApplication and ui/lvgl.
+  2. main.cpp only brings up power gates, SPI, DisplayEink, LvglPort, draws a
+     fixed test pattern (bars / border), full refresh.
+  3. Flash and confirm the panel shows the pattern correctly (orientation,
+     contrast, no all-white/all-black failure).
+  4. Fix any remaining pin, SPI clock, or busy-wait issues.
+
+Phase B — Minimal LVGL on e-ink
+  1. Re-enable a tiny ui/lvgl subset (or local screens under boards/tdeck_Pro)
+     that does NOT include LvglApplication.
+  2. One screen only: title + battery stub + “Announce” label.
+  3. Confirm partial vs full refresh behaviour and ghosting.
+
+Phase C — Screen set with dummy data
+  1. Home / Messages / Contacts / Nodes / Settings layouts sized for 320×240
+     monochrome, large fonts, high contrast.
+  2. Dummy strings only; iterate from photos of the real panel.
+  3. Keyboard focus / simple navigation.
+
+Phase D — Wire live data
+  1. Re-use existing protocol, message store, identity, battery, LoRa status
+     from the cooperative path (already working).
+  2. Keep UI and protocol sides loosely coupled.
+
+Phase E — Full Standalone product
+  1. Either adapt Plus LvglApplication carefully for e-ink constraints, or
+     keep a Pro-specific application entry that owns navigation.
+  2. Match Plus feature set where it makes sense on e-ink (no colour, slower
+     updates, partial refresh discipline).
+
+RULES FOR FUTURE AI / CONTRIBUTORS
+----------------------------------
+- Never overwrite BoardConfig.h with a minimal stub. Extend it if needed.
+- Do not include core/runtime/LvglApplication.cpp in the standalone bring-up
+  env until a compatible UIManager/LvScreen stack exists for the Pro.
+- Prefer baby steps: driver → one screen → dummy multi-screen → live data.
+- Shared SPI: display and LoRa must not fight; raise the other CS when talking.
+- E-ink: prefer partial updates for status; full refresh for major changes or
+  periodically to clear ghosting.
+- Keep cooperative/node builds working; they are the regression baseline.
+- When adding files, put board-specific code under src/boards/tdeck_Pro/ and
+  match existing include style ("config/BoardConfig.h", "Eink/...").
+
+QUICK STATUS ONE-LINER
+----------------------
+Cooperative messaging works. Standalone e-ink driver compiles; next milestone
+is a successful test-pattern flash on the real GDEQ031T10 panel, then minimal
+LVGL screens—not a full Plus UI port in one jump.
+================================================================================
