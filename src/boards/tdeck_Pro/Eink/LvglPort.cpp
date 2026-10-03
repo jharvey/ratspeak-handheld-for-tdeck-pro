@@ -1,16 +1,18 @@
 #include "LvglPort.h"
 #include <Arduino.h>
+#include "config/BoardConfig.h"
 
 DisplayEink* LvglPort::disp_ = nullptr;
 
 static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf1[EINK_WIDTH * 20];   // small buffer for 1-bit
+static lv_color_t buf1[EINK_WIDTH * 20];
 
 bool LvglPort::begin(DisplayEink& display) {
     disp_ = &display;
     if (!disp_->begin()) return false;
 
     lv_init();
+
     lv_disp_draw_buf_init(&draw_buf, buf1, NULL, EINK_WIDTH * 20);
 
     static lv_disp_drv_t disp_drv;
@@ -22,13 +24,14 @@ bool LvglPort::begin(DisplayEink& display) {
     disp_drv.antialiasing = 0;
     lv_disp_drv_register(&disp_drv);
 
-    // Touch (stub – wire CST328 later)
+    // Touch stub
     static lv_indev_drv_t indev_drv;
     lv_indev_drv_init(&indev_drv);
     indev_drv.type = LV_INDEV_TYPE_POINTER;
     indev_drv.read_cb = touch_read_cb;
     lv_indev_drv_register(&indev_drv);
 
+    Serial.println("[LVGL] port ready");
     return true;
 }
 
@@ -37,14 +40,21 @@ void LvglPort::flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* c
     lv_disp_flush_ready(drv);
 }
 
-void LvglPort::touch_read_cb(lv_indev_drv_t* drv, lv_indev_data_t* data) {
-    // TODO: read CST328
+void LvglPort::touch_read_cb(lv_indev_drv_t* /*drv*/, lv_indev_data_t* data) {
     data->state = LV_INDEV_STATE_RELEASED;
 }
 
 void LvglPort::tick() {
-    lv_tick_inc(5);
+    // LVGL 8.x – provide the tick ourselves
+    static uint32_t last = 0;
+    uint32_t now = millis();
+    if (now - last >= 5) {
+        lv_tick_inc(now - last);
+        last = now;
+    }
     lv_timer_handler();
 }
 
-DisplayEink* LvglPort::display() { return disp_; }
+DisplayEink* LvglPort::display() {
+    return disp_;
+}
