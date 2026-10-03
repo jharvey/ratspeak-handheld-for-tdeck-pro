@@ -2,10 +2,10 @@
 setlocal enabledelayedexpansion
 
 set LOGFILE=build_log.txt
-echo. > "%LOGFILE%"
 
 echo ===================================================
-echo  T-Deck Pro Build Menu  (log -^> %LOGFILE%)
+echo  T-Deck Pro Build Menu
+echo  Log file: %CD%\%LOGFILE%  (overwritten each build)
 echo ===================================================
 echo 1. Compile Cooperative (Node mode)
 echo 2. Flash Cooperative binaries
@@ -26,70 +26,70 @@ goto end
 
 :do_build_coop
 echo.
-echo Building Cooperative... | tee -a "%LOGFILE%" 2>nul
-echo Building Cooperative... >> "%LOGFILE%"
-pio run -e tdeck_pro_cooperative >> "%LOGFILE%" 2>&1
-set ERR=!ERRORLEVEL!
-type "%LOGFILE%"
-if !ERR! neq 0 (
-    echo *** BUILD FAILED - see %LOGFILE% ***
-) else (
-    echo Build OK. Log: %LOGFILE%
-)
+echo Building Cooperative...
+echo ========== COOPERATIVE BUILD %DATE% %TIME% ========== > "%LOGFILE%"
+call :run_and_log pio run -e tdeck_pro_cooperative
 goto end
 
 :do_flash_coop
-echo Flashing Cooperative... >> "%LOGFILE%"
-pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 921600 write_flash ^
-  0x0000 .pio/build/tdeck_pro_cooperative/bootloader.bin ^
-  0x8000 .pio/build/tdeck_pro_cooperative/partitions.bin ^
-  0x10000 .pio/build/tdeck_pro_cooperative/firmware.bin >> "%LOGFILE%" 2>&1
-type "%LOGFILE%"
+echo.
+echo Flashing Cooperative...
+echo ========== COOPERATIVE FLASH %DATE% %TIME% ========== > "%LOGFILE%"
+call :run_and_log pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 921600 write_flash 0x0000 .pio/build/tdeck_pro_cooperative/bootloader.bin 0x8000 .pio/build/tdeck_pro_cooperative/partitions.bin 0x10000 .pio/build/tdeck_pro_cooperative/firmware.bin
 goto end
 
 :do_build_standalone
 echo.
-echo Building Standalone (log -^> %LOGFILE%)...
+echo Building Standalone (e-ink)...
 echo ========== STANDALONE BUILD %DATE% %TIME% ========== > "%LOGFILE%"
-pio run -e tdeck_pro_standalone >> "%LOGFILE%" 2>&1
-set ERR=!ERRORLEVEL!
-echo.
-echo ---------- last 80 lines of log ----------
-powershell -Command "Get-Content '%LOGFILE%' -Tail 80"
-echo ------------------------------------------
-if !ERR! neq 0 (
+call :run_and_log pio run -e tdeck_pro_standalone
+if errorlevel 1 (
     echo.
     echo *** BUILD FAILED ***
-    echo Full log saved to: %CD%\%LOGFILE%
-    echo Share that file for the next fix.
+    echo Full log: %CD%\%LOGFILE%
 ) else (
     echo.
-    echo Build OK. Full log: %CD%\%LOGFILE%
+    echo Build OK.
+    echo Full log: %CD%\%LOGFILE%
 )
 goto end
 
 :do_flash_standalone
-echo Flashing Standalone... > "%LOGFILE%"
-pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 921600 write_flash ^
-  0x0000 .pio/build/tdeck_pro_standalone/bootloader.bin ^
-  0x8000 .pio/build/tdeck_pro_standalone/partitions.bin ^
-  0x10000 .pio/build/tdeck_pro_standalone/firmware.bin >> "%LOGFILE%" 2>&1
-type "%LOGFILE%"
+echo.
+echo Flashing Standalone...
+echo ========== STANDALONE FLASH %DATE% %TIME% ========== > "%LOGFILE%"
+call :run_and_log pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 921600 write_flash 0x0000 .pio/build/tdeck_pro_standalone/bootloader.bin 0x8000 .pio/build/tdeck_pro_standalone/partitions.bin 0x10000 .pio/build/tdeck_pro_standalone/firmware.bin
 goto end
 
 :do_clean
-echo Cleaning... > "%LOGFILE%"
-pio run --target clean >> "%LOGFILE%" 2>&1
-echo Done. >> "%LOGFILE%"
-type "%LOGFILE%"
+echo.
+echo Cleaning...
+echo ========== CLEAN %DATE% %TIME% ========== > "%LOGFILE%"
+call :run_and_log pio run --target clean
 goto end
 
 :do_wipe
-echo [WARNING] Erase all flash? >> "%LOGFILE%"
+echo.
+echo [WARNING] This will erase all firmware.
 pause
-pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 921600 erase_flash >> "%LOGFILE%" 2>&1
-type "%LOGFILE%"
+echo ========== WIPE %DATE% %TIME% ========== > "%LOGFILE%"
+call :run_and_log pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32s3 --baud 921600 erase_flash
 goto end
+
+rem ---------- helper: run command, show on screen, append to log ----------
+:run_and_log
+rem %* = full command line
+rem PowerShell tee: live console + append to log
+powershell -NoProfile -Command ^
+  "& { $ErrorActionPreference = 'Continue'; " ^
+  "  & %* 2>&1 | ForEach-Object { " ^
+  "    $line = $_; " ^
+  "    Write-Host $line; " ^
+  "    Add-Content -Path '%LOGFILE%' -Value $line -Encoding UTF8 " ^
+  "  }; " ^
+  "  exit $LASTEXITCODE " ^
+  "}"
+exit /b %ERRORLEVEL%
 
 :end
 echo.
