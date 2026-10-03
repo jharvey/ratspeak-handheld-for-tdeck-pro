@@ -1,144 +1,59 @@
 #include "UIManager.h"
-#include "Theme.h"
-#include "LvTheme.h"
-#include "LvInput.h"
-#include "util/PerfTrace.h"
+#include "screens/LvHomeScreen.h"
+#include "screens/LvMessagesScreen.h"
+#include "screens/LvContactsScreen.h"
+#include "screens/LvNodesScreen.h"
+#include "screens/LvMessageView.h"
+#include "screens/LvSettingsScreen.h"
+#include "theme/EinkTheme.h"
+#include <Arduino.h>
 
-// --- LvScreen base ---
-
-void LvScreen::destroyUI() {
-    // Content is owned by UIManager's _lvContent — just clear our pointers.
-    // The UIManager calls lv_obj_clean(_lvContent) before creating the next screen.
-    _screen = nullptr;
-}
-
-// --- UIManager ---
+UIManager::ScreenId UIManager::current_ = UIManager::HOME;
+lv_obj_t* UIManager::tabbar_ = nullptr;
 
 void UIManager::begin() {
-    // Initialize LVGL theme and create persistent UI structure
+    EinkTheme::apply();
+    createTabBar();
+    show(HOME);
+}
+
+void UIManager::createTabBar() {
+    tabbar_ = lv_btnmatrix_create(lv_layer_top());
+    static const char* map[] = {"Home", "Msgs", "Cont", "Nodes", "Set", ""};
+    lv_btnmatrix_set_map(tabbar_, map);
+    lv_obj_set_size(tabbar_, 320, 36);
+    lv_obj_align(tabbar_, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_add_event_cb(tabbar_, onTab, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_set_style_bg_color(tabbar_, lv_color_white(), 0);
+    lv_obj_set_style_border_width(tabbar_, 1, 0);
+    lv_obj_set_style_border_color(tabbar_, lv_color_black(), 0);
+}
+
+void UIManager::onTab(lv_event_t* e) {
+    lv_obj_t* obj = lv_event_get_target(e);
+    uint16_t id = lv_btnmatrix_get_selected_btn(obj);
+    if (id < SETTINGS) show((ScreenId)id);
+    else if (id == 4) show(SETTINGS);
+}
+
+void UIManager::show(ScreenId id) {
+    current_ = id;
     lv_obj_t* scr = lv_scr_act();
-    LvTheme::init(lv_disp_get_default());
+    lv_obj_clean(scr);
 
-    // Apply screen background style
-    lv_obj_add_style(scr, LvTheme::styleScreen(), 0);
-
-    // Create LVGL status bar (top)
-    _lvStatusBar.create(scr);
-
-    // Create LVGL tab bar (bottom)
-    _lvTabBar.create(scr);
-
-    // Create content area between status bar and tab bar
-    _lvContent = lv_obj_create(scr);
-    lv_obj_set_pos(_lvContent, 0, Theme::STATUS_BAR_H);
-    lv_obj_set_size(_lvContent, Theme::CONTENT_W, Theme::CONTENT_H);
-    lv_obj_set_style_bg_color(_lvContent, lv_color_hex(Theme::BG), 0);
-    lv_obj_set_style_bg_opa(_lvContent, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(_lvContent, 0, 0);
-    lv_obj_set_style_pad_all(_lvContent, 0, 0);
-    lv_obj_set_style_radius(_lvContent, 0, 0);
-
-    Serial.println("[UI] LVGL UI structure created");
+    switch (id) {
+        case HOME:          LvHomeScreen::create(scr); break;
+        case MESSAGES:      LvMessagesScreen::create(scr); break;
+        case CONTACTS:      LvContactsScreen::create(scr); break;
+        case NODES:         LvNodesScreen::create(scr); break;
+        case MESSAGE_VIEW:  LvMessageView::create(scr); break;
+        case SETTINGS:      LvSettingsScreen::create(scr); break;
+        default: break;
+    }
+    // re-attach tabbar
+    if (tabbar_) lv_obj_move_foreground(tabbar_);
 }
 
-void UIManager::setScreen(LvScreen* screen) {
-    if (_currentLvScreen == screen) return;
-    const char* fromTitle = _currentLvScreen ? _currentLvScreen->title() : "none";
-    const char* toTitle = screen ? screen->title() : "none";
-    unsigned long startMs = PerfTrace::nowMs();
-    unsigned long exitMs = 0;
-    unsigned long destroyMs = 0;
-    unsigned long showMs = 0;
-    unsigned long cleanMs = 0;
-    unsigned long createMs = 0;
-    unsigned long enterMs = 0;
-
-    // Transition from previous LVGL screen
-    if (_currentLvScreen) {
-        unsigned long phaseMs = millis();
-        _currentLvScreen->onExit();
-        exitMs = millis() - phaseMs;
-        phaseMs = millis();
-        _currentLvScreen->destroyUI();
-        destroyMs = millis() - phaseMs;
-    }
-
-    _currentLvScreen = screen;
-
-    // Show LVGL layers
-    unsigned long phaseMs = millis();
-    if (!_bootMode) {
-        lv_obj_clear_flag(_lvStatusBar.obj(), LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(_lvTabBar.obj(), LV_OBJ_FLAG_HIDDEN);
-    }
-    lv_obj_clear_flag(_lvContent, LV_OBJ_FLAG_HIDDEN);
-    showMs = millis() - phaseMs;
-
-    if (_currentLvScreen) {
-        // Clean content area
-        phaseMs = millis();
-        lv_obj_clean(_lvContent);
-        cleanMs = millis() - phaseMs;
-        phaseMs = millis();
-        _currentLvScreen->createUI(_lvContent);
-        createMs = millis() - phaseMs;
-        phaseMs = millis();
-        _currentLvScreen->onEnter();
-        enterMs = millis() - phaseMs;
-    }
-
-    unsigned long elapsed = millis() - startMs;
-    if (PerfTrace::shouldLog(elapsed, RSDECK_PERF_UI_TRACE_MS)) {
-        Serial.printf("[PERF] UI transition: %s -> %s total=%lums exit=%lums destroy=%lums show=%lums clean=%lums create=%lums enter=%lums boot=%s\n",
-                      fromTitle, toTitle, elapsed, exitMs, destroyMs, showMs,
-                      cleanMs, createMs, enterMs, _bootMode ? "yes" : "no");
-    }
-}
-
-void UIManager::setBootMode(bool boot) {
-    _bootMode = boot;
-    if (boot) {
-        lv_obj_add_flag(_lvStatusBar.obj(), LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(_lvTabBar.obj(), LV_OBJ_FLAG_HIDDEN);
-        // In boot mode, content area is full screen
-        lv_obj_set_pos(_lvContent, 0, 0);
-        lv_obj_set_size(_lvContent, Theme::SCREEN_W, Theme::SCREEN_H);
-    } else {
-        lv_obj_clear_flag(_lvStatusBar.obj(), LV_OBJ_FLAG_HIDDEN);
-        lv_obj_clear_flag(_lvTabBar.obj(), LV_OBJ_FLAG_HIDDEN);
-        lv_obj_set_pos(_lvContent, 0, Theme::STATUS_BAR_H);
-        lv_obj_set_size(_lvContent, Theme::CONTENT_W, Theme::CONTENT_H);
-    }
-}
-
-void UIManager::update() {
-    _lvStatusBar.update();
-    if (_currentLvScreen) _currentLvScreen->refreshUI();
-}
-
-void UIManager::forceRedraw() {
-    lv_obj_invalidate(lv_scr_act());
-}
-
-void UIManager::applyTheme() {
-    LvTheme::refresh();
-    if (_lvContent) lv_obj_set_style_bg_color(_lvContent, lv_color_hex(Theme::BG), 0);
-    _lvStatusBar.applyTheme();
-    _lvTabBar.refreshTabs();
-    LvInput::applyTheme();
-    forceRedraw();
-}
-
-bool UIManager::handleKey(const KeyEvent& event) {
-    if (_currentLvScreen) {
-        return _currentLvScreen->handleKey(event);
-    }
-    return false;
-}
-
-bool UIManager::handleLongPress() {
-    if (_currentLvScreen) {
-        return _currentLvScreen->handleLongPress();
-    }
-    return false;
+void UIManager::loop() {
+    // nothing extra yet
 }

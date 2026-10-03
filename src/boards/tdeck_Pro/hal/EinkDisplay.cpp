@@ -1,263 +1,129 @@
-#include "EinkDisplay.h"
+#include "DisplayEink.h"
+#include <string.h>
 
-#include <Arduino.h>
-#include <SPI.h>
-#include <GxEPD2_BW.h>
-#include <Fonts/FreeMonoBold9pt7b.h>
-#include <Fonts/FreeMono9pt7b.h>
+DisplayEink::DisplayEink() : spi_(nullptr), framebuffer_(nullptr) {}
 
-#include "config/BoardConfig.h"
+bool DisplayEink::begin() {
+    pinMode(BOARD_1V8_EN_PIN, OUTPUT);
+    pinMode(LORA_EN_PIN, OUTPUT);
+    digitalWrite(BOARD_1V8_EN_PIN, HIGH);
+    digitalWrite(LORA_EN_PIN, HIGH);
+    delay(50);
 
-namespace tdeck_pro {
-namespace eink {
+    pinMode(EINK_CS_PIN, OUTPUT);
+    pinMode(EINK_DC_PIN, OUTPUT);
+    pinMode(EINK_BUSY_PIN, INPUT);
+    digitalWrite(EINK_CS_PIN, HIGH);
 
-#ifndef TDECK_PRO_EPD_CS
-#error "TDECK_PRO_EPD_CS must be defined"
-#endif
-#ifndef TDECK_PRO_EPD_DC
-#error "TDECK_PRO_EPD_DC must be defined"
-#endif
-#ifndef TDECK_PRO_EPD_RST
-#error "TDECK_PRO_EPD_RST must be defined"
-#endif
-#ifndef TDECK_PRO_EPD_BUSY
-#error "TDECK_PRO_EPD_BUSY must be defined"
-#endif
+    spi_ = new SPIClass(HSPI);
+    spi_->begin(SPI_SCK_PIN, -1, SPI_MOSI_PIN, -1);
 
-using InkPanel = GxEPD2_310_GDEQ031T10;
-using InkDisplay = GxEPD2_BW<InkPanel, InkPanel::HEIGHT>;
+    framebuffer_ = (uint8_t*)ps_malloc(EINK_WIDTH * EINK_HEIGHT / 8);
+    if (!framebuffer_) return false;
+    memset(framebuffer_, 0xFF, EINK_WIDTH * EINK_HEIGHT / 8); // white
 
-static InkDisplay display(
-    InkPanel(
-        TDECK_PRO_EPD_CS,
-        TDECK_PRO_EPD_DC,
-        TDECK_PRO_EPD_RST,
-        TDECK_PRO_EPD_BUSY));
-
-static bool initialized = false;
-
-static void drawBatteryBar(int x, int y, int w, int h, int percent) {
-    display.drawRect(x, y, w, h, GxEPD_BLACK);
-    display.fillRect(x + w, y + h / 4, 3, h / 2, GxEPD_BLACK);
-    if (percent < 0) percent = 0;
-    if (percent > 100) percent = 100;
-    int fillW = (w - 4) * percent / 100;
-    if (fillW > 0) {
-        display.fillRect(x + 2, y + 2, fillW, h - 4, GxEPD_BLACK);
-    }
-}
-
-bool begin() {
-    Serial.println("[EINK] Initializing GDEQ031T10...");
-
-    pinMode(LORA_CS, OUTPUT);
-    digitalWrite(LORA_CS, HIGH);
-    pinMode(SD_CS, OUTPUT);
-    digitalWrite(SD_CS, HIGH);
-    pinMode(TDECK_PRO_EPD_CS, OUTPUT);
-    digitalWrite(TDECK_PRO_EPD_CS, HIGH);
-    pinMode(TDECK_PRO_EPD_DC, OUTPUT);
-    digitalWrite(TDECK_PRO_EPD_DC, LOW);
-    pinMode(TDECK_PRO_EPD_BUSY, INPUT);
-
-#if TDECK_PRO_EPD_RST >= 0
-    pinMode(TDECK_PRO_EPD_RST, OUTPUT);
-    digitalWrite(TDECK_PRO_EPD_RST, HIGH);
-#endif
-
-    SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
-    display.epd2.selectSPI(SPI, SPISettings(2000000, MSBFIRST, SPI_MODE0));
-    display.init(0, true, 2, false);
-    display.setRotation(0);
-    display.setFont(&FreeMonoBold9pt7b);
-    display.setTextColor(GxEPD_BLACK);
-
-    initialized = true;
-    Serial.printf("[EINK] Ready (%d x %d)\r\n", display.width(), display.height());
+    // Basic init sequence for GDEQ031T10 / UC8253 family
+    sendCommand(0x04); // Power on
+    waitBusy();
+    sendCommand(0x00); // Panel setting
+    sendData(0x1F);
+    sendCommand(0x50); // VCOM
+    sendData(0x97);
     return true;
 }
 
-void clear() {
-    if (!initialized) return;
-    display.setFullWindow();
-    display.firstPage();
-    do {
-        display.fillScreen(GxEPD_WHITE);
-    } while (display.nextPage());
-    display.powerOff();
+void DisplayEink::sendCommand(uint8_t cmd) {
+    digitalWrite(EINK_DC_PIN, LOW);
+    digitalWrite(EINK_CS_PIN, LOW);
+    spi_->beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+    spi_->transfer(cmd);
+    spi_->endTransaction();
+    digitalWrite(EINK_CS_PIN, HIGH);
 }
 
-void showBootScreen() {
-    if (!initialized) return;
-    display.setFullWindow();
-    display.firstPage();
-    do {
-        display.fillScreen(GxEPD_WHITE);
-        display.setTextColor(GxEPD_BLACK);
-        display.setFont(&FreeMonoBold9pt7b);
-        display.setCursor(20, 40);
-        display.print("RATSPEAK");
-        display.setCursor(20, 70);
-        display.print("T-Deck Pro V1.1");
-        display.setCursor(20, 110);
-        display.print("NODE");
-        display.setCursor(20, 140);
-        display.print("E-INK UI");
-        display.setCursor(20, 180);
-        display.print(FIRMWARE_VERSION);
-    } while (display.nextPage());
-    display.powerOff();
+void DisplayEink::sendData(uint8_t data) {
+    digitalWrite(EINK_DC_PIN, HIGH);
+    digitalWrite(EINK_CS_PIN, LOW);
+    spi_->beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+    spi_->transfer(data);
+    spi_->endTransaction();
+    digitalWrite(EINK_CS_PIN, HIGH);
 }
 
-void showTestScreen() {
-    if (!initialized) return;
-    display.setFullWindow();
-    display.firstPage();
-    do {
-        display.fillScreen(GxEPD_WHITE);
-        display.setTextColor(GxEPD_BLACK);
-        display.setFont(&FreeMonoBold9pt7b);
-        display.setCursor(20, 35);
-        display.print("RATSPEAK");
-        display.setCursor(20, 70);
-        display.print("E-PAPER TEST");
-        display.setCursor(20, 105);
-        display.print("GDEQ031T10");
-        display.setCursor(20, 140);
-        display.print("240 x 320");
-    } while (display.nextPage());
-    display.powerOff();
+void DisplayEink::waitBusy(uint32_t timeoutMs) {
+    uint32_t start = millis();
+    while (digitalRead(EINK_BUSY_PIN) == HIGH) {
+        if (millis() - start > timeoutMs) break;
+        delay(1);
+    }
 }
 
-void showStatusScreen(
-    const char* destShort,
-    int batteryPct,
-    bool loraOnline,
-    unsigned pathCount,
-    const char* version) {
-    showNodeHome(destShort, batteryPct, loraOnline, pathCount, 0, nullptr, version);
+void DisplayEink::setWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    sendCommand(0x44); // X
+    sendData(x / 8);
+    sendData((x + w - 1) / 8);
+    sendCommand(0x45); // Y
+    sendData(y & 0xFF);
+    sendData((y >> 8) & 0xFF);
+    sendData((y + h - 1) & 0xFF);
+    sendData(((y + h - 1) >> 8) & 0xFF);
+    sendCommand(0x4E);
+    sendData(x / 8);
+    sendCommand(0x4F);
+    sendData(y & 0xFF);
+    sendData((y >> 8) & 0xFF);
 }
 
-void showNodeHome(
-    const char* destShort,
-    int batteryPct,
-    bool loraOnline,
-    unsigned pathCount,
-    unsigned linkCount,
-    const char* lastEvent,
-    const char* version) {
+void DisplayEink::fillScreen(bool black) {
+    memset(framebuffer_, black ? 0x00 : 0xFF, EINK_WIDTH * EINK_HEIGHT / 8);
+}
 
-    if (!initialized) return;
+void DisplayEink::setPixel(uint16_t x, uint16_t y, bool black) {
+    if (x >= EINK_WIDTH || y >= EINK_HEIGHT) return;
+    uint32_t idx = (y * EINK_WIDTH + x) / 8;
+    uint8_t mask = 0x80 >> (x % 8);
+    if (black) framebuffer_[idx] &= ~mask;
+    else       framebuffer_[idx] |=  mask;
+}
 
-    Serial.println("[EINK] Updating node home...");
-    display.setFullWindow();
-    display.firstPage();
-    do {
-        display.fillScreen(GxEPD_WHITE);
-        display.setTextColor(GxEPD_BLACK);
+void DisplayEink::fullRefresh() {
+    setWindow(0, 0, EINK_WIDTH, EINK_HEIGHT);
+    sendCommand(0x24); // write RAM
+    digitalWrite(EINK_DC_PIN, HIGH);
+    digitalWrite(EINK_CS_PIN, LOW);
+    spi_->beginTransaction(SPISettings(4000000, MSBFIRST, SPI_MODE0));
+    for (int i = 0; i < EINK_WIDTH * EINK_HEIGHT / 8; i++) {
+        spi_->transfer(framebuffer_[i]);
+    }
+    spi_->endTransaction();
+    digitalWrite(EINK_CS_PIN, HIGH);
 
-        display.setFont(&FreeMonoBold9pt7b);
-        display.setCursor(12, 28);
-        display.print("RATSPEAK NODE");
+    sendCommand(0x22); // display update
+    sendData(0xF7);
+    sendCommand(0x20);
+    waitBusy(8000);
+}
 
-        display.setFont(&FreeMono9pt7b);
-        display.setCursor(12, 48);
-        display.print(version ? version : "----");
+void DisplayEink::partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    // For first bring-up we just do full; replace with true partial later
+    fullRefresh();
+}
 
-        display.drawFastHLine(10, 56, 220, GxEPD_BLACK);
+void DisplayEink::flush(const lv_area_t* area, lv_color_t* color_map) {
+    int32_t w = area->x2 - area->x1 + 1;
+    int32_t h = area->y2 - area->y1 + 1;
 
-        display.setCursor(12, 80);
-        display.print("Dest ");
-        display.print(destShort && destShort[0] ? destShort : "(none)");
-
-        display.setCursor(12, 104);
-        display.print("LoRa ");
-        display.print(loraOnline ? "ONLINE" : "OFFLINE");
-
-        display.setCursor(12, 128);
-        display.print("Batt ");
-        drawBatteryBar(70, 116, 100, 16, batteryPct);
-        display.setCursor(180, 128);
-        if (batteryPct >= 0) display.printf("%d%%", batteryPct);
-        else display.print("--");
-
-        display.setCursor(12, 152);
-        display.printf("Paths %u  Links %u", pathCount, linkCount);
-
-        display.drawFastHLine(10, 164, 220, GxEPD_BLACK);
-
-        display.setCursor(12, 188);
-        display.print("Event:");
-        display.setCursor(12, 212);
-        if (lastEvent && lastEvent[0]) {
-            char line[28];
-            snprintf(line, sizeof(line), "%.27s", lastEvent);
-            display.print(line);
-        } else {
-            display.print("(idle)");
+    for (int32_t y = 0; y < h; y++) {
+        for (int32_t x = 0; x < w; x++) {
+            lv_color_t c = color_map[y * w + x];
+            bool black = (c.full == 0);   // 1-bit: 0 = black
+            setPixel(area->x1 + x, area->y1 + y, black);
         }
-
-        display.setCursor(12, 250);
-        display.print("ENT=announce");
-        display.setCursor(12, 274);
-        display.print("msg <dest> <text>");
-    } while (display.nextPage());
-
-    display.powerOff();
-    Serial.println("[EINK] Node home done");
+    }
+    // Decide full vs partial based on area size
+    if (w * h > (EINK_WIDTH * EINK_HEIGHT / 4)) {
+        fullRefresh();
+    } else {
+        partialRefresh(area->x1, area->y1, w, h);
+    }
 }
-
-// Bottom strip only — does not overwrite RATSPEAK title
-void showUptime(uint32_t elapsedSeconds) {
-    if (!initialized) return;
-
-    uint32_t hours = elapsedSeconds / 3600UL;
-    uint32_t minutes = (elapsedSeconds % 3600UL) / 60UL;
-    uint32_t seconds = elapsedSeconds % 60UL;
-
-    char uptime[24];
-    snprintf(
-        uptime,
-        sizeof(uptime),
-        "UP %02lu:%02lu:%02lu",
-        (unsigned long)hours,
-        (unsigned long)minutes,
-        (unsigned long)seconds);
-
-    const int x = 12;
-    const int y = 295;
-    const int w = 216;
-    const int h = 22;
-
-    display.setPartialWindow(x, y, w, h);
-    display.firstPage();
-    do {
-        display.fillRect(x, y, w, h, GxEPD_WHITE);
-        display.setTextColor(GxEPD_BLACK);
-        display.setFont(&FreeMono9pt7b);
-        display.setCursor(x + 2, y + 16);
-        display.print(uptime);
-    } while (display.nextPage());
-    display.powerOff();
-}
-
-void sleep() {
-    if (!initialized) return;
-    display.powerOff();
-}
-
-void wake() {
-    if (!initialized) return;
-    display.epd2.selectSPI(SPI, SPISettings(2000000, MSBFIRST, SPI_MODE0));
-    display.init(0, true, 2, false);
-    display.setRotation(0);
-    display.setFont(&FreeMonoBold9pt7b);
-    display.setTextColor(GxEPD_BLACK);
-}
-
-bool isReady() {
-    return initialized;
-}
-
-}  // namespace eink
-}  // namespace tdeck_pro

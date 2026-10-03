@@ -1,36 +1,29 @@
 #pragma once
 
 #include <Arduino.h>
+#include <SPI.h>
+#include "BoardConfig.h"
 
-namespace tdeck_pro {
-namespace eink {
+class DisplayEink {
+public:
+    DisplayEink();
+    bool begin();
+    void fullRefresh();
+    void partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+    void setPixel(uint16_t x, uint16_t y, bool black);
+    void fillScreen(bool black);
+    void drawBitmap(uint16_t x, uint16_t y, const uint8_t* bmp, uint16_t w, uint16_t h);
+    uint16_t width() const { return EINK_WIDTH; }
+    uint16_t height() const { return EINK_HEIGHT; }
 
-bool begin();
-void clear();
-void showBootScreen();
-void showTestScreen();
+    // Called by LVGL flush
+    void flush(const lv_area_t* area, lv_color_t* color_map);
 
-void showStatusScreen(
-    const char* destShort,
-    int batteryPct,
-    bool loraOnline,
-    unsigned pathCount,
-    const char* version);
-
-void showNodeHome(
-    const char* destShort,
-    int batteryPct,
-    bool loraOnline,
-    unsigned pathCount,
-    unsigned linkCount,
-    const char* lastEvent,
-    const char* version);
-
-void showUptime(uint32_t elapsedSeconds);
-
-void sleep();
-void wake();
-bool isReady();
-
-}  // namespace eink
-}  // namespace tdeck_pro
+private:
+    SPIClass* spi_;
+    uint8_t* framebuffer_;          // 320*240/8 = 9600 bytes
+    void sendCommand(uint8_t cmd);
+    void sendData(uint8_t data);
+    void waitBusy(uint32_t timeoutMs = 5000);
+    void setWindow(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+};
