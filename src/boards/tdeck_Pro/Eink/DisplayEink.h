@@ -14,8 +14,8 @@ public:
     void setPixel(uint16_t x, uint16_t y, bool black);
     void fillScreen(bool black);
 
-    uint16_t width()  const { return EINK_WIDTH; }
-    uint16_t height() const { return EINK_HEIGHT; }
+    uint16_t width()  const { return EPD_WIDTH; }
+    uint16_t height() const { return EPD_HEIGHT; }
 
     void flush(const lv_area_t* area, lv_color_t* color_map);
 
