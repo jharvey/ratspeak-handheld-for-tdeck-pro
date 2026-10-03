@@ -81,16 +81,10 @@ void DisplayEink::flush(const lv_area_t* area, lv_color_t* color_map) {
     for (int32_t y = 0; y < h; y++) {
         for (int32_t x = 0; x < w; x++) {
             lv_color_t c = color_map[y * w + x];
-            // Treat near-black as black for mono e-ink
-#if LV_COLOR_DEPTH == 1
-            bool black = (c.full == 0);
-#else
-            bool black = (c.ch.red < 16 && c.ch.green < 32 && c.ch.blue < 16);
-#endif
+            bool black = (c.full == 0);  // lv_color_black() → black pixel
             setPixel((uint16_t)(area->x1 + x), (uint16_t)(area->y1 + y), black);
         }
     }
 
-    // Bring-up: always full refresh (partial later)
     fullRefresh();
 }
