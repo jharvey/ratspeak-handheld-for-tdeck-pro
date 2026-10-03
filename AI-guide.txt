@@ -1,13 +1,13 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-03 (Phase B complete)
+Last updated: 2026-10-03 (Phase C complete)
 ================================================================================
 
 OVERALL GOALS
 -------------
 1. Port Ratspeak from T-Deck Plus to T-Deck Pro (GDEQ031T10 e-ink 320×240).
 2. Keep Cooperative / Node mode working (LXMF messaging proven on hardware).
-3. Standalone e-ink UI via GxEPD2 + thin LVGL, then screens, then live data.
+3. Standalone e-ink UI via GxEPD2 + thin LVGL → screens → live data.
 4. After bring-up is stable: REWRITE history as clean upstream-friendly commits
    (see UPSTREAM REBASE PLAN). Do not upstream the messy debug branch.
 
@@ -16,7 +16,7 @@ HARDWARE (T-Deck Pro)
 Panel     : GDEQ031T10, 320×240, controller UC8253
 EPD pins  : CS=34  DC=35  BUSY=37  RST=16
 SPI       : SCK=36  MOSI=33  MISO=47  (shared with LoRa)
-Power     : BOARD_1V8_EN, BOARD_LORA_EN must be HIGH before display/SPI
+Power     : BOARD_1V8_EN, BOARD_LORA_EN HIGH before display/SPI
 LoRa      : keep LORA_CS high when talking to e-ink
 BoardConfig: src/boards/tdeck_Pro/config/BoardConfig.h  (source of truth)
 
@@ -27,39 +27,46 @@ COOPERATIVE / NODE
   - Do not break this path when changing standalone.
 
 STANDALONE — PHASE A ★ DONE ★
-  - GxEPD2_310_GDEQ031T10 draws test pattern (bars/border) on real panel.
-  - Shared SPI, power gates, CS isolation confirmed.
+  - GxEPD2_310_GDEQ031T10 test pattern (bars/border) on real panel.
 
 STANDALONE — PHASE B ★ DONE ★
-  - DisplayEink wraps GxEPD2; 9600-byte 1-bit framebuffer.
-  - LvglPort: LVGL 8.3 flush → mono FB → GxEPD2 full refresh.
-  - Demo UI on panel: title "Ratspeak Pro", body labels, footer "320x240 mono".
-  - Photo confirmed text readable on device.
-  - LvglStubs match LvMemory.h / LvFailure.h (fail is void, no args).
+  - DisplayEink wraps GxEPD2; 1-bit framebuffer; LVGL 8.3 labels on panel.
 
-KNOWN POLISH (Phase B leftovers)
---------------------------------
-  - Full refresh runs once per LVGL strip (~10× at boot). Need: accumulate,
-    then single fullRefresh after first paint / dirty cycle.
-  - Contrast/layout: large black regions from title-bar object styling; tune
-    for high-contrast mono (prefer black text on white).
-  - Framebuffer often via malloc (PSRAM fallback); acceptable for bring-up.
-  - Do not use c.ch.green with LV_COLOR_16_SWAP — use c.full == 0 for black.
+STANDALONE — PHASE C ★ DONE ★
+  - Batched refresh: flush only updates FB; fullRefresh once via refreshIfDirty().
+  - Boot does a single full panel update (not one per LVGL strip).
+  - High-contrast mono home layout (dummy data): header, status rows, LOCAL_DEST.
+  - Pixel polarity fixed: bitmap bit 1 = black for GxEPD2 drawBitmap.
+  - Photo confirmed: white bg, black text, black header, keyboard-bottom orientation.
+
+BITMAP / COLOR CONVENTION (do not invert again)
+-----------------------------------------------
+  FB bit 1 = black on panel, bit 0 = white.
+  setPixel(black): |= mask;  setPixel(white): &= ~mask
+  Initial FB: memset 0x00 (white).
+  fullRefresh: fillScreen(WHITE) then drawBitmap(..., GxEPD_BLACK).
+  LVGL: c.full == 0 → black pixel. Do not use c.ch.green (LV_COLOR_16_SWAP).
+
+KNOWN POLISH (non-blocking)
+---------------------------
+  - Right-column values can clip near the edge; tighten padding/columns later.
+  - Footer / long strings can overlap; shorten or use two lines.
+  - FB often via malloc (PSRAM fallback); OK for bring-up.
+  - Partial refresh not implemented yet (always full when dirty).
 
 WHAT FAILED EARLIER (do not repeat)
 -----------------------------------
-  - Hand-rolled UC8253 with SSD1680 commands (0x24/0x22/0x20). Wrong.
-    Correct path: GxEPD2 (0x10/0x13 write, 0x12 refresh, BUSY active LOW).
-  - -mfix_size=16MB as build_flag (invalid).
-  - Pulling LvglApplication into standalone before panel worked.
+  - Bare UC8253 with SSD1680 cmds (0x24/0x22/0x20). Use GxEPD2.
+  - -mfix_size=16MB as build_flag.
+  - LvglApplication in standalone before panel worked.
   - handheld_lvgl_fail(const char*) — real API is fail(void).
+  - FB bit 0 = black (inverted vs GxEPD2 drawBitmap).
 
 CURRENT ARCHITECTURE (standalone)
 ---------------------------------
-  main.cpp
-    → DisplayEink (GxEPD2 backend + 1-bit FB)
-    → LvglPort (lv_init, draw buf, flush_cb)
-    → simple lv_label / lv_obj demo UI
+  main.cpp → DisplayEink (GxEPD2 + 1-bit FB, dirty flag)
+           → LvglPort (flush_cb writes FB only; updateAndRefresh optional)
+           → build_home_ui() dummy status layout
   LvglStubs: alloc/free/realloc/fail + lv_font_rsdeck_14 → montserrat_16
   Env excludes LvglApplication.cpp and ui/lvgl sources.
 
@@ -68,14 +75,14 @@ STANDALONE BUILD RULES
 [env:tdeck_pro_standalone]
   extends tdeck_Pro_base
   +<core/> -<core/runtime/LvglApplication.cpp> -<ui/lvgl/> +<boards/tdeck_Pro/>
-  No -mfix_size=* in build_flags. BOARD_HAS_PSRAM ok.
+  No -mfix_size=* in build_flags.
 
 NEAR-TERM ROADMAP
 -----------------
-Phase A  ★ DONE ★  GxEPD2 test pattern on panel
-Phase B  ★ DONE ★  LVGL text on panel (GxEPD2 backend)
-Phase C  Single-refresh policy + cleaner high-contrast home layout (dummy data)
-Phase D  Multi-screen shell (Home / Messages / Settings) still dummy
+Phase A  ★ DONE ★  GxEPD2 test pattern
+Phase B  ★ DONE ★  LVGL text on panel
+Phase C  ★ DONE ★  Single refresh + mono home (dummy)
+Phase D  Multi-screen shell (Home / Messages / Settings), still dummy
 Phase E  Live data from cooperative stack (battery, RSSI, dest)
 Phase F  Clean history rewrite for upstream
 
@@ -86,21 +93,20 @@ Fresh fork / clean base — do not upstream messy history:
   Commit 1 — Build environment (ini, filters, bat)
   Commit 2 — Board HAL + GxEPD2 e-ink + test pattern
   Commit 3 — Cooperative / node on Pro
-  Commit 4 — Minimal Standalone LVGL shell
+  Commit 4 — Minimal Standalone LVGL shell + home layout
   Commit 5+ — Screens/features one at a time
 
 RULES FOR AI / CONTRIBUTORS
 ---------------------------
-- Prefer full files when asked; match real headers and BoardConfig.
+- Prefer full files when asked; match BoardConfig and LvMemory/LvFailure.
 - Keep cooperative green.
-- Panel proven via GxEPD2 — do not reintroduce broken bare UC8253 sequences
-  unless they mirror GxEPD2 exactly.
+- Panel path is GxEPD2; do not reintroduce broken bare UC8253 sequences.
 - Full build_log.txt preferred over snippets.
-- After Phase E: clean commits for upstream, not more spaghetti.
+- After Phase E: clean commits for upstream.
 
 ONE-LINER
 ---------
-Cooperative works. Standalone: GxEPD2 + LVGL show text on GDEQ031T10
-(Phase A+B done). Next: single refresh + clean mono layout, then screens,
-then live data, then upstream-friendly history.
+Cooperative works. Standalone Phase A–C done: GxEPD2 + LVGL, single refresh,
+mono home UI on GDEQ031T10. Next: multi-screen shell, then live data, then
+upstream-friendly history.
 ================================================================================
