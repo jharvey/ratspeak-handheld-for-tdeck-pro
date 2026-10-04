@@ -1,9 +1,8 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <Wire.h>
-#include <Preferences.h>
 #include <lvgl.h>
-#include <esp_system.h>
+#include <Preferences.h>
 #include "config/BoardConfig.h"
 #include "Eink/DisplayEink.h"
 #include "Eink/LvglPort.h"
@@ -21,178 +20,118 @@ enum ScreenId : uint8_t {
 static ScreenId g_screen = SCR_HOME;
 static lv_obj_t* g_root = nullptr;
 
-// ---------------------------------------------------------------------------
-// Minimal Rust FFI identity (Phase E step 2)
-// Init context + load/create identity + expose lxmf.delivery dest hash.
-// Does NOT open transport / LoRa / engines — that is the next larger step.
-// ---------------------------------------------------------------------------
-static rs_handheld_rns_t* g_rns = nullptr;
-static bool g_identity_ok = false;
+// ---------- Live data cache (updated once per screen draw) ----------
+static char g_batStr[16]   = "?.?? V";
+static char g_pctStr[8]    = "--%";
+static char g_destHex[17]  = "................";  // 16 hex + NUL
+static bool g_rnsReady     = false;
+static bool g_batOk        = false;
 
-struct LiveStatus {
-    float    batt_v;
-    int      batt_pct;
-    bool     batt_ok;
-
-    bool     lora_online;
-    int      rssi_dbm;
-    float    snr_db;
-    int      paths;
-    int      links;
-    int      lxmf_q;
-
-    char     local_dest[17];   // 16 hex + NUL
-    bool     dest_ok;
-
-    char     msg_lines[4][40];
-    int      msg_count;
-};
-
-static LiveStatus g_status;
-
-static void bytes_to_hex16(const uint8_t in[16], char out[17]) {
-    static const char* hex = "0123456789abcdef";
-    for (int i = 0; i < 16; i++) {
-        out[i * 2]     = hex[(in[i] >> 4) & 0xF];
-        out[i * 2 + 1] = hex[in[i] & 0xF];
-    }
-    out[16] = '\0';
-}
-
-static void fill_entropy64(uint8_t out[64]) {
-    for (int i = 0; i < 64; i += 4) {
-        uint32_t r = esp_random();
-        out[i]     = (uint8_t)(r);
-        out[i + 1] = (uint8_t)(r >> 8);
-        out[i + 2] = (uint8_t)(r >> 16);
-        out[i + 3] = (uint8_t)(r >> 24);
-    }
-}
-
-// NVS key layout matches cooperative: namespace NVS_NS_IDENTITY, key "rawkey" (64 bytes)
-static bool nvs_load_identity(uint8_t key[64]) {
-    Preferences prefs;
-    if (!prefs.begin(NVS_NS_IDENTITY, true)) return false;
-    size_t n = prefs.getBytesLength("rawkey");
-    if (n != 64) {
-        prefs.end();
-        return false;
-    }
-    size_t got = prefs.getBytes("rawkey", key, 64);
-    prefs.end();
-    return got == 64;
-}
-
-static bool nvs_save_identity(const uint8_t key[64]) {
-    Preferences prefs;
-    if (!prefs.begin(NVS_NS_IDENTITY, false)) return false;
-    size_t w = prefs.putBytes("rawkey", key, 64);
-    prefs.end();
-    return w == 64;
-}
-
-static bool init_identity() {
-    rs_handheld_status_t st = rs_handheld_rns_init(&g_rns);
-    if (st != RS_HANDHELD_OK || !g_rns) {
-        Serial.printf("[RNS] init failed (%d)\n", (int)st);
-        g_rns = nullptr;
-        return false;
-    }
-    Serial.printf("[RNS] FFI %s\n", rs_handheld_rns_version());
-
-    uint8_t key[64];
-    uint8_t id_hash[16];
-    bool have = false;
-
-    if (nvs_load_identity(key) &&
-        rs_handheld_rns_validate_identity(key, id_hash, nullptr) == RS_HANDHELD_OK) {
-        st = rs_handheld_rns_load_identity(g_rns, key);
-        if (st == RS_HANDHELD_OK) {
-            have = true;
-            Serial.println("[RNS] identity loaded from NVS");
-        }
-    }
-
-    if (!have) {
-        uint8_t entropy[64];
-        fill_entropy64(entropy);
-        st = rs_handheld_rns_create_identity(entropy, key, id_hash);
-        // wipe entropy
-        for (int i = 0; i < 64; i++) entropy[i] = 0;
-        if (st != RS_HANDHELD_OK) {
-            Serial.printf("[RNS] create_identity failed (%d)\n", (int)st);
-            return false;
-        }
-        st = rs_handheld_rns_load_identity(g_rns, key);
-        if (st != RS_HANDHELD_OK) {
-            Serial.printf("[RNS] load_identity failed (%d)\n", (int)st);
-            return false;
-        }
-        if (nvs_save_identity(key)) {
-            Serial.println("[RNS] new identity created + saved to NVS");
-        } else {
-            Serial.println("[RNS] new identity created (NVS save failed — ephemeral)");
-        }
-    }
-
-    // wipe key buffer
-    for (int i = 0; i < 64; i++) key[i] = 0;
-
-    uint8_t dest[16];
-    st = rs_handheld_rns_destination_hash(g_rns, dest);
-    if (st != RS_HANDHELD_OK) {
-        Serial.printf("[RNS] destination_hash failed (%d)\n", (int)st);
-        return false;
-    }
-    bytes_to_hex16(dest, g_status.local_dest);
-    g_status.dest_ok = true;
-    Serial.printf("[RNS] LOCAL_DEST %s\n", g_status.local_dest);
-    g_identity_ok = true;
-    return true;
-}
-
-// BQ27220 Voltage() 0x08, LE mV
-static bool read_bq27220_voltage(float& v_out, int& pct_out) {
+// Minimal BQ27220 read (Voltage @ 0x08, SOC @ 0x2C)
+static bool readBattery(float& volts, int& pct) {
+    // Voltage mV
     Wire.beginTransmission(BQ27220_I2C_ADDR);
     Wire.write(0x08);
     if (Wire.endTransmission(false) != 0) return false;
-    if (Wire.requestFrom((uint8_t)BQ27220_I2C_ADDR, (uint8_t)2) != 2) return false;
+    if (Wire.requestFrom((int)BQ27220_I2C_ADDR, 2) != 2) return false;
     uint16_t mv = Wire.read() | (Wire.read() << 8);
-    if (mv < 2500 || mv > 4500) return false;
-    v_out = mv / 1000.0f;
-    float pct = (v_out - 3.30f) / (4.20f - 3.30f) * 100.0f;
-    if (pct < 0) pct = 0;
+    volts = mv / 1000.0f;
+
+    // State of Charge %
+    Wire.beginTransmission(BQ27220_I2C_ADDR);
+    Wire.write(0x2C);
+    if (Wire.endTransmission(false) != 0) return false;
+    if (Wire.requestFrom((int)BQ27220_I2C_ADDR, 2) != 2) return false;
+    pct = Wire.read() | (Wire.read() << 8);
     if (pct > 100) pct = 100;
-    pct_out = (int)(pct + 0.5f);
     return true;
 }
 
-static void refresh_status() {
-    g_status.batt_ok = read_bq27220_voltage(g_status.batt_v, g_status.batt_pct);
-    if (!g_status.batt_ok) {
-        g_status.batt_v   = 0.0f;
-        g_status.batt_pct = -1;
+// Minimal RNS identity → LOCAL_DEST (uses already-linked FFI)
+static bool initLocalDest() {
+    rs_handheld_rns_t* ctx = nullptr;
+    if (rs_handheld_rns_init(&ctx) != RS_HANDHELD_OK || !ctx) {
+        Serial.println("[RNS] init failed");
+        return false;
     }
 
-    // Radio / paths still fallback until ProtocolRuntime + LoRa pump
-    g_status.lora_online = false;
-    g_status.rssi_dbm    = 0;
-    g_status.snr_db      = 0.0f;
-    g_status.paths       = 0;
-    g_status.links       = 0;
-    g_status.lxmf_q      = 0;
-
-    if (!g_status.dest_ok) {
-        strncpy(g_status.local_dest, "--------", sizeof(g_status.local_dest));
-        g_status.local_dest[16] = '\0';
+    // Try load from NVS first
+    Preferences prefs;
+    uint8_t priv[64] = {0};
+    bool haveKey = false;
+    if (prefs.begin(NVS_NS_IDENTITY, true)) {
+        size_t n = prefs.getBytes("privkey", priv, 64);
+        prefs.end();
+        if (n == 64) haveKey = true;
     }
 
-    g_status.msg_count = 0;  // no message store yet
+    if (!haveKey) {
+        // Create new identity from platform entropy
+        uint8_t entropy[64];
+        for (int i = 0; i < 64; i += 4) {
+            uint32_t r = esp_random();
+            memcpy(entropy + i, &r, 4);
+        }
+        uint8_t idHash[16];
+        if (rs_handheld_rns_create_identity(entropy, priv, idHash) != RS_HANDHELD_OK) {
+            Serial.println("[RNS] create_identity failed");
+            rs_handheld_rns_shutdown(ctx);
+            return false;
+        }
+        // Persist
+        if (prefs.begin(NVS_NS_IDENTITY, false)) {
+            prefs.putBytes("privkey", priv, 64);
+            prefs.end();
+            Serial.println("[RNS] new identity created + saved to NVS");
+        }
+    }
+
+    if (rs_handheld_rns_load_identity(ctx, priv) != RS_HANDHELD_OK) {
+        Serial.println("[RNS] load_identity failed");
+        rs_handheld_rns_shutdown(ctx);
+        return false;
+    }
+
+    uint8_t dest[16];
+    if (rs_handheld_rns_destination_hash(ctx, dest) != RS_HANDHELD_OK) {
+        Serial.println("[RNS] destination_hash failed");
+        rs_handheld_rns_shutdown(ctx);
+        return false;
+    }
+
+    for (int i = 0; i < 16; i++) {
+        sprintf(g_destHex + i * 2, "%02x", dest[i]);
+    }
+    g_destHex[16] = '\0';
+
+    Serial.printf("[RNS] FFI %s\n", rs_handheld_rns_version());
+    Serial.printf("[RNS] LOCAL_DEST %s\n", g_destHex);
+
+    // We only needed the dest hash for the UI; shut the context down.
+    // Full ProtocolRuntime / radio / LXMF stays for later Phase E slices.
+    rs_handheld_rns_shutdown(ctx);
+    return true;
 }
 
-// ---------------------------------------------------------------------------
-// Fat-text UI (unchanged shell)
-// ---------------------------------------------------------------------------
+static void refreshLiveData() {
+    float v = 0;
+    int pct = -1;
+    g_batOk = readBattery(v, pct);
+    if (g_batOk) {
+        snprintf(g_batStr, sizeof(g_batStr), "%.2f V", v);
+        snprintf(g_pctStr, sizeof(g_pctStr), "%d%%", pct);
+        Serial.printf("[BAT] %.2f V  %d%%\n", v, pct);
+    } else {
+        strcpy(g_batStr, "n/a");
+        strcpy(g_pctStr, "--");
+    }
+
+    if (!g_rnsReady) {
+        g_rnsReady = initLocalDest();
+    }
+}
+
+// ---------- UI helpers (unchanged Phase D style) ----------
 static void fat_label(lv_obj_t* parent, const char* txt,
                       lv_coord_t x, lv_coord_t y,
                       lv_color_t color = lv_color_black())
@@ -246,40 +185,26 @@ static void add_row(int& y, const char* left, const char* right) {
 static void build_home() {
     clear_screen();
     make_header("Ratspeak");
-    char buf[32];
     int y = 40;
 
-    if (g_status.batt_ok) {
-        snprintf(buf, sizeof(buf), "%.2f V %d%%", g_status.batt_v, g_status.batt_pct);
-    } else {
-        snprintf(buf, sizeof(buf), "n/a");
-    }
-    add_row(y, "Battery", buf);
+    // Live battery
+    char batLine[24];
+    snprintf(batLine, sizeof(batLine), "%s %s", g_batStr, g_pctStr);
+    add_row(y, "Battery", batLine);
 
-    add_row(y, "LoRa", g_status.lora_online ? "online" : "offline");
-
-    if (g_status.lora_online) {
-        snprintf(buf, sizeof(buf), "%d dBm", g_status.rssi_dbm);
-        add_row(y, "RSSI", buf);
-        snprintf(buf, sizeof(buf), "%.1f dB", g_status.snr_db);
-        add_row(y, "SNR", buf);
-    } else {
-        add_row(y, "RSSI", "--");
-        add_row(y, "SNR",  "--");
-    }
-
+    // Still placeholders until radio / ProtocolRuntime wired
+    add_row(y, "LoRa",    "online*");
+    add_row(y, "RSSI",    "-.-- dBm");
+    add_row(y, "SNR",     "-.- dB");
     y += 6;
-    snprintf(buf, sizeof(buf), "%d", g_status.paths);
-    add_row(y, "Paths", buf);
-    snprintf(buf, sizeof(buf), "%d", g_status.links);
-    add_row(y, "Links", buf);
-    snprintf(buf, sizeof(buf), "%d", g_status.lxmf_q);
-    add_row(y, "LXMF Q", buf);
-
+    add_row(y, "Paths",   "0");
+    add_row(y, "Links",   "0");
+    add_row(y, "LXMF Q",  "0");
     y += 10;
+
     fat_label(g_root, "LOCAL_DEST", 8, y);
     y += 26;
-    fat_label(g_root, g_status.local_dest, 8, y);
+    fat_label(g_root, g_rnsReady ? g_destHex : "................", 8, y);
 
     make_footer("1/3 Home | [>] next");
 }
@@ -288,14 +213,9 @@ static void build_messages() {
     clear_screen();
     make_header("Messages");
     int y = 40;
-    if (g_status.msg_count == 0) {
-        fat_label(g_root, "(no messages yet)", 8, y);
-    } else {
-        for (int i = 0; i < g_status.msg_count && i < 4; i++) {
-            fat_label(g_root, g_status.msg_lines[i], 8, y);
-            y += 28;
-        }
-    }
+    add_row(y, "(none)", "live list next");
+    y += 14;
+    fat_label(g_root, "(Phase E: MessageStore)", 8, y);
     make_footer("2/3 Msgs | [>] next");
 }
 
@@ -309,13 +229,13 @@ static void build_settings() {
     add_row(y, "WiFi",     "off");
     add_row(y, "Display",  "e-ink");
     y += 14;
-    fat_label(g_root, g_identity_ok ? "(identity live)" : "(identity n/a)", 8, y);
+    fat_label(g_root, "(live settings later)", 8, y);
     make_footer("3/3 Setup | [>] next");
 }
 
 static void show_screen(ScreenId id) {
     g_screen = id;
-    refresh_status();
+    refreshLiveData();          // pull battery + dest just before paint
     switch (id) {
         case SCR_HOME:     build_home();     break;
         case SCR_MESSAGES: build_messages(); break;
@@ -336,15 +256,19 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E.2");
-    Serial.println(" identity + LOCAL_DEST");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E");
+    Serial.println(" live battery + LOCAL_DEST");
     Serial.println("========================================");
+
+    // Power + I2C (needed for BQ27220)
+    pinMode(BOARD_1V8_EN, OUTPUT);
+    pinMode(BOARD_LORA_EN, OUTPUT);
+    digitalWrite(BOARD_1V8_EN, HIGH);
+    digitalWrite(BOARD_LORA_EN, HIGH);
+    delay(30);
 
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(I2C_FREQUENCY);
-
-    g_status.dest_ok = false;
-    g_status.local_dest[0] = '\0';
 
     if (!g_display.begin()) {
         Serial.println("[BOOT] Display init FAILED");
@@ -353,17 +277,6 @@ void setup() {
     if (!LvglPort::begin(g_display)) {
         Serial.println("[BOOT] LVGL init FAILED");
         return;
-    }
-
-    if (!init_identity()) {
-        Serial.println("[BOOT] identity init failed — LOCAL_DEST will show --------");
-    }
-
-    refresh_status();
-    if (g_status.batt_ok) {
-        Serial.printf("[BAT] %.2f V  %d%%\n", g_status.batt_v, g_status.batt_pct);
-    } else {
-        Serial.println("[BAT] BQ27220 not responding");
     }
 
     show_screen(SCR_HOME);
