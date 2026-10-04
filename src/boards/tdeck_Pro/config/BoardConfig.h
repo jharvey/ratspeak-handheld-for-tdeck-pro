@@ -89,8 +89,8 @@
 #define EPD_BUSY                37
 #define EPD_RST                 16
 
-#define EPD_WIDTH               320
-#define EPD_HEIGHT              240
+#define EPD_WIDTH               240
+#define EPD_HEIGHT              320
 
 // Compatibility aliases used by some code
 #define EINK_WIDTH              EPD_WIDTH

@@ -41,7 +41,7 @@ bool DisplayEink::begin() {
 
     Serial.println("[EINK] init GxEPD2...");
     g_epd.init(115200, true, 50, false);
-    g_epd.setRotation(0);
+    g_epd.setRotation(1);
     ready_ = true;
     dirty_ = false;
     Serial.println("[EINK] DisplayEink ready (GxEPD2)");
