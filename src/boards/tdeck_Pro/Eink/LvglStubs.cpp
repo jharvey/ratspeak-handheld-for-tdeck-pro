@@ -65,5 +65,7 @@ void handheld_lvgl_fail(void) {
 
 } // extern "C"
 
+// Stand-in for the custom rsDeck 14-pt font. montserrat_16 is enabled
+// and gives usable e-ink contrast; the UI draws it twice (offset) for weight.
 extern const lv_font_t lv_font_montserrat_16;
 const lv_font_t lv_font_rsdeck_14 = lv_font_montserrat_16;
