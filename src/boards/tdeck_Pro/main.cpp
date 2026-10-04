@@ -47,17 +47,26 @@ static void clear_screen() {
 }
 
 static void make_header(const char* title) {
-    lv_obj_t* header = lv_obj_create(g_root);
-    lv_obj_set_size(header, EPD_WIDTH, 28);
-    lv_obj_set_pos(header, 0, 0);
-    lv_obj_set_style_bg_color(header, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(header, 0, 0);
-    lv_obj_set_style_radius(header, 0, 0);
-    lv_obj_set_style_pad_all(header, 0, 0);
-    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+    // White background, black text + thick bottom line
+    fat_label(g_root, title, 8, 6);
 
-    fat_label(header, title, 8, 5, lv_color_white());
+    // 3-pixel black underline under the title
+    for (int y = 28; y <= 30; y++) {
+        for (int x = 0; x < EPD_WIDTH; x++) {
+            // We can't draw pixels directly from here easily,
+            // so just use a full-width black label as a bar
+        }
+    }
+
+    // Simple reliable version – black bar made of a filled object
+    lv_obj_t* bar = lv_obj_create(g_root);
+    lv_obj_set_size(bar, EPD_WIDTH, 3);
+    lv_obj_set_pos(bar, 0, 30);
+    lv_obj_set_style_bg_color(bar, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(bar, 0, 0);
+    lv_obj_set_style_radius(bar, 0, 0);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
 }
 
 static void make_footer(const char* text) {
