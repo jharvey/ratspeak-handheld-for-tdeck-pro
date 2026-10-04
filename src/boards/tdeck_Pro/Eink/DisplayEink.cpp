@@ -35,7 +35,7 @@ bool DisplayEink::begin() {
         Serial.printf("[EINK] framebuffer alloc failed (%u bytes)\n", (unsigned)fb_bytes);
         return false;
     }
-    // Guide: Initial FB memset 0x00 = white. bit 1 = black on panel.
+    // Guide: Initial FB = 0x00 (white). bit 1 = black on panel.
     memset(framebuffer_, 0x00, fb_bytes);
     Serial.printf("[EINK] framebuffer %u bytes OK\n", (unsigned)fb_bytes);
 
@@ -50,6 +50,7 @@ bool DisplayEink::begin() {
 
 void DisplayEink::fillScreen(bool black) {
     if (!framebuffer_) return;
+    // Bitmap bit 1 = black (GxEPD2/Adafruit_GFX drawBitmap convention)
     memset(framebuffer_, black ? 0xFF : 0x00, (size_t)EPD_WIDTH * EPD_HEIGHT / 8);
     dirty_ = true;
 }
@@ -58,8 +59,8 @@ void DisplayEink::setPixel(uint16_t x, uint16_t y, bool black) {
     if (!framebuffer_ || x >= EPD_WIDTH || y >= EPD_HEIGHT) return;
     uint32_t idx = (y * EPD_WIDTH + x) / 8;
     uint8_t  mask = 0x80 >> (x % 8);
-    if (black) framebuffer_[idx] |=  mask;
-    else       framebuffer_[idx] &= ~mask;
+    if (black) framebuffer_[idx] |=  mask;   // 1 = black on panel
+    else       framebuffer_[idx] &= ~mask;   // 0 = white on panel
 }
 
 void DisplayEink::flush(const lv_area_t* area, lv_color_t* color_map) {
@@ -76,6 +77,7 @@ void DisplayEink::flush(const lv_area_t* area, lv_color_t* color_map) {
         }
     }
     dirty_ = true;
+    // Do NOT fullRefresh here — caller batches then refreshIfDirty()
 }
 
 void DisplayEink::fullRefresh() {
