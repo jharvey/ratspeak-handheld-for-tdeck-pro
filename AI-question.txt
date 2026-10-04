@@ -5,9 +5,10 @@ Current focus: standalone e-ink bring-up (not full Plus UI).
 - Standalone must EXCLUDE LvglApplication.cpp and ui/lvgl sources; INCLUDE boards/tdeck_Pro (DisplayEink, LvglPort, LvglStubs, main).
 - Phase A–D complete: GxEPD2 panel, batched refresh, fat-text multi-screen shell (Home / Messages / Settings) with dummy data and auto-cycle.
 
-Next target — Phase E:
-  Wire live data from the cooperative / node stack into the existing screens
-  (battery, LoRa status, SNR, paths/links, LXMF queue, real message list, LOCAL_DEST).
+Next Phase E slices (when you are ready)
+  Keep a long-lived ProtocolRuntime (or thinner subset) so pathCount / linkCount / lxmfQueuedCount become live.
+  Pull the newest messages from MessageStore into the Messages screen.
+  Wire real LoRa status / last RSSI-SNR from the radio HAL.
   Keep the single fullRefresh-per-screen-change pattern.
   Prefer small, compile-ready full files.
 
