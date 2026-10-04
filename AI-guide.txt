@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-03 (Phase C complete)
+Last updated: 2026-10-04 (Phase D complete)
 ================================================================================
 
 OVERALL GOALS
@@ -39,6 +39,14 @@ STANDALONE — PHASE C ★ DONE ★
   - Pixel polarity fixed: bitmap bit 1 = black for GxEPD2 drawBitmap.
   - Photo confirmed: white bg, black text, black header, keyboard-bottom orientation.
 
+STANDALONE — PHASE D ★ DONE ★
+  - Multi-screen shell: Home / Messages / Settings (dummy content).
+  - Fat-text helper (1-pixel offset double-draw) for readable stroke on GDEQ031T10.
+  - Screen switch via show_screen(); single fullRefresh per change.
+  - Auto-cycle demo every ~4.5 s (placeholder until real key input).
+  - Footer hints: "LOCAL_DEST  Home | [ ] next", "2/3 Msgs | [ ] next", etc.
+  - Photo/video confirmed working on hardware.
+
 BITMAP / COLOR CONVENTION (do not invert again)
 -----------------------------------------------
   FB bit 1 = black on panel, bit 0 = white.
@@ -53,6 +61,8 @@ KNOWN POLISH (non-blocking)
   - Footer / long strings can overlap; shorten or use two lines.
   - FB often via malloc (PSRAM fallback); OK for bring-up.
   - Partial refresh not implemented yet (always full when dirty).
+  - Real keyboard / TCA8418 input not yet wired into screen switching.
+  - Fat-text doubles object count; acceptable for three screens.
 
 WHAT FAILED EARLIER (do not repeat)
 -----------------------------------
@@ -66,9 +76,10 @@ CURRENT ARCHITECTURE (standalone)
 ---------------------------------
   main.cpp → DisplayEink (GxEPD2 + 1-bit FB, dirty flag)
            → LvglPort (flush_cb writes FB only; updateAndRefresh optional)
-           → build_home_ui() dummy status layout
+           → show_screen() / build_home|messages|settings()  (dummy multi-screen)
   LvglStubs: alloc/free/realloc/fail + lv_font_rsdeck_14 → montserrat_16
   Env excludes LvglApplication.cpp and ui/lvgl sources.
+  Fat-text helper lives in main.cpp for now.
 
 STANDALONE BUILD RULES
 ----------------------
@@ -82,8 +93,8 @@ NEAR-TERM ROADMAP
 Phase A  ★ DONE ★  GxEPD2 test pattern
 Phase B  ★ DONE ★  LVGL text on panel
 Phase C  ★ DONE ★  Single refresh + mono home (dummy)
-Phase D  Multi-screen shell (Home / Messages / Settings), still dummy
-Phase E  Live data from cooperative stack (battery, RSSI, dest)
+Phase D  ★ DONE ★  Multi-screen shell (Home / Messages / Settings), still dummy
+Phase E  Live data from cooperative stack (battery, RSSI, dest, message list)
 Phase F  Clean history rewrite for upstream
 
 UPSTREAM REBASE PLAN (after Phase E)
@@ -106,7 +117,7 @@ RULES FOR AI / CONTRIBUTORS
 
 ONE-LINER
 ---------
-Cooperative works. Standalone Phase A–C done: GxEPD2 + LVGL, single refresh,
-mono home UI on GDEQ031T10. Next: multi-screen shell, then live data, then
-upstream-friendly history.
+Cooperative works. Standalone Phase A–D done: GxEPD2 + LVGL, single refresh,
+fat-text multi-screen shell (Home/Messages/Settings) on GDEQ031T10.
+Next: live data from cooperative stack, then upstream-friendly history.
 ================================================================================

@@ -3,10 +3,16 @@ Continue the T-Deck Pro Ratspeak port. Read https://github.com/jharvey/ratspeak-
 Current focus: standalone e-ink bring-up (not full Plus UI).
 - Cooperative/node messaging already works on hardware.
 - Standalone must EXCLUDE LvglApplication.cpp and ui/lvgl sources; INCLUDE boards/tdeck_Pro (DisplayEink, LvglPort, LvglStubs, main).
-- Last work: fixing LvglStubs.cpp to match LvMemory.h / LvFailure.h (handheld_lvgl_fail is void, no args) and lv_font_rsdeck_14 stand-in (montserrat_16).
+- Phase A–D complete: GxEPD2 panel, batched refresh, fat-text multi-screen shell (Home / Messages / Settings) with dummy data and auto-cycle.
 
-I pushed the latest files to GitHub. Here’s the latest build_log.txt / error:
+Next target — Phase E:
+  Wire live data from the cooperative / node stack into the existing screens
+  (battery, LoRa status, SNR, paths/links, LXMF queue, real message list, LOCAL_DEST).
+  Keep the single fullRefresh-per-screen-change pattern.
+  Prefer small, compile-ready full files.
 
-[paste build_log.txt or last error]
+I pushed the latest files to GitHub. Here’s the latest build_log.txt / error (or photo confirmation):
 
-Please provide full fixed files only (not diffs). Prefer small, compile-ready changes so we can flash a test pattern on the GDEQ031T10 before any full UI port.
+[paste build_log.txt, serial output, or describe what you see]
+
+Please provide full fixed files only (not diffs). Keep cooperative green and do not break the Phase D screen shell.
