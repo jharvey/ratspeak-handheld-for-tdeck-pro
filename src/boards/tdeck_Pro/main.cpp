@@ -10,16 +10,24 @@
 #include "Eink/LvglPort.h"
 #include "ratspeak_protocol.h"
 #include "radio/SX1262.h"
+#include "storage/FlashStore.h"
+#include "storage/MessageStore.h"
+#include "reticulum/IdentityManager.h"
 
 // ---------------------------------------------------------------------------
-// Phase E — live battery, LOCAL_DEST, LoRa online + RSSI
-// Paths/Links/LXMF Q and Messages list need ProtocolRuntime / MessageStore
-// (next slice). Shell + single fullRefresh unchanged. Cooperative green.
+// Phase E chunk 2 — FlashStore + IdentityManager + MessageStore
+// Live: battery, LOCAL_DEST, LoRa/RSSI, conversation count / unread
+// Paths/Links/LXMF Q still need ProtocolRuntime (next chunk)
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
 static SX1262* g_radio = nullptr;
 static bool g_radioOk = false;
+
+static FlashStore g_flash;
+static IdentityManager g_idMgr;
+static MessageStore g_msgStore;
+static bool g_storeReady = false;
 
 enum ScreenId : uint8_t {
     SCR_HOME = 0,
@@ -31,7 +39,6 @@ enum ScreenId : uint8_t {
 static ScreenId g_screen = SCR_HOME;
 static lv_obj_t* g_root = nullptr;
 
-// Live cache
 static char g_batStr[20]   = "n/a";
 static char g_pctStr[8]    = "--%";
 static char g_destHex[17]  = "................";
@@ -41,6 +48,8 @@ static char g_snrStr[12]   = "-";
 static char g_pathsStr[8]  = "0";
 static char g_linksStr[8]  = "0";
 static char g_lxmfqStr[8]  = "0";
+static char g_convStr[24]  = "0 conv";
+static char g_unreadStr[16] = "0 unread";
 static bool g_rnsReady     = false;
 
 // ---------- BQ27220 ----------
@@ -123,9 +132,8 @@ static bool initLocalDest() {
     return true;
 }
 
-// ---------- SX1262 (shared SPI; hold EPD_CS high while talking) ----------
+// ---------- SX1262 ----------
 static bool initRadio() {
-    // Isolate e-ink while we talk to LoRa
     pinMode(EPD_CS, OUTPUT);
     digitalWrite(EPD_CS, HIGH);
     pinMode(LORA_CS, OUTPUT);
@@ -135,7 +143,6 @@ static bool initRadio() {
     digitalWrite(SD_CS, HIGH);
 #endif
 
-    // SPI already started by DisplayEink::begin(); reuse the bus
     g_radio = new SX1262(&SPI, LORA_CS, SPI_SCK, SPI_MOSI, SPI_MISO,
                          LORA_RST, LORA_IRQ, LORA_BUSY, LORA_RXEN,
                          LORA_HAS_TCXO, LORA_DIO2_AS_RF_SWITCH);
@@ -156,7 +163,7 @@ static bool initRadio() {
     g_radio->setCodingRate4(LORA_DEFAULT_CR);
     g_radio->setTxPower(LORA_DEFAULT_TX_POWER);
     g_radio->setPreambleLength(LORA_DEFAULT_PREAMBLE);
-    g_radio->receive();   // listen so currentRssi is meaningful
+    g_radio->receive();
 
     Serial.printf("[LORA] online  freq=%lu SF=%d BW=%lu TX=%d\n",
                   (unsigned long)LORA_DEFAULT_FREQ,
@@ -166,8 +173,33 @@ static bool initRadio() {
     return true;
 }
 
+// ---------- Flash + identity + message store ----------
+static bool initStorage() {
+    if (!g_flash.begin()) {
+        Serial.println("[STORE] FlashStore begin failed");
+        return false;
+    }
+    Serial.println("[STORE] FlashStore ready");
+
+    if (!g_idMgr.begin(&g_flash, nullptr)) {
+        Serial.println("[STORE] IdentityManager begin failed");
+        // Continue — MessageStore can still open
+    } else {
+        Serial.printf("[STORE] IdentityManager slots=%d active=%d\n",
+                      g_idMgr.count(), g_idMgr.activeIndex());
+    }
+
+    if (!g_msgStore.begin(&g_flash, nullptr, false)) {
+        Serial.println("[STORE] MessageStore begin failed");
+        return false;
+    }
+    Serial.printf("[STORE] MessageStore ready  conv=%u unread=%d\n",
+                  (unsigned)g_msgStore.totalConversations(),
+                  g_msgStore.totalUnreadCount());
+    return true;
+}
+
 static void refreshLiveData() {
-    // Battery
     float v = 0;
     int pct = -1;
     if (readBattery(v, pct)) {
@@ -179,17 +211,13 @@ static void refreshLiveData() {
         strcpy(g_pctStr, "--%");
     }
 
-    // LOCAL_DEST (once)
     if (!g_rnsReady) {
         g_rnsReady = initLocalDest();
     }
 
-    // LoRa status + RSSI (live when radio is up)
     if (g_radio && g_radio->isRadioOnline()) {
         strcpy(g_loraStr, "online");
-        int rssi = g_radio->currentRssi();
-        snprintf(g_rssiStr, sizeof(g_rssiStr), "%d dBm", rssi);
-        // packetSnr only valid after a received packet; show dash until then
+        snprintf(g_rssiStr, sizeof(g_rssiStr), "%d dBm", g_radio->currentRssi());
         strcpy(g_snrStr, "-");
     } else {
         strcpy(g_loraStr, "off");
@@ -197,10 +225,21 @@ static void refreshLiveData() {
         strcpy(g_snrStr, "-");
     }
 
-    // ProtocolRuntime counters — next slice
+    // ProtocolRuntime not yet — stay at 0
     strcpy(g_pathsStr, "0");
     strcpy(g_linksStr, "0");
     strcpy(g_lxmfqStr, "0");
+
+    if (g_storeReady) {
+        g_msgStore.poll();
+        uint32_t conv = g_msgStore.totalConversations();
+        int unread = g_msgStore.totalUnreadCount();
+        snprintf(g_convStr, sizeof(g_convStr), "%u conv", (unsigned)conv);
+        snprintf(g_unreadStr, sizeof(g_unreadStr), "%d unread", unread);
+    } else {
+        strcpy(g_convStr, "no store");
+        strcpy(g_unreadStr, "-");
+    }
 }
 
 // ---------- UI helpers ----------
@@ -284,9 +323,19 @@ static void build_messages() {
     clear_screen();
     make_header("Messages");
     int y = 40;
-    add_row(y, "(none)", "no store yet");
+
+    add_row(y, "Convs",  g_convStr);
+    add_row(y, "Unread", g_unreadStr);
     y += 14;
-    fat_label(g_root, "(MessageStore next)", 8, y);
+
+    if (g_storeReady && g_msgStore.totalConversations() == 0) {
+        fat_label(g_root, "(empty - no messages yet)", 8, y);
+    } else if (!g_storeReady) {
+        fat_label(g_root, "(store not ready)", 8, y);
+    } else {
+        fat_label(g_root, "(list rows next chunk)", 8, y);
+    }
+
     make_footer("2/3 Msgs | [>] next");
 }
 
@@ -334,8 +383,8 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E");
-    Serial.println(" live battery + dest + LoRa");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 2");
+    Serial.println(" store + battery + dest + LoRa");
     Serial.println("========================================");
 
     pinMode(BOARD_1V8_EN, OUTPUT);
@@ -347,7 +396,6 @@ void setup() {
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(I2C_FREQUENCY);
 
-    // Display first (owns SPI begin + power gates)
     if (!g_display.begin()) {
         Serial.println("[BOOT] Display init FAILED");
         return;
@@ -357,10 +405,14 @@ void setup() {
         return;
     }
 
-    // Radio after display so SPI is up; CS isolation inside initRadio()
     g_radioOk = initRadio();
     if (!g_radioOk) {
         Serial.println("[BOOT] Radio init failed (UI continues)");
+    }
+
+    g_storeReady = initStorage();
+    if (!g_storeReady) {
+        Serial.println("[BOOT] Storage init failed (UI continues)");
     }
 
     show_screen(SCR_HOME);
@@ -368,10 +420,11 @@ void setup() {
 }
 
 void loop() {
-    // Keep radio in RX so currentRssi updates
     if (g_radio && g_radioOk) {
-        // parsePacket drains any pending; ignore payload for now
         (void)g_radio->parsePacket();
+    }
+    if (g_storeReady) {
+        g_msgStore.poll();
     }
 
     static uint32_t last = 0;

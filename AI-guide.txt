@@ -1,24 +1,24 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-04 (Phase D complete; Phase E in progress)
+Last updated: 2026-10-04 (Phase E chunk 2: store + radio)
 ================================================================================
 
 OVERALL GOALS
 -------------
-1. Port Ratspeak from T-Deck Plus to T-Deck Pro (GDEQ031T10 e-ink 240×320).
+1. Port Ratspeak from T-Deck Plus to T-Deck Pro (GDEQ031T10 e-ink 240x320).
 2. Keep Cooperative / Node mode working (LXMF messaging proven on hardware).
-3. Standalone e-ink UI via GxEPD2 + thin LVGL → screens → live data.
+3. Standalone e-ink UI via GxEPD2 + thin LVGL -> screens -> live data.
 4. After bring-up is stable: REWRITE history as clean upstream-friendly commits
    (see UPSTREAM REBASE PLAN). Do not upstream the messy debug branch.
 
 HARDWARE (T-Deck Pro)
 ---------------------
-Panel     : GDEQ031T10, 240×320, controller UC8253
+Panel     : GDEQ031T10, 240x320, controller UC8253
 EPD pins  : CS=34  DC=35  BUSY=37  RST=16
 SPI       : SCK=36  MOSI=33  MISO=47  (shared with LoRa)
 Power     : BOARD_1V8_EN, BOARD_LORA_EN HIGH before display/SPI
-LoRa      : keep LORA_CS high when talking to e-ink
-I2C       : SDA=13 SCL=14 (BQ27220 battery, keyboard, touch)
+LoRa      : keep LORA_CS high when talking to e-ink; hold EPD_CS high for LoRa
+I2C       : SDA=13 SCL=14 (BQ27220, keyboard, touch)
 BoardConfig: src/boards/tdeck_Pro/config/BoardConfig.h  (source of truth)
 
 WORKING STATE (verified on device)
@@ -28,37 +28,37 @@ COOPERATIVE / NODE
   - Do not break this path when changing standalone.
 
 STANDALONE — PHASE A ★ DONE ★
-  - GxEPD2_310_GDEQ031T10 test pattern (bars/border) on real panel.
+  - GxEPD2_310_GDEQ031T10 test pattern on real panel.
 
 STANDALONE — PHASE B ★ DONE ★
-  - DisplayEink wraps GxEPD2; 1-bit framebuffer; LVGL 8.3 labels on panel.
+  - DisplayEink wraps GxEPD2; 1-bit FB; LVGL 8.3 labels.
 
 STANDALONE — PHASE C ★ DONE ★
-  - Batched refresh: flush only updates FB; fullRefresh once via refreshIfDirty().
-  - Boot does a single full panel update (not one per LVGL strip).
-  - High-contrast mono home layout; pixel polarity fixed (bit 1 = black).
-  - Photo confirmed: white bg, black text, black header.
+  - Batched refresh; single fullRefresh via refreshIfDirty().
+  - Pixel polarity fixed (bit 1 = black).
 
 STANDALONE — PHASE D ★ DONE ★
   - Multi-screen shell: Home / Messages / Settings.
-  - Fat-text (4-draw) labels, header bar, footer.
-  - Serial nav: n/> next, h/1 Home, m/2 Messages, s/3 Settings.
-  - Auto-cycle every ~3.5 s.
-  - Single fullRefresh per screen change.
-  - Build + flash SUCCESS on hardware.
+  - Fat-text, serial nav, auto-cycle, single fullRefresh per change.
 
 STANDALONE — PHASE E (in progress)
-  ★ DONE on device:
-    - Live battery from BQ27220 (Voltage 0x08, SOC 0x2C) → e.g. 4.11 V 68%.
-    - Live LOCAL_DEST from minimal RNS FFI + NVS identity (create/load).
-    - ASCII-only strings (no U+2014 em-dash; montserrat_16 has no glyph).
-  NEXT slices (keep shell; prefer small compile-ready full files):
-    1. Long-lived ProtocolRuntime (or thin subset) so pathCount / linkCount /
-       lxmfQueuedCount become live on Home.
-    2. Pull newest conversations from MessageStore into Messages screen.
-    3. Wire real LoRa status / last RSSI-SNR from the radio HAL.
-    4. Keep the single fullRefresh-per-screen-change pattern.
-    5. Do not pull in LvglApplication or ui/lvgl.
+  ★ DONE on device (chunk 1):
+    - Live battery BQ27220 (e.g. 4.11 V 68%).
+    - Live LOCAL_DEST via RNS FFI + NVS (e.g. ca53afea5f8f1fbc).
+    - ASCII-only UI (no U+2014 em-dash).
+  ★ Chunk 2 (this step — flash and confirm):
+    - SX1262 begin: LoRa online/off + currentRssi on Home.
+    - FlashStore + IdentityManager + MessageStore begin.
+    - Messages screen: live "N conv" / "M unread" (list rows later).
+  NEXT chunks:
+    3. Long-lived ProtocolRuntime -> pathCount / linkCount / lxmfQueuedCount.
+    4. Conversation page rows on Messages (requestConversationPage).
+    5. packetSnr after first RX; optional announce.
+  Rules for E chunks:
+    - Keep Phase D shell + single fullRefresh pattern.
+    - Prefer small compile-ready full files.
+    - Do not link LvglApplication or ui/lvgl.
+    - Keep cooperative green.
 
 BITMAP / COLOR CONVENTION (do not invert again)
 -----------------------------------------------
@@ -66,39 +66,39 @@ BITMAP / COLOR CONVENTION (do not invert again)
   setPixel(black): |= mask;  setPixel(white): &= ~mask
   Initial FB: memset 0x00 (white).
   fullRefresh: fillScreen(WHITE) then drawBitmap(..., GxEPD_BLACK).
-  LVGL: c.full == 0 → black pixel. Do not use c.ch.green (LV_COLOR_16_SWAP).
+  LVGL: c.full == 0 -> black pixel.
 
 UI TEXT RULES
 -------------
-  - Use only characters present in lv_font_montserrat_16.
-  - Prefer ASCII: "-", "--", "n/a", "0". Never use em-dash (U+2014) or other
-    fancy punctuation that triggers "glyph dsc. not found".
+  - Only characters in lv_font_montserrat_16.
+  - ASCII only: "-", "--", "n/a", "0". Never U+2014 em-dash.
 
 KNOWN POLISH (non-blocking)
 ---------------------------
-  - Right-column values can clip near the edge; tighten padding/columns later.
-  - Footer / long strings can overlap; shorten or use two lines.
-  - FB often via malloc (PSRAM fallback); OK for bring-up.
-  - Partial refresh not implemented yet (always full when dirty).
-  - Full ProtocolRuntime + radio + MessageStore not yet in standalone main.
+  - Right-column values can clip; tighten later.
+  - Partial refresh not implemented (always full when dirty).
+  - ProtocolRuntime not yet in standalone main.
+  - Message list is counts only (no peer rows yet).
 
 WHAT FAILED EARLIER (do not repeat)
 -----------------------------------
-  - Bare UC8253 with SSD1680 cmds (0x24/0x22/0x20). Use GxEPD2.
+  - Bare UC8253 / SSD1680 cmds. Use GxEPD2.
   - -mfix_size=16MB as build_flag.
-  - LvglApplication in standalone before panel worked.
+  - LvglApplication before panel worked.
   - handheld_lvgl_fail(const char*) — real API is fail(void).
-  - FB bit 0 = black (inverted vs GxEPD2 drawBitmap).
-  - Em-dash "—" in UI strings → LVGL glyph warnings (U+2014).
+  - FB bit 0 = black (inverted).
+  - Em-dash "—" -> LVGL glyph warnings (U+2014).
 
 CURRENT ARCHITECTURE (standalone)
 ---------------------------------
-  main.cpp → DisplayEink (GxEPD2 + 1-bit FB, dirty flag)
-           → LvglPort (flush_cb writes FB only; updateAndRefresh optional)
-           → multi-screen shell (Home / Messages / Settings)
-           → live battery (BQ27220) + LOCAL_DEST (RNS FFI)
-  LvglStubs: alloc/free/realloc/fail + lv_font_rsdeck_14 → montserrat_16
-  Env excludes LvglApplication.cpp and ui/lvgl sources.
+  main.cpp
+    -> DisplayEink + LvglPort (batched refresh)
+    -> multi-screen shell
+    -> BQ27220 battery
+    -> RNS FFI LOCAL_DEST
+    -> SX1262 LoRa status + RSSI
+    -> FlashStore + IdentityManager + MessageStore (counts)
+  Env: excludes LvglApplication.cpp and ui/lvgl.
 
 STANDALONE BUILD RULES
 ----------------------
@@ -112,15 +112,17 @@ NEAR-TERM ROADMAP
 -----------------
 Phase A  ★ DONE ★  GxEPD2 test pattern
 Phase B  ★ DONE ★  LVGL text on panel
-Phase C  ★ DONE ★  Single refresh + mono home (dummy)
-Phase D  ★ DONE ★  Multi-screen shell (Home / Messages / Settings)
-Phase E  IN PROGRESS  Live data (battery + dest done; runtime/radio/store next)
+Phase C  ★ DONE ★  Single refresh + mono home
+Phase D  ★ DONE ★  Multi-screen shell
+Phase E  IN PROGRESS
+  chunk 1 ★ DONE ★  battery + LOCAL_DEST
+  chunk 2 THIS     FlashStore + MessageStore counts + LoRa/RSSI
+  chunk 3 NEXT     ProtocolRuntime path/link/queue
+  chunk 4          Message list rows
 Phase F  Clean history rewrite for upstream
 
 UPSTREAM REBASE PLAN (after Phase E)
 ------------------------------------
-Fresh fork / clean base — do not upstream messy history:
-
   Commit 1 — Build environment (ini, filters, bat)
   Commit 2 — Board HAL + GxEPD2 e-ink + test pattern
   Commit 3 — Cooperative / node on Pro
@@ -129,16 +131,15 @@ Fresh fork / clean base — do not upstream messy history:
 
 RULES FOR AI / CONTRIBUTORS
 ---------------------------
-- Prefer full files when asked; match BoardConfig and LvMemory/LvFailure.
+- Prefer full files when asked; match BoardConfig.
 - Keep cooperative green.
-- Panel path is GxEPD2; do not reintroduce broken bare UC8253 sequences.
+- Panel path is GxEPD2 only.
 - Full build_log.txt preferred over snippets.
-- ASCII-only UI strings (no U+2014 or other missing glyphs).
+- ASCII-only UI strings.
 - After Phase E: clean commits for upstream.
 
 ONE-LINER
 ---------
-Cooperative works. Standalone Phase A–D done. Phase E: battery + LOCAL_DEST
-live on panel; next: ProtocolRuntime counters, MessageStore list, radio
-RSSI/SNR. Then upstream-friendly history rewrite.
+Cooperative works. Standalone A-D done. Phase E: battery+dest+LoRa+store
+counts; next ProtocolRuntime counters then message list rows.
 ================================================================================
