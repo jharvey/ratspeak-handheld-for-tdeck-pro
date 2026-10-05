@@ -1,145 +1,62 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-04 (Phase E chunk 2: store + radio)
+Last updated: 2026-10-05 (Phase E chunk 3b)
 ================================================================================
 
 OVERALL GOALS
 -------------
-1. Port Ratspeak from T-Deck Plus to T-Deck Pro (GDEQ031T10 e-ink 240x320).
-2. Keep Cooperative / Node mode working (LXMF messaging proven on hardware).
-3. Standalone e-ink UI via GxEPD2 + thin LVGL -> screens -> live data.
-4. After bring-up is stable: REWRITE history as clean upstream-friendly commits
-   (see UPSTREAM REBASE PLAN). Do not upstream the messy debug branch.
+1. Port Ratspeak to T-Deck Pro (GDEQ031T10 e-ink 240x320).
+2. Keep Cooperative / Node green.
+3. Standalone e-ink: GxEPD2 + thin LVGL shell + live data.
+4. Later: clean upstream-friendly history rewrite.
 
-HARDWARE (T-Deck Pro)
----------------------
-Panel     : GDEQ031T10, 240x320, controller UC8253
-EPD pins  : CS=34  DC=35  BUSY=37  RST=16
-SPI       : SCK=36  MOSI=33  MISO=47  (shared with LoRa)
-Power     : BOARD_1V8_EN, BOARD_LORA_EN HIGH before display/SPI
-LoRa      : keep LORA_CS high when talking to e-ink; hold EPD_CS high for LoRa
-I2C       : SDA=13 SCL=14 (BQ27220, keyboard, touch)
-BoardConfig: src/boards/tdeck_Pro/config/BoardConfig.h  (source of truth)
+HARDWARE
+--------
+Panel GDEQ031T10 240x320 UC8253. EPD CS=34 DC=35 BUSY=37 RST=16.
+SPI shared: SCK=36 MOSI=33 MISO=47. Power: BOARD_1V8_EN, BOARD_LORA_EN.
+Touch CST328 I2C 0x1A INT=12 RST=45. Keyboard TCA8418 0x34.
+BoardConfig: src/boards/tdeck_Pro/config/BoardConfig.h
 
-WORKING STATE (verified on device)
-----------------------------------
-COOPERATIVE / NODE
-  - Messaging, announce, LXMF, battery, LoRa online.
-  - Do not break this path when changing standalone.
+STANDALONE PROGRESS
+-------------------
+Phase A-D ★ DONE ★  panel, LVGL, batched refresh, multi-screen shell
+Phase E
+  chunk 1 ★ DONE ★  live battery + LOCAL_DEST (FFI/NVS)
+  chunk 2 ★ DONE ★  SX1262 LoRa/RSSI, FlashStore+MessageStore counts
+  chunk 2b ★ DONE ★ no auto-rotate; Enter / serial next; touch attempt
+  chunk 3  partial   ProtocolRuntime wired but node alloc failed on device
+  chunk 3b THIS      multi-cap alloc fallback; dest NVS fallback; touch via INT
 
-STANDALONE — PHASE A ★ DONE ★
-  - GxEPD2_310_GDEQ031T10 test pattern on real panel.
+KNOWN DEVICE FACTS (2026-10-05 serial)
+--------------------------------------
+- Flash SUCCESS (~1.1 MB app).
+- [RUST] node alloc failed (200672 bytes, align=8, caps=SPIRAM|8BIT)
+  -> Settings shows (protocol off); Paths/Links/Q stay 0 until alloc works.
+- LOCAL_DEST dashes were a consequence of proto fail; 3b fills from NVS.
+- Touch I2C coords bogus (x=3358); 3b uses TOUCH_INT falling edge for next.
+- Full e-ink refresh ~1s blocks the loop; Enter during refresh feels delayed.
+  That is expected until partial refresh — not a keyboard bug.
 
-STANDALONE — PHASE B ★ DONE ★
-  - DisplayEink wraps GxEPD2; 1-bit FB; LVGL 8.3 labels.
+BITMAP
+------
+FB bit 1 = black. ASCII-only UI (no U+2014).
 
-STANDALONE — PHASE C ★ DONE ★
-  - Batched refresh; single fullRefresh via refreshIfDirty().
-  - Pixel polarity fixed (bit 1 = black).
+STANDALONE RULES
+----------------
+Exclude LvglApplication.cpp and ui/lvgl. Include boards/tdeck_Pro.
+bindDeviceOwner() before ProtocolRuntime. Prefer full files.
 
-STANDALONE — PHASE D ★ DONE ★
-  - Multi-screen shell: Home / Messages / Settings.
-  - Fat-text, serial nav, auto-cycle, single fullRefresh per change.
-
-STANDALONE — PHASE E (in progress)
-  ★ DONE on device (chunk 1):
-    - Live battery BQ27220 (e.g. 4.11 V 68%).
-    - Live LOCAL_DEST via RNS FFI + NVS (e.g. ca53afea5f8f1fbc).
-    - ASCII-only UI (no U+2014 em-dash).
-  ★ Chunk 2 (this step — flash and confirm):
-    - SX1262 begin: LoRa online/off + currentRssi on Home.
-    - FlashStore + IdentityManager + MessageStore begin.
-    - Messages screen: live "N conv" / "M unread" (list rows later).
-  NEXT chunks:
-    3. Long-lived ProtocolRuntime -> pathCount / linkCount / lxmfQueuedCount.
-    4. Conversation page rows on Messages (requestConversationPage).
-    5. packetSnr after first RX; optional announce.
-  Rules for E chunks:
-    - Keep Phase D shell + single fullRefresh pattern.
-    - Prefer small compile-ready full files.
-    - Do not link LvglApplication or ui/lvgl.
-    - Keep cooperative green.
-
-BITMAP / COLOR CONVENTION (do not invert again)
------------------------------------------------
-  FB bit 1 = black on panel, bit 0 = white.
-  setPixel(black): |= mask;  setPixel(white): &= ~mask
-  Initial FB: memset 0x00 (white).
-  fullRefresh: fillScreen(WHITE) then drawBitmap(..., GxEPD_BLACK).
-  LVGL: c.full == 0 -> black pixel.
-
-UI TEXT RULES
--------------
-  - Only characters in lv_font_montserrat_16.
-  - ASCII only: "-", "--", "n/a", "0". Never U+2014 em-dash.
-
-KNOWN POLISH (non-blocking)
----------------------------
-  - Right-column values can clip; tighten later.
-  - Partial refresh not implemented (always full when dirty).
-  - ProtocolRuntime not yet in standalone main.
-  - Message list is counts only (no peer rows yet).
-
-WHAT FAILED EARLIER (do not repeat)
------------------------------------
-  - Bare UC8253 / SSD1680 cmds. Use GxEPD2.
-  - -mfix_size=16MB as build_flag.
-  - LvglApplication before panel worked.
-  - handheld_lvgl_fail(const char*) — real API is fail(void).
-  - FB bit 0 = black (inverted).
-  - Em-dash "—" -> LVGL glyph warnings (U+2014).
-
-CURRENT ARCHITECTURE (standalone)
----------------------------------
-  main.cpp
-    -> DisplayEink + LvglPort (batched refresh)
-    -> multi-screen shell
-    -> BQ27220 battery
-    -> RNS FFI LOCAL_DEST
-    -> SX1262 LoRa status + RSSI
-    -> FlashStore + IdentityManager + MessageStore (counts)
-  Env: excludes LvglApplication.cpp and ui/lvgl.
-
-STANDALONE BUILD RULES
-----------------------
-[env:tdeck_pro_standalone]
-  extends tdeck_Pro_base
-  +<core/> -<core/runtime/LvglApplication.cpp> -<ui/lvgl/> +<boards/tdeck_Pro/>
-  No -mfix_size=* in build_flags.
-  DEVICE_SERVICE_TASK=0, TDECK_PRO_STANDALONE=1, HAS_EINK=1.
-
-NEAR-TERM ROADMAP
------------------
-Phase A  ★ DONE ★  GxEPD2 test pattern
-Phase B  ★ DONE ★  LVGL text on panel
-Phase C  ★ DONE ★  Single refresh + mono home
-Phase D  ★ DONE ★  Multi-screen shell
-Phase E  IN PROGRESS
-  chunk 1 ★ DONE ★  battery + LOCAL_DEST
-  chunk 2 THIS     FlashStore + MessageStore counts + LoRa/RSSI
-  chunk 3 NEXT     ProtocolRuntime path/link/queue
-  chunk 4          Message list rows
-Phase F  Clean history rewrite for upstream
-
-UPSTREAM REBASE PLAN (after Phase E)
-------------------------------------
-  Commit 1 — Build environment (ini, filters, bat)
-  Commit 2 — Board HAL + GxEPD2 e-ink + test pattern
-  Commit 3 — Cooperative / node on Pro
-  Commit 4 — Minimal Standalone LVGL shell + home layout
-  Commit 5+ — Screens/features one at a time
-
-RULES FOR AI / CONTRIBUTORS
----------------------------
-- Prefer full files when asked; match BoardConfig.
-- Keep cooperative green.
-- Panel path is GxEPD2 only.
-- Full build_log.txt preferred over snippets.
-- ASCII-only UI strings.
-- After Phase E: clean commits for upstream.
+NEXT
+----
+1. Confirm 3b: LOCAL_DEST hex visible; [TOUCH] INT next on finger down;
+   [PROTO] up via ... in serial (if any cap succeeds).
+2. If all alloc paths still fail: investigate PSRAM enable in platformio /
+   try MICRO profile size, or shrink concurrent buffers.
+3. Message list rows (requestConversationPage) once proto or store path stable.
+4. Phase F: upstream-friendly history rewrite.
 
 ONE-LINER
 ---------
-Cooperative works. Standalone A-D done. Phase E: battery+dest+LoRa+store
-counts; next ProtocolRuntime counters then message list rows.
+Shell + battery + LoRa + store counts work. ProtocolRuntime blocked on
+200KB node alloc; 3b retries caps + dest fallback + INT touch.
 ================================================================================
