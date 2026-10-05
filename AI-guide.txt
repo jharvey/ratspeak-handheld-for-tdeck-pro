@@ -1,11 +1,11 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-04 (Phase D complete)
+Last updated: 2026-10-04 (Phase D complete; Phase E in progress)
 ================================================================================
 
 OVERALL GOALS
 -------------
-1. Port Ratspeak from T-Deck Plus to T-Deck Pro (GDEQ031T10 e-ink 320×240).
+1. Port Ratspeak from T-Deck Plus to T-Deck Pro (GDEQ031T10 e-ink 240×320).
 2. Keep Cooperative / Node mode working (LXMF messaging proven on hardware).
 3. Standalone e-ink UI via GxEPD2 + thin LVGL → screens → live data.
 4. After bring-up is stable: REWRITE history as clean upstream-friendly commits
@@ -13,11 +13,12 @@ OVERALL GOALS
 
 HARDWARE (T-Deck Pro)
 ---------------------
-Panel     : GDEQ031T10, 320×240, controller UC8253
+Panel     : GDEQ031T10, 240×320, controller UC8253
 EPD pins  : CS=34  DC=35  BUSY=37  RST=16
 SPI       : SCK=36  MOSI=33  MISO=47  (shared with LoRa)
 Power     : BOARD_1V8_EN, BOARD_LORA_EN HIGH before display/SPI
 LoRa      : keep LORA_CS high when talking to e-ink
+I2C       : SDA=13 SCL=14 (BQ27220 battery, keyboard, touch)
 BoardConfig: src/boards/tdeck_Pro/config/BoardConfig.h  (source of truth)
 
 WORKING STATE (verified on device)
@@ -35,17 +36,29 @@ STANDALONE — PHASE B ★ DONE ★
 STANDALONE — PHASE C ★ DONE ★
   - Batched refresh: flush only updates FB; fullRefresh once via refreshIfDirty().
   - Boot does a single full panel update (not one per LVGL strip).
-  - High-contrast mono home layout (dummy data): header, status rows, LOCAL_DEST.
-  - Pixel polarity fixed: bitmap bit 1 = black for GxEPD2 drawBitmap.
-  - Photo confirmed: white bg, black text, black header, keyboard-bottom orientation.
+  - High-contrast mono home layout; pixel polarity fixed (bit 1 = black).
+  - Photo confirmed: white bg, black text, black header.
 
 STANDALONE — PHASE D ★ DONE ★
-  - Multi-screen shell: Home / Messages / Settings (dummy content).
-  - Fat-text helper (1-pixel offset double-draw) for readable stroke on GDEQ031T10.
-  - Screen switch via show_screen(); single fullRefresh per change.
-  - Auto-cycle demo every ~4.5 s (placeholder until real key input).
-  - Footer hints: "LOCAL_DEST  Home | [ ] next", "2/3 Msgs | [ ] next", etc.
-  - Photo/video confirmed working on hardware.
+  - Multi-screen shell: Home / Messages / Settings.
+  - Fat-text (4-draw) labels, header bar, footer.
+  - Serial nav: n/> next, h/1 Home, m/2 Messages, s/3 Settings.
+  - Auto-cycle every ~3.5 s.
+  - Single fullRefresh per screen change.
+  - Build + flash SUCCESS on hardware.
+
+STANDALONE — PHASE E (in progress)
+  ★ DONE on device:
+    - Live battery from BQ27220 (Voltage 0x08, SOC 0x2C) → e.g. 4.11 V 68%.
+    - Live LOCAL_DEST from minimal RNS FFI + NVS identity (create/load).
+    - ASCII-only strings (no U+2014 em-dash; montserrat_16 has no glyph).
+  NEXT slices (keep shell; prefer small compile-ready full files):
+    1. Long-lived ProtocolRuntime (or thin subset) so pathCount / linkCount /
+       lxmfQueuedCount become live on Home.
+    2. Pull newest conversations from MessageStore into Messages screen.
+    3. Wire real LoRa status / last RSSI-SNR from the radio HAL.
+    4. Keep the single fullRefresh-per-screen-change pattern.
+    5. Do not pull in LvglApplication or ui/lvgl.
 
 BITMAP / COLOR CONVENTION (do not invert again)
 -----------------------------------------------
@@ -55,14 +68,19 @@ BITMAP / COLOR CONVENTION (do not invert again)
   fullRefresh: fillScreen(WHITE) then drawBitmap(..., GxEPD_BLACK).
   LVGL: c.full == 0 → black pixel. Do not use c.ch.green (LV_COLOR_16_SWAP).
 
+UI TEXT RULES
+-------------
+  - Use only characters present in lv_font_montserrat_16.
+  - Prefer ASCII: "-", "--", "n/a", "0". Never use em-dash (U+2014) or other
+    fancy punctuation that triggers "glyph dsc. not found".
+
 KNOWN POLISH (non-blocking)
 ---------------------------
   - Right-column values can clip near the edge; tighten padding/columns later.
   - Footer / long strings can overlap; shorten or use two lines.
   - FB often via malloc (PSRAM fallback); OK for bring-up.
   - Partial refresh not implemented yet (always full when dirty).
-  - Real keyboard / TCA8418 input not yet wired into screen switching.
-  - Fat-text doubles object count; acceptable for three screens.
+  - Full ProtocolRuntime + radio + MessageStore not yet in standalone main.
 
 WHAT FAILED EARLIER (do not repeat)
 -----------------------------------
@@ -71,15 +89,16 @@ WHAT FAILED EARLIER (do not repeat)
   - LvglApplication in standalone before panel worked.
   - handheld_lvgl_fail(const char*) — real API is fail(void).
   - FB bit 0 = black (inverted vs GxEPD2 drawBitmap).
+  - Em-dash "—" in UI strings → LVGL glyph warnings (U+2014).
 
 CURRENT ARCHITECTURE (standalone)
 ---------------------------------
   main.cpp → DisplayEink (GxEPD2 + 1-bit FB, dirty flag)
            → LvglPort (flush_cb writes FB only; updateAndRefresh optional)
-           → show_screen() / build_home|messages|settings()  (dummy multi-screen)
+           → multi-screen shell (Home / Messages / Settings)
+           → live battery (BQ27220) + LOCAL_DEST (RNS FFI)
   LvglStubs: alloc/free/realloc/fail + lv_font_rsdeck_14 → montserrat_16
   Env excludes LvglApplication.cpp and ui/lvgl sources.
-  Fat-text helper lives in main.cpp for now.
 
 STANDALONE BUILD RULES
 ----------------------
@@ -87,14 +106,15 @@ STANDALONE BUILD RULES
   extends tdeck_Pro_base
   +<core/> -<core/runtime/LvglApplication.cpp> -<ui/lvgl/> +<boards/tdeck_Pro/>
   No -mfix_size=* in build_flags.
+  DEVICE_SERVICE_TASK=0, TDECK_PRO_STANDALONE=1, HAS_EINK=1.
 
 NEAR-TERM ROADMAP
 -----------------
 Phase A  ★ DONE ★  GxEPD2 test pattern
 Phase B  ★ DONE ★  LVGL text on panel
 Phase C  ★ DONE ★  Single refresh + mono home (dummy)
-Phase D  ★ DONE ★  Multi-screen shell (Home / Messages / Settings), still dummy
-Phase E  Live data from cooperative stack (battery, RSSI, dest, message list)
+Phase D  ★ DONE ★  Multi-screen shell (Home / Messages / Settings)
+Phase E  IN PROGRESS  Live data (battery + dest done; runtime/radio/store next)
 Phase F  Clean history rewrite for upstream
 
 UPSTREAM REBASE PLAN (after Phase E)
@@ -113,11 +133,12 @@ RULES FOR AI / CONTRIBUTORS
 - Keep cooperative green.
 - Panel path is GxEPD2; do not reintroduce broken bare UC8253 sequences.
 - Full build_log.txt preferred over snippets.
+- ASCII-only UI strings (no U+2014 or other missing glyphs).
 - After Phase E: clean commits for upstream.
 
 ONE-LINER
 ---------
-Cooperative works. Standalone Phase A–D done: GxEPD2 + LVGL, single refresh,
-fat-text multi-screen shell (Home/Messages/Settings) on GDEQ031T10.
-Next: live data from cooperative stack, then upstream-friendly history.
+Cooperative works. Standalone Phase A–D done. Phase E: battery + LOCAL_DEST
+live on panel; next: ProtocolRuntime counters, MessageStore list, radio
+RSSI/SNR. Then upstream-friendly history rewrite.
 ================================================================================

@@ -9,14 +9,17 @@
 #include "Eink/DisplayEink.h"
 #include "Eink/LvglPort.h"
 #include "ratspeak_protocol.h"
+#include "radio/SX1262.h"
 
 // ---------------------------------------------------------------------------
-// Phase E — live battery + LOCAL_DEST; ASCII-only UI (no U+2014)
-// Keeps Phase D multi-screen shell + single fullRefresh pattern.
-// Cooperative / node envs are unchanged.
+// Phase E — live battery, LOCAL_DEST, LoRa online + RSSI
+// Paths/Links/LXMF Q and Messages list need ProtocolRuntime / MessageStore
+// (next slice). Shell + single fullRefresh unchanged. Cooperative green.
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
+static SX1262* g_radio = nullptr;
+static bool g_radioOk = false;
 
 enum ScreenId : uint8_t {
     SCR_HOME = 0,
@@ -28,20 +31,19 @@ enum ScreenId : uint8_t {
 static ScreenId g_screen = SCR_HOME;
 static lv_obj_t* g_root = nullptr;
 
-// Live cache (refreshed once per screen paint)
+// Live cache
 static char g_batStr[20]   = "n/a";
 static char g_pctStr[8]    = "--%";
 static char g_destHex[17]  = "................";
-static char g_loraStr[12]  = "-";
-static char g_rssiStr[14]  = "-";
+static char g_loraStr[12]  = "off";
+static char g_rssiStr[16]  = "-";
 static char g_snrStr[12]   = "-";
 static char g_pathsStr[8]  = "0";
 static char g_linksStr[8]  = "0";
 static char g_lxmfqStr[8]  = "0";
 static bool g_rnsReady     = false;
-static bool g_batOk        = false;
 
-// ---------- BQ27220 (Voltage 0x08, SOC 0x2C) ----------
+// ---------- BQ27220 ----------
 static bool readBattery(float& volts, int& pct) {
     Wire.beginTransmission(BQ27220_I2C_ADDR);
     Wire.write(0x08);
@@ -60,7 +62,7 @@ static bool readBattery(float& volts, int& pct) {
     return true;
 }
 
-// ---------- Minimal RNS identity -> LOCAL_DEST (FFI only; no full runtime) ----------
+// ---------- Minimal RNS identity -> LOCAL_DEST ----------
 static bool initLocalDest() {
     rs_handheld_rns_t* ctx = nullptr;
     if (rs_handheld_rns_init(&ctx) != RS_HANDHELD_OK || !ctx) {
@@ -117,16 +119,58 @@ static bool initLocalDest() {
     Serial.printf("[RNS] FFI %s\n", rs_handheld_rns_version());
     Serial.printf("[RNS] LOCAL_DEST %s\n", g_destHex);
 
-    // Dest only for UI; full ProtocolRuntime / radio / LXMF is the next slice.
     rs_handheld_rns_shutdown(ctx);
     return true;
 }
 
+// ---------- SX1262 (shared SPI; hold EPD_CS high while talking) ----------
+static bool initRadio() {
+    // Isolate e-ink while we talk to LoRa
+    pinMode(EPD_CS, OUTPUT);
+    digitalWrite(EPD_CS, HIGH);
+    pinMode(LORA_CS, OUTPUT);
+    digitalWrite(LORA_CS, HIGH);
+#ifdef SD_CS
+    pinMode(SD_CS, OUTPUT);
+    digitalWrite(SD_CS, HIGH);
+#endif
+
+    // SPI already started by DisplayEink::begin(); reuse the bus
+    g_radio = new SX1262(&SPI, LORA_CS, SPI_SCK, SPI_MOSI, SPI_MISO,
+                         LORA_RST, LORA_IRQ, LORA_BUSY, LORA_RXEN,
+                         LORA_HAS_TCXO, LORA_DIO2_AS_RF_SWITCH);
+    if (!g_radio) {
+        Serial.println("[LORA] alloc failed");
+        return false;
+    }
+
+    if (!g_radio->begin(LORA_DEFAULT_FREQ)) {
+        Serial.println("[LORA] begin failed");
+        delete g_radio;
+        g_radio = nullptr;
+        return false;
+    }
+
+    g_radio->setSpreadingFactor(LORA_DEFAULT_SF);
+    g_radio->setSignalBandwidth(LORA_DEFAULT_BW);
+    g_radio->setCodingRate4(LORA_DEFAULT_CR);
+    g_radio->setTxPower(LORA_DEFAULT_TX_POWER);
+    g_radio->setPreambleLength(LORA_DEFAULT_PREAMBLE);
+    g_radio->receive();   // listen so currentRssi is meaningful
+
+    Serial.printf("[LORA] online  freq=%lu SF=%d BW=%lu TX=%d\n",
+                  (unsigned long)LORA_DEFAULT_FREQ,
+                  LORA_DEFAULT_SF,
+                  (unsigned long)LORA_DEFAULT_BW,
+                  LORA_DEFAULT_TX_POWER);
+    return true;
+}
+
 static void refreshLiveData() {
+    // Battery
     float v = 0;
     int pct = -1;
-    g_batOk = readBattery(v, pct);
-    if (g_batOk) {
+    if (readBattery(v, pct)) {
         snprintf(g_batStr, sizeof(g_batStr), "%.2f V", v);
         snprintf(g_pctStr, sizeof(g_pctStr), "%d%%", pct);
         Serial.printf("[BAT] %.2f V  %d%%\n", v, pct);
@@ -135,21 +179,31 @@ static void refreshLiveData() {
         strcpy(g_pctStr, "--%");
     }
 
+    // LOCAL_DEST (once)
     if (!g_rnsReady) {
         g_rnsReady = initLocalDest();
     }
 
-    // Until ProtocolRuntime + radio HAL are long-lived:
-    // leave honest ASCII placeholders so the shell stays truthful.
-    strcpy(g_loraStr, "-");
-    strcpy(g_rssiStr, "-");
-    strcpy(g_snrStr, "-");
+    // LoRa status + RSSI (live when radio is up)
+    if (g_radio && g_radio->isRadioOnline()) {
+        strcpy(g_loraStr, "online");
+        int rssi = g_radio->currentRssi();
+        snprintf(g_rssiStr, sizeof(g_rssiStr), "%d dBm", rssi);
+        // packetSnr only valid after a received packet; show dash until then
+        strcpy(g_snrStr, "-");
+    } else {
+        strcpy(g_loraStr, "off");
+        strcpy(g_rssiStr, "-");
+        strcpy(g_snrStr, "-");
+    }
+
+    // ProtocolRuntime counters — next slice
     strcpy(g_pathsStr, "0");
     strcpy(g_linksStr, "0");
     strcpy(g_lxmfqStr, "0");
 }
 
-// ---------- UI helpers (Phase D fat-text style) ----------
+// ---------- UI helpers ----------
 static void fat_label(lv_obj_t* parent, const char* txt,
                       lv_coord_t x, lv_coord_t y,
                       lv_color_t color = lv_color_black())
@@ -196,7 +250,7 @@ static void make_footer(const char* text) {
 
 static void add_row(int& y, const char* left, const char* right) {
     fat_label(g_root, left,  8,  y);
-    fat_label(g_root, right, 110, y);   // 240-wide safe column
+    fat_label(g_root, right, 110, y);
     y += 28;
 }
 
@@ -230,7 +284,6 @@ static void build_messages() {
     clear_screen();
     make_header("Messages");
     int y = 40;
-    // MessageStore long-lived begin is the next slice; keep shell honest.
     add_row(y, "(none)", "no store yet");
     y += 14;
     fat_label(g_root, "(MessageStore next)", 8, y);
@@ -242,7 +295,6 @@ static void build_settings() {
     make_header("Settings");
     int y = 40;
 
-    // BoardConfig defaults (live settings UI later)
     char freq[20];
     snprintf(freq, sizeof(freq), "%.1f MHz", LORA_DEFAULT_FREQ / 1e6f);
     char txp[12];
@@ -283,7 +335,7 @@ void setup() {
     Serial.println();
     Serial.println("========================================");
     Serial.println(" RATSPEAK  T-Deck Pro  Phase E");
-    Serial.println(" live battery + LOCAL_DEST");
+    Serial.println(" live battery + dest + LoRa");
     Serial.println("========================================");
 
     pinMode(BOARD_1V8_EN, OUTPUT);
@@ -295,6 +347,7 @@ void setup() {
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(I2C_FREQUENCY);
 
+    // Display first (owns SPI begin + power gates)
     if (!g_display.begin()) {
         Serial.println("[BOOT] Display init FAILED");
         return;
@@ -304,13 +357,25 @@ void setup() {
         return;
     }
 
+    // Radio after display so SPI is up; CS isolation inside initRadio()
+    g_radioOk = initRadio();
+    if (!g_radioOk) {
+        Serial.println("[BOOT] Radio init failed (UI continues)");
+    }
+
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready - serial: n / h / m / s");
 }
 
 void loop() {
+    // Keep radio in RX so currentRssi updates
+    if (g_radio && g_radioOk) {
+        // parsePacket drains any pending; ignore payload for now
+        (void)g_radio->parsePacket();
+    }
+
     static uint32_t last = 0;
-    if (millis() - last > 3500) {
+    if (millis() - last > 4000) {
         last = millis();
         next_screen();
     }
