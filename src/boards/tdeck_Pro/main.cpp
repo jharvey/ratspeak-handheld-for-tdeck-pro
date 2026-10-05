@@ -56,9 +56,9 @@ static bool g_rnsReady     = false;
 
 // Touch hit target: bottom-right ~72x40 px
 static constexpr int NEXT_X0 = EPD_WIDTH - 80;
-static constexpr int NEXT_Y0 = EPD_HEIGHT - 40;
-static constexpr int NEXT_X1 = EPD_WIDTH - 4;
-static constexpr int NEXT_Y1 = EPD_HEIGHT - 4;
+static constexpr int NEXT_Y0 = EPD_HEIGHT - 56;
+static constexpr int NEXT_X1 = EPD_WIDTH - 1;
+static constexpr int NEXT_Y1 = EPD_HEIGHT - 1;
 
 // ---------- BQ27220 ----------
 static bool readBattery(float& volts, int& pct) {
@@ -195,14 +195,13 @@ static bool initStorage() {
 // ---------- Minimal CST328 touch (I2C 0x1A) ----------
 // Reads first touch point; returns true if finger down with coords.
 static bool touchRead(int16_t& x, int16_t& y) {
-    // CST3xx-style: reg 0x00.. finger count at 0x02, points follow
     Wire.beginTransmission(TOUCH_I2C_ADDR);
     Wire.write(0x00);
     if (Wire.endTransmission(false) != 0) return false;
     if (Wire.requestFrom((int)TOUCH_I2C_ADDR, 7) < 7) return false;
 
-    (void)Wire.read(); // 0x00
-    (void)Wire.read(); // 0x01
+    (void)Wire.read();
+    (void)Wire.read();
     uint8_t fingers = Wire.read() & 0x0F;
     if (fingers == 0) return false;
 
@@ -211,14 +210,8 @@ static bool touchRead(int16_t& x, int16_t& y) {
     uint8_t yh = Wire.read();
     uint8_t yl = Wire.read();
 
-    x = ((xh & 0x0F) << 8) | xl;
-    y = ((yh & 0x0F) << 8) | yl;
-
-    // Clamp to panel
-    if (x < 0) x = 0;
-    if (y < 0) y = 0;
-    if (x >= EPD_WIDTH) x = EPD_WIDTH - 1;
-    if (y >= EPD_HEIGHT) y = EPD_HEIGHT - 1;
+    x = (int16_t)(((xh & 0x0F) << 8) | xl);
+    y = (int16_t)(((yh & 0x0F) << 8) | yl);
     return true;
 }
 
@@ -471,12 +464,13 @@ void loop() {
     // Touch bottom-right [>]
     static bool wasDown = false;
     static uint32_t lastTouchMs = 0;
-    if (millis() - lastTouchMs > 40) {
+    if (millis() - lastTouchMs > 50) {
         lastTouchMs = millis();
         int16_t tx = 0, ty = 0;
         bool down = touchRead(tx, ty);
         if (down && !wasDown) {
-            if (tx >= NEXT_X0 && tx <= NEXT_X1 && ty >= NEXT_Y0 && ty <= NEXT_Y1) {
+            // Inclusive right-half bottom strip
+            if (tx >= NEXT_X0 && ty >= NEXT_Y0) {
                 Serial.printf("[TOUCH] next hit x=%d y=%d\n", tx, ty);
                 next_screen();
             } else {
