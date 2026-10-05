@@ -1,62 +1,61 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-05 (Phase E chunk 3b)
+Last updated: 2026-10-05 (Phase E chunk 4)
 ================================================================================
 
 OVERALL GOALS
 -------------
-1. Port Ratspeak to T-Deck Pro (GDEQ031T10 e-ink 240x320).
+1. Port Ratspeak to T-Deck Pro (GDEQ031T10 240x320 e-ink).
 2. Keep Cooperative / Node green.
-3. Standalone e-ink: GxEPD2 + thin LVGL shell + live data.
+3. Standalone e-ink bring-up (not full Plus UI).
 4. Later: clean upstream-friendly history rewrite.
 
 HARDWARE
 --------
-Panel GDEQ031T10 240x320 UC8253. EPD CS=34 DC=35 BUSY=37 RST=16.
-SPI shared: SCK=36 MOSI=33 MISO=47. Power: BOARD_1V8_EN, BOARD_LORA_EN.
-Touch CST328 I2C 0x1A INT=12 RST=45. Keyboard TCA8418 0x34.
-BoardConfig: src/boards/tdeck_Pro/config/BoardConfig.h
-
-STANDALONE PROGRESS
--------------------
-Phase A-D ★ DONE ★  panel, LVGL, batched refresh, multi-screen shell
-Phase E
-  chunk 1 ★ DONE ★  live battery + LOCAL_DEST (FFI/NVS)
-  chunk 2 ★ DONE ★  SX1262 LoRa/RSSI, FlashStore+MessageStore counts
-  chunk 2b ★ DONE ★ no auto-rotate; Enter / serial next; touch attempt
-  chunk 3  partial   ProtocolRuntime wired but node alloc failed on device
-  chunk 3b THIS      multi-cap alloc fallback; dest NVS fallback; touch via INT
-
-KNOWN DEVICE FACTS (2026-10-05 serial)
---------------------------------------
-- Flash SUCCESS (~1.1 MB app).
-- [RUST] node alloc failed (200672 bytes, align=8, caps=SPIRAM|8BIT)
-  -> Settings shows (protocol off); Paths/Links/Q stay 0 until alloc works.
-- LOCAL_DEST dashes were a consequence of proto fail; 3b fills from NVS.
-- Touch I2C coords bogus (x=3358); 3b uses TOUCH_INT falling edge for next.
-- Full e-ink refresh ~1s blocks the loop; Enter during refresh feels delayed.
-  That is expected until partial refresh — not a keyboard bug.
-
-BITMAP
-------
-FB bit 1 = black. ASCII-only UI (no U+2014).
+EPD CS=34 DC=35 BUSY=37 RST=16. SPI SCK=36 MOSI=33 MISO=47.
+Power BOARD_1V8_EN BOARD_LORA_EN. Touch CST328 0x1A INT=12 RST=45.
+Keyboard TCA8418 0x34. BoardConfig = source of truth.
 
 STANDALONE RULES
 ----------------
 Exclude LvglApplication.cpp and ui/lvgl. Include boards/tdeck_Pro.
-bindDeviceOwner() before ProtocolRuntime. Prefer full files.
+bindDeviceOwner() before ProtocolRuntime. Full files preferred. ASCII only.
+
+PHASE STATUS
+------------
+A-D ★ DONE ★ panel, LVGL, shell
+E1  ★ DONE ★ battery + LOCAL_DEST
+E2  ★ DONE ★ LoRa RSSI, MessageStore counts
+E2b ★ DONE ★ no auto-rotate; Enter / serial next
+E3  partial  ProtocolRuntime linked; node alloc fails
+E3b ★ DONE ★ multi-cap try; dest NVS fallback; touch via INT
+E4  THIS     message list rows; removed floating [>]
+
+DEVICE FACTS (2026-10-05)
+-------------------------
+free_spiram=0  free_internal~220KB
+Protocol needs ~200KB aligned node buffer -> always fails without PSRAM.
+LOCAL_DEST from NVS fallback is correct (ca53afea5f8f1fbc).
+Touch INT falling edge advances screens (I2C coords were bogus).
+Full e-ink refresh ~1s blocks input polling — expected.
+1 conv / 1 unread is real cooperative data on LittleFS.
+
+BLOCKER: PSRAM
+--------------
+Standalone build reports free_spiram=0. Cooperative works with ProtocolRuntime,
+so PSRAM must be enabled differently there. Investigate platformio.ini
+tdeck_pro_standalone / board_build.arduino.memory_type / PSRAM flags.
+Do not keep retrying alloc in main.cpp until free_spiram > 0.
 
 NEXT
 ----
-1. Confirm 3b: LOCAL_DEST hex visible; [TOUCH] INT next on finger down;
-   [PROTO] up via ... in serial (if any cap succeeds).
-2. If all alloc paths still fail: investigate PSRAM enable in platformio /
-   try MICRO profile size, or shrink concurrent buffers.
-3. Message list rows (requestConversationPage) once proto or store path stable.
-4. Phase F: upstream-friendly history rewrite.
+1. Confirm E4 message rows show peer short + preview for the 1 conv.
+2. Fix PSRAM for standalone (platformio), then re-enable ProtocolRuntime.
+3. Optional: open conversation history page; partial refresh to cut lag.
+4. Phase F: upstream history rewrite.
 
 ONE-LINER
 ---------
-Shell + battery + LoRa + store counts work. ProtocolRuntime blocked on
-200KB node alloc; 3b retries caps + dest fallback + INT touch.
+Shell + battery + LoRa + store + dest + touch INT work. Message rows land
+in E4. ProtocolRuntime blocked until PSRAM is visible to the heap.
 ================================================================================
