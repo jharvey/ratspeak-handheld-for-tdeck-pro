@@ -11,7 +11,7 @@
 #include "ratspeak_protocol.h"
 
 // ---------------------------------------------------------------------------
-// Phase E — live battery + LOCAL_DEST; other counters ready for ProtocolRuntime
+// Phase E — live battery + LOCAL_DEST; ASCII-only UI (no U+2014)
 // Keeps Phase D multi-screen shell + single fullRefresh pattern.
 // Cooperative / node envs are unchanged.
 // ---------------------------------------------------------------------------
@@ -32,9 +32,9 @@ static lv_obj_t* g_root = nullptr;
 static char g_batStr[20]   = "n/a";
 static char g_pctStr[8]    = "--%";
 static char g_destHex[17]  = "................";
-static char g_loraStr[12]  = "—";
-static char g_rssiStr[14]  = "—";
-static char g_snrStr[12]   = "—";
+static char g_loraStr[12]  = "-";
+static char g_rssiStr[14]  = "-";
+static char g_snrStr[12]   = "-";
 static char g_pathsStr[8]  = "0";
 static char g_linksStr[8]  = "0";
 static char g_lxmfqStr[8]  = "0";
@@ -60,7 +60,7 @@ static bool readBattery(float& volts, int& pct) {
     return true;
 }
 
-// ---------- Minimal RNS identity → LOCAL_DEST (FFI only; no full runtime) ----------
+// ---------- Minimal RNS identity -> LOCAL_DEST (FFI only; no full runtime) ----------
 static bool initLocalDest() {
     rs_handheld_rns_t* ctx = nullptr;
     if (rs_handheld_rns_init(&ctx) != RS_HANDHELD_OK || !ctx) {
@@ -140,10 +140,10 @@ static void refreshLiveData() {
     }
 
     // Until ProtocolRuntime + radio HAL are long-lived:
-    // leave honest zeros / dashes so the shell stays truthful.
-    strcpy(g_loraStr, "—");
-    strcpy(g_rssiStr, "—");
-    strcpy(g_snrStr, "—");
+    // leave honest ASCII placeholders so the shell stays truthful.
+    strcpy(g_loraStr, "-");
+    strcpy(g_rssiStr, "-");
+    strcpy(g_snrStr, "-");
     strcpy(g_pathsStr, "0");
     strcpy(g_linksStr, "0");
     strcpy(g_lxmfqStr, "0");
@@ -305,7 +305,7 @@ void setup() {
     }
 
     show_screen(SCR_HOME);
-    Serial.println("[BOOT] ready – serial: n / h / m / s");
+    Serial.println("[BOOT] ready - serial: n / h / m / s");
 }
 
 void loop() {
