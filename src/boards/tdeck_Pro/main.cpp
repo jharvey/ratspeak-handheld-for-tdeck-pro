@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <esp_heap_caps.h>
-#include <esp_psram.h>
 
 #include "config/BoardConfig.h"
 #include "Eink/DisplayEink.h"
@@ -24,8 +23,7 @@
 #include "ratspeak_protocol.h"
 
 // ---------------------------------------------------------------------------
-// Phase E chunk 5 — message page fix + PSRAM diagnostics
-// free_spiram still 0 after ini; probe ESP.getPsramSize / psramFound
+// Phase E chunk 5b — same as E5; no esp_psram.h (Arduino 2.0.16)
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
@@ -138,6 +136,7 @@ static bool initRadio() {
 }
 
 static void logPsram() {
+    // Arduino-ESP32 2.0.x: psramFound / ESP.getPsramSize (no esp_psram.h)
     size_t size = ESP.getPsramSize();
     size_t free = ESP.getFreePsram();
     bool found = psramFound();
@@ -189,7 +188,6 @@ static bool initStorageAndProto() {
     return true;
 }
 
-// Conversation page + startup-ID fallback
 static void loadMessageRows() {
     g_msgRowCount = 0;
     g_msgNote[0] = '\0';
@@ -201,7 +199,6 @@ static void loadMessageRows() {
 
     using namespace handheld::storage;
 
-    // 1) Try formal conversation page
     auto sub = g_msgStore.requestConversationPage(
         {}, false, ConversationOrder::Recent, ConversationDirection::After, MSG_ROWS);
 
@@ -254,7 +251,6 @@ static void loadMessageRows() {
         Serial.printf("[MSG] page rejected %u\n", (unsigned)sub.rejection);
     }
 
-    // 2) Fallback: startup recent message IDs (opaque, but proves store content)
     if (g_msgRowCount == 0) {
         auto ids = g_msgStore.startupRecentMessageIds(MSG_ROWS);
         Serial.printf("[MSG] startup ids=%u convs=%u unread=%d\n",
@@ -264,7 +260,6 @@ static void loadMessageRows() {
         for (size_t i = 0; i < ids.size() && g_msgRowCount < MSG_ROWS; i++) {
             MsgRow& r = g_msgRows[g_msgRowCount];
             r.used = true;
-            // Show first 16 chars of id
             snprintf(r.line1, sizeof(r.line1), "id %.16s", ids[i].c_str());
             r.line2[0] = '\0';
             g_msgRowCount++;
@@ -430,7 +425,6 @@ static void build_settings() {
     y += 14;
     fat_label(g_root, g_protoReady ? "(protocol up)" : "(protocol off)", 8, y);
     y += 28;
-    // Live PSRAM line so we can see board config effect without serial
     char ps[40];
     snprintf(ps, sizeof(ps), "PSRAM %uK", (unsigned)(ESP.getPsramSize() / 1024));
     fat_label(g_root, ps, 8, y);
@@ -461,8 +455,8 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 5");
-    Serial.println(" msg page + PSRAM probe");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 5b");
+    Serial.println(" msg page + PSRAM probe (no esp_psram.h)");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
