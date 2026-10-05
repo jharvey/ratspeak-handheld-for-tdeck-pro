@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <esp_heap_caps.h>
+#include <esp_psram.h>
 
 #include "config/BoardConfig.h"
 #include "Eink/DisplayEink.h"
@@ -23,8 +24,8 @@
 #include "ratspeak_protocol.h"
 
 // ---------------------------------------------------------------------------
-// Phase E chunk 4 — message list rows; no floating [>]; dest/touch stable
-// Protocol still off until PSRAM is enabled (free_spiram=0 on device)
+// Phase E chunk 5 — message page fix + PSRAM diagnostics
+// free_spiram still 0 after ini; probe ESP.getPsramSize / psramFound
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
@@ -58,18 +59,16 @@ static char g_lxmfqStr[8]   = "0";
 static char g_convStr[24]   = "0 conv";
 static char g_unreadStr[16] = "0 unread";
 
-// Cached conversation page (max 4 fat rows fit e-ink)
 static constexpr int MSG_ROWS = 4;
 struct MsgRow {
-    char peerShort[9];   // 8 hex + NUL
-    char preview[24];
-    uint32_t unread;
+    char line1[28];
+    char line2[28];
     bool used;
 };
 static MsgRow g_msgRows[MSG_ROWS];
 static int g_msgRowCount = 0;
+static char g_msgNote[40] = "";
 
-// ---------- Battery ----------
 static bool readBattery(float& volts, int& pct) {
     Wire.beginTransmission(BQ27220_I2C_ADDR);
     Wire.write(0x08);
@@ -138,10 +137,18 @@ static bool initRadio() {
     return true;
 }
 
-static bool tryProto(uint32_t caps, const char* label) {
-    Serial.printf("[PROTO] try %s free_spiram=%u free_int=%u\n", label,
+static void logPsram() {
+    size_t size = ESP.getPsramSize();
+    size_t free = ESP.getFreePsram();
+    bool found = psramFound();
+    Serial.printf("[PSRAM] found=%d size=%u free=%u  caps_spiram=%u caps_int=%u\n",
+                  (int)found, (unsigned)size, (unsigned)free,
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+}
+
+static bool tryProto(uint32_t caps, const char* label) {
+    Serial.printf("[PROTO] try %s\n", label);
     return g_proto.begin(&g_flash, nullptr, &g_idMgr, &g_msgStore,
                          &g_announceMgr, RS_HANDHELD_PROFILE_SMALL, caps);
 }
@@ -153,10 +160,18 @@ static bool initStorageAndProto() {
     g_storeReady = true;
     g_announceMgr.setStorage(nullptr, &g_flash);
 
-    // PSRAM is 0 on this standalone build — keep one attempt for when it lands
-    if (tryProto(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, "SPIRAM|8BIT") ||
-        tryProto(MALLOC_CAP_DEFAULT, "DEFAULT")) {
-        g_protoReady = true;
+    logPsram();
+
+    if (psramFound() && ESP.getFreePsram() > 250000) {
+        if (tryProto(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, "SPIRAM|8BIT") ||
+            tryProto(MALLOC_CAP_DEFAULT, "DEFAULT")) {
+            g_protoReady = true;
+        }
+    } else {
+        Serial.println("[PROTO] skip - no usable PSRAM");
+    }
+
+    if (g_protoReady) {
         if (g_loraIf) {
             g_proto.pump().attachLoRa(g_loraIf);
             g_announceMgr.setLoRaInterface(g_loraIf);
@@ -168,77 +183,104 @@ static bool initStorageAndProto() {
         }
         Serial.printf("[PROTO] up dest=%s\n", g_destHex);
     } else {
-        Serial.println("[PROTO] off (need PSRAM) — store-only");
+        Serial.println("[PROTO] off — store-only");
         fillDestFromNvs();
     }
     return true;
 }
 
-// Pull up to MSG_ROWS conversation summaries into g_msgRows
+// Conversation page + startup-ID fallback
 static void loadMessageRows() {
     g_msgRowCount = 0;
+    g_msgNote[0] = '\0';
     for (int i = 0; i < MSG_ROWS; i++) g_msgRows[i].used = false;
-    if (!g_storeReady) return;
+    if (!g_storeReady) {
+        snprintf(g_msgNote, sizeof(g_msgNote), "(no store)");
+        return;
+    }
 
     using namespace handheld::storage;
+
+    // 1) Try formal conversation page
     auto sub = g_msgStore.requestConversationPage(
         {}, false, ConversationOrder::Recent, ConversationDirection::After, MSG_ROWS);
-    if (!sub.accepted()) {
-        Serial.println("[MSG] conversation page rejected");
-        return;
+
+    if (sub.accepted()) {
+        for (int spin = 0; spin < 400; spin++) {
+            g_msgStore.poll();
+            Result res;
+            if (!g_msgStore.peekResult(sub.ticket, res)) {
+                delay(5);
+                continue;
+            }
+            Serial.printf("[MSG] page outcome=%u err=%u len=%u total=%u more=%d\n",
+                          (unsigned)res.outcome, (unsigned)res.error,
+                          (unsigned)res.length, (unsigned)res.total, (int)res.more);
+            if (res.outcome == Outcome::Committed && res.error == Error::None &&
+                res.length >= sizeof(ConversationView)) {
+                const size_t n = res.length / sizeof(ConversationView);
+                size_t take = n > (size_t)MSG_ROWS ? (size_t)MSG_ROWS : n;
+                ConversationView views[MSG_ROWS];
+                if (g_msgStore.readPayload(sub.ticket, views, take * sizeof(ConversationView))) {
+                    for (size_t i = 0; i < take; i++) {
+                        MsgRow& r = g_msgRows[i];
+                        r.used = true;
+                        if (views[i].unreadCount > 0)
+                            snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x *%u",
+                                     views[i].peer[0], views[i].peer[1],
+                                     views[i].peer[2], views[i].peer[3],
+                                     (unsigned)views[i].unreadCount);
+                        else
+                            snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x",
+                                     views[i].peer[0], views[i].peer[1],
+                                     views[i].peer[2], views[i].peer[3]);
+                        size_t pl = views[i].previewLength;
+                        if (pl >= sizeof(r.line2)) pl = sizeof(r.line2) - 1;
+                        memcpy(r.line2, views[i].preview, pl);
+                        r.line2[pl] = '\0';
+                        for (size_t k = 0; k < pl; k++) {
+                            if ((unsigned char)r.line2[k] < 32 ||
+                                (unsigned char)r.line2[k] > 126)
+                                r.line2[k] = '?';
+                        }
+                        g_msgRowCount++;
+                    }
+                }
+            }
+            g_msgStore.releaseResult(sub.ticket);
+            break;
+        }
+    } else {
+        Serial.printf("[MSG] page rejected %u\n", (unsigned)sub.rejection);
     }
 
-    // Drive the queue until ready (bounded)
-    for (int spin = 0; spin < 200; spin++) {
-        g_msgStore.poll();
-        Result res;
-        if (!g_msgStore.peekResult(sub.ticket, res)) {
-            delay(5);
-            continue;
-        }
-        if (res.outcome != Outcome::Committed || res.error != Error::None) {
-            Serial.printf("[MSG] page failed outcome=%u err=%u\n",
-                          (unsigned)res.outcome, (unsigned)res.error);
-            g_msgStore.releaseResult(sub.ticket);
-            return;
-        }
-        const size_t n = res.length / sizeof(ConversationView);
-        if (n == 0 || res.length % sizeof(ConversationView) != 0) {
-            g_msgStore.releaseResult(sub.ticket);
-            return;
-        }
-        ConversationView views[MSG_ROWS];
-        size_t take = n > (size_t)MSG_ROWS ? (size_t)MSG_ROWS : n;
-        if (!g_msgStore.readPayload(sub.ticket, views, take * sizeof(ConversationView))) {
-            g_msgStore.releaseResult(sub.ticket);
-            return;
-        }
-        for (size_t i = 0; i < take; i++) {
-            MsgRow& r = g_msgRows[i];
+    // 2) Fallback: startup recent message IDs (opaque, but proves store content)
+    if (g_msgRowCount == 0) {
+        auto ids = g_msgStore.startupRecentMessageIds(MSG_ROWS);
+        Serial.printf("[MSG] startup ids=%u convs=%u unread=%d\n",
+                      (unsigned)ids.size(),
+                      (unsigned)g_msgStore.totalConversations(),
+                      g_msgStore.totalUnreadCount());
+        for (size_t i = 0; i < ids.size() && g_msgRowCount < MSG_ROWS; i++) {
+            MsgRow& r = g_msgRows[g_msgRowCount];
             r.used = true;
-            r.unread = views[i].unreadCount;
-            // First 4 bytes of peer as 8 hex
-            snprintf(r.peerShort, sizeof(r.peerShort), "%02x%02x%02x%02x",
-                     views[i].peer[0], views[i].peer[1],
-                     views[i].peer[2], views[i].peer[3]);
-            // Preview (ASCII-safe, already short)
-            size_t pl = views[i].previewLength;
-            if (pl >= sizeof(r.preview)) pl = sizeof(r.preview) - 1;
-            memcpy(r.preview, views[i].preview, pl);
-            r.preview[pl] = '\0';
-            // Strip non-printables
-            for (size_t k = 0; k < pl; k++) {
-                if ((unsigned char)r.preview[k] < 32 || (unsigned char)r.preview[k] > 126)
-                    r.preview[k] = '?';
-            }
+            // Show first 16 chars of id
+            snprintf(r.line1, sizeof(r.line1), "id %.16s", ids[i].c_str());
+            r.line2[0] = '\0';
             g_msgRowCount++;
         }
-        g_msgStore.releaseResult(sub.ticket);
-        Serial.printf("[MSG] loaded %d rows\n", g_msgRowCount);
-        return;
     }
-    g_msgStore.releaseResult(sub.ticket);
-    Serial.println("[MSG] page timeout");
+
+    if (g_msgRowCount == 0) {
+        uint32_t c = g_msgStore.totalConversations();
+        int u = g_msgStore.totalUnreadCount();
+        if (c > 0)
+            snprintf(g_msgNote, sizeof(g_msgNote), "(%u stored, list empty)", (unsigned)c);
+        else if (u > 0)
+            snprintf(g_msgNote, sizeof(g_msgNote), "(%d unread, list empty)", u);
+        else
+            snprintf(g_msgNote, sizeof(g_msgNote), "(no conversations)");
+    }
 }
 
 static void refreshLiveData() {
@@ -281,7 +323,6 @@ static void refreshLiveData() {
     }
 }
 
-// ---------- UI ----------
 static void fat_label(lv_obj_t* parent, const char* txt, lv_coord_t x, lv_coord_t y) {
     for (int dy = 0; dy <= 1; dy++)
         for (int dx = 0; dx <= 1; dx++) {
@@ -357,19 +398,13 @@ static void build_messages() {
     y += 8;
 
     if (g_msgRowCount == 0) {
-        fat_label(g_root, g_storeReady ? "(no conversations)" : "(no store)", 8, y);
+        fat_label(g_root, g_msgNote[0] ? g_msgNote : "(empty)", 8, y);
     } else {
         for (int i = 0; i < g_msgRowCount; i++) {
-            const MsgRow& r = g_msgRows[i];
-            char line1[40];
-            if (r.unread > 0)
-                snprintf(line1, sizeof(line1), "%s *%u", r.peerShort, (unsigned)r.unread);
-            else
-                snprintf(line1, sizeof(line1), "%s", r.peerShort);
-            fat_label(g_root, line1, 8, y);
+            fat_label(g_root, g_msgRows[i].line1, 8, y);
             y += 22;
-            if (r.preview[0]) {
-                fat_label(g_root, r.preview, 8, y);
+            if (g_msgRows[i].line2[0]) {
+                fat_label(g_root, g_msgRows[i].line2, 8, y);
                 y += 24;
             } else {
                 y += 4;
@@ -394,6 +429,11 @@ static void build_settings() {
     add_row(y, "Display", "e-ink");
     y += 14;
     fat_label(g_root, g_protoReady ? "(protocol up)" : "(protocol off)", 8, y);
+    y += 28;
+    // Live PSRAM line so we can see board config effect without serial
+    char ps[40];
+    snprintf(ps, sizeof(ps), "PSRAM %uK", (unsigned)(ESP.getPsramSize() / 1024));
+    fat_label(g_root, ps, 8, y);
     make_footer("3/3 Setup Enter/touch next");
 }
 
@@ -421,11 +461,12 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 4");
-    Serial.println(" message rows; no [>]; PSRAM still required");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 5");
+    Serial.println(" msg page + PSRAM probe");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
+    logPsram();
 
     pinMode(BOARD_1V8_EN, OUTPUT);
     pinMode(BOARD_LORA_EN, OUTPUT);

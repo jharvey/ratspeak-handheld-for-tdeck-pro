@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-05 (Phase E chunk 4)
+Last updated: 2026-10-05 (Phase E chunk 5)
 ================================================================================
 
 OVERALL GOALS
@@ -29,33 +29,37 @@ E2  ★ DONE ★ LoRa RSSI, MessageStore counts
 E2b ★ DONE ★ no auto-rotate; Enter / serial next
 E3  partial  ProtocolRuntime linked; node alloc fails
 E3b ★ DONE ★ multi-cap try; dest NVS fallback; touch via INT
-E4  THIS     message list rows; removed floating [>]
+E4  ★ DONE ★ message list attempt; removed floating [>]
+E5  THIS     better msg page + startup-ID fallback + PSRAM probe on Settings
 
 DEVICE FACTS (2026-10-05)
 -------------------------
-free_spiram=0  free_internal~220KB
-Protocol needs ~200KB aligned node buffer -> always fails without PSRAM.
-LOCAL_DEST from NVS fallback is correct (ca53afea5f8f1fbc).
-Touch INT falling edge advances screens (I2C coords were bogus).
-Full e-ink refresh ~1s blocks input polling — expected.
-1 conv / 1 unread is real cooperative data on LittleFS.
+free_spiram=0 still, even after platformio.ini psram_type=opi / flash_mode=qio.
+Protocol needs ~200KB -> stays off. LOCAL_DEST from NVS is correct.
+Touch INT works. 1 conv / 1 unread is real LittleFS metadata.
+Conversation page returns empty (summary bank not seeded); E5 falls back to
+startupRecentMessageIds or shows "(N stored, list empty)".
 
-BLOCKER: PSRAM
---------------
-Standalone build reports free_spiram=0. Cooperative works with ProtocolRuntime,
-so PSRAM must be enabled differently there. Investigate platformio.ini
-tdeck_pro_standalone / board_build.arduino.memory_type / PSRAM flags.
-Do not keep retrying alloc in main.cpp until free_spiram > 0.
+PSRAM BLOCKER
+-------------
+ini already has BOARD_HAS_PSRAM + qio_opi + psram_type=opi.
+Still free_spiram=0 / ESP.getPsramSize() likely 0.
+Next experiments (pick one):
+  A) Confirm fullclean: pio run -e tdeck_pro_standalone -t fullclean
+  B) Switch standalone board=esp32-s3-devkitc-1 with same qio_opi + 16MB
+  C) Compare cooperative boot serial for [PSRAM] line (add same log there)
+Do not keep retrying 200KB alloc in main until PSRAM size > 0.
 
 NEXT
 ----
-1. Confirm E4 message rows show peer short + preview for the 1 conv.
-2. Fix PSRAM for standalone (platformio), then re-enable ProtocolRuntime.
-3. Optional: open conversation history page; partial refresh to cut lag.
+1. Flash E5; note Settings "PSRAM xxxK" and serial [PSRAM] / [MSG] lines.
+2. Fix PSRAM (board/sdkconfig), then ProtocolRuntime comes up for free.
+3. Real conversation rows once summary bank is populated (or after first
+   cooperative-written message settles under standalone).
 4. Phase F: upstream history rewrite.
 
 ONE-LINER
 ---------
-Shell + battery + LoRa + store + dest + touch INT work. Message rows land
-in E4. ProtocolRuntime blocked until PSRAM is visible to the heap.
+Shell + battery + LoRa + dest + touch + counts work. Message page empty
+but counts real. ProtocolRuntime blocked until PSRAM is actually mapped.
 ================================================================================
