@@ -2,34 +2,44 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <lvgl.h>
-#include <Preferences.h>
 #include <stdio.h>
 #include <string.h>
+#include <esp_heap_caps.h>
+
 #include "config/BoardConfig.h"
 #include "Eink/DisplayEink.h"
 #include "Eink/LvglPort.h"
-#include "ratspeak_protocol.h"
+#include "hal/Keyboard.h"
 #include "radio/SX1262.h"
 #include "storage/FlashStore.h"
 #include "storage/MessageStore.h"
 #include "reticulum/IdentityManager.h"
-#include "hal/Keyboard.h"
+#include "reticulum/AnnounceManager.h"
+#include "transport/LoRaInterface.h"
+#include "protocol/ProtocolRuntime.h"
+#include "runtime/TaskOwner.h"
+#include "ratspeak_protocol.h"
 
 // ---------------------------------------------------------------------------
-// Phase E chunk 2b — no auto-rotate; next via Enter / serial / touch [>]
-// Live: battery, dest, LoRa/RSSI, store counts (1 unread is real data)
+// Phase E chunk 3 — ProtocolRuntime (paths / links / LXMF Q)
+// Keeps: battery, LoRa RSSI, store counts, keyboard Enter, touch [>], no auto-cycle
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
-static SX1262* g_radio = nullptr;
-static bool g_radioOk = false;
 static Keyboard g_kb;
 static bool g_kbOk = false;
 
 static FlashStore g_flash;
 static IdentityManager g_idMgr;
 static MessageStore g_msgStore;
+static AnnounceManager g_announceMgr;
+static ProtocolRuntime g_proto;
 static bool g_storeReady = false;
+static bool g_protoReady = false;
+
+static SX1262* g_radio = nullptr;
+static LoRaInterface* g_loraIf = nullptr;
+static bool g_radioOk = false;
 
 enum ScreenId : uint8_t {
     SCR_HOME = 0,
@@ -41,26 +51,23 @@ enum ScreenId : uint8_t {
 static ScreenId g_screen = SCR_HOME;
 static lv_obj_t* g_root = nullptr;
 
-static char g_batStr[20]   = "n/a";
-static char g_pctStr[8]    = "--%";
-static char g_destHex[17]  = "................";
-static char g_loraStr[12]  = "off";
-static char g_rssiStr[16]  = "-";
-static char g_snrStr[12]   = "-";
-static char g_pathsStr[8]  = "0";
-static char g_linksStr[8]  = "0";
-static char g_lxmfqStr[8]  = "0";
-static char g_convStr[24]  = "0 conv";
+static char g_batStr[20]    = "n/a";
+static char g_pctStr[8]     = "--%";
+static char g_destHex[17]   = "................";
+static char g_loraStr[12]   = "off";
+static char g_rssiStr[16]   = "-";
+static char g_snrStr[12]    = "-";
+static char g_pathsStr[8]   = "0";
+static char g_linksStr[8]   = "0";
+static char g_lxmfqStr[8]   = "0";
+static char g_convStr[24]   = "0 conv";
 static char g_unreadStr[16] = "0 unread";
-static bool g_rnsReady     = false;
 
-// Touch hit target: bottom-right ~72x40 px
-static constexpr int NEXT_X0 = EPD_WIDTH - 80;
+// Touch: right half, bottom strip (inclusive edges)
+static constexpr int NEXT_X0 = EPD_WIDTH / 2;
 static constexpr int NEXT_Y0 = EPD_HEIGHT - 56;
-static constexpr int NEXT_X1 = EPD_WIDTH - 1;
-static constexpr int NEXT_Y1 = EPD_HEIGHT - 1;
 
-// ---------- BQ27220 ----------
+// ---------- Battery ----------
 static bool readBattery(float& volts, int& pct) {
     Wire.beginTransmission(BQ27220_I2C_ADDR);
     Wire.write(0x08);
@@ -79,67 +86,7 @@ static bool readBattery(float& volts, int& pct) {
     return true;
 }
 
-// ---------- Minimal RNS LOCAL_DEST ----------
-static bool initLocalDest() {
-    rs_handheld_rns_t* ctx = nullptr;
-    if (rs_handheld_rns_init(&ctx) != RS_HANDHELD_OK || !ctx) {
-        Serial.println("[RNS] init failed");
-        return false;
-    }
-
-    Preferences prefs;
-    uint8_t priv[64] = {0};
-    bool haveKey = false;
-    if (prefs.begin(NVS_NS_IDENTITY, true)) {
-        size_t n = prefs.getBytes("privkey", priv, 64);
-        prefs.end();
-        if (n == 64) haveKey = true;
-    }
-
-    if (!haveKey) {
-        uint8_t entropy[64];
-        for (int i = 0; i < 64; i += 4) {
-            uint32_t r = esp_random();
-            memcpy(entropy + i, &r, 4);
-        }
-        uint8_t idHash[16];
-        if (rs_handheld_rns_create_identity(entropy, priv, idHash) != RS_HANDHELD_OK) {
-            Serial.println("[RNS] create_identity failed");
-            rs_handheld_rns_shutdown(ctx);
-            return false;
-        }
-        if (prefs.begin(NVS_NS_IDENTITY, false)) {
-            prefs.putBytes("privkey", priv, 64);
-            prefs.end();
-            Serial.println("[RNS] new identity created + saved to NVS");
-        }
-    }
-
-    if (rs_handheld_rns_load_identity(ctx, priv) != RS_HANDHELD_OK) {
-        Serial.println("[RNS] load_identity failed");
-        rs_handheld_rns_shutdown(ctx);
-        return false;
-    }
-
-    uint8_t dest[16];
-    if (rs_handheld_rns_destination_hash(ctx, dest) != RS_HANDHELD_OK) {
-        Serial.println("[RNS] destination_hash failed");
-        rs_handheld_rns_shutdown(ctx);
-        return false;
-    }
-
-    for (int i = 0; i < 16; i++) {
-        sprintf(g_destHex + i * 2, "%02x", dest[i]);
-    }
-    g_destHex[16] = '\0';
-
-    Serial.printf("[RNS] FFI %s\n", rs_handheld_rns_version());
-    Serial.printf("[RNS] LOCAL_DEST %s\n", g_destHex);
-    rs_handheld_rns_shutdown(ctx);
-    return true;
-}
-
-// ---------- SX1262 ----------
+// ---------- Radio + LoRaInterface ----------
 static bool initRadio() {
     pinMode(EPD_CS, OUTPUT);
     digitalWrite(EPD_CS, HIGH);
@@ -160,7 +107,6 @@ static bool initRadio() {
         g_radio = nullptr;
         return false;
     }
-
     g_radio->setSpreadingFactor(LORA_DEFAULT_SF);
     g_radio->setSignalBandwidth(LORA_DEFAULT_BW);
     g_radio->setCodingRate4(LORA_DEFAULT_CR);
@@ -168,57 +114,76 @@ static bool initRadio() {
     g_radio->setPreambleLength(LORA_DEFAULT_PREAMBLE);
     g_radio->receive();
 
+    g_loraIf = new LoRaInterface(g_radio, "LoRa");
+    if (!g_loraIf || !g_loraIf->start()) {
+        Serial.println("[LORA] LoRaInterface start failed");
+        return false;
+    }
+
     Serial.printf("[LORA] online freq=%lu SF=%d\n",
                   (unsigned long)LORA_DEFAULT_FREQ, LORA_DEFAULT_SF);
     return true;
 }
 
-// ---------- Storage ----------
-static bool initStorage() {
+// ---------- Storage + ProtocolRuntime ----------
+static bool initStorageAndProto() {
     if (!g_flash.begin()) {
-        Serial.println("[STORE] FlashStore begin failed");
+        Serial.println("[STORE] FlashStore failed");
         return false;
     }
     if (!g_idMgr.begin(&g_flash, nullptr)) {
-        Serial.println("[STORE] IdentityManager begin failed");
+        Serial.println("[STORE] IdentityManager failed");
     }
     if (!g_msgStore.begin(&g_flash, nullptr, false)) {
-        Serial.println("[STORE] MessageStore begin failed");
+        Serial.println("[STORE] MessageStore failed");
         return false;
     }
-    Serial.printf("[STORE] ready conv=%u unread=%d\n",
-                  (unsigned)g_msgStore.totalConversations(),
-                  g_msgStore.totalUnreadCount());
+    g_announceMgr.setStorage(nullptr, &g_flash);
+
+    // SPIRAM for SMALL profile node buffer (tdeck family)
+    const uint32_t caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    if (!g_proto.begin(&g_flash, nullptr, &g_idMgr, &g_msgStore,
+                       &g_announceMgr, RS_HANDHELD_PROFILE_SMALL, caps)) {
+        Serial.println("[PROTO] ProtocolRuntime begin failed");
+        return false;
+    }
+
+    if (g_loraIf) {
+        g_proto.pump().attachLoRa(g_loraIf);
+        g_announceMgr.setLoRaInterface(g_loraIf);
+    }
+
+    // LOCAL_DEST from runtime
+    const uint8_t* dest = g_proto.localDestHash();
+    if (dest) {
+        for (int i = 0; i < 16; i++) {
+            sprintf(g_destHex + i * 2, "%02x", dest[i]);
+        }
+        g_destHex[16] = '\0';
+        Serial.printf("[PROTO] LOCAL_DEST %s\n", g_destHex);
+    }
+
+    Serial.printf("[PROTO] ready paths=%u links=%u q=%d\n",
+                  (unsigned)g_proto.pathCount(),
+                  (unsigned)g_proto.linkCount(),
+                  g_proto.lxmfQueuedCount());
     return true;
 }
 
-// ---------- Minimal CST328 touch (I2C 0x1A) ----------
-// Reads first touch point; returns true if finger down with coords.
+// ---------- Touch (best-effort CST328) ----------
 static bool touchRead(int16_t& x, int16_t& y) {
     Wire.beginTransmission(TOUCH_I2C_ADDR);
     Wire.write(0x00);
     if (Wire.endTransmission(false) != 0) return false;
     if (Wire.requestFrom((int)TOUCH_I2C_ADDR, 7) < 7) return false;
-
     (void)Wire.read();
     (void)Wire.read();
-    uint8_t fingers = Wire.read() & 0x0F;
-    if (fingers == 0) return false;
-
-    uint8_t xh = Wire.read();
-    uint8_t xl = Wire.read();
-    uint8_t yh = Wire.read();
-    uint8_t yl = Wire.read();
-
+    if ((Wire.read() & 0x0F) == 0) return false;
+    uint8_t xh = Wire.read(), xl = Wire.read();
+    uint8_t yh = Wire.read(), yl = Wire.read();
     x = (int16_t)(((xh & 0x0F) << 8) | xl);
     y = (int16_t)(((yh & 0x0F) << 8) | yl);
     return true;
-}
-
-static bool touchHitNext() {
-    int16_t x = 0, y = 0;
-    if (!touchRead(x, y)) return false;
-    return (x >= NEXT_X0 && x <= NEXT_X1 && y >= NEXT_Y0 && y <= NEXT_Y1);
 }
 
 static void refreshLiveData() {
@@ -232,9 +197,18 @@ static void refreshLiveData() {
         strcpy(g_pctStr, "--%");
     }
 
-    if (!g_rnsReady) g_rnsReady = initLocalDest();
-
-    if (g_radio && g_radio->isRadioOnline()) {
+    if (g_loraIf && g_loraIf->isOnline()) {
+        strcpy(g_loraStr, "online");
+        int rssi = g_loraIf->lastRxRssi();
+        if (rssi == 0 && g_radio) rssi = g_radio->currentRssi();
+        snprintf(g_rssiStr, sizeof(g_rssiStr), "%d dBm", rssi);
+        float snr = g_loraIf->lastRxSnr();
+        if (snr != 0.0f) {
+            snprintf(g_snrStr, sizeof(g_snrStr), "%.1f dB", snr);
+        } else {
+            strcpy(g_snrStr, "-");
+        }
+    } else if (g_radio && g_radio->isRadioOnline()) {
         strcpy(g_loraStr, "online");
         snprintf(g_rssiStr, sizeof(g_rssiStr), "%d dBm", g_radio->currentRssi());
         strcpy(g_snrStr, "-");
@@ -244,9 +218,23 @@ static void refreshLiveData() {
         strcpy(g_snrStr, "-");
     }
 
-    strcpy(g_pathsStr, "0");
-    strcpy(g_linksStr, "0");
-    strcpy(g_lxmfqStr, "0");
+    if (g_protoReady) {
+        snprintf(g_pathsStr, sizeof(g_pathsStr), "%u", (unsigned)g_proto.pathCount());
+        snprintf(g_linksStr, sizeof(g_linksStr), "%u", (unsigned)g_proto.linkCount());
+        snprintf(g_lxmfqStr, sizeof(g_lxmfqStr), "%d", g_proto.lxmfQueuedCount());
+        if (g_destHex[0] == '.') {
+            const uint8_t* dest = g_proto.localDestHash();
+            if (dest) {
+                for (int i = 0; i < 16; i++) {
+                    sprintf(g_destHex + i * 2, "%02x", dest[i]);
+                }
+            }
+        }
+    } else {
+        strcpy(g_pathsStr, "0");
+        strcpy(g_linksStr, "0");
+        strcpy(g_lxmfqStr, "0");
+    }
 
     if (g_storeReady) {
         g_msgStore.poll();
@@ -254,9 +242,6 @@ static void refreshLiveData() {
                  (unsigned)g_msgStore.totalConversations());
         snprintf(g_unreadStr, sizeof(g_unreadStr), "%d unread",
                  g_msgStore.totalUnreadCount());
-    } else {
-        strcpy(g_convStr, "no store");
-        strcpy(g_unreadStr, "-");
     }
 }
 
@@ -306,7 +291,6 @@ static void make_footer(const char* text) {
 }
 
 static void make_next_button() {
-    // Visible [>] in the bottom-right touch zone
     fat_label(g_root, "[>]", NEXT_X0 + 8, NEXT_Y0 + 8);
 }
 
@@ -333,7 +317,7 @@ static void build_home() {
     y += 10;
     fat_label(g_root, "LOCAL_DEST", 8, y);
     y += 26;
-    fat_label(g_root, g_rnsReady ? g_destHex : "................", 8, y);
+    fat_label(g_root, g_destHex, 8, y);
     make_footer("1/3 Home  Enter/[>] next");
     make_next_button();
 }
@@ -370,7 +354,7 @@ static void build_settings() {
     add_row(y, "WiFi",     "off");
     add_row(y, "Display",  "e-ink");
     y += 14;
-    fat_label(g_root, "(BoardConfig defaults)", 8, y);
+    fat_label(g_root, g_protoReady ? "(protocol up)" : "(protocol off)", 8, y);
     make_footer("3/3 Setup Enter/[>] next");
     make_next_button();
 }
@@ -399,9 +383,12 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E");
-    Serial.println(" no auto-rotate; Enter / touch [>]");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 3");
+    Serial.println(" ProtocolRuntime + live counters");
     Serial.println("========================================");
+
+    // Bind protocol ownership to this task (Arduino loop)
+    handheld::bindDeviceOwner();
 
     pinMode(BOARD_1V8_EN, OUTPUT);
     pinMode(BOARD_LORA_EN, OUTPUT);
@@ -409,7 +396,6 @@ void setup() {
     digitalWrite(BOARD_LORA_EN, HIGH);
     delay(30);
 
-    // Touch reset
     pinMode(TOUCH_RST, OUTPUT);
     digitalWrite(TOUCH_RST, LOW);
     delay(10);
@@ -430,38 +416,42 @@ void setup() {
     }
 
     g_kbOk = g_kb.begin();
-    if (!g_kbOk) Serial.println("[BOOT] Keyboard failed (serial still works)");
+    if (!g_kbOk) Serial.println("[BOOT] Keyboard failed");
 
     g_radioOk = initRadio();
     if (!g_radioOk) Serial.println("[BOOT] Radio failed (UI continues)");
 
-    g_storeReady = initStorage();
-    if (!g_storeReady) Serial.println("[BOOT] Store failed (UI continues)");
+    g_storeReady = true;
+    g_protoReady = initStorageAndProto();
+    if (!g_protoReady) {
+        Serial.println("[BOOT] Protocol failed (UI continues with store-only)");
+        // store may still be up from partial init
+        g_storeReady = g_msgStore.totalConversations() >= 0;
+    }
 
     show_screen(SCR_HOME);
-    Serial.println("[BOOT] ready - Enter / [>] / serial n to next");
+    Serial.println("[BOOT] ready - Enter / [>] / serial n");
 }
 
 void loop() {
-    if (g_radio && g_radioOk) {
-        (void)g_radio->parsePacket();
+    // Protocol + radio tick (required for live path/link counts)
+    if (g_protoReady) {
+        g_proto.loop();
     }
     if (g_storeReady) {
         g_msgStore.poll();
     }
+    g_announceMgr.loop();
 
     // Keyboard Enter -> next
     if (g_kbOk) {
         g_kb.update();
-        if (g_kb.hasEvent()) {
-            const KeyEvent& e = g_kb.getEvent();
-            if (e.enter) {
-                next_screen();
-            }
+        if (g_kb.hasEvent() && g_kb.getEvent().enter) {
+            next_screen();
         }
     }
 
-    // Touch bottom-right [>]
+    // Touch bottom-right
     static bool wasDown = false;
     static uint32_t lastTouchMs = 0;
     if (millis() - lastTouchMs > 50) {
@@ -469,29 +459,22 @@ void loop() {
         int16_t tx = 0, ty = 0;
         bool down = touchRead(tx, ty);
         if (down && !wasDown) {
-            // Inclusive right-half bottom strip
             if (tx >= NEXT_X0 && ty >= NEXT_Y0) {
                 Serial.printf("[TOUCH] next hit x=%d y=%d\n", tx, ty);
                 next_screen();
             } else {
-                Serial.printf("[TOUCH] x=%d y=%d (outside [>])\n", tx, ty);
+                Serial.printf("[TOUCH] x=%d y=%d (outside)\n", tx, ty);
             }
         }
         wasDown = down;
     }
 
-    // Serial still works
     while (Serial.available()) {
         char c = (char)Serial.read();
-        if (c == 'n' || c == 'N' || c == '>') {
-            next_screen();
-        } else if (c == 'h' || c == 'H' || c == '1') {
-            show_screen(SCR_HOME);
-        } else if (c == 'm' || c == 'M' || c == '2') {
-            show_screen(SCR_MESSAGES);
-        } else if (c == 's' || c == 'S' || c == '3') {
-            show_screen(SCR_SETTINGS);
-        }
+        if (c == 'n' || c == 'N' || c == '>') next_screen();
+        else if (c == 'h' || c == 'H' || c == '1') show_screen(SCR_HOME);
+        else if (c == 'm' || c == 'M' || c == '2') show_screen(SCR_MESSAGES);
+        else if (c == 's' || c == 'S' || c == '3') show_screen(SCR_SETTINGS);
     }
-    delay(15);
+    delay(10);
 }
