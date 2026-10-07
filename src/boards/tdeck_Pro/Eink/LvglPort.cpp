@@ -11,7 +11,8 @@ bool LvglPort::begin(DisplayEink& display) {
 
     lv_init();
 
-    const size_t lines = 40;  // a bit more buffer → fewer flush strips
+    // 20 lines: 240*20*2 = 9600 bytes — keeps room for protocol node on internal heap
+    const size_t lines = 20;
     const size_t pixels = (size_t)EPD_WIDTH * lines;
     buf1_ = (lv_color_t*)ps_malloc(pixels * sizeof(lv_color_t));
     if (!buf1_) buf1_ = (lv_color_t*)malloc(pixels * sizeof(lv_color_t));
@@ -19,6 +20,8 @@ bool LvglPort::begin(DisplayEink& display) {
         Serial.println("[LVGL] draw buffer alloc failed");
         return false;
     }
+    Serial.printf("[LVGL] draw buf %u bytes (lines=%u)\n",
+                  (unsigned)(pixels * sizeof(lv_color_t)), (unsigned)lines);
 
     lv_disp_draw_buf_init(&draw_buf_, buf1_, nullptr, pixels);
 
