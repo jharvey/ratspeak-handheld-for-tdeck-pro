@@ -23,8 +23,7 @@
 #include "ratspeak_protocol.h"
 
 // ---------------------------------------------------------------------------
-// Phase E chunk 6 — protocol BEFORE LVGL; try internal heap if no PSRAM
-// (old cooperative f2ab5e4 proved 200KB node works on this board)
+// Phase E chunk 6b — SPI before radio; protocol before LVGL; internal node OK
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
@@ -67,6 +66,14 @@ struct MsgRow {
 static MsgRow g_msgRows[MSG_ROWS];
 static int g_msgRowCount = 0;
 static char g_msgNote[40] = "";
+
+static void spiBusIdle() {
+    pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
+    pinMode(LORA_CS, OUTPUT); digitalWrite(LORA_CS, HIGH);
+#ifdef SD_CS
+    pinMode(SD_CS, OUTPUT); digitalWrite(SD_CS, HIGH);
+#endif
+}
 
 static bool readBattery(float& volts, int& pct) {
     Wire.beginTransmission(BQ27220_I2C_ADDR);
@@ -111,11 +118,11 @@ static bool fillDestFromNvs() {
 }
 
 static bool initRadio() {
-    pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
-    pinMode(LORA_CS, OUTPUT); digitalWrite(LORA_CS, HIGH);
-#ifdef SD_CS
-    pinMode(SD_CS, OUTPUT); digitalWrite(SD_CS, HIGH);
-#endif
+    spiBusIdle();
+    // Shared SPI with e-ink — must start before SX1262 (display used to do this)
+    SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
+    delay(10);
+
     g_radio = new SX1262(&SPI, LORA_CS, SPI_SCK, SPI_MOSI, SPI_MISO,
                          LORA_RST, LORA_IRQ, LORA_BUSY, LORA_RXEN,
                          LORA_HAS_TCXO, LORA_DIO2_AS_RF_SWITCH);
@@ -162,7 +169,6 @@ static bool initStorageAndProto() {
 
     logPsram();
 
-    // Prefer PSRAM if it actually mapped
     if (psramFound() && ESP.getPsramSize() > 0 && ESP.getFreePsram() > 250000) {
         if (tryProto(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, "SPIRAM|8BIT") ||
             tryProto(MALLOC_CAP_DEFAULT, "DEFAULT")) {
@@ -170,7 +176,6 @@ static bool initStorageAndProto() {
         }
     }
 
-    // Cooperative proved ~200KB node works from internal when tried early
     if (!g_protoReady) {
         if (tryProto(MALLOC_CAP_DEFAULT, "DEFAULT") ||
             tryProto(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT, "INTERNAL|8BIT") ||
@@ -466,8 +471,8 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 6");
-    Serial.println(" protocol BEFORE LVGL; internal heap OK");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 6b");
+    Serial.println(" SPI+radio, proto, then e-ink/LVGL");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -486,16 +491,23 @@ void setup() {
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(I2C_FREQUENCY);
 
-    // --- Protocol path first (same order as cooperative f2ab5e4) ---
+    spiBusIdle();
     logPsram();
+
     if (!initRadio()) Serial.println("[BOOT] Radio failed");
     initStorageAndProto();
     if (g_destHex[0] == '.') fillDestFromNvs();
-    logPsram();  // free_int after node alloc
+    logPsram();
 
-    // --- UI after node is allocated ---
+    // E-ink owns SPI next — hold LoRa CS high
+    spiBusIdle();
+    Serial.printf("[BOOT] before display free_int=%u\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
     if (!g_display.begin()) { Serial.println("[BOOT] Display FAILED"); return; }
+    Serial.println("[BOOT] display OK");
     if (!LvglPort::begin(g_display)) { Serial.println("[BOOT] LVGL FAILED"); return; }
+    Serial.println("[BOOT] LVGL OK");
 
     g_kbOk = g_kb.begin();
     if (g_kbOk) Serial.println("[KEYBOARD] TCA8418 keyboard ready");
