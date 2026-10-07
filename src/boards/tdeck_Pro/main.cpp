@@ -23,7 +23,8 @@
 #include "ratspeak_protocol.h"
 
 // ---------------------------------------------------------------------------
-// Phase E chunk 5b — same as E5; no esp_psram.h (Arduino 2.0.16)
+// Phase E chunk 6 — protocol BEFORE LVGL; try internal heap if no PSRAM
+// (old cooperative f2ab5e4 proved 200KB node works on this board)
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
@@ -136,7 +137,6 @@ static bool initRadio() {
 }
 
 static void logPsram() {
-    // Arduino-ESP32 2.0.x: psramFound / ESP.getPsramSize (no esp_psram.h)
     size_t size = ESP.getPsramSize();
     size_t free = ESP.getFreePsram();
     bool found = psramFound();
@@ -147,7 +147,8 @@ static void logPsram() {
 }
 
 static bool tryProto(uint32_t caps, const char* label) {
-    Serial.printf("[PROTO] try %s\n", label);
+    size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    Serial.printf("[PROTO] try %s free_int=%u\n", label, (unsigned)freeInt);
     return g_proto.begin(&g_flash, nullptr, &g_idMgr, &g_msgStore,
                          &g_announceMgr, RS_HANDHELD_PROFILE_SMALL, caps);
 }
@@ -161,13 +162,21 @@ static bool initStorageAndProto() {
 
     logPsram();
 
-    if (psramFound() && ESP.getFreePsram() > 250000) {
+    // Prefer PSRAM if it actually mapped
+    if (psramFound() && ESP.getPsramSize() > 0 && ESP.getFreePsram() > 250000) {
         if (tryProto(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, "SPIRAM|8BIT") ||
             tryProto(MALLOC_CAP_DEFAULT, "DEFAULT")) {
             g_protoReady = true;
         }
-    } else {
-        Serial.println("[PROTO] skip - no usable PSRAM");
+    }
+
+    // Cooperative proved ~200KB node works from internal when tried early
+    if (!g_protoReady) {
+        if (tryProto(MALLOC_CAP_DEFAULT, "DEFAULT") ||
+            tryProto(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT, "INTERNAL|8BIT") ||
+            tryProto(MALLOC_CAP_8BIT, "8BIT")) {
+            g_protoReady = true;
+        }
     }
 
     if (g_protoReady) {
@@ -180,7 +189,9 @@ static bool initStorageAndProto() {
             for (int i = 0; i < 16; i++) sprintf(g_destHex + i * 2, "%02x", dest[i]);
             g_destHex[16] = '\0';
         }
-        Serial.printf("[PROTO] up dest=%s\n", g_destHex);
+        Serial.printf("[PROTO] up dest=%s free_int=%u\n",
+                      g_destHex,
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     } else {
         Serial.println("[PROTO] off — store-only");
         fillDestFromNvs();
@@ -455,12 +466,11 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 5b");
-    Serial.println(" msg page + PSRAM probe (no esp_psram.h)");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 6");
+    Serial.println(" protocol BEFORE LVGL; internal heap OK");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
-    logPsram();
 
     pinMode(BOARD_1V8_EN, OUTPUT);
     pinMode(BOARD_LORA_EN, OUTPUT);
@@ -476,13 +486,19 @@ void setup() {
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(I2C_FREQUENCY);
 
+    // --- Protocol path first (same order as cooperative f2ab5e4) ---
+    logPsram();
+    if (!initRadio()) Serial.println("[BOOT] Radio failed");
+    initStorageAndProto();
+    if (g_destHex[0] == '.') fillDestFromNvs();
+    logPsram();  // free_int after node alloc
+
+    // --- UI after node is allocated ---
     if (!g_display.begin()) { Serial.println("[BOOT] Display FAILED"); return; }
     if (!LvglPort::begin(g_display)) { Serial.println("[BOOT] LVGL FAILED"); return; }
 
     g_kbOk = g_kb.begin();
-    if (!initRadio()) Serial.println("[BOOT] Radio failed");
-    initStorageAndProto();
-    if (g_destHex[0] == '.') fillDestFromNvs();
+    if (g_kbOk) Serial.println("[KEYBOARD] TCA8418 keyboard ready");
 
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready");

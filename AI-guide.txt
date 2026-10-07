@@ -1,12 +1,12 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-05 (Phase E chunk 5)
+Last updated: 2026-10-07 (Phase E chunk 6)
 ================================================================================
 
 OVERALL GOALS
 -------------
 1. Port Ratspeak to T-Deck Pro (GDEQ031T10 240x320 e-ink).
-2. Keep Cooperative / Node green.
+2. Keep Cooperative / Node green (known-good: f2ab5e4 headless).
 3. Standalone e-ink bring-up (not full Plus UI).
 4. Later: clean upstream-friendly history rewrite.
 
@@ -20,46 +20,36 @@ STANDALONE RULES
 ----------------
 Exclude LvglApplication.cpp and ui/lvgl. Include boards/tdeck_Pro.
 bindDeviceOwner() before ProtocolRuntime. Full files preferred. ASCII only.
+Single fullRefresh per screen change.
 
 PHASE STATUS
 ------------
 A-D ★ DONE ★ panel, LVGL, shell
-E1  ★ DONE ★ battery + LOCAL_DEST
-E2  ★ DONE ★ LoRa RSSI, MessageStore counts
-E2b ★ DONE ★ no auto-rotate; Enter / serial next
-E3  partial  ProtocolRuntime linked; node alloc fails
-E3b ★ DONE ★ multi-cap try; dest NVS fallback; touch via INT
-E4  ★ DONE ★ message list attempt; removed floating [>]
-E5  THIS     better msg page + startup-ID fallback + PSRAM probe on Settings
+E1-E5 ★ DONE ★ battery, dest, LoRa, counts, touch INT, msg fallback
+E6  THIS     protocol BEFORE LVGL; try internal heap if PSRAM size=0
 
-DEVICE FACTS (2026-10-05)
+DEVICE FACTS (2026-10-07)
 -------------------------
-free_spiram=0 still, even after platformio.ini psram_type=opi / flash_mode=qio.
-Protocol needs ~200KB -> stays off. LOCAL_DEST from NVS is correct.
-Touch INT works. 1 conv / 1 unread is real LittleFS metadata.
-Conversation page returns empty (summary bank not seeded); E5 falls back to
-startupRecentMessageIds or shows "(N stored, list empty)".
+PSRAM: found=1 size=0 on current tree (SPIRAM compiled in, IGNORE_NOTFOUND).
+Old cooperative f2ab5e4: [PROTO] Ready=yes, node=200672, free heap ~52K after.
+Conclusion: 200KB node works on this board when allocated EARLY (before heavy UI).
+Standalone was failing because LVGL ate internal heap first.
 
-PSRAM BLOCKER
--------------
-ini already has BOARD_HAS_PSRAM + qio_opi + psram_type=opi.
-Still free_spiram=0 / ESP.getPsramSize() likely 0.
-Next experiments (pick one):
-  A) Confirm fullclean: pio run -e tdeck_pro_standalone -t fullclean
-  B) Switch standalone board=esp32-s3-devkitc-1 with same qio_opi + 16MB
-  C) Compare cooperative boot serial for [PSRAM] line (add same log there)
-Do not keep retrying 200KB alloc in main until PSRAM size > 0.
+E6 CHANGE
+---------
+setup() order: power -> I2C -> radio -> storage+proto -> display+LVGL -> UI.
+initStorageAndProto tries SPIRAM only if getPsramSize()>0; else DEFAULT/INTERNAL.
+Expect [PROTO] up if free_int is large enough before LVGL.
 
 NEXT
 ----
-1. Flash E5; note Settings "PSRAM xxxK" and serial [PSRAM] / [MSG] lines.
-2. Fix PSRAM (board/sdkconfig), then ProtocolRuntime comes up for free.
-3. Real conversation rows once summary bank is populated (or after first
-   cooperative-written message settles under standalone).
-4. Phase F: upstream history rewrite.
+1. Flash E6; look for [PROTO] up dest=... (not skip/off).
+2. Home should show live Paths/Links/LXMF Q when proto up.
+3. Settings should show (protocol up).
+4. PSRAM mapping still open later; not required if internal path holds.
 
 ONE-LINER
 ---------
-Shell + battery + LoRa + dest + touch + counts work. Message page empty
-but counts real. ProtocolRuntime blocked until PSRAM is actually mapped.
+Cooperative proves protocol on this hardware. E6 starts protocol before LVGL
+so the 200KB node can allocate from internal heap like f2ab5e4.
 ================================================================================
