@@ -23,8 +23,8 @@
 #include "ratspeak_protocol.h"
 
 // ---------------------------------------------------------------------------
-// Phase E chunk 6 — protocol BEFORE LVGL; internal node when PSRAM size=0
-// setup order: power -> I2C -> radio -> storage+proto -> display+LVGL -> UI
+// Phase E chunk 7 — proto before LVGL; msg preload before display;
+// single-stroke labels; conversation page cache (avoid err=2 Allocation)
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
@@ -67,6 +67,7 @@ struct MsgRow {
 static MsgRow g_msgRows[MSG_ROWS];
 static int g_msgRowCount = 0;
 static char g_msgNote[40] = "";
+static bool g_msgRowsLoaded = false;
 
 static void spiBusIdle() {
     pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
@@ -169,10 +170,8 @@ static bool initStorageAndProto() {
 
     logPsram();
 
-    // PSRAM reports found=1 but size=0 on this board/tree. DEFAULT can still
-    // route into a broken SPIRAM path and abort in Rust open_transport.
-    // Only use SPIRAM when size is real; otherwise stay on internal heap
-    // (matches cooperative f2ab5e4 ~200KB node early allocation).
+    // PSRAM reports found=1 but size=0 on this board/tree. Only use SPIRAM
+    // when size is real; otherwise stay on internal heap.
     const size_t psSize = ESP.getPsramSize();
     const size_t psFree = ESP.getFreePsram();
     if (psramFound() && psSize > 0 && psFree > 250000) {
@@ -183,7 +182,6 @@ static bool initStorageAndProto() {
     }
 
     if (!g_protoReady) {
-        // Prefer pure internal. Avoid DEFAULT when PSRAM is broken.
         if (tryProto(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT, "INTERNAL|8BIT") ||
             tryProto(MALLOC_CAP_INTERNAL, "INTERNAL") ||
             tryProto(MALLOC_CAP_8BIT, "8BIT")) {
@@ -211,7 +209,84 @@ static bool initStorageAndProto() {
     return true;
 }
 
-static void loadMessageRows() {
+static void applyConversationViews(const handheld::storage::ConversationView* views,
+                                   size_t take) {
+    for (size_t i = 0; i < take && g_msgRowCount < MSG_ROWS; i++) {
+        MsgRow& r = g_msgRows[g_msgRowCount];
+        r.used = true;
+        if (views[i].unreadCount > 0)
+            snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x *%u",
+                     views[i].peer[0], views[i].peer[1],
+                     views[i].peer[2], views[i].peer[3],
+                     (unsigned)views[i].unreadCount);
+        else
+            snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x",
+                     views[i].peer[0], views[i].peer[1],
+                     views[i].peer[2], views[i].peer[3]);
+        size_t pl = views[i].previewLength;
+        if (pl >= sizeof(r.line2)) pl = sizeof(r.line2) - 1;
+        memcpy(r.line2, views[i].preview, pl);
+        r.line2[pl] = '\0';
+        for (size_t k = 0; k < pl; k++) {
+            if ((unsigned char)r.line2[k] < 32 ||
+                (unsigned char)r.line2[k] > 126)
+                r.line2[k] = '?';
+        }
+        g_msgRowCount++;
+    }
+}
+
+static bool tryConversationPage(uint8_t limit) {
+    using namespace handheld::storage;
+
+    auto sub = g_msgStore.requestConversationPage(
+        {}, false, ConversationOrder::Recent, ConversationDirection::After, limit);
+    if (!sub.accepted()) {
+        Serial.printf("[MSG] page rejected rejection=%u limit=%u free_int=%u\n",
+                      (unsigned)sub.rejection, (unsigned)limit,
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        return false;
+    }
+
+    for (int spin = 0; spin < 600; spin++) {
+        g_msgStore.poll();
+        Result res;
+        if (!g_msgStore.peekResult(sub.ticket, res)) {
+            delay(5);
+            continue;
+        }
+        Serial.printf(
+            "[MSG] page outcome=%u err=%u len=%u total=%u more=%d limit=%u free_int=%u\n",
+            (unsigned)res.outcome, (unsigned)res.error,
+            (unsigned)res.length, (unsigned)res.total, (int)res.more,
+            (unsigned)limit,
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
+        bool ok = (res.outcome == Outcome::Committed &&
+                   res.error == Error::None &&
+                   res.length >= sizeof(ConversationView));
+        if (ok) {
+            const size_t n = res.length / sizeof(ConversationView);
+            size_t take = n > (size_t)MSG_ROWS ? (size_t)MSG_ROWS : n;
+            ConversationView views[MSG_ROWS];
+            if (g_msgStore.readPayload(sub.ticket, views,
+                                       take * sizeof(ConversationView)))
+                applyConversationViews(views, take);
+        }
+        g_msgStore.releaseResult(sub.ticket);
+        return g_msgRowCount > 0;
+    }
+    Serial.println("[MSG] page timeout");
+    g_msgStore.releaseResult(sub.ticket);
+    return false;
+}
+
+static void loadMessageRows(bool force = false) {
+    if (g_msgRowsLoaded && !force && g_msgRowCount > 0) {
+        Serial.printf("[MSG] using cached %d rows\n", g_msgRowCount);
+        return;
+    }
+
     g_msgRowCount = 0;
     g_msgNote[0] = '\0';
     for (int i = 0; i < MSG_ROWS; i++) g_msgRows[i].used = false;
@@ -220,59 +295,12 @@ static void loadMessageRows() {
         return;
     }
 
-    using namespace handheld::storage;
+    Serial.printf("[MSG] load free_int=%u\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
-    auto sub = g_msgStore.requestConversationPage(
-        {}, false, ConversationOrder::Recent, ConversationDirection::After, MSG_ROWS);
-
-    if (sub.accepted()) {
-        for (int spin = 0; spin < 400; spin++) {
-            g_msgStore.poll();
-            Result res;
-            if (!g_msgStore.peekResult(sub.ticket, res)) {
-                delay(5);
-                continue;
-            }
-            Serial.printf("[MSG] page outcome=%u err=%u len=%u total=%u more=%d\n",
-                          (unsigned)res.outcome, (unsigned)res.error,
-                          (unsigned)res.length, (unsigned)res.total, (int)res.more);
-            if (res.outcome == Outcome::Committed && res.error == Error::None &&
-                res.length >= sizeof(ConversationView)) {
-                const size_t n = res.length / sizeof(ConversationView);
-                size_t take = n > (size_t)MSG_ROWS ? (size_t)MSG_ROWS : n;
-                ConversationView views[MSG_ROWS];
-                if (g_msgStore.readPayload(sub.ticket, views, take * sizeof(ConversationView))) {
-                    for (size_t i = 0; i < take; i++) {
-                        MsgRow& r = g_msgRows[i];
-                        r.used = true;
-                        if (views[i].unreadCount > 0)
-                            snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x *%u",
-                                     views[i].peer[0], views[i].peer[1],
-                                     views[i].peer[2], views[i].peer[3],
-                                     (unsigned)views[i].unreadCount);
-                        else
-                            snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x",
-                                     views[i].peer[0], views[i].peer[1],
-                                     views[i].peer[2], views[i].peer[3]);
-                        size_t pl = views[i].previewLength;
-                        if (pl >= sizeof(r.line2)) pl = sizeof(r.line2) - 1;
-                        memcpy(r.line2, views[i].preview, pl);
-                        r.line2[pl] = '\0';
-                        for (size_t k = 0; k < pl; k++) {
-                            if ((unsigned char)r.line2[k] < 32 ||
-                                (unsigned char)r.line2[k] > 126)
-                                r.line2[k] = '?';
-                        }
-                        g_msgRowCount++;
-                    }
-                }
-            }
-            g_msgStore.releaseResult(sub.ticket);
-            break;
-        }
-    } else {
-        Serial.printf("[MSG] page rejected %u\n", (unsigned)sub.rejection);
-    }
+    // Prefer full page; on Allocation (err=2) retry a single row.
+    if (!tryConversationPage(MSG_ROWS))
+        tryConversationPage(1);
 
     if (g_msgRowCount == 0) {
         auto ids = g_msgStore.startupRecentMessageIds(MSG_ROWS);
@@ -283,7 +311,7 @@ static void loadMessageRows() {
         for (size_t i = 0; i < ids.size() && g_msgRowCount < MSG_ROWS; i++) {
             MsgRow& r = g_msgRows[g_msgRowCount];
             r.used = true;
-            snprintf(r.line1, sizeof(r.line1), "id %.16s", ids[i].c_str());
+            snprintf(r.line1, sizeof(r.line1), "msg %.12s", ids[i].c_str());
             r.line2[0] = '\0';
             g_msgRowCount++;
         }
@@ -298,6 +326,9 @@ static void loadMessageRows() {
             snprintf(g_msgNote, sizeof(g_msgNote), "(%d unread, list empty)", u);
         else
             snprintf(g_msgNote, sizeof(g_msgNote), "(no conversations)");
+    } else {
+        g_msgRowsLoaded = true;
+        Serial.printf("[MSG] loaded %d rows\n", g_msgRowCount);
     }
 }
 
@@ -342,7 +373,7 @@ static void refreshLiveData() {
 }
 
 static void fat_label(lv_obj_t* parent, const char* txt, lv_coord_t x, lv_coord_t y) {
-    // Single stroke — clearer on 240x320 e-ink than the old 2x2 "bold" overdraw
+    // Single stroke — clearer on 240x320 e-ink than 2x2 overdraw
     lv_obj_t* o = lv_label_create(parent);
     lv_label_set_text(o, txt);
     lv_obj_set_style_text_font(o, &lv_font_montserrat_16, 0);
@@ -447,9 +478,7 @@ static void build_settings() {
     fat_label(g_root, g_protoReady ? "(protocol up)" : "(protocol off)", 8, y);
     y += 28;
     char ps[40];
-    snprintf(ps, sizeof(ps), "PSRAM %uK int %uK",
-             (unsigned)(ESP.getPsramSize() / 1024),
-             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+    snprintf(ps, sizeof(ps), "PSRAM %uK", (unsigned)(ESP.getPsramSize() / 1024));
     fat_label(g_root, ps, 8, y);
     make_footer("3/3 Setup Enter/touch next");
 }
@@ -457,7 +486,7 @@ static void build_settings() {
 static void show_screen(ScreenId id) {
     g_screen = id;
     refreshLiveData();
-    if (id == SCR_MESSAGES) loadMessageRows();
+    if (id == SCR_MESSAGES) loadMessageRows(false);
     switch (id) {
         case SCR_HOME: build_home(); break;
         case SCR_MESSAGES: build_messages(); break;
@@ -478,13 +507,12 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 6");
-    Serial.println(" proto BEFORE LVGL; internal if PSRAM=0");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 7");
+    Serial.println(" proto first, msg preload, then e-ink");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
 
-    // power
     pinMode(BOARD_1V8_EN, OUTPUT);
     pinMode(BOARD_LORA_EN, OUTPUT);
     digitalWrite(BOARD_1V8_EN, HIGH);
@@ -496,36 +524,36 @@ void setup() {
     digitalWrite(TOUCH_RST, HIGH); delay(50);
     pinMode(TOUCH_INT, INPUT_PULLUP);
 
-    // I2C
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(I2C_FREQUENCY);
 
     spiBusIdle();
-    SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
-    delay(10);
     logPsram();
 
-    // radio then storage+proto WHILE internal heap is still large
-    // (cooperative proved ~200KB node works when allocated early)
-    Serial.printf("[BOOT] before radio free_int=%u\n",
-                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     if (!initRadio()) Serial.println("[BOOT] Radio failed");
     initStorageAndProto();
     if (g_destHex[0] == '.') fillDestFromNvs();
     logPsram();
 
-    // keyboard (light)
-    g_kbOk = g_kb.begin();
-    if (g_kbOk) Serial.println("[KEYBOARD] TCA8418 keyboard ready");
+    // Preload conversation rows while free_int is still ~40K (before LVGL).
+    // Post-LVGL page requests often hit Error::Allocation (err=2).
+    if (g_storeReady) {
+        Serial.printf("[MSG] preload free_int=%u\n",
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        loadMessageRows(true);
+    }
 
-    // display + LVGL last
+    spiBusIdle();
     Serial.printf("[BOOT] before display free_int=%u\n",
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
     if (!g_display.begin()) { Serial.println("[BOOT] Display FAILED"); return; }
     Serial.println("[BOOT] display OK");
     if (!LvglPort::begin(g_display)) { Serial.println("[BOOT] LVGL FAILED"); return; }
     Serial.println("[BOOT] LVGL OK");
-    logPsram();
+
+    g_kbOk = g_kb.begin();
+    if (g_kbOk) Serial.println("[KEYBOARD] TCA8418 keyboard ready");
 
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready");
