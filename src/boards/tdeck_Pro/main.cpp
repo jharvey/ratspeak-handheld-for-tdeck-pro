@@ -23,8 +23,7 @@
 #include "ratspeak_protocol.h"
 
 // ---------------------------------------------------------------------------
-// Phase E chunk 7b — conversation PAGE returns ConversationSelector (32B);
-// detail via requestConversation -> ConversationView (72B + preview)
+// Phase E chunk 8 — revision-aware msg cache; 8-byte peer prefix
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
@@ -68,6 +67,7 @@ static MsgRow g_msgRows[MSG_ROWS];
 static int g_msgRowCount = 0;
 static char g_msgNote[40] = "";
 static bool g_msgRowsLoaded = false;
+static uint32_t g_msgCacheRevision = 0;
 
 static void spiBusIdle() {
     pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
@@ -207,7 +207,6 @@ static bool initStorageAndProto() {
     return true;
 }
 
-// Wait for one ticket result (poll until ready or timeout).
 static bool waitResult(MessageStore::Ticket ticket, MessageStore::Result& res,
                        int maxSpin = 600) {
     for (int spin = 0; spin < maxSpin; spin++) {
@@ -218,17 +217,24 @@ static bool waitResult(MessageStore::Ticket ticket, MessageStore::Result& res,
     return false;
 }
 
+static void formatPeerLine(char* out, size_t outLen, const uint8_t peer[16],
+                           uint32_t unread) {
+    if (unread > 0)
+        snprintf(out, outLen, "%02x%02x%02x%02x%02x%02x%02x%02x *%u",
+                 peer[0], peer[1], peer[2], peer[3],
+                 peer[4], peer[5], peer[6], peer[7],
+                 (unsigned)unread);
+    else
+        snprintf(out, outLen, "%02x%02x%02x%02x%02x%02x%02x%02x",
+                 peer[0], peer[1], peer[2], peer[3],
+                 peer[4], peer[5], peer[6], peer[7]);
+}
+
 static void applyView(const handheld::storage::ConversationView& v) {
     if (g_msgRowCount >= MSG_ROWS) return;
     MsgRow& r = g_msgRows[g_msgRowCount];
     r.used = true;
-    if (v.unreadCount > 0)
-        snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x *%u",
-                 v.peer[0], v.peer[1], v.peer[2], v.peer[3],
-                 (unsigned)v.unreadCount);
-    else
-        snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x",
-                 v.peer[0], v.peer[1], v.peer[2], v.peer[3]);
+    formatPeerLine(r.line1, sizeof(r.line1), v.peer, v.unreadCount);
     size_t pl = v.previewLength;
     if (pl >= sizeof(r.line2)) pl = sizeof(r.line2) - 1;
     memcpy(r.line2, v.preview, pl);
@@ -244,14 +250,11 @@ static void applySelectorOnly(const handheld::storage::ConversationSelector& s) 
     if (g_msgRowCount >= MSG_ROWS) return;
     MsgRow& r = g_msgRows[g_msgRowCount];
     r.used = true;
-    snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x",
-             s.cursor.peer[0], s.cursor.peer[1],
-             s.cursor.peer[2], s.cursor.peer[3]);
+    formatPeerLine(r.line1, sizeof(r.line1), s.cursor.peer, 0);
     r.line2[0] = '\0';
     g_msgRowCount++;
 }
 
-// PAGE -> ConversationSelector[]; DETAIL -> ConversationView per selector.
 static bool tryConversationPage(uint8_t limit) {
     using namespace handheld::storage;
 
@@ -298,7 +301,6 @@ static bool tryConversationPage(uint8_t limit) {
                       sel.cursor.peer[0], sel.cursor.peer[1],
                       sel.cursor.peer[2], sel.cursor.peer[3]);
 
-        // Detail needs counter > 0 and error == None
         if (!sel.counter || sel.error != Error::None) {
             applySelectorOnly(sel);
             continue;
@@ -337,10 +339,16 @@ static bool tryConversationPage(uint8_t limit) {
 }
 
 static void loadMessageRows(bool force = false) {
-    if (g_msgRowsLoaded && !force && g_msgRowCount > 0) {
-        Serial.printf("[MSG] using cached %d rows\n", g_msgRowCount);
+    if (g_storeReady) g_msgStore.poll();
+    const uint32_t rev = g_storeReady ? g_msgStore.revision() : 0;
+
+    if (g_msgRowsLoaded && !force && g_msgRowCount > 0 && rev == g_msgCacheRevision) {
+        Serial.printf("[MSG] using cached %d rows rev=%u\n", g_msgRowCount, (unsigned)rev);
         return;
     }
+    if (g_msgRowsLoaded && rev != g_msgCacheRevision)
+        Serial.printf("[MSG] cache stale rev %u -> %u\n",
+                      (unsigned)g_msgCacheRevision, (unsigned)rev);
 
     g_msgRowCount = 0;
     g_msgNote[0] = '\0';
@@ -350,8 +358,9 @@ static void loadMessageRows(bool force = false) {
         return;
     }
 
-    Serial.printf("[MSG] load free_int=%u\n",
-                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    Serial.printf("[MSG] load free_int=%u rev=%u\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                  (unsigned)rev);
 
     if (!tryConversationPage(MSG_ROWS))
         tryConversationPage(1);
@@ -380,9 +389,12 @@ static void loadMessageRows(bool force = false) {
             snprintf(g_msgNote, sizeof(g_msgNote), "(%d unread, list empty)", u);
         else
             snprintf(g_msgNote, sizeof(g_msgNote), "(no conversations)");
+        g_msgRowsLoaded = false;
     } else {
         g_msgRowsLoaded = true;
-        Serial.printf("[MSG] loaded %d rows\n", g_msgRowCount);
+        g_msgCacheRevision = g_msgStore.revision();
+        Serial.printf("[MSG] loaded %d rows rev=%u\n",
+                      g_msgRowCount, (unsigned)g_msgCacheRevision);
     }
 }
 
@@ -560,8 +572,8 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 7b");
-    Serial.println(" page=Selector detail=View preload");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 8");
+    Serial.println(" revision-aware msg cache");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -639,6 +651,11 @@ void loop() {
         else if (c == 'h' || c == 'H' || c == '1') show_screen(SCR_HOME);
         else if (c == 'm' || c == 'M' || c == '2') show_screen(SCR_MESSAGES);
         else if (c == 's' || c == 'S' || c == '3') show_screen(SCR_SETTINGS);
+        else if (c == 'r' || c == 'R') {
+            // Force message reload + redraw Messages
+            loadMessageRows(true);
+            show_screen(SCR_MESSAGES);
+        }
     }
     delay(5);
 }
