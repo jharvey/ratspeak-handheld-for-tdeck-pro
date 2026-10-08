@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-07 (Phase E chunk 6)
+Last updated: 2026-10-08 (Phase E chunk 7 — e-ink shell live)
 ================================================================================
 
 OVERALL GOALS
@@ -15,41 +15,55 @@ HARDWARE
 EPD CS=34 DC=35 BUSY=37 RST=16. SPI SCK=36 MOSI=33 MISO=47.
 Power BOARD_1V8_EN BOARD_LORA_EN. Touch CST328 0x1A INT=12 RST=45.
 Keyboard TCA8418 0x34. BoardConfig = source of truth.
+Silicon: ESP32-S3FN16R8 (16MB flash + 8MB OPI PSRAM on hardware).
 
 STANDALONE RULES
 ----------------
 Exclude LvglApplication.cpp and ui/lvgl. Include boards/tdeck_Pro.
 bindDeviceOwner() before ProtocolRuntime. Full files preferred. ASCII only.
 Single fullRefresh per screen change.
+GxEPD2 page_height=16 (not HEIGHT) so static RAM stays small after 200KB node.
+Framebuffer is app-owned; push with firstPage + drawBitmap (1 = black).
+LVGL flush: anything not pure white -> black (AA edges under LV_COLOR_16_SWAP).
 
 PHASE STATUS
 ------------
-A-D ★ DONE ★ panel, LVGL, shell
+A-D   ★ DONE ★ panel, LVGL, multi-screen shell
 E1-E5 ★ DONE ★ battery, dest, LoRa, counts, touch INT, msg fallback
-E6  THIS     protocol BEFORE LVGL; try internal heap if PSRAM size=0
+E6    ★ DONE ★ protocol BEFORE LVGL; internal heap when PSRAM size=0
+E7    ★ DONE ★ e-ink survives post-proto heap; single-stroke labels; live shell
 
-DEVICE FACTS (2026-10-07)
+DEVICE FACTS (2026-10-08)
 -------------------------
-PSRAM: found=1 size=0 on current tree (SPIRAM compiled in, IGNORE_NOTFOUND).
-Old cooperative f2ab5e4: [PROTO] Ready=yes, node=200672, free heap ~52K after.
-Conclusion: 200KB node works on this board when allocated EARLY (before heavy UI).
-Standalone was failing because LVGL ate internal heap first.
+PSRAM: still found=1 size=0 free=0 caps_spiram=0 on current tree.
+  SPIRAM is compiled in; OPI map fails at runtime (IGNORE_NOTFOUND path).
+  Expect size≈8MB only after mapping is fixed — not required for bring-up.
+Internal path holds:
+  Before radio  free_int ≈ 281K
+  After proto   free_int ≈ 44K  (node=200672 SMALL)
+  After FB+LVGL free_int ≈ 24K
+  fullRefresh bits_set typically 6K–11K / 76800 on Home/Settings
+Proto up: dest=ca53afea5f8f1fbc, LoRa RX live, touch cycles screens.
+Messages: ConversationView page can return err=2; startupRecentMessageIds fallback works.
 
-E6 CHANGE
----------
+E6/E7 LAYOUT
+------------
 setup() order: power -> I2C -> radio -> storage+proto -> display+LVGL -> UI.
-initStorageAndProto tries SPIRAM only if getPsramSize()>0; else DEFAULT/INTERNAL.
-Expect [PROTO] up if free_int is large enough before LVGL.
+DisplayEink: no second SPI.begin/power; park CS only; page_height 16.
+LvglPort: 20-line draw strip (~9.6KB) after proto.
+fat_label: single stroke (no 2x2 overdraw).
 
 NEXT
 ----
-1. Flash E6; look for [PROTO] up dest=... (not skip/off).
-2. Home should show live Paths/Links/LXMF Q when proto up.
-3. Settings should show (protocol up).
-4. PSRAM mapping still open later; not required if internal path holds.
+1. Messages screen: fix ConversationView page err=2 so real peer/preview rows show
+   (keep startupRecentMessageIds as fallback).
+2. Optional: slightly smaller font if montserrat_16 still feels heavy on glass.
+3. PSRAM OPI map (later): aim for getPsramSize()≈8MB; then prefer SPIRAM for
+   node/FB/LVGL. Do not block UI work on this.
+4. Keep cooperative/node green; do not pull LvglApplication or ui/lvgl into standalone.
 
 ONE-LINER
 ---------
-Cooperative proves protocol on this hardware. E6 starts protocol before LVGL
-so the 200KB node can allocate from internal heap like f2ab5e4.
+Standalone e-ink shell is live on internal heap with protocol up. PSRAM size=0
+is known and deferred; next concrete win is real conversation rows on Messages.
 ================================================================================
