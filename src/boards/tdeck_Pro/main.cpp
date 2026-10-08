@@ -342,14 +342,12 @@ static void refreshLiveData() {
 }
 
 static void fat_label(lv_obj_t* parent, const char* txt, lv_coord_t x, lv_coord_t y) {
-    for (int dy = 0; dy <= 1; dy++)
-        for (int dx = 0; dx <= 1; dx++) {
-            lv_obj_t* o = lv_label_create(parent);
-            lv_label_set_text(o, txt);
-            lv_obj_set_style_text_font(o, &lv_font_montserrat_16, 0);
-            lv_obj_set_style_text_color(o, lv_color_black(), 0);
-            lv_obj_set_pos(o, x + dx, y + dy);
-        }
+    // Single stroke — clearer on 240x320 e-ink than the old 2x2 "bold" overdraw
+    lv_obj_t* o = lv_label_create(parent);
+    lv_label_set_text(o, txt);
+    lv_obj_set_style_text_font(o, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(o, lv_color_black(), 0);
+    lv_obj_set_pos(o, x, y);
 }
 
 static void clear_screen() {
