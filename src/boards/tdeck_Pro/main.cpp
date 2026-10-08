@@ -23,7 +23,7 @@
 #include "ratspeak_protocol.h"
 
 // ---------------------------------------------------------------------------
-// Phase E chunk 8 — revision-aware msg cache; 8-byte peer prefix
+// Phase E chunk 9 — manual announce (serial a / Settings)
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
@@ -56,6 +56,7 @@ static char g_linksStr[8]   = "0";
 static char g_lxmfqStr[8]   = "0";
 static char g_convStr[24]   = "0 conv";
 static char g_unreadStr[16] = "0 unread";
+static char g_announceStr[20] = "never";
 
 static constexpr int MSG_ROWS = 4;
 struct MsgRow {
@@ -196,6 +197,7 @@ static bool initStorageAndProto() {
         if (dest) {
             for (int i = 0; i < 16; i++) sprintf(g_destHex + i * 2, "%02x", dest[i]);
             g_destHex[16] = '\0';
+            g_announceMgr.setLocalDestHash(rs::Bytes(dest, 16));
         }
         Serial.printf("[PROTO] up dest=%s free_int=%u\n",
                       g_destHex,
@@ -205,6 +207,39 @@ static bool initStorageAndProto() {
         fillDestFromNvs();
     }
     return true;
+}
+
+// Manual announce — empty app-data is valid (ProtocolBackend contract).
+// Rate-limit 5s so we do not flood the air.
+static void doAnnounce() {
+    if (!g_protoReady) {
+        strcpy(g_announceStr, "proto off");
+        Serial.println("[ANN] proto off");
+        return;
+    }
+    static unsigned long lastMs = 0;
+    if (lastMs != 0 && (millis() - lastMs) < 5000UL) {
+        strcpy(g_announceStr, "wait 5s");
+        Serial.println("[ANN] rate limited (5s)");
+        return;
+    }
+
+    auto r = g_proto.announce(nullptr, 0);
+    lastMs = millis();
+    switch (r) {
+        case ProtocolBackend::AnnounceResult::Sent:
+            strcpy(g_announceStr, "sent");
+            Serial.printf("[ANN] sent dest=%s\n", g_destHex);
+            break;
+        case ProtocolBackend::AnnounceResult::Deferred:
+            strcpy(g_announceStr, "deferred");
+            Serial.println("[ANN] deferred (radio busy)");
+            break;
+        default:
+            strcpy(g_announceStr, "failed");
+            Serial.println("[ANN] failed");
+            break;
+    }
 }
 
 static bool waitResult(MessageStore::Ticket ticket, MessageStore::Result& res,
@@ -539,9 +574,12 @@ static void build_settings() {
     add_row(y, "TX power", txp);
     add_row(y, "WiFi", "off");
     add_row(y, "Display", "e-ink");
-    y += 14;
+    add_row(y, "Announce", g_announceStr);
+    y += 8;
     fat_label(g_root, g_protoReady ? "(protocol up)" : "(protocol off)", 8, y);
-    y += 28;
+    y += 24;
+    fat_label(g_root, "serial a = announce", 8, y);
+    y += 24;
     char ps[40];
     snprintf(ps, sizeof(ps), "PSRAM %uK", (unsigned)(ESP.getPsramSize() / 1024));
     fat_label(g_root, ps, 8, y);
@@ -572,8 +610,8 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 8");
-    Serial.println(" revision-aware msg cache");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 9");
+    Serial.println(" announce: serial a");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -620,6 +658,7 @@ void setup() {
 
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready");
+    Serial.println("[HINT] serial: a=announce r=reload msgs n=next");
 }
 
 void loop() {
@@ -629,9 +668,18 @@ void loop() {
 
     if (g_kbOk) {
         g_kb.update();
-        if (g_kb.hasEvent() && g_kb.getEvent().enter) {
-            g_kb.discardPending();
-            next_screen();
+        if (g_kb.hasEvent()) {
+            const KeyEvent& ev = g_kb.getEvent();
+            if (ev.enter) {
+                g_kb.discardPending();
+                next_screen();
+            } else if (ev.character == 'a' || ev.character == 'A') {
+                g_kb.discardPending();
+                doAnnounce();
+                if (g_screen == SCR_SETTINGS) show_screen(SCR_SETTINGS);
+            } else {
+                g_kb.discardPending();
+            }
         }
     }
 
@@ -652,9 +700,11 @@ void loop() {
         else if (c == 'm' || c == 'M' || c == '2') show_screen(SCR_MESSAGES);
         else if (c == 's' || c == 'S' || c == '3') show_screen(SCR_SETTINGS);
         else if (c == 'r' || c == 'R') {
-            // Force message reload + redraw Messages
             loadMessageRows(true);
             show_screen(SCR_MESSAGES);
+        } else if (c == 'a' || c == 'A') {
+            doAnnounce();
+            if (g_screen == SCR_SETTINGS) show_screen(SCR_SETTINGS);
         }
     }
     delay(5);
