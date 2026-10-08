@@ -23,8 +23,8 @@
 #include "ratspeak_protocol.h"
 
 // ---------------------------------------------------------------------------
-// Phase E chunk 6c — display+LVGL FIRST, then radio+proto (avoid OOM)
-// Protocol stays on internal heap while PSRAM size=0.
+// Phase E chunk 6 — protocol BEFORE LVGL; internal node when PSRAM size=0
+// setup order: power -> I2C -> radio -> storage+proto -> display+LVGL -> UI
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
@@ -120,7 +120,9 @@ static bool fillDestFromNvs() {
 
 static bool initRadio() {
     spiBusIdle();
-    // SPI already started for e-ink; keep bus, only ensure CS idle
+    SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
+    delay(10);
+
     g_radio = new SX1262(&SPI, LORA_CS, SPI_SCK, SPI_MOSI, SPI_MISO,
                          LORA_RST, LORA_IRQ, LORA_BUSY, LORA_RXEN,
                          LORA_HAS_TCXO, LORA_DIO2_AS_RF_SWITCH);
@@ -152,8 +154,8 @@ static void logPsram() {
 }
 
 static bool tryProto(uint32_t caps, const char* label) {
-    Serial.printf("[PROTO] try %s free_int=%u\n", label,
-                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    Serial.printf("[PROTO] try %s free_int=%u\n", label, (unsigned)freeInt);
     return g_proto.begin(&g_flash, nullptr, &g_idMgr, &g_msgStore,
                          &g_announceMgr, RS_HANDHELD_PROFILE_SMALL, caps);
 }
@@ -167,8 +169,13 @@ static bool initStorageAndProto() {
 
     logPsram();
 
-    // Prefer real PSRAM if mapped; else internal (cooperative proved ~200KB works)
-    if (psramFound() && ESP.getPsramSize() > 0 && ESP.getFreePsram() > 250000) {
+    // PSRAM reports found=1 but size=0 on this board/tree. DEFAULT can still
+    // route into a broken SPIRAM path and abort in Rust open_transport.
+    // Only use SPIRAM when size is real; otherwise stay on internal heap
+    // (matches cooperative f2ab5e4 ~200KB node early allocation).
+    const size_t psSize = ESP.getPsramSize();
+    const size_t psFree = ESP.getFreePsram();
+    if (psramFound() && psSize > 0 && psFree > 250000) {
         if (tryProto(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, "SPIRAM|8BIT") ||
             tryProto(MALLOC_CAP_DEFAULT, "DEFAULT")) {
             g_protoReady = true;
@@ -176,8 +183,10 @@ static bool initStorageAndProto() {
     }
 
     if (!g_protoReady) {
-        if (tryProto(MALLOC_CAP_DEFAULT, "DEFAULT") ||
-            tryProto(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT, "INTERNAL|8BIT")) {
+        // Prefer pure internal. Avoid DEFAULT when PSRAM is broken.
+        if (tryProto(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT, "INTERNAL|8BIT") ||
+            tryProto(MALLOC_CAP_INTERNAL, "INTERNAL") ||
+            tryProto(MALLOC_CAP_8BIT, "8BIT")) {
             g_protoReady = true;
         }
     }
@@ -192,7 +201,8 @@ static bool initStorageAndProto() {
             for (int i = 0; i < 16; i++) sprintf(g_destHex + i * 2, "%02x", dest[i]);
             g_destHex[16] = '\0';
         }
-        Serial.printf("[PROTO] up dest=%s free_int=%u\n", g_destHex,
+        Serial.printf("[PROTO] up dest=%s free_int=%u\n",
+                      g_destHex,
                       (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     } else {
         Serial.println("[PROTO] off — store-only");
@@ -470,12 +480,13 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 6c");
-    Serial.println(" display+LVGL first, then radio+proto");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 6");
+    Serial.println(" proto BEFORE LVGL; internal if PSRAM=0");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
 
+    // power
     pinMode(BOARD_1V8_EN, OUTPUT);
     pinMode(BOARD_LORA_EN, OUTPUT);
     digitalWrite(BOARD_1V8_EN, HIGH);
@@ -487,6 +498,7 @@ void setup() {
     digitalWrite(TOUCH_RST, HIGH); delay(50);
     pinMode(TOUCH_INT, INPUT_PULLUP);
 
+    // I2C
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(I2C_FREQUENCY);
 
@@ -495,23 +507,26 @@ void setup() {
     delay(10);
     logPsram();
 
-    // --- Display + LVGL while internal heap is still rich ---
+    // radio then storage+proto WHILE internal heap is still large
+    // (cooperative proved ~200KB node works when allocated early)
+    Serial.printf("[BOOT] before radio free_int=%u\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    if (!initRadio()) Serial.println("[BOOT] Radio failed");
+    initStorageAndProto();
+    if (g_destHex[0] == '.') fillDestFromNvs();
+    logPsram();
+
+    // keyboard (light)
+    g_kbOk = g_kb.begin();
+    if (g_kbOk) Serial.println("[KEYBOARD] TCA8418 keyboard ready");
+
+    // display + LVGL last
     Serial.printf("[BOOT] before display free_int=%u\n",
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     if (!g_display.begin()) { Serial.println("[BOOT] Display FAILED"); return; }
     Serial.println("[BOOT] display OK");
     if (!LvglPort::begin(g_display)) { Serial.println("[BOOT] LVGL FAILED"); return; }
     Serial.println("[BOOT] LVGL OK");
-    logPsram();
-
-    g_kbOk = g_kb.begin();
-    if (g_kbOk) Serial.println("[KEYBOARD] TCA8418 keyboard ready");
-
-    // --- Radio then protocol (proto uses ~200KB internal) ---
-    spiBusIdle();
-    if (!initRadio()) Serial.println("[BOOT] Radio failed");
-    initStorageAndProto();
-    if (g_destHex[0] == '.') fillDestFromNvs();
     logPsram();
 
     show_screen(SCR_HOME);
