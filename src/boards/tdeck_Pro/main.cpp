@@ -23,8 +23,8 @@
 #include "ratspeak_protocol.h"
 
 // ---------------------------------------------------------------------------
-// Phase E chunk 7 — proto before LVGL; msg preload before display;
-// single-stroke labels; conversation page cache (avoid err=2 Allocation)
+// Phase E chunk 7b — conversation PAGE returns ConversationSelector (32B);
+// detail via requestConversation -> ConversationView (72B + preview)
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
@@ -170,8 +170,6 @@ static bool initStorageAndProto() {
 
     logPsram();
 
-    // PSRAM reports found=1 but size=0 on this board/tree. Only use SPIRAM
-    // when size is real; otherwise stay on internal heap.
     const size_t psSize = ESP.getPsramSize();
     const size_t psFree = ESP.getFreePsram();
     if (psramFound() && psSize > 0 && psFree > 250000) {
@@ -209,33 +207,51 @@ static bool initStorageAndProto() {
     return true;
 }
 
-static void applyConversationViews(const handheld::storage::ConversationView* views,
-                                   size_t take) {
-    for (size_t i = 0; i < take && g_msgRowCount < MSG_ROWS; i++) {
-        MsgRow& r = g_msgRows[g_msgRowCount];
-        r.used = true;
-        if (views[i].unreadCount > 0)
-            snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x *%u",
-                     views[i].peer[0], views[i].peer[1],
-                     views[i].peer[2], views[i].peer[3],
-                     (unsigned)views[i].unreadCount);
-        else
-            snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x",
-                     views[i].peer[0], views[i].peer[1],
-                     views[i].peer[2], views[i].peer[3]);
-        size_t pl = views[i].previewLength;
-        if (pl >= sizeof(r.line2)) pl = sizeof(r.line2) - 1;
-        memcpy(r.line2, views[i].preview, pl);
-        r.line2[pl] = '\0';
-        for (size_t k = 0; k < pl; k++) {
-            if ((unsigned char)r.line2[k] < 32 ||
-                (unsigned char)r.line2[k] > 126)
-                r.line2[k] = '?';
-        }
-        g_msgRowCount++;
+// Wait for one ticket result (poll until ready or timeout).
+static bool waitResult(MessageStore::Ticket ticket, MessageStore::Result& res,
+                       int maxSpin = 600) {
+    for (int spin = 0; spin < maxSpin; spin++) {
+        g_msgStore.poll();
+        if (g_msgStore.peekResult(ticket, res)) return true;
+        delay(5);
     }
+    return false;
 }
 
+static void applyView(const handheld::storage::ConversationView& v) {
+    if (g_msgRowCount >= MSG_ROWS) return;
+    MsgRow& r = g_msgRows[g_msgRowCount];
+    r.used = true;
+    if (v.unreadCount > 0)
+        snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x *%u",
+                 v.peer[0], v.peer[1], v.peer[2], v.peer[3],
+                 (unsigned)v.unreadCount);
+    else
+        snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x",
+                 v.peer[0], v.peer[1], v.peer[2], v.peer[3]);
+    size_t pl = v.previewLength;
+    if (pl >= sizeof(r.line2)) pl = sizeof(r.line2) - 1;
+    memcpy(r.line2, v.preview, pl);
+    r.line2[pl] = '\0';
+    for (size_t k = 0; k < pl; k++) {
+        if ((unsigned char)r.line2[k] < 32 || (unsigned char)r.line2[k] > 126)
+            r.line2[k] = '?';
+    }
+    g_msgRowCount++;
+}
+
+static void applySelectorOnly(const handheld::storage::ConversationSelector& s) {
+    if (g_msgRowCount >= MSG_ROWS) return;
+    MsgRow& r = g_msgRows[g_msgRowCount];
+    r.used = true;
+    snprintf(r.line1, sizeof(r.line1), "%02x%02x%02x%02x",
+             s.cursor.peer[0], s.cursor.peer[1],
+             s.cursor.peer[2], s.cursor.peer[3]);
+    r.line2[0] = '\0';
+    g_msgRowCount++;
+}
+
+// PAGE -> ConversationSelector[]; DETAIL -> ConversationView per selector.
 static bool tryConversationPage(uint8_t limit) {
     using namespace handheld::storage;
 
@@ -248,37 +264,76 @@ static bool tryConversationPage(uint8_t limit) {
         return false;
     }
 
-    for (int spin = 0; spin < 600; spin++) {
-        g_msgStore.poll();
-        Result res;
-        if (!g_msgStore.peekResult(sub.ticket, res)) {
-            delay(5);
+    Result res;
+    if (!waitResult(sub.ticket, res)) {
+        Serial.println("[MSG] page timeout");
+        g_msgStore.releaseResult(sub.ticket);
+        return false;
+    }
+
+    Serial.printf(
+        "[MSG] page outcome=%u err=%u len=%u total=%u more=%d limit=%u free_int=%u\n",
+        (unsigned)res.outcome, (unsigned)res.error,
+        (unsigned)res.length, (unsigned)res.total, (int)res.more,
+        (unsigned)limit,
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
+    ConversationSelector selectors[MSG_ROWS];
+    size_t nSel = 0;
+    if (res.outcome == Outcome::Committed && res.error == Error::None &&
+        res.length >= sizeof(ConversationSelector)) {
+        nSel = res.length / sizeof(ConversationSelector);
+        if (nSel > (size_t)MSG_ROWS) nSel = (size_t)MSG_ROWS;
+        if (!g_msgStore.readPayload(sub.ticket, selectors,
+                                    nSel * sizeof(ConversationSelector)))
+            nSel = 0;
+    }
+    g_msgStore.releaseResult(sub.ticket);
+
+    for (size_t i = 0; i < nSel && g_msgRowCount < MSG_ROWS; i++) {
+        const ConversationSelector& sel = selectors[i];
+        Serial.printf("[MSG] sel[%u] ctr=%u in=%u err=%u peer=%02x%02x%02x%02x\n",
+                      (unsigned)i, (unsigned)sel.counter, (unsigned)sel.incoming,
+                      (unsigned)sel.error,
+                      sel.cursor.peer[0], sel.cursor.peer[1],
+                      sel.cursor.peer[2], sel.cursor.peer[3]);
+
+        // Detail needs counter > 0 and error == None
+        if (!sel.counter || sel.error != Error::None) {
+            applySelectorOnly(sel);
             continue;
         }
-        Serial.printf(
-            "[MSG] page outcome=%u err=%u len=%u total=%u more=%d limit=%u free_int=%u\n",
-            (unsigned)res.outcome, (unsigned)res.error,
-            (unsigned)res.length, (unsigned)res.total, (int)res.more,
-            (unsigned)limit,
-            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
-        bool ok = (res.outcome == Outcome::Committed &&
-                   res.error == Error::None &&
-                   res.length >= sizeof(ConversationView));
-        if (ok) {
-            const size_t n = res.length / sizeof(ConversationView);
-            size_t take = n > (size_t)MSG_ROWS ? (size_t)MSG_ROWS : n;
-            ConversationView views[MSG_ROWS];
-            if (g_msgStore.readPayload(sub.ticket, views,
-                                       take * sizeof(ConversationView)))
-                applyConversationViews(views, take);
+        auto dsub = g_msgStore.requestConversation(sel);
+        if (!dsub.accepted()) {
+            Serial.printf("[MSG] detail rejected %u\n", (unsigned)dsub.rejection);
+            applySelectorOnly(sel);
+            continue;
         }
-        g_msgStore.releaseResult(sub.ticket);
-        return g_msgRowCount > 0;
+
+        Result dres;
+        if (!waitResult(dsub.ticket, dres)) {
+            Serial.println("[MSG] detail timeout");
+            g_msgStore.releaseResult(dsub.ticket);
+            applySelectorOnly(sel);
+            continue;
+        }
+        Serial.printf("[MSG] detail outcome=%u err=%u len=%u\n",
+                      (unsigned)dres.outcome, (unsigned)dres.error,
+                      (unsigned)dres.length);
+
+        ConversationView view;
+        bool got = (dres.outcome == Outcome::Committed &&
+                    dres.error == Error::None &&
+                    dres.length >= sizeof(ConversationView) &&
+                    g_msgStore.readPayload(dsub.ticket, &view, sizeof(view)));
+        g_msgStore.releaseResult(dsub.ticket);
+
+        if (got) applyView(view);
+        else applySelectorOnly(sel);
     }
-    Serial.println("[MSG] page timeout");
-    g_msgStore.releaseResult(sub.ticket);
-    return false;
+
+    return g_msgRowCount > 0;
 }
 
 static void loadMessageRows(bool force = false) {
@@ -298,7 +353,6 @@ static void loadMessageRows(bool force = false) {
     Serial.printf("[MSG] load free_int=%u\n",
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
-    // Prefer full page; on Allocation (err=2) retry a single row.
     if (!tryConversationPage(MSG_ROWS))
         tryConversationPage(1);
 
@@ -373,7 +427,6 @@ static void refreshLiveData() {
 }
 
 static void fat_label(lv_obj_t* parent, const char* txt, lv_coord_t x, lv_coord_t y) {
-    // Single stroke — clearer on 240x320 e-ink than 2x2 overdraw
     lv_obj_t* o = lv_label_create(parent);
     lv_label_set_text(o, txt);
     lv_obj_set_style_text_font(o, &lv_font_montserrat_16, 0);
@@ -507,8 +560,8 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 7");
-    Serial.println(" proto first, msg preload, then e-ink");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 7b");
+    Serial.println(" page=Selector detail=View preload");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -535,8 +588,6 @@ void setup() {
     if (g_destHex[0] == '.') fillDestFromNvs();
     logPsram();
 
-    // Preload conversation rows while free_int is still ~40K (before LVGL).
-    // Post-LVGL page requests often hit Error::Allocation (err=2).
     if (g_storeReady) {
         Serial.printf("[MSG] preload free_int=%u\n",
                       (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
