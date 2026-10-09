@@ -3,7 +3,7 @@
 
 void setup() {
     Serial.begin(115200);
-    delay(800);  // USB-CDC: give Putty time after reset
+    delay(800);
     Serial.println();
     Serial.println("[MAIN] setup");
     Serial.flush();
@@ -19,7 +19,7 @@ void setup() {
 
 void loop() {
     static uint32_t lastBeat = 0;
-    if (millis() - lastBeat > 5000) {
+    if (millis() - lastBeat > 60000UL) {
         lastBeat = millis();
         Serial.printf("[MAIN] beat free_int=%u\n",
                       (unsigned)ESP.getFreeHeap());

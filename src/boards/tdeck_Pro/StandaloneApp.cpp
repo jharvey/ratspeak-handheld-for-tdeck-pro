@@ -79,15 +79,14 @@ uint32_t g_msgCacheRevision = 0;
 bool g_bootAnnDone = false;
 uint32_t g_bootAnnAt = 0;
 
-// Auto-redraw Messages when store revision moves while that screen is open.
 uint32_t g_lastUiRevision = 0;
 uint32_t g_lastMsgRedrawMs = 0;
-constexpr uint32_t MSG_REDRAW_MIN_MS = 2500;  // e-ink: do not thrash
+constexpr uint32_t MSG_REDRAW_MIN_MS = 2500;
 
 void peerToHex32(const uint8_t peer[16], char out[33]);
 void show_screen(ScreenId id);
 void doAnnounce();
-void doSendTest();
+void doSendTest(const char* body);
 void loadMessageRows(bool force);
 
 void spiBusIdle() {
@@ -254,7 +253,7 @@ void doAnnounce() {
     }
 }
 
-void doSendTest() {
+void doSendTest(const char* body) {
     if (!g_protoReady) {
         strcpy(g_txStr, "proto off");
         Serial.println("[TX] proto off");
@@ -272,15 +271,27 @@ void doSendTest() {
         return;
     }
 
+    if (!body || !body[0]) body = "ping from tdeck-pro";
+    char local[161];
+    size_t n = strlen(body);
+    if (n >= sizeof(local)) n = sizeof(local) - 1;
+    memcpy(local, body, n);
+    local[n] = '\0';
+    while (n > 0 && (local[n - 1] == '\r' || local[n - 1] == '\n' || local[n - 1] == ' '))
+        local[--n] = '\0';
+    if (n == 0) {
+        strcpy(local, "ping from tdeck-pro");
+        n = strlen(local);
+    }
+
     const uint8_t* dest = g_msgRows[0].peer;
-    const char* body = "ping from tdeck-pro";
     char hex[33];
     peerToHex32(dest, hex);
-    Serial.printf("[TX] to %s body=\"%s\" free_int=%u\n", hex, body,
+    Serial.printf("[TX] to %s body=\"%s\" free_int=%u\n", hex, local,
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
     auto sub = g_proto.lxmfSubmit(dest, nullptr, 0,
-                                  (const uint8_t*)body, strlen(body), false);
+                                  (const uint8_t*)local, n, false);
     if (!sub.accepted()) {
         snprintf(g_txStr, sizeof(g_txStr), "rej %u", (unsigned)sub.rejection);
         Serial.printf("[TX] rejected %u\n", (unsigned)sub.rejection);
@@ -662,7 +673,7 @@ void build_settings() {
     y += 8;
     fat_label(g_root, g_protoReady ? "(protocol up)" : "(protocol off)", 8, y);
     y += 24;
-    fat_label(g_root, "a=ann  t=tx test", 8, y);
+    fat_label(g_root, "a=ann  t=tx text", 8, y);
     y += 24;
     char ps[40];
     snprintf(ps, sizeof(ps), "PSRAM %uK", (unsigned)(ESP.getPsramSize() / 1024));
@@ -690,7 +701,6 @@ void next_screen() {
     show_screen((ScreenId)((g_screen + 1) % SCR_COUNT));
 }
 
-// While Messages is visible, fullRefresh if store revision moved (min interval).
 void maybeAutoRedrawMessages() {
     if (g_screen != SCR_MESSAGES || !g_storeReady) return;
     g_msgStore.poll();
@@ -708,8 +718,8 @@ void maybeAutoRedrawMessages() {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 13");
-    Serial.println(" split StandaloneApp + msg auto-redraw");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 15");
+    Serial.println(" serial t <text> compose");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -763,7 +773,7 @@ bool begin() {
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready");
     g_bootAnnAt = millis() + 3000;
-    Serial.println("[HINT] a=announce t=send r=reload n=next");
+    Serial.println("[HINT] Enter lines: t | t hello | a | r | n/m/h/s");
     return true;
 }
 
@@ -793,7 +803,7 @@ void loop() {
                 if (g_screen == SCR_SETTINGS) show_screen(SCR_SETTINGS);
             } else if (ev.character == 't' || ev.character == 'T') {
                 g_kb.discardPending();
-                doSendTest();
+                doSendTest(nullptr);
                 if (g_screen == SCR_SETTINGS || g_screen == SCR_MESSAGES)
                     show_screen(g_screen);
             } else {
@@ -812,22 +822,45 @@ void loop() {
     }
     lastInt = tInt;
 
+    static char line[180];
+    static size_t lineLen = 0;
     while (Serial.available()) {
         char c = (char)Serial.read();
-        if (c == 'n' || c == 'N' || c == '>') next_screen();
-        else if (c == 'h' || c == 'H' || c == '1') show_screen(SCR_HOME);
-        else if (c == 'm' || c == 'M' || c == '2') show_screen(SCR_MESSAGES);
-        else if (c == 's' || c == 'S' || c == '3') show_screen(SCR_SETTINGS);
-        else if (c == 'r' || c == 'R') {
-            loadMessageRows(true);
-            show_screen(SCR_MESSAGES);
-        } else if (c == 'a' || c == 'A') {
-            doAnnounce();
-            if (g_screen == SCR_SETTINGS) show_screen(SCR_SETTINGS);
-        } else if (c == 't' || c == 'T') {
-            doSendTest();
-            if (g_screen == SCR_SETTINGS || g_screen == SCR_MESSAGES)
-                show_screen(g_screen);
+        if (c == '\r' || c == '\n') {
+            if (lineLen == 0) continue;
+            line[lineLen] = '\0';
+            lineLen = 0;
+            char* p = line;
+            while (*p == ' ') p++;
+            if (p[0] == 't' || p[0] == 'T') {
+                const char* body = nullptr;
+                if (p[1] == ':' || p[1] == ' ') {
+                    body = p + 2;
+                    while (*body == ' ') body++;
+                    if (!*body) body = nullptr;
+                }
+                doSendTest(body);
+                if (g_screen == SCR_SETTINGS || g_screen == SCR_MESSAGES)
+                    show_screen(g_screen);
+            } else if (p[0] == 'a' || p[0] == 'A') {
+                doAnnounce();
+                if (g_screen == SCR_SETTINGS) show_screen(SCR_SETTINGS);
+            } else if (p[0] == 'r' || p[0] == 'R') {
+                loadMessageRows(true);
+                show_screen(SCR_MESSAGES);
+            } else if (p[0] == 'n' || p[0] == 'N' || p[0] == '>') {
+                next_screen();
+            } else if (p[0] == 'h' || p[0] == 'H' || p[0] == '1') {
+                show_screen(SCR_HOME);
+            } else if (p[0] == 'm' || p[0] == 'M' || p[0] == '2') {
+                show_screen(SCR_MESSAGES);
+            } else if (p[0] == 's' || p[0] == 'S' || p[0] == '3') {
+                show_screen(SCR_SETTINGS);
+            } else {
+                Serial.printf("[CMD] unknown \"%s\" (t/a/r/n/m/h/s)\n", p);
+            }
+        } else if (c >= 32 && c < 127) {
+            if (lineLen + 1 < sizeof(line)) line[lineLen++] = c;
         }
     }
     delay(5);
