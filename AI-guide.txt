@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-08 (Phase E chunk 7 — e-ink shell live)
+Last updated: 2026-10-08 (Phase E chunk 9 — announce + live LXMF)
 ================================================================================
 
 OVERALL GOALS
@@ -22,48 +22,38 @@ STANDALONE RULES
 Exclude LvglApplication.cpp and ui/lvgl. Include boards/tdeck_Pro.
 bindDeviceOwner() before ProtocolRuntime. Full files preferred. ASCII only.
 Single fullRefresh per screen change.
-GxEPD2 page_height=16 (not HEIGHT) so static RAM stays small after 200KB node.
-Framebuffer is app-owned; push with firstPage + drawBitmap (1 = black).
-LVGL flush: anything not pure white -> black (AA edges under LV_COLOR_16_SWAP).
+GxEPD2 page_height=16; FB app-owned; firstPage+drawBitmap (1=black).
+LVGL flush: non-white -> black. fat_label: single stroke.
 
 PHASE STATUS
 ------------
 A-D   ★ DONE ★ panel, LVGL, multi-screen shell
-E1-E5 ★ DONE ★ battery, dest, LoRa, counts, touch INT, msg fallback
-E6    ★ DONE ★ protocol BEFORE LVGL; internal heap when PSRAM size=0
-E7    ★ DONE ★ e-ink survives post-proto heap; single-stroke labels; live shell
+E1-E5 ★ DONE ★ battery, dest, LoRa, counts, touch, msg fallback
+E6    ★ DONE ★ protocol BEFORE LVGL; internal node when PSRAM size=0
+E7    ★ DONE ★ e-ink post-proto; ConversationSelector page + View detail
+E8    ★ DONE ★ revision-aware msg cache; 8-byte peer prefix
+E9    ★ DONE ★ manual announce (serial a); inbound LXMF verified on hardware
 
 DEVICE FACTS (2026-10-08)
 -------------------------
-PSRAM: still found=1 size=0 free=0 caps_spiram=0 on current tree.
-  SPIRAM is compiled in; OPI map fails at runtime (IGNORE_NOTFOUND path).
-  Expect size≈8MB only after mapping is fixed — not required for bring-up.
-Internal path holds:
-  Before radio  free_int ≈ 281K
-  After proto   free_int ≈ 44K  (node=200672 SMALL)
-  After FB+LVGL free_int ≈ 24K
-  fullRefresh bits_set typically 6K–11K / 76800 on Home/Settings
-Proto up: dest=ca53afea5f8f1fbc, LoRa RX live, touch cycles screens.
-Messages: ConversationView page can return err=2; startupRecentMessageIds fallback works.
-
-E6/E7 LAYOUT
-------------
-setup() order: power -> I2C -> radio -> storage+proto -> display+LVGL -> UI.
-DisplayEink: no second SPI.begin/power; park CS only; page_height 16.
-LvglPort: 20-line draw strip (~9.6KB) after proto.
-fat_label: single stroke (no 2x2 overdraw).
+PSRAM: found=1 size=0 free=0 (OPI map still broken; deferred).
+Internal path holds: free_int ~44K after proto, ~24K after LVGL.
+Conversation page returns ConversationSelector (32B each), NOT View.
+  Detail: requestConversation(selector) -> ConversationView (72B + preview).
+Announce: g_proto.announce(nullptr,0); rate-limit 5s manual.
+  Hardware proof: [ANN] sent + inbound msg file under /messages/<peer>/...
+Serial: a=announce r=reload msgs n/h/m/s screens.
 
 NEXT
 ----
-1. Messages screen: fix ConversationView page err=2 so real peer/preview rows show
-   (keep startupRecentMessageIds as fallback).
-2. Optional: slightly smaller font if montserrat_16 still feels heavy on glass.
-3. PSRAM OPI map (later): aim for getPsramSize()≈8MB; then prefer SPIRAM for
-   node/FB/LVGL. Do not block UI work on this.
-4. Keep cooperative/node green; do not pull LvglApplication or ui/lvgl into standalone.
+1. Show peer display name from AnnounceManager::lookupName when known.
+2. Optional one delayed boot announce (~3s after ready).
+3. Compose/send LXMF (bigger slice).
+4. PSRAM OPI map later (size~8MB); do not block UI.
+5. Keep cooperative/node green; no LvglApplication in standalone.
 
 ONE-LINER
 ---------
-Standalone e-ink shell is live on internal heap with protocol up. PSRAM size=0
-is known and deferred; next concrete win is real conversation rows on Messages.
+Standalone shell runs protocol+e-ink on internal heap; announce and inbound
+LXMF work on hardware. PSRAM still size=0. Next: name labels + boot announce.
 ================================================================================

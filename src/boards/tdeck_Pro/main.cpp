@@ -5,6 +5,7 @@
 #include <Preferences.h>
 #include <stdio.h>
 #include <string.h>
+#include <string>
 #include <esp_heap_caps.h>
 
 #include "config/BoardConfig.h"
@@ -21,9 +22,10 @@
 #include "protocol/ProtocolRuntime.h"
 #include "runtime/TaskOwner.h"
 #include "ratspeak_protocol.h"
+#include "util/Bytes.h"
 
 // ---------------------------------------------------------------------------
-// Phase E chunk 9 — manual announce (serial a / Settings)
+// Phase E chunk 10 — name labels + boot announce
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
@@ -69,6 +71,9 @@ static int g_msgRowCount = 0;
 static char g_msgNote[40] = "";
 static bool g_msgRowsLoaded = false;
 static uint32_t g_msgCacheRevision = 0;
+
+static bool g_bootAnnDone = false;
+static uint32_t g_bootAnnAt = 0;
 
 static void spiBusIdle() {
     pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
@@ -209,8 +214,6 @@ static bool initStorageAndProto() {
     return true;
 }
 
-// Manual announce — empty app-data is valid (ProtocolBackend contract).
-// Rate-limit 5s so we do not flood the air.
 static void doAnnounce() {
     if (!g_protoReady) {
         strcpy(g_announceStr, "proto off");
@@ -252,13 +255,27 @@ static bool waitResult(MessageStore::Ticket ticket, MessageStore::Result& res,
     return false;
 }
 
+static void peerToHex32(const uint8_t peer[16], char out[33]) {
+    for (int i = 0; i < 16; i++) sprintf(out + i * 2, "%02x", peer[i]);
+    out[32] = '\0';
+}
+
 static void formatPeerLine(char* out, size_t outLen, const uint8_t peer[16],
                            uint32_t unread) {
+    char hex[33];
+    peerToHex32(peer, hex);
+    std::string name = g_announceMgr.lookupName(hex);
+    if (!name.empty()) {
+        if (unread > 0)
+            snprintf(out, outLen, "%.18s *%u", name.c_str(), (unsigned)unread);
+        else
+            snprintf(out, outLen, "%.20s", name.c_str());
+        return;
+    }
     if (unread > 0)
         snprintf(out, outLen, "%02x%02x%02x%02x%02x%02x%02x%02x *%u",
                  peer[0], peer[1], peer[2], peer[3],
-                 peer[4], peer[5], peer[6], peer[7],
-                 (unsigned)unread);
+                 peer[4], peer[5], peer[6], peer[7], (unsigned)unread);
     else
         snprintf(out, outLen, "%02x%02x%02x%02x%02x%02x%02x%02x",
                  peer[0], peer[1], peer[2], peer[3],
@@ -610,8 +627,8 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 9");
-    Serial.println(" announce: serial a");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 10");
+    Serial.println(" names + boot announce");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -658,6 +675,7 @@ void setup() {
 
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready");
+    g_bootAnnAt = millis() + 3000;
     Serial.println("[HINT] serial: a=announce r=reload msgs n=next");
 }
 
@@ -665,6 +683,12 @@ void loop() {
     if (g_protoReady) g_proto.loop();
     if (g_storeReady) g_msgStore.poll();
     g_announceMgr.loop();
+
+    if (!g_bootAnnDone && g_bootAnnAt != 0 && millis() >= g_bootAnnAt) {
+        g_bootAnnDone = true;
+        Serial.println("[ANN] boot announce");
+        doAnnounce();
+    }
 
     if (g_kbOk) {
         g_kb.update();
