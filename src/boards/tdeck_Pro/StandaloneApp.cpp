@@ -76,6 +76,16 @@ char g_msgNote[40] = "";
 bool g_msgRowsLoaded = false;
 uint32_t g_msgCacheRevision = 0;
 
+constexpr int HIST_ROWS = 4;
+struct HistRow {
+    char line[28];
+    bool used;
+};
+HistRow g_histRows[HIST_ROWS];
+int g_histRowCount = 0;
+bool g_showHistory = false;
+char g_histNote[40] = "";
+
 bool g_bootAnnDone = false;
 uint32_t g_bootAnnAt = 0;
 
@@ -88,6 +98,7 @@ void show_screen(ScreenId id);
 void doAnnounce();
 void doSendTest(const char* body);
 void loadMessageRows(bool force);
+void loadHistoryRows();
 
 void spiBusIdle() {
     pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
@@ -471,6 +482,115 @@ bool tryConversationPage(uint8_t limit) {
     return g_msgRowCount > 0;
 }
 
+void loadHistoryRows() {
+    g_histRowCount = 0;
+    g_histNote[0] = '\0';
+    for (int i = 0; i < HIST_ROWS; i++) g_histRows[i].used = false;
+
+    if (!g_storeReady || g_msgRowCount == 0 || !g_msgRows[0].used) {
+        snprintf(g_histNote, sizeof(g_histNote), "(no peer)");
+        return;
+    }
+
+    char hex[33];
+    peerToHex32(g_msgRows[0].peer, hex);
+    std::string peerHex(hex);
+    Serial.printf("[HIST] load peer=%s free_int=%u\n", hex,
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
+    using namespace handheld::storage;
+    auto sub = g_msgStore.requestHistoryPage(
+        peerHex, HistoryEntry{}, (uint8_t)HIST_ROWS, HistoryDirection::Before);
+    if (!sub.accepted()) {
+        Serial.printf("[HIST] page rejected %u\n", (unsigned)sub.rejection);
+        snprintf(g_histNote, sizeof(g_histNote), "(hist rejected)");
+        return;
+    }
+
+    Result res;
+    if (!waitResult(sub.ticket, res)) {
+        g_msgStore.releaseResult(sub.ticket);
+        snprintf(g_histNote, sizeof(g_histNote), "(hist timeout)");
+        return;
+    }
+    Serial.printf("[HIST] page outcome=%u err=%u len=%u total=%u\n",
+                  (unsigned)res.outcome, (unsigned)res.error,
+                  (unsigned)res.length, (unsigned)res.total);
+
+    HistoryEntry entries[HIST_ROWS];
+    size_t nEnt = 0;
+    if (res.outcome == Outcome::Committed && res.error == Error::None &&
+        res.length >= sizeof(HistoryEntry)) {
+        nEnt = res.length / sizeof(HistoryEntry);
+        if (nEnt > (size_t)HIST_ROWS) nEnt = (size_t)HIST_ROWS;
+        if (!g_msgStore.readPayload(sub.ticket, entries, nEnt * sizeof(HistoryEntry)))
+            nEnt = 0;
+    }
+    g_msgStore.releaseResult(sub.ticket);
+
+    for (size_t i = 0; i < nEnt && g_histRowCount < HIST_ROWS; i++) {
+        RecordKey key{};
+        memcpy(key.peer, g_msgRows[0].peer, 16);
+        key.counter = entries[i].counter;
+        key.incoming = entries[i].incoming;
+
+        auto rsub = g_msgStore.requestRecord(key, 0, 96);
+        if (!rsub.accepted()) {
+            HistRow& h = g_histRows[g_histRowCount++];
+            h.used = true;
+            snprintf(h.line, sizeof(h.line), "%s#%u",
+                     entries[i].incoming ? "<" : ">", (unsigned)entries[i].counter);
+            continue;
+        }
+        Result rres;
+        if (!waitResult(rsub.ticket, rres) ||
+            rres.outcome != Outcome::Committed || rres.error != Error::None) {
+            g_msgStore.releaseResult(rsub.ticket);
+            HistRow& h = g_histRows[g_histRowCount++];
+            h.used = true;
+            snprintf(h.line, sizeof(h.line), "%s#%u",
+                     entries[i].incoming ? "<" : ">", (unsigned)entries[i].counter);
+            continue;
+        }
+
+        uint8_t buf[160];
+        size_t want = rres.length < sizeof(buf) ? rres.length : sizeof(buf);
+        bool ok = g_msgStore.readPayload(rsub.ticket, buf, want);
+        g_msgStore.releaseResult(rsub.ticket);
+
+        HistRow& h = g_histRows[g_histRowCount++];
+        h.used = true;
+        const char* arrow = entries[i].incoming ? "<" : ">";
+        if (!ok || want < sizeof(StoredRecordHeader)) {
+            snprintf(h.line, sizeof(h.line), "%s#%u", arrow, (unsigned)entries[i].counter);
+            continue;
+        }
+        StoredRecordHeader hdr;
+        memcpy(&hdr, buf, sizeof(hdr));
+        size_t off = sizeof(StoredRecordHeader);
+        if (off + hdr.titleLength <= want) off += hdr.titleLength;
+        size_t clen = hdr.contentLength;
+        if (off + clen > want) clen = want > off ? want - off : 0;
+        char snip[20];
+        size_t copy = clen < sizeof(snip) - 1 ? clen : sizeof(snip) - 1;
+        memcpy(snip, buf + off, copy);
+        snip[copy] = '\0';
+        for (size_t k = 0; k < copy; k++) {
+            if ((unsigned char)snip[k] < 32 || (unsigned char)snip[k] > 126)
+                snip[k] = '?';
+        }
+        if (copy)
+            snprintf(h.line, sizeof(h.line), "%s %s", arrow, snip);
+        else
+            snprintf(h.line, sizeof(h.line), "%s#%u", arrow, (unsigned)entries[i].counter);
+    }
+
+    if (g_histRowCount == 0)
+        snprintf(g_histNote, sizeof(g_histNote), "(no history)");
+    else
+        Serial.printf("[HIST] loaded %d rows\n", g_histRowCount);
+}
+
 void loadMessageRows(bool force) {
     if (g_storeReady) g_msgStore.poll();
     const uint32_t rev = g_storeReady ? g_msgStore.revision() : 0;
@@ -635,6 +755,25 @@ void build_messages() {
                            g_msgRows[i].peer, g_msgRows[i].unread);
     }
     clear_screen();
+    if (g_showHistory) {
+        make_header("History");
+        int y = 40;
+        if (g_msgRowCount > 0 && g_msgRows[0].used) {
+            fat_label(g_root, g_msgRows[0].line1, 8, y);
+            y += 26;
+        }
+        if (g_histRowCount == 0) {
+            fat_label(g_root, g_histNote[0] ? g_histNote : "(empty)", 8, y);
+        } else {
+            for (int i = 0; i < g_histRowCount; i++) {
+                fat_label(g_root, g_histRows[i].line, 8, y);
+                y += 26;
+                if (y > EPD_HEIGHT - 40) break;
+            }
+        }
+        make_footer("H=list  t=send");
+        return;
+    }
     make_header("Messages");
     int y = 40;
     add_row(y, "Convs", g_convStr);
@@ -655,7 +794,7 @@ void build_messages() {
             if (y > EPD_HEIGHT - 40) break;
         }
     }
-    make_footer("2/3 Msgs  t=send test");
+    make_footer("2/3 Msgs  H=history");
 }
 
 void build_settings() {
@@ -718,8 +857,8 @@ void maybeAutoRedrawMessages() {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 15");
-    Serial.println(" serial t <text> compose");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 17");
+    Serial.println(" history: serial H");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -773,7 +912,7 @@ bool begin() {
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready");
     g_bootAnnAt = millis() + 3000;
-    Serial.println("[HINT] Enter lines: t | t hello | a | r | n/m/h/s");
+    Serial.println("[HINT] t | t hello | H=history | a | r | n/m/h/s");
     return true;
 }
 
@@ -848,16 +987,24 @@ void loop() {
             } else if (p[0] == 'r' || p[0] == 'R') {
                 loadMessageRows(true);
                 show_screen(SCR_MESSAGES);
+            } else if (p[0] == 'H') {
+                g_showHistory = !g_showHistory;
+                if (g_showHistory) loadHistoryRows();
+                show_screen(SCR_MESSAGES);
             } else if (p[0] == 'n' || p[0] == 'N' || p[0] == '>') {
+                g_showHistory = false;
                 next_screen();
-            } else if (p[0] == 'h' || p[0] == 'H' || p[0] == '1') {
+            } else if (p[0] == 'h' || p[0] == '1') {
+                g_showHistory = false;
                 show_screen(SCR_HOME);
             } else if (p[0] == 'm' || p[0] == 'M' || p[0] == '2') {
+                g_showHistory = false;
                 show_screen(SCR_MESSAGES);
             } else if (p[0] == 's' || p[0] == 'S' || p[0] == '3') {
+                g_showHistory = false;
                 show_screen(SCR_SETTINGS);
             } else {
-                Serial.printf("[CMD] unknown \"%s\" (t/a/r/n/m/h/s)\n", p);
+                Serial.printf("[CMD] unknown \"%s\" (t/a/r/n/m/h/s/H)\n", p);
             }
         } else if (c >= 32 && c < 127) {
             if (lineLen + 1 < sizeof(line)) line[lineLen++] = c;
