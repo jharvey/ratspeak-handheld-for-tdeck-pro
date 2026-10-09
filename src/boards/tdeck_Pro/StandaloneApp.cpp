@@ -534,8 +534,13 @@ void loadHistoryRows() {
         key.counter = entries[i].counter;
         key.incoming = entries[i].incoming;
 
-        auto rsub = g_msgStore.requestRecord(key, 0, 96);
+        // Header alone is ~104B; need room for a short title+body snippet.
+        constexpr uint16_t kRecCap = 256;
+        auto rsub = g_msgStore.requestRecord(key, 0, kRecCap);
         if (!rsub.accepted()) {
+            Serial.printf("[HIST] record rej ctr=%u in=%u rej=%u\n",
+                          (unsigned)entries[i].counter, (unsigned)entries[i].incoming,
+                          (unsigned)rsub.rejection);
             HistRow& h = g_histRows[g_histRowCount++];
             h.used = true;
             snprintf(h.line, sizeof(h.line), "%s#%u",
@@ -545,6 +550,9 @@ void loadHistoryRows() {
         Result rres;
         if (!waitResult(rsub.ticket, rres) ||
             rres.outcome != Outcome::Committed || rres.error != Error::None) {
+            Serial.printf("[HIST] record fail ctr=%u out=%u err=%u\n",
+                          (unsigned)entries[i].counter,
+                          (unsigned)rres.outcome, (unsigned)rres.error);
             g_msgStore.releaseResult(rsub.ticket);
             HistRow& h = g_histRows[g_histRowCount++];
             h.used = true;
@@ -553,7 +561,7 @@ void loadHistoryRows() {
             continue;
         }
 
-        uint8_t buf[160];
+        uint8_t buf[256];
         size_t want = rres.length < sizeof(buf) ? rres.length : sizeof(buf);
         bool ok = g_msgStore.readPayload(rsub.ticket, buf, want);
         g_msgStore.releaseResult(rsub.ticket);
@@ -562,6 +570,8 @@ void loadHistoryRows() {
         h.used = true;
         const char* arrow = entries[i].incoming ? "<" : ">";
         if (!ok || want < sizeof(StoredRecordHeader)) {
+            Serial.printf("[HIST] short payload len=%u need=%u\n",
+                          (unsigned)want, (unsigned)sizeof(StoredRecordHeader));
             snprintf(h.line, sizeof(h.line), "%s#%u", arrow, (unsigned)entries[i].counter);
             continue;
         }
@@ -569,11 +579,12 @@ void loadHistoryRows() {
         memcpy(&hdr, buf, sizeof(hdr));
         size_t off = sizeof(StoredRecordHeader);
         if (off + hdr.titleLength <= want) off += hdr.titleLength;
+        else off = want;
         size_t clen = hdr.contentLength;
         if (off + clen > want) clen = want > off ? want - off : 0;
-        char snip[20];
+        char snip[22];
         size_t copy = clen < sizeof(snip) - 1 ? clen : sizeof(snip) - 1;
-        memcpy(snip, buf + off, copy);
+        if (copy) memcpy(snip, buf + off, copy);
         snip[copy] = '\0';
         for (size_t k = 0; k < copy; k++) {
             if ((unsigned char)snip[k] < 32 || (unsigned char)snip[k] > 126)
@@ -583,7 +594,9 @@ void loadHistoryRows() {
             snprintf(h.line, sizeof(h.line), "%s %s", arrow, snip);
         else
             snprintf(h.line, sizeof(h.line), "%s#%u", arrow, (unsigned)entries[i].counter);
-    }
+        Serial.printf("[HIST] %s#%u \"%s\" tlen=%u clen=%u\n",
+                      arrow, (unsigned)entries[i].counter, snip,
+                      (unsigned)hdr.titleLength, (unsigned)hdr.contentLength);    }
 
     if (g_histRowCount == 0)
         snprintf(g_histNote, sizeof(g_histNote), "(no history)");
