@@ -815,7 +815,11 @@ void build_settings() {
     fat_label(g_root, "a=ann  t=tx text", 8, y);
     y += 24;
     char ps[40];
-    snprintf(ps, sizeof(ps), "PSRAM %uK", (unsigned)(ESP.getPsramSize() / 1024));
+    if (ESP.getPsramSize() > 0)
+        snprintf(ps, sizeof(ps), "PSRAM %uK", (unsigned)(ESP.getPsramSize() / 1024));
+    else
+        snprintf(ps, sizeof(ps), "PSRAM n/a");
+	
     fat_label(g_root, ps, 8, y);
     make_footer("3/3 Setup Enter/touch next");
 }

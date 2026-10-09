@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-09 (Phase E chunk 16 — guide through E15)
+Last updated: 2026-10-09 (Phase E chunk 18 — history bodies)
 ================================================================================
 
 OVERALL GOALS
@@ -13,12 +13,12 @@ OVERALL GOALS
 STANDALONE RULES
 ----------------
 Exclude LvglApplication.cpp and ui/lvgl. Include boards/tdeck_Pro.
-bindDeviceOwner() before ProtocolRuntime. Full files preferred. ASCII only.
+bindDeviceOwner() before ProtocolRuntime. Prefer full files on Windows
+(patches often break on CRLF / Tortoise). ASCII only.
 Single fullRefresh per screen change.
 GxEPD2 page_height=16; firstPage+drawBitmap; flush non-white->black.
 fat_label: single stroke. Protocol BEFORE LVGL. Internal node if PSRAM size=0.
-Code layout: thin main.cpp + StandaloneApp.h/.cpp (shell lives in StandaloneApp).
-Patches: apply from repo root with  git apply eNN.patch  (paths inside the patch).
+Code layout: thin main.cpp + StandaloneApp.h/.cpp.
 
 PHASE STATUS
 ------------
@@ -26,61 +26,55 @@ A-D         * DONE * panel, LVGL shell (Home / Messages / Settings)
 E1-E6       * DONE * battery, dest, LoRa, proto-before-LVGL, internal node
 E7          * DONE * ConversationSelector page + ConversationView detail
 E8          * DONE * revision-aware message cache
-E9          * DONE * manual announce (serial a); inbound LXMF on hardware
+E9          * DONE * manual announce (serial a); inbound LXMF
 E10         * DONE * boot announce (+3s)
-E11         * DONE * loadNameCache + resolvePeerName on Messages draw
-E12         * DONE * serial t test LXMF send (fixed ping body)
-E13         * DONE * StandaloneApp split; Messages auto-redraw on revision
-E14         * DONE * LvglPort: skip broken ps_malloc; try 20/10/5 line strips
-E15         * DONE * line serial: t | t <text> | t:text  custom compose
-E16         * DONE * this AI-guide update
+E11         * DONE * loadNameCache + resolvePeerName on draw
+E12         * DONE * serial t fixed ping LXMF
+E13         * DONE * StandaloneApp split; Messages auto-redraw
+E14         * DONE * LvglPort 20/10/5 line strip alloc
+E15         * DONE * line serial t | t <text> compose
+E16         * DONE * AI-guide catch-up
+E17         * DONE * History toggle (serial H); counters on glass
+E18         * DONE * History body snippets (requestRecord cap >= header)
 
-Hardware proof (2026-10-09):
-  [MSG] row peer=659bd853... name="1"
-  [TX] body="hello from pro" outcome=0
-  [LVGL] draw buf 20 lines when largest_int allows; else 10
-  [UI] auto Messages redraw / cache stale rev ...
+Hardware proof:
+  Messages: peer name "1", preview text, unread counts
+  History: [HIST] loaded 4 rows; bodies after E18
+  TX: body="hello from pro" outcome=0
 
 DEVICE FACTS
 ------------
-Board: ESP32-S3FN16R8 (16MB flash + 8MB OPI PSRAM on silicon).
-PSRAM: found=1 size=0 free=0 — OPI map still broken; use INTERNAL path only.
-Heap: ~44-45K free_int after proto; ~25-28K after LVGL when 20-line strip fits.
-  Fragmentation: if largest_int < 9600, LvglPort falls back to 10 then 5 lines.
-Conversation page returns ConversationSelector (32B each), NOT View.
-  Detail: requestConversation(selector) -> ConversationView (72B + preview).
-Announce: g_proto.announce(nullptr, 0); boot +3s; serial line "a"; rate-limit 5s.
-Names: loadNameCache() after setStorage; resolve at Messages draw time.
-Outbound: lxmfSubmit to g_msgRows[0].peer; poll + acknowledge.
-E-ink: CS park with LoRa; one fullRefresh per screen change.
+PSRAM: found=1 size=0 — use INTERNAL only; Settings shows "PSRAM n/a".
+Heap: ~45K post-proto; ~25K post-LVGL (20-line strip when largest_int allows).
+Conversation page = ConversationSelector (32B); detail = ConversationView (72B).
+History page = HistoryEntry (8B each); body via requestRecord.
+  StoredRecordHeader is ~104B — requestRecord capacity MUST be >= header
+  (E17 used 96 and always fell back to #counter only).
+Announce: boot +3s; serial a; rate-limit 5s.
+Outbound: lxmfSubmit to first MsgRow peer.
 
-SERIAL HINTS
-------------
-Putty: type a full line, then Enter (line-oriented since E15).
-  t              default body "ping from tdeck-pro"
-  t hello world  custom body (max ~160 chars)
-  t:hi           same (colon form)
-  a              announce
-  r              force reload Messages
-  n / h / m / s  next / home / messages / settings (also 1 2 3)
-Keyboard t = default ping only; Enter/touch cycles screens.
+SERIAL HINTS (line + Enter)
+---------------------------
+  t / t hello / t:hi   send (default ping or custom)
+  H                    toggle History for first peer
+  a r n h m s / 1 2 3  announce / reload / next / home / msgs / settings
+
+FILE MAP
+--------
+src/boards/tdeck_Pro/main.cpp
+src/boards/tdeck_Pro/StandaloneApp.*
+src/boards/tdeck_Pro/Eink/DisplayEink.*
+src/boards/tdeck_Pro/Eink/LvglPort.*
 
 NEXT
 ----
-1. Optional: conversation history (last N messages under a peer).
-2. Optional: keyboard text compose (heap-light).
-3. PSRAM OPI map later (do not block UI).
-4. Keep cooperative/node green; no LvglApplication in standalone.
-
-FILE MAP (standalone)
----------------------
-src/boards/tdeck_Pro/main.cpp           thin setup/loop
-src/boards/tdeck_Pro/StandaloneApp.*    shell, msgs, announce, TX
-src/boards/tdeck_Pro/Eink/DisplayEink.* GxEPD2 panel + FB
-src/boards/tdeck_Pro/Eink/LvglPort.*    LVGL flush + draw strip alloc
+1. Optional: keyboard text compose
+2. Optional: mark-read / multi-peer list
+3. PSRAM OPI map later
+4. Keep cooperative green
 
 ONE-LINER
 ---------
-Standalone runs protocol + e-ink + announce + named inbox + outbound LXMF on
-internal heap. PSRAM still size=0. Next optional: history view or keyboard compose.
+Standalone: protocol + e-ink + announce + named inbox + outbound + history
+on internal heap. PSRAM still size=0.
 ================================================================================
