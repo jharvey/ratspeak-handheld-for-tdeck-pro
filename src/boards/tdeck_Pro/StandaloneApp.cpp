@@ -72,6 +72,7 @@ struct MsgRow {
 };
 MsgRow g_msgRows[MSG_ROWS];
 int g_msgRowCount = 0;
+int g_selPeer = 0;  // E20: selected MsgRow for TX / History / mark-read
 char g_msgNote[40] = "";
 bool g_msgRowsLoaded = false;
 uint32_t g_msgCacheRevision = 0;
@@ -109,6 +110,8 @@ void composeClear();
 void composeAppend(char c);
 void composeBackspace();
 void composeLog();
+void clampSelPeer();
+bool cycleSelPeer();
 
 void spiBusIdle() {
     pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
@@ -280,7 +283,8 @@ void doSendTest(const char* body) {
         Serial.println("[TX] proto off");
         return;
     }
-    if (g_msgRowCount == 0 || !g_msgRows[0].used) {
+    clampSelPeer();
+    if (g_msgRowCount == 0 || !g_msgRows[g_selPeer].used) {
         strcpy(g_txStr, "no peer");
         Serial.println("[TX] no peer");
         return;
@@ -305,7 +309,7 @@ void doSendTest(const char* body) {
         n = strlen(local);
     }
 
-    const uint8_t* dest = g_msgRows[0].peer;
+    const uint8_t* dest = g_msgRows[g_selPeer].peer;
     char hex[33];
     peerToHex32(dest, hex);
     Serial.printf("[TX] to %s body=\"%s\" free_int=%u\n", hex, local,
@@ -429,6 +433,29 @@ void composeBackspace() {
     composeLog();
 }
 
+void clampSelPeer() {
+    if (g_msgRowCount <= 0) {
+        g_selPeer = 0;
+        return;
+    }
+    if (g_selPeer < 0) g_selPeer = 0;
+    if (g_selPeer >= g_msgRowCount) g_selPeer = g_msgRowCount - 1;
+}
+
+bool cycleSelPeer() {
+    if (g_msgRowCount <= 0) {
+        Serial.println("[PEER] no peers");
+        return false;
+    }
+    g_selPeer = (g_selPeer + 1) % g_msgRowCount;
+    clampSelPeer();
+    char hex[33];
+    peerToHex32(g_msgRows[g_selPeer].peer, hex);
+    Serial.printf("[PEER] sel=%d/%d %s\n", g_selPeer, g_msgRowCount, hex);
+    return true;
+}
+
+
 void applyView(const handheld::storage::ConversationView& v) {
     if (g_msgRowCount >= MSG_ROWS) return;
     MsgRow& r = g_msgRows[g_msgRowCount];
@@ -527,16 +554,33 @@ void loadHistoryRows() {
     g_histNote[0] = '\0';
     for (int i = 0; i < HIST_ROWS; i++) g_histRows[i].used = false;
 
-    if (!g_storeReady || g_msgRowCount == 0 || !g_msgRows[0].used) {
+    clampSelPeer();
+    if (!g_storeReady || g_msgRowCount == 0 || !g_msgRows[g_selPeer].used) {
         snprintf(g_histNote, sizeof(g_histNote), "(no peer)");
         return;
     }
 
     char hex[33];
-    peerToHex32(g_msgRows[0].peer, hex);
+    peerToHex32(g_msgRows[g_selPeer].peer, hex);
     std::string peerHex(hex);
     Serial.printf("[HIST] load peer=%s free_int=%u\n", hex,
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
+    // E20: mark conversation read when opening History for selected peer.
+    {
+        auto mr = g_msgStore.requestMarkRead(std::string(hex));
+        if (mr.accepted()) {
+            MessageStore::Result mres;
+            if (waitResult(mr.ticket, mres, 200)) {
+                Serial.printf("[HIST] markRead outcome=%u err=%u\n",
+                              (unsigned)mres.outcome, (unsigned)mres.error);
+            }
+            g_msgStore.releaseResult(mr.ticket);
+            g_msgStore.poll();
+        } else {
+            Serial.printf("[HIST] markRead rejected %u\n", (unsigned)mr.rejection);
+        }
+    }
 
     using namespace handheld::storage;
     auto sub = g_msgStore.requestHistoryPage(
@@ -570,7 +614,7 @@ void loadHistoryRows() {
 
     for (size_t i = 0; i < nEnt && g_histRowCount < HIST_ROWS; i++) {
         RecordKey key{};
-        memcpy(key.peer, g_msgRows[0].peer, 16);
+        memcpy(key.peer, g_msgRows[g_selPeer].peer, 16);
         key.counter = entries[i].counter;
         key.incoming = entries[i].incoming;
 
@@ -697,8 +741,9 @@ void loadMessageRows(bool force) {
     } else {
         g_msgRowsLoaded = true;
         g_msgCacheRevision = g_msgStore.revision();
-        Serial.printf("[MSG] loaded %d rows rev=%u\n",
-                      g_msgRowCount, (unsigned)g_msgCacheRevision);
+        clampSelPeer();
+        Serial.printf("[MSG] loaded %d rows rev=%u sel=%d\n",
+                      g_msgRowCount, (unsigned)g_msgCacheRevision, g_selPeer);
     }
 }
 
@@ -812,8 +857,10 @@ void build_messages() {
     if (g_showHistory) {
         make_header("History");
         int y = 40;
-        if (g_msgRowCount > 0 && g_msgRows[0].used) {
-            fat_label(g_root, g_msgRows[0].line1, 8, y);
+        if (g_msgRowCount > 0 && g_msgRows[g_selPeer].used) {
+            char hdr[32];
+            snprintf(hdr, sizeof(hdr), ">%s", g_msgRows[g_selPeer].line1);
+            fat_label(g_root, hdr, 8, y);
             y += 26;
         }
         if (g_histRowCount == 0) {
@@ -843,10 +890,15 @@ void build_messages() {
         fat_label(g_root, g_msgNote[0] ? g_msgNote : "(empty)", 8, y);
     } else {
         for (int i = 0; i < g_msgRowCount; i++) {
-            fat_label(g_root, g_msgRows[i].line1, 8, y);
+            char marked[32];
+            if (i == g_selPeer)
+                snprintf(marked, sizeof(marked), ">%s", g_msgRows[i].line1);
+            else
+                snprintf(marked, sizeof(marked), " %s", g_msgRows[i].line1);
+            fat_label(g_root, marked, 8, y);
             y += 22;
             if (g_msgRows[i].line2[0]) {
-                fat_label(g_root, g_msgRows[i].line2, 8, y);
+                fat_label(g_root, g_msgRows[i].line2, 16, y);
                 y += 24;
             } else {
                 y += 4;
@@ -859,7 +911,7 @@ void build_messages() {
         snprintf(foot, sizeof(foot), ">%.28s", g_compose);
         make_footer(foot);
     } else {
-        make_footer("2/3 Msgs  H=hist type+Enter");
+        make_footer("2/3 Msgs  H=hist p=peer");
     }
 }
 
@@ -974,6 +1026,13 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 show_screen(SCR_MESSAGES);
                 return false;
             }
+            if (ev.character == 'p' || ev.character == 'P') {
+                if (cycleSelPeer()) {
+                    if (g_showHistory) loadHistoryRows();
+                    return (g_screen == SCR_MESSAGES);
+                }
+                return false;
+            }
         }
         composeAppend(ev.character);
         return false;
@@ -987,8 +1046,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 19");
-    Serial.println(" keyboard compose + history bodies");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 20");
+    Serial.println(" peer select + mark-read on History");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -1042,7 +1101,7 @@ bool begin() {
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready");
     g_bootAnnAt = millis() + 3000;
-    Serial.println("[HINT] type then Enter=send | a | t | H | serial t/a/r/n/m/h/s");
+    Serial.println("[HINT] type+Enter=send | p=peer | H=hist | a t | serial t/a/r/p/H/c");
     return true;
 }
 
@@ -1128,8 +1187,13 @@ void loop() {
                 Serial.println("[COMPOSE] cleared");
                 if (g_screen == SCR_MESSAGES || g_screen == SCR_SETTINGS)
                     show_screen(g_screen);
+            } else if (p[0] == 'p' || p[0] == 'P') {
+                if (cycleSelPeer()) {
+                    if (g_showHistory) loadHistoryRows();
+                    if (g_screen == SCR_MESSAGES) show_screen(SCR_MESSAGES);
+                }
             } else {
-                Serial.printf("[CMD] unknown \"%s\" (t/a/r/n/m/h/s/H/c)\n", p);
+                Serial.printf("[CMD] unknown \"%s\" (t/a/r/n/m/h/s/H/c/p)\n", p);
             }
         } else if (c >= 32 && c < 127) {
             if (lineLen + 1 < sizeof(line)) line[lineLen++] = c;

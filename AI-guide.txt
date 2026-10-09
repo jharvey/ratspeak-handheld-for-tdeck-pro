@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-09 (Phase E chunk 19 — keyboard compose)
+Last updated: 2026-10-09 (Phase E chunk 20 — peer select + mark-read)
 ================================================================================
 
 OVERALL GOALS
@@ -37,12 +37,14 @@ E16         * DONE * AI-guide catch-up
 E17         * DONE * History toggle (serial H); counters on glass
 E18         * DONE * History body snippets (requestRecord cap >= header)
 E19         * DONE * Keyboard text compose (TCA8418, no per-key refresh)
+E20         * DONE * Peer select (p) + mark-read on History open
 
 Hardware proof:
   Messages: peer name "1", preview text, unread counts
   History: [HIST] loaded 4 rows; bodies after E18
   TX: body="hello from pro" outcome=0
   Compose: type on keyboard -> [COMPOSE] serial; Enter sends
+  Peer: serial/kb p cycles; > marks selected row; TX/History use sel
 
 DEVICE FACTS
 ------------
@@ -53,16 +55,19 @@ History page = HistoryEntry (8B each); body via requestRecord.
   StoredRecordHeader is ~104B — requestRecord capacity MUST be >= header
   (E17 used 96 and always fell back to #counter only).
 Announce: boot +3s; serial a; rate-limit 5s.
-Outbound: lxmfSubmit to first MsgRow peer.
+Outbound: lxmfSubmit to selected MsgRow peer (g_selPeer).
 Compose: 120-char buffer; printable/space/backspace; Enter sends.
   No e-ink refresh while typing (serial only). Redraw on send.
-  Empty-buffer Enter still advances screen. Single-letter a/t/H only
+  Empty-buffer Enter still advances screen. Single-letter a/t/H/p only
   when compose empty (preserves shortcuts).
+Peer select: g_selPeer cycles with p; Messages list shows > on selected.
+  Opening History calls requestMarkRead for selected peer.
 
 SERIAL HINTS (line + Enter)
 ---------------------------
-  t / t hello / t:hi   send (default ping or custom)
-  H                    toggle History for first peer
+  t / t hello / t:hi   send (default ping or custom) to selected peer
+  H                    toggle History for selected peer (marks read)
+  p                    cycle selected peer
   c                    clear compose buffer
   a r n h m s / 1 2 3  announce / reload / next / home / msgs / settings
 
@@ -70,9 +75,9 @@ KEYBOARD HINTS
 --------------
   type chars/space     append to compose (serial [COMPOSE])
   Backspace            delete last char
-  Enter (compose nonempty)  send to first peer, clear, redraw
+  Enter (compose nonempty)  send to selected peer, clear, redraw
   Enter (compose empty)     next screen
-  a / t / H            shortcuts only when compose empty
+  a / t / H / p        shortcuts only when compose empty
 
 FILE MAP
 --------
@@ -83,13 +88,13 @@ src/boards/tdeck_Pro/Eink/LvglPort.*
 
 NEXT
 ----
-1. Optional: mark-read / multi-peer list (select peer for TX/history)
-2. Optional: compose line live on glass (periodic/deferred refresh)
+1. Optional: compose line live on glass (deferred refresh via g_composeDirty)
+2. Optional: touch-select peer row
 3. PSRAM OPI map later
 4. Keep cooperative green
 
 ONE-LINER
 ---------
 Standalone: protocol + e-ink + announce + named inbox + outbound + history
-+ keyboard compose on internal heap. PSRAM still size=0.
++ keyboard compose + peer select + mark-read on internal heap. PSRAM size=0.
 ================================================================================
