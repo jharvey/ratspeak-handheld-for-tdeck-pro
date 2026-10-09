@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-09 (Phase E chunk 20 — peer select + mark-read)
+Last updated: 2026-10-09 (Phase E chunk 21 — deferred compose-on-glass)
 ================================================================================
 
 OVERALL GOALS
@@ -38,30 +38,30 @@ E17         * DONE * History toggle (serial H); counters on glass
 E18         * DONE * History body snippets (requestRecord cap >= header)
 E19         * DONE * Keyboard text compose (TCA8418, no per-key refresh)
 E20         * DONE * Peer select (p) + mark-read on History open
+E21         * DONE * Deferred compose-on-glass (idle ~1.6s then one refresh)
 
-Hardware proof:
-  Messages: peer name "1", preview text, unread counts
-  History: [HIST] loaded 4 rows; bodies after E18
-  TX: body="hello from pro" outcome=0
-  Compose: type on keyboard -> [COMPOSE] serial; Enter sends
-  Peer: serial/kb p cycles; > marks selected row; TX/History use sel
+Hardware proof (E20):
+  Messages: peer "1", unread 6 -> 0 after History/markRead
+  History: 4 rows with bodies; TX hello outcome=0
+  Compose: [COMPOSE] serial while typing; peer sel=0/1
+  Heap: post-LVGL ~22-28K free_int stable
 
 DEVICE FACTS
 ------------
 PSRAM: found=1 size=0 — use INTERNAL only; Settings shows "PSRAM n/a".
-Heap: ~45K post-proto; ~25K post-LVGL (20-line strip when largest_int allows).
+Heap: ~45K post-proto; ~25K post-LVGL (10-line strip when largest_int allows).
 Conversation page = ConversationSelector (32B); detail = ConversationView (72B).
 History page = HistoryEntry (8B each); body via requestRecord.
-  StoredRecordHeader is ~104B — requestRecord capacity MUST be >= header
-  (E17 used 96 and always fell back to #counter only).
+  StoredRecordHeader is ~104B — requestRecord capacity MUST be >= header.
 Announce: boot +3s; serial a; rate-limit 5s.
 Outbound: lxmfSubmit to selected MsgRow peer (g_selPeer).
 Compose: 120-char buffer; printable/space/backspace; Enter sends.
-  No e-ink refresh while typing (serial only). Redraw on send.
-  Empty-buffer Enter still advances screen. Single-letter a/t/H/p only
-  when compose empty (preserves shortcuts).
+  No e-ink refresh while typing (serial only).
+  E21: after COMPOSE_IDLE_MS (1600) with no keys, one show_screen so
+  footer shows ">text". Shares MSG_REDRAW_MIN_MS rate limit with inbox
+  auto-redraw. show_screen clears g_composeDirty.
 Peer select: g_selPeer cycles with p; Messages list shows > on selected.
-  Opening History calls requestMarkRead for selected peer.
+  Opening History calls requestMarkRead for that peer.
 
 SERIAL HINTS (line + Enter)
 ---------------------------
@@ -74,6 +74,7 @@ SERIAL HINTS (line + Enter)
 KEYBOARD HINTS
 --------------
   type chars/space     append to compose (serial [COMPOSE])
+  pause ~1.6s          one fullRefresh; footer shows ">compose"
   Backspace            delete last char
   Enter (compose nonempty)  send to selected peer, clear, redraw
   Enter (compose empty)     next screen
@@ -88,13 +89,14 @@ src/boards/tdeck_Pro/Eink/LvglPort.*
 
 NEXT
 ----
-1. Optional: compose line live on glass (deferred refresh via g_composeDirty)
-2. Optional: touch-select peer row
+1. Optional: touch-select peer row
+2. Optional: shorter compose idle / partial refresh experiment
 3. PSRAM OPI map later
 4. Keep cooperative green
 
 ONE-LINER
 ---------
 Standalone: protocol + e-ink + announce + named inbox + outbound + history
-+ keyboard compose + peer select + mark-read on internal heap. PSRAM size=0.
++ keyboard compose (idle-on-glass) + peer select + mark-read on internal heap.
+PSRAM size=0.
 ================================================================================

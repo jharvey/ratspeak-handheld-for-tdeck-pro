@@ -92,6 +92,8 @@ constexpr size_t COMPOSE_CAP = 120;
 char g_compose[COMPOSE_CAP + 1] = "";
 size_t g_composeLen = 0;
 bool g_composeDirty = false;
+uint32_t g_lastComposeMs = 0;
+constexpr uint32_t COMPOSE_IDLE_MS = 1600;  // E21: redraw glass after typing pauses
 
 bool g_bootAnnDone = false;
 uint32_t g_bootAnnAt = 0;
@@ -407,6 +409,7 @@ void composeClear() {
     g_compose[0] = '\0';
     g_composeLen = 0;
     g_composeDirty = false;
+    g_lastComposeMs = 0;
 }
 
 void composeLog() {
@@ -423,6 +426,7 @@ void composeAppend(char c) {
     g_compose[g_composeLen++] = c;
     g_compose[g_composeLen] = '\0';
     g_composeDirty = true;
+    g_lastComposeMs = millis();
     composeLog();
 }
 
@@ -430,6 +434,7 @@ void composeBackspace() {
     if (g_composeLen == 0) return;
     g_compose[--g_composeLen] = '\0';
     g_composeDirty = true;
+    g_lastComposeMs = millis();
     composeLog();
 }
 
@@ -980,6 +985,19 @@ void maybeAutoRedrawMessages() {
     show_screen(SCR_MESSAGES);
 }
 
+// E21: after typing pauses, one fullRefresh so the footer shows the compose line.
+// Never refresh per keypress — only when idle and dirty.
+void maybeComposeRedraw() {
+    if (!g_composeDirty) return;
+    if (g_lastComposeMs == 0) return;
+    if ((millis() - g_lastComposeMs) < COMPOSE_IDLE_MS) return;
+    // Share rate limit with message auto-redraw so e-ink is not hammered.
+    if (millis() - g_lastMsgRedrawMs < MSG_REDRAW_MIN_MS) return;
+    g_lastMsgRedrawMs = millis();
+    Serial.printf("[UI] compose idle redraw len=%u\n", (unsigned)g_composeLen);
+    show_screen(g_screen);  // clears g_composeDirty
+}
+
 // Handle one keyboard event. Returns true if a full screen redraw is needed.
 bool handleKeyEvent(const KeyEvent& ev) {
     // Enter: send compose if non-empty, else next screen.
@@ -1046,8 +1064,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 20");
-    Serial.println(" peer select + mark-read on History");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 21");
+    Serial.println(" deferred compose-on-glass");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -1101,7 +1119,7 @@ bool begin() {
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready");
     g_bootAnnAt = millis() + 3000;
-    Serial.println("[HINT] type+Enter=send | p=peer | H=hist | a t | serial t/a/r/p/H/c");
+    Serial.println("[HINT] type+Enter=send | pause~1.6s shows on glass | p H a t");
     return true;
 }
 
@@ -1117,6 +1135,7 @@ void loop() {
     }
 
     maybeAutoRedrawMessages();
+    maybeComposeRedraw();
 
     if (g_kbOk) {
         g_kb.update();
