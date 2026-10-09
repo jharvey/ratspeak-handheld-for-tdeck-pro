@@ -32,6 +32,7 @@ namespace {
 DisplayEink g_display;
 Keyboard g_kb;
 bool g_kbOk = false;
+bool g_touchOk = false;  // E22: CST328 present
 
 FlashStore g_flash;
 IdentityManager g_idMgr;
@@ -114,6 +115,8 @@ void composeBackspace();
 void composeLog();
 void clampSelPeer();
 bool cycleSelPeer();
+bool cst328Read(int16_t& x, int16_t& y);  // E22
+bool handleTouchAt(int16_t x, int16_t y);  // true if already drew
 
 void spiBusIdle() {
     pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
@@ -458,6 +461,54 @@ bool cycleSelPeer() {
     peerToHex32(g_msgRows[g_selPeer].peer, hex);
     Serial.printf("[PEER] sel=%d/%d %s\n", g_selPeer, g_msgRowCount, hex);
     return true;
+}
+
+// Minimal CST328 (addr 0x1A) single-finger read. No SensorLib dependency.
+// Register window starts at 0xD000; finger-1 state at first 5 bytes.
+bool cst328Read(int16_t& x, int16_t& y) {
+    Wire.beginTransmission(TOUCH_I2C_ADDR);
+    Wire.write((uint8_t)0xD0);
+    Wire.write((uint8_t)0x00);
+    if (Wire.endTransmission(false) != 0) return false;
+    if (Wire.requestFrom((int)TOUCH_I2C_ADDR, 7) < 5) return false;
+    uint8_t d0 = Wire.read();
+    uint8_t d1 = Wire.read();
+    uint8_t d2 = Wire.read();
+    uint8_t d3 = Wire.read();
+    (void)Wire.read();  // pressure
+    while (Wire.available()) (void)Wire.read();
+    if ((d0 & 0x0F) != 0x06) return false;  // pressed state
+    x = (int16_t)((d1 << 4) | ((d3 >> 4) & 0x0F));
+    y = (int16_t)((d2 << 4) | (d3 & 0x0F));
+    return true;
+}
+
+// Messages content rows start ~y=40; each row ~46px with preview.
+// Tap in row band -> select peer. Otherwise next screen.
+bool handleTouchAt(int16_t x, int16_t y) {
+    Serial.printf("[TOUCH] xy=%d,%d screen=%u\n", (int)x, (int)y, (unsigned)g_screen);
+    if (g_screen == SCR_MESSAGES && !g_showHistory && g_msgRowCount > 0) {
+        const int contentTop = 40;
+        const int rowH = 46;
+        if (y >= contentTop && y < EPD_HEIGHT - 28) {
+            int row = (y - contentTop) / rowH;
+            if (row < 0) row = 0;
+            if (row >= g_msgRowCount) row = g_msgRowCount - 1;
+            if (row != g_selPeer) {
+                g_selPeer = row;
+                clampSelPeer();
+                char hex[33];
+                peerToHex32(g_msgRows[g_selPeer].peer, hex);
+                Serial.printf("[PEER] touch sel=%d/%d %s\n",
+                              g_selPeer, g_msgRowCount, hex);
+                show_screen(SCR_MESSAGES);
+                return true;
+            }
+            // same peer: still redraw is unnecessary; fall through to next
+        }
+    }
+    next_screen();
+    return true;  // next_screen already drew
 }
 
 
@@ -1064,8 +1115,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 21");
-    Serial.println(" deferred compose-on-glass");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 22");
+    Serial.println(" touch peer select (CST328)");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -1116,10 +1167,16 @@ bool begin() {
     g_kbOk = g_kb.begin();
     if (g_kbOk) Serial.println("[KEYBOARD] TCA8418 keyboard ready");
 
+    // E22: probe CST328 (already reset earlier). Soft-fail keeps INT-only next.
+    Wire.beginTransmission(TOUCH_I2C_ADDR);
+    g_touchOk = (Wire.endTransmission() == 0);
+    Serial.printf("[TOUCH] CST328 %s (0x%02X)\n",
+                  g_touchOk ? "ok" : "absent", (unsigned)TOUCH_I2C_ADDR);
+
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready");
     g_bootAnnAt = millis() + 3000;
-    Serial.println("[HINT] type+Enter=send | pause~1.6s shows on glass | p H a t");
+    Serial.println("[HINT] type+Enter | pause~1.6s glass | touch=row/next | p H a t");
     return true;
 }
 
@@ -1153,8 +1210,13 @@ void loop() {
     int tInt = digitalRead(TOUCH_INT);
     if (lastInt == HIGH && tInt == LOW && (millis() - lastTouchMs > 400)) {
         lastTouchMs = millis();
-        Serial.println("[TOUCH] INT next");
-        next_screen();
+        int16_t tx = 0, ty = 0;
+        if (g_touchOk && cst328Read(tx, ty)) {
+            handleTouchAt(tx, ty);
+        } else {
+            Serial.println("[TOUCH] INT next");
+            next_screen();
+        }
     }
     lastInt = tInt;
 

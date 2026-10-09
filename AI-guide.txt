@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-09 (Phase E chunk 21 — deferred compose-on-glass)
+Last updated: 2026-10-09 (Phase E chunk 22 — touch peer select CST328)
 ================================================================================
 
 OVERALL GOALS
@@ -39,46 +39,41 @@ E18         * DONE * History body snippets (requestRecord cap >= header)
 E19         * DONE * Keyboard text compose (TCA8418, no per-key refresh)
 E20         * DONE * Peer select (p) + mark-read on History open
 E21         * DONE * Deferred compose-on-glass (idle ~1.6s then one refresh)
+E22         * DONE * CST328 touch: Messages row tap selects peer; else next
 
-Hardware proof (E20):
-  Messages: peer "1", unread 6 -> 0 after History/markRead
-  History: 4 rows with bodies; TX hello outcome=0
-  Compose: [COMPOSE] serial while typing; peer sel=0/1
-  Heap: post-LVGL ~22-28K free_int stable
+Hardware proof (E21):
+  Compose idle redraw len=6/7; TX body="GGGGGGF" outcome=0
+  Touch INT next still cycles screens; heap ~22K stable
 
 DEVICE FACTS
 ------------
 PSRAM: found=1 size=0 — use INTERNAL only; Settings shows "PSRAM n/a".
-Heap: ~45K post-proto; ~25K post-LVGL (10-line strip when largest_int allows).
-Conversation page = ConversationSelector (32B); detail = ConversationView (72B).
-History page = HistoryEntry (8B each); body via requestRecord.
-  StoredRecordHeader is ~104B — requestRecord capacity MUST be >= header.
-Announce: boot +3s; serial a; rate-limit 5s.
+Heap: ~45K post-proto; ~28K post-LVGL (10-line strip).
+Touch: CST328 @ 0x1A (not GT911). Minimal 0xD000 finger-1 read in
+  StandaloneApp — no SensorLib dependency. Soft-fail keeps INT-only next.
 Outbound: lxmfSubmit to selected MsgRow peer (g_selPeer).
-Compose: 120-char buffer; printable/space/backspace; Enter sends.
-  No e-ink refresh while typing (serial only).
-  E21: after COMPOSE_IDLE_MS (1600) with no keys, one show_screen so
-  footer shows ">text". Shares MSG_REDRAW_MIN_MS rate limit with inbox
-  auto-redraw. show_screen clears g_composeDirty.
-Peer select: g_selPeer cycles with p; Messages list shows > on selected.
-  Opening History calls requestMarkRead for that peer.
+Compose: 120-char buffer; idle ~1.6s one fullRefresh for footer ">text".
+Peer: serial/kb p cycles; Messages list shows >; History mark-reads sel.
 
 SERIAL HINTS (line + Enter)
 ---------------------------
-  t / t hello / t:hi   send (default ping or custom) to selected peer
-  H                    toggle History for selected peer (marks read)
+  t / t hello / t:hi   send to selected peer
+  H                    toggle History (marks read)
   p                    cycle selected peer
   c                    clear compose buffer
   a r n h m s / 1 2 3  announce / reload / next / home / msgs / settings
 
 KEYBOARD HINTS
 --------------
-  type chars/space     append to compose (serial [COMPOSE])
-  pause ~1.6s          one fullRefresh; footer shows ">compose"
-  Backspace            delete last char
-  Enter (compose nonempty)  send to selected peer, clear, redraw
-  Enter (compose empty)     next screen
+  type + pause ~1.6s   compose on glass footer
+  Enter (nonempty)     send to selected peer
+  Enter (empty)        next screen
   a / t / H / p        shortcuts only when compose empty
+
+TOUCH HINTS
+-----------
+  Messages list row    select that peer (redraw with >)
+  elsewhere / fail     next screen (same as pre-E22 INT)
 
 FILE MAP
 --------
@@ -89,14 +84,14 @@ src/boards/tdeck_Pro/Eink/LvglPort.*
 
 NEXT
 ----
-1. Optional: touch-select peer row
+1. Optional: calibrate row Y mapping from real touch coords log
 2. Optional: shorter compose idle / partial refresh experiment
 3. PSRAM OPI map later
 4. Keep cooperative green
 
 ONE-LINER
 ---------
-Standalone: protocol + e-ink + announce + named inbox + outbound + history
-+ keyboard compose (idle-on-glass) + peer select + mark-read on internal heap.
-PSRAM size=0.
+Standalone: protocol + e-ink + announce + inbox + outbound + history
++ keyboard compose (idle-on-glass) + peer select (p/touch) + mark-read
+on internal heap. PSRAM size=0.
 ================================================================================
