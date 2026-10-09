@@ -105,6 +105,7 @@ constexpr uint32_t MSG_REDRAW_MIN_MS = 2500;
 
 void peerToHex32(const uint8_t peer[16], char out[33]);
 void show_screen(ScreenId id);
+void next_screen();
 void doAnnounce();
 void doSendTest(const char* body);
 void loadMessageRows(bool force);
