@@ -1,7 +1,14 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-08 (Phase E chunk 11 — names; next: compose)
+Last updated: 2026-10-09 (Phase E chunk 16 — guide through E15)
 ================================================================================
+
+OVERALL GOALS
+-------------
+1. Port Ratspeak to T-Deck Pro (GDEQ031T10 240x320 e-ink).
+2. Keep Cooperative / Node green.
+3. Standalone e-ink bring-up (not full Plus UI).
+4. Later: clean upstream-friendly history.
 
 STANDALONE RULES
 ----------------
@@ -10,33 +17,70 @@ bindDeviceOwner() before ProtocolRuntime. Full files preferred. ASCII only.
 Single fullRefresh per screen change.
 GxEPD2 page_height=16; firstPage+drawBitmap; flush non-white->black.
 fat_label: single stroke. Protocol BEFORE LVGL. Internal node if PSRAM size=0.
+Code layout: thin main.cpp + StandaloneApp.h/.cpp (shell lives in StandaloneApp).
+Patches: apply from repo root with  git apply eNN.patch  (paths inside the patch).
 
 PHASE STATUS
 ------------
-A-D, E1-E9  ★ DONE ★ shell, proto, msgs, announce, inbound LXMF
-E10         ★ DONE ★ boot announce
-E11         ★ DONE ★ name cache load + resolve on draw
-            Proof: [MSG] row peer=659bd853... name="1" unread=3
-            [ANNOUNCE] Name cache loaded (1 entries)
+A-D         * DONE * panel, LVGL shell (Home / Messages / Settings)
+E1-E6       * DONE * battery, dest, LoRa, proto-before-LVGL, internal node
+E7          * DONE * ConversationSelector page + ConversationView detail
+E8          * DONE * revision-aware message cache
+E9          * DONE * manual announce (serial a); inbound LXMF on hardware
+E10         * DONE * boot announce (+3s)
+E11         * DONE * loadNameCache + resolvePeerName on Messages draw
+E12         * DONE * serial t test LXMF send (fixed ping body)
+E13         * DONE * StandaloneApp split; Messages auto-redraw on revision
+E14         * DONE * LvglPort: skip broken ps_malloc; try 20/10/5 line strips
+E15         * DONE * line serial: t | t <text> | t:text  custom compose
+E16         * DONE * this AI-guide update
+
+Hardware proof (2026-10-09):
+  [MSG] row peer=659bd853... name="1"
+  [TX] body="hello from pro" outcome=0
+  [LVGL] draw buf 20 lines when largest_int allows; else 10
+  [UI] auto Messages redraw / cache stale rev ...
 
 DEVICE FACTS
 ------------
-PSRAM found=1 size=0 (deferred). free_int ~44K post-proto, ~24K post-LVGL.
-Conversation page = ConversationSelector (32B); detail = ConversationView (72B).
-Announce: g_proto.announce(nullptr,0); boot +3s; serial a; rate-limit 5s.
-Names: loadNameCache() after setStorage; resolvePeerName at Messages draw.
+Board: ESP32-S3FN16R8 (16MB flash + 8MB OPI PSRAM on silicon).
+PSRAM: found=1 size=0 free=0 — OPI map still broken; use INTERNAL path only.
+Heap: ~44-45K free_int after proto; ~25-28K after LVGL when 20-line strip fits.
+  Fragmentation: if largest_int < 9600, LvglPort falls back to 10 then 5 lines.
+Conversation page returns ConversationSelector (32B each), NOT View.
+  Detail: requestConversation(selector) -> ConversationView (72B + preview).
+Announce: g_proto.announce(nullptr, 0); boot +3s; serial line "a"; rate-limit 5s.
+Names: loadNameCache() after setStorage; resolve at Messages draw time.
+Outbound: lxmfSubmit to g_msgRows[0].peer; poll + acknowledge.
+E-ink: CS park with LoRa; one fullRefresh per screen change.
 
 SERIAL HINTS
 ------------
-a = announce | r = reload msgs | n/h/m/s = screens | t = send test LXMF (chunk 12)
+Putty: type a full line, then Enter (line-oriented since E15).
+  t              default body "ping from tdeck-pro"
+  t hello world  custom body (max ~160 chars)
+  t:hi           same (colon form)
+  a              announce
+  r              force reload Messages
+  n / h / m / s  next / home / messages / settings (also 1 2 3)
+Keyboard t = default ping only; Enter/touch cycles screens.
 
 NEXT
 ----
-1. Compose/send: serial t -> lxmfSubmit to first MsgRow peer (fixed ping body).
-2. Optional keyboard text later; keep heap-light.
-3. PSRAM OPI later. Keep cooperative green.
+1. Optional: conversation history (last N messages under a peer).
+2. Optional: keyboard text compose (heap-light).
+3. PSRAM OPI map later (do not block UI).
+4. Keep cooperative/node green; no LvglApplication in standalone.
+
+FILE MAP (standalone)
+---------------------
+src/boards/tdeck_Pro/main.cpp           thin setup/loop
+src/boards/tdeck_Pro/StandaloneApp.*    shell, msgs, announce, TX
+src/boards/tdeck_Pro/Eink/DisplayEink.* GxEPD2 panel + FB
+src/boards/tdeck_Pro/Eink/LvglPort.*    LVGL flush + draw strip alloc
 
 ONE-LINER
 ---------
-Standalone: protocol+e-ink+announce+named inbox on internal heap. Next: outbound LXMF.
+Standalone runs protocol + e-ink + announce + named inbox + outbound LXMF on
+internal heap. PSRAM still size=0. Next optional: history view or keyboard compose.
 ================================================================================
