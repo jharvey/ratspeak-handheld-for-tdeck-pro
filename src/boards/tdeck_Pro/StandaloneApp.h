@@ -9,6 +9,6 @@
 namespace standalone {
 
 bool begin();          // power, radio, proto, display, LVGL, first screen
-void loop();           // proto, input, boot announce, msg auto-redraw
+void loop();           // proto, input, boot announce, msg auto-redraw, compose
 
 }  // namespace standalone

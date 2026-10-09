@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-09 (Phase E chunk 18 — history bodies)
+Last updated: 2026-10-09 (Phase E chunk 19 — keyboard compose)
 ================================================================================
 
 OVERALL GOALS
@@ -36,11 +36,13 @@ E15         * DONE * line serial t | t <text> compose
 E16         * DONE * AI-guide catch-up
 E17         * DONE * History toggle (serial H); counters on glass
 E18         * DONE * History body snippets (requestRecord cap >= header)
+E19         * DONE * Keyboard text compose (TCA8418, no per-key refresh)
 
 Hardware proof:
   Messages: peer name "1", preview text, unread counts
   History: [HIST] loaded 4 rows; bodies after E18
   TX: body="hello from pro" outcome=0
+  Compose: type on keyboard -> [COMPOSE] serial; Enter sends
 
 DEVICE FACTS
 ------------
@@ -52,12 +54,25 @@ History page = HistoryEntry (8B each); body via requestRecord.
   (E17 used 96 and always fell back to #counter only).
 Announce: boot +3s; serial a; rate-limit 5s.
 Outbound: lxmfSubmit to first MsgRow peer.
+Compose: 120-char buffer; printable/space/backspace; Enter sends.
+  No e-ink refresh while typing (serial only). Redraw on send.
+  Empty-buffer Enter still advances screen. Single-letter a/t/H only
+  when compose empty (preserves shortcuts).
 
 SERIAL HINTS (line + Enter)
 ---------------------------
   t / t hello / t:hi   send (default ping or custom)
   H                    toggle History for first peer
+  c                    clear compose buffer
   a r n h m s / 1 2 3  announce / reload / next / home / msgs / settings
+
+KEYBOARD HINTS
+--------------
+  type chars/space     append to compose (serial [COMPOSE])
+  Backspace            delete last char
+  Enter (compose nonempty)  send to first peer, clear, redraw
+  Enter (compose empty)     next screen
+  a / t / H            shortcuts only when compose empty
 
 FILE MAP
 --------
@@ -68,13 +83,13 @@ src/boards/tdeck_Pro/Eink/LvglPort.*
 
 NEXT
 ----
-1. Optional: keyboard text compose
-2. Optional: mark-read / multi-peer list
+1. Optional: mark-read / multi-peer list (select peer for TX/history)
+2. Optional: compose line live on glass (periodic/deferred refresh)
 3. PSRAM OPI map later
 4. Keep cooperative green
 
 ONE-LINER
 ---------
 Standalone: protocol + e-ink + announce + named inbox + outbound + history
-on internal heap. PSRAM still size=0.
++ keyboard compose on internal heap. PSRAM still size=0.
 ================================================================================

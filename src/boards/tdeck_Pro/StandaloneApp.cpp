@@ -86,6 +86,12 @@ int g_histRowCount = 0;
 bool g_showHistory = false;
 char g_histNote[40] = "";
 
+// E19: keyboard compose buffer (no per-key e-ink refresh).
+constexpr size_t COMPOSE_CAP = 120;
+char g_compose[COMPOSE_CAP + 1] = "";
+size_t g_composeLen = 0;
+bool g_composeDirty = false;
+
 bool g_bootAnnDone = false;
 uint32_t g_bootAnnAt = 0;
 
@@ -99,6 +105,10 @@ void doAnnounce();
 void doSendTest(const char* body);
 void loadMessageRows(bool force);
 void loadHistoryRows();
+void composeClear();
+void composeAppend(char c);
+void composeBackspace();
+void composeLog();
 
 void spiBusIdle() {
     pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
@@ -389,6 +399,36 @@ void formatPeerLine(char* out, size_t outLen, const uint8_t peer[16], uint32_t u
                  peer[4], peer[5], peer[6], peer[7]);
 }
 
+void composeClear() {
+    g_compose[0] = '\0';
+    g_composeLen = 0;
+    g_composeDirty = false;
+}
+
+void composeLog() {
+    Serial.printf("[COMPOSE] len=%u \"%s\"\n",
+                  (unsigned)g_composeLen, g_compose);
+}
+
+void composeAppend(char c) {
+    if (c < 32 || c > 126) return;
+    if (g_composeLen >= COMPOSE_CAP) {
+        Serial.println("[COMPOSE] full");
+        return;
+    }
+    g_compose[g_composeLen++] = c;
+    g_compose[g_composeLen] = '\0';
+    g_composeDirty = true;
+    composeLog();
+}
+
+void composeBackspace() {
+    if (g_composeLen == 0) return;
+    g_compose[--g_composeLen] = '\0';
+    g_composeDirty = true;
+    composeLog();
+}
+
 void applyView(const handheld::storage::ConversationView& v) {
     if (g_msgRowCount >= MSG_ROWS) return;
     MsgRow& r = g_msgRows[g_msgRowCount];
@@ -596,7 +636,8 @@ void loadHistoryRows() {
             snprintf(h.line, sizeof(h.line), "%s#%u", arrow, (unsigned)entries[i].counter);
         Serial.printf("[HIST] %s#%u \"%s\" tlen=%u clen=%u\n",
                       arrow, (unsigned)entries[i].counter, snip,
-                      (unsigned)hdr.titleLength, (unsigned)hdr.contentLength);    }
+                      (unsigned)hdr.titleLength, (unsigned)hdr.contentLength);
+    }
 
     if (g_histRowCount == 0)
         snprintf(g_histNote, sizeof(g_histNote), "(no history)");
@@ -784,7 +825,13 @@ void build_messages() {
                 if (y > EPD_HEIGHT - 40) break;
             }
         }
-        make_footer("H=list  t=send");
+        if (g_composeLen > 0) {
+            char foot[40];
+            snprintf(foot, sizeof(foot), ">%.28s", g_compose);
+            make_footer(foot);
+        } else {
+            make_footer("H=list  type+Enter=send");
+        }
         return;
     }
     make_header("Messages");
@@ -807,7 +854,13 @@ void build_messages() {
             if (y > EPD_HEIGHT - 40) break;
         }
     }
-    make_footer("2/3 Msgs  H=history");
+    if (g_composeLen > 0) {
+        char foot[40];
+        snprintf(foot, sizeof(foot), ">%.28s", g_compose);
+        make_footer(foot);
+    } else {
+        make_footer("2/3 Msgs  H=hist type+Enter");
+    }
 }
 
 void build_settings() {
@@ -825,16 +878,21 @@ void build_settings() {
     y += 8;
     fat_label(g_root, g_protoReady ? "(protocol up)" : "(protocol off)", 8, y);
     y += 24;
-    fat_label(g_root, "a=ann  t=tx text", 8, y);
+    fat_label(g_root, "a=ann  type+Enter=tx", 8, y);
     y += 24;
     char ps[40];
     if (ESP.getPsramSize() > 0)
         snprintf(ps, sizeof(ps), "PSRAM %uK", (unsigned)(ESP.getPsramSize() / 1024));
     else
         snprintf(ps, sizeof(ps), "PSRAM n/a");
-	
     fat_label(g_root, ps, 8, y);
-    make_footer("3/3 Setup Enter/touch next");
+    if (g_composeLen > 0) {
+        char foot[40];
+        snprintf(foot, sizeof(foot), ">%.28s", g_compose);
+        make_footer(foot);
+    } else {
+        make_footer("3/3 Setup Enter/touch next");
+    }
 }
 
 void show_screen(ScreenId id) {
@@ -850,6 +908,7 @@ void show_screen(ScreenId id) {
     lv_refr_now(nullptr);
     g_display.refreshIfDirty();
     if (g_storeReady) g_lastUiRevision = g_msgStore.revision();
+    g_composeDirty = false;
     Serial.printf("[UI] screen %u drawn\n", (unsigned)id);
 }
 
@@ -869,13 +928,67 @@ void maybeAutoRedrawMessages() {
     show_screen(SCR_MESSAGES);
 }
 
+// Handle one keyboard event. Returns true if a full screen redraw is needed.
+bool handleKeyEvent(const KeyEvent& ev) {
+    // Enter: send compose if non-empty, else next screen.
+    if (ev.enter) {
+        if (g_composeLen > 0) {
+            char body[COMPOSE_CAP + 1];
+            memcpy(body, g_compose, g_composeLen + 1);
+            composeClear();
+            doSendTest(body);
+            return true;  // redraw current screen
+        }
+        next_screen();
+        return false;  // next_screen already drew
+    }
+
+    // Backspace
+    if (ev.del) {
+        composeBackspace();
+        return false;  // no e-ink refresh while typing
+    }
+
+    // Space
+    if (ev.space) {
+        composeAppend(' ');
+        return false;
+    }
+
+    // Printable character
+    if (ev.character >= 32 && ev.character <= 126) {
+        // Single-letter shortcuts only when compose is empty
+        // (so "a" alone still announces, "t" alone still pings).
+        if (g_composeLen == 0) {
+            if (ev.character == 'a' || ev.character == 'A') {
+                doAnnounce();
+                return (g_screen == SCR_SETTINGS);
+            }
+            if (ev.character == 't' || ev.character == 'T') {
+                doSendTest(nullptr);
+                return (g_screen == SCR_SETTINGS || g_screen == SCR_MESSAGES);
+            }
+            if (ev.character == 'H') {
+                g_showHistory = !g_showHistory;
+                if (g_showHistory) loadHistoryRows();
+                show_screen(SCR_MESSAGES);
+                return false;
+            }
+        }
+        composeAppend(ev.character);
+        return false;
+    }
+
+    return false;
+}
+
 }  // namespace
 
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 17");
-    Serial.println(" history: serial H");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 19");
+    Serial.println(" keyboard compose + history bodies");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -929,7 +1042,7 @@ bool begin() {
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready");
     g_bootAnnAt = millis() + 3000;
-    Serial.println("[HINT] t | t hello | H=history | a | r | n/m/h/s");
+    Serial.println("[HINT] type then Enter=send | a | t | H | serial t/a/r/n/m/h/s");
     return true;
 }
 
@@ -950,21 +1063,10 @@ void loop() {
         g_kb.update();
         if (g_kb.hasEvent()) {
             const KeyEvent& ev = g_kb.getEvent();
-            if (ev.enter) {
-                g_kb.discardPending();
-                next_screen();
-            } else if (ev.character == 'a' || ev.character == 'A') {
-                g_kb.discardPending();
-                doAnnounce();
-                if (g_screen == SCR_SETTINGS) show_screen(SCR_SETTINGS);
-            } else if (ev.character == 't' || ev.character == 'T') {
-                g_kb.discardPending();
-                doSendTest(nullptr);
-                if (g_screen == SCR_SETTINGS || g_screen == SCR_MESSAGES)
-                    show_screen(g_screen);
-            } else {
-                g_kb.discardPending();
-            }
+            bool needRedraw = handleKeyEvent(ev);
+            g_kb.discardPending();
+            if (needRedraw)
+                show_screen(g_screen);
         }
     }
 
@@ -1020,8 +1122,14 @@ void loop() {
             } else if (p[0] == 's' || p[0] == 'S' || p[0] == '3') {
                 g_showHistory = false;
                 show_screen(SCR_SETTINGS);
+            } else if (p[0] == 'c' || p[0] == 'C') {
+                // serial clear compose
+                composeClear();
+                Serial.println("[COMPOSE] cleared");
+                if (g_screen == SCR_MESSAGES || g_screen == SCR_SETTINGS)
+                    show_screen(g_screen);
             } else {
-                Serial.printf("[CMD] unknown \"%s\" (t/a/r/n/m/h/s/H)\n", p);
+                Serial.printf("[CMD] unknown \"%s\" (t/a/r/n/m/h/s/H/c)\n", p);
             }
         } else if (c >= 32 && c < 127) {
             if (lineLen + 1 < sizeof(line)) line[lineLen++] = c;
