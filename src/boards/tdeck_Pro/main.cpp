@@ -20,12 +20,13 @@
 #include "reticulum/AnnounceManager.h"
 #include "transport/LoRaInterface.h"
 #include "protocol/ProtocolRuntime.h"
+#include "protocol/OutgoingContract.h"
 #include "runtime/TaskOwner.h"
 #include "ratspeak_protocol.h"
 #include "util/Bytes.h"
 
 // ---------------------------------------------------------------------------
-// Phase E chunk 11 — peer name resolve on draw; loadNameCache on boot
+// Phase E chunk 12 — serial t = test LXMF to first conversation peer
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
@@ -59,6 +60,7 @@ static char g_lxmfqStr[8]   = "0";
 static char g_convStr[24]   = "0 conv";
 static char g_unreadStr[16] = "0 unread";
 static char g_announceStr[20] = "never";
+static char g_txStr[24]     = "-";
 
 static constexpr int MSG_ROWS = 4;
 struct MsgRow {
@@ -76,6 +78,8 @@ static uint32_t g_msgCacheRevision = 0;
 
 static bool g_bootAnnDone = false;
 static uint32_t g_bootAnnAt = 0;
+
+static void peerToHex32(const uint8_t peer[16], char out[33]);
 
 static void spiBusIdle() {
     pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
@@ -175,7 +179,7 @@ static bool initStorageAndProto() {
     if (!g_msgStore.begin(&g_flash, nullptr, false)) return false;
     g_storeReady = true;
     g_announceMgr.setStorage(nullptr, &g_flash);
-    g_announceMgr.loadNameCache();  // names.json from prior announces
+    g_announceMgr.loadNameCache();
 
     logPsram();
 
@@ -248,6 +252,70 @@ static void doAnnounce() {
     }
 }
 
+static void doSendTest() {
+    if (!g_protoReady) {
+        strcpy(g_txStr, "proto off");
+        Serial.println("[TX] proto off");
+        return;
+    }
+    if (g_msgRowCount == 0 || !g_msgRows[0].used) {
+        strcpy(g_txStr, "no peer");
+        Serial.println("[TX] no peer — need Messages row");
+        return;
+    }
+    static unsigned long lastTx = 0;
+    if (lastTx && millis() - lastTx < 3000UL) {
+        strcpy(g_txStr, "wait 3s");
+        Serial.println("[TX] rate limited (3s)");
+        return;
+    }
+
+    const uint8_t* dest = g_msgRows[0].peer;
+    const char* body = "ping from tdeck-pro";
+    char hex[33];
+    peerToHex32(dest, hex);
+    Serial.printf("[TX] to %s body=\"%s\" free_int=%u\n",
+                  hex, body,
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
+    auto sub = g_proto.lxmfSubmit(dest, nullptr, 0,
+                                  (const uint8_t*)body, strlen(body), false);
+    if (!sub.accepted()) {
+        snprintf(g_txStr, sizeof(g_txStr), "rej %u", (unsigned)sub.rejection);
+        Serial.printf("[TX] rejected %u\n", (unsigned)sub.rejection);
+        return;
+    }
+    lastTx = millis();
+    strcpy(g_txStr, "pending");
+
+    for (int i = 0; i < 800; i++) {
+        g_proto.loop();
+        if (g_storeReady) g_msgStore.poll();
+        handheld::outgoing::InitialResult ir{};
+        auto p = g_proto.lxmfPoll(sub.ticket, ir);
+        if (p == handheld::outgoing::Poll::Pending) {
+            delay(10);
+            continue;
+        }
+        if (p == handheld::outgoing::Poll::Ready) {
+            Serial.printf("[TX] outcome=%u err=%u suppressed=%d\n",
+                          (unsigned)ir.outcome, (unsigned)ir.error,
+                          (int)ir.txSuppressed);
+            g_proto.lxmfAcknowledge(sub.ticket);
+            if (ir.outcome == handheld::storage::Outcome::Committed)
+                strcpy(g_txStr, ir.txSuppressed ? "saved" : "sent");
+            else
+                snprintf(g_txStr, sizeof(g_txStr), "fail %u", (unsigned)ir.error);
+            return;
+        }
+        strcpy(g_txStr, "invalid");
+        Serial.println("[TX] poll invalid");
+        return;
+    }
+    strcpy(g_txStr, "timeout");
+    Serial.println("[TX] timeout");
+}
+
 static bool waitResult(MessageStore::Ticket ticket, MessageStore::Result& res,
                        int maxSpin = 600) {
     for (int spin = 0; spin < maxSpin; spin++) {
@@ -263,7 +331,6 @@ static void peerToHex32(const uint8_t peer[16], char out[33]) {
     out[32] = '\0';
 }
 
-// Resolve display name: lookupName (cache) then live nodes by hash bytes.
 static std::string resolvePeerName(const uint8_t peer[16]) {
     char hex[33];
     peerToHex32(peer, hex);
@@ -590,7 +657,6 @@ static void build_home() {
 }
 
 static void build_messages() {
-    // Re-resolve names at draw time (announce may have arrived after cache fill)
     for (int i = 0; i < g_msgRowCount; i++) {
         if (g_msgRows[i].used)
             formatPeerLine(g_msgRows[i].line1, sizeof(g_msgRows[i].line1),
@@ -619,7 +685,7 @@ static void build_messages() {
             if (y > EPD_HEIGHT - 40) break;
         }
     }
-    make_footer("2/3 Msgs  Enter/touch next");
+    make_footer("2/3 Msgs  t=send test");
 }
 
 static void build_settings() {
@@ -632,13 +698,12 @@ static void build_settings() {
     add_row(y, "Radio", "Long Fast");
     add_row(y, "Freq", freq);
     add_row(y, "TX power", txp);
-    add_row(y, "WiFi", "off");
-    add_row(y, "Display", "e-ink");
     add_row(y, "Announce", g_announceStr);
+    add_row(y, "Last TX", g_txStr);
     y += 8;
     fat_label(g_root, g_protoReady ? "(protocol up)" : "(protocol off)", 8, y);
     y += 24;
-    fat_label(g_root, "serial a = announce", 8, y);
+    fat_label(g_root, "a=ann  t=tx test", 8, y);
     y += 24;
     char ps[40];
     snprintf(ps, sizeof(ps), "PSRAM %uK", (unsigned)(ESP.getPsramSize() / 1024));
@@ -670,8 +735,8 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 11");
-    Serial.println(" name resolve on draw + name cache load");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 12");
+    Serial.println(" serial t = test LXMF send");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -719,7 +784,7 @@ void setup() {
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready");
     g_bootAnnAt = millis() + 3000;
-    Serial.println("[HINT] serial: a=announce r=reload msgs n=next");
+    Serial.println("[HINT] a=announce t=send test r=reload n=next");
 }
 
 void loop() {
@@ -744,6 +809,11 @@ void loop() {
                 g_kb.discardPending();
                 doAnnounce();
                 if (g_screen == SCR_SETTINGS) show_screen(SCR_SETTINGS);
+            } else if (ev.character == 't' || ev.character == 'T') {
+                g_kb.discardPending();
+                doSendTest();
+                if (g_screen == SCR_SETTINGS || g_screen == SCR_MESSAGES)
+                    show_screen(g_screen);
             } else {
                 g_kb.discardPending();
             }
@@ -772,6 +842,10 @@ void loop() {
         } else if (c == 'a' || c == 'A') {
             doAnnounce();
             if (g_screen == SCR_SETTINGS) show_screen(SCR_SETTINGS);
+        } else if (c == 't' || c == 'T') {
+            doSendTest();
+            if (g_screen == SCR_SETTINGS || g_screen == SCR_MESSAGES)
+                show_screen(g_screen);
         }
     }
     delay(5);
