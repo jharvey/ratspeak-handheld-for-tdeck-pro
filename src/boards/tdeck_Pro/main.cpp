@@ -64,6 +64,8 @@ static constexpr int MSG_ROWS = 4;
 struct MsgRow {
     char line1[28];
     char line2[28];
+    uint8_t peer[16];
+    uint32_t unread;
     bool used;
 };
 static MsgRow g_msgRows[MSG_ROWS];
@@ -554,6 +556,11 @@ static void build_home() {
 }
 
 static void build_messages() {
+	for (int i = 0; i < g_msgRowCount; i++) {
+		if (g_msgRows[i].used)
+			formatPeerLine(g_msgRows[i].line1, sizeof(g_msgRows[i].line1),
+						   g_msgRows[i].peer, g_msgRows[i].unread);
+	}
     clear_screen();
     make_header("Messages");
     int y = 40;
