@@ -25,7 +25,7 @@
 #include "util/Bytes.h"
 
 // ---------------------------------------------------------------------------
-// Phase E chunk 10 — name labels + boot announce
+// Phase E chunk 11 — peer name resolve on draw; loadNameCache on boot
 // ---------------------------------------------------------------------------
 
 static DisplayEink g_display;
@@ -175,6 +175,7 @@ static bool initStorageAndProto() {
     if (!g_msgStore.begin(&g_flash, nullptr, false)) return false;
     g_storeReady = true;
     g_announceMgr.setStorage(nullptr, &g_flash);
+    g_announceMgr.loadNameCache();  // names.json from prior announces
 
     logPsram();
 
@@ -262,11 +263,32 @@ static void peerToHex32(const uint8_t peer[16], char out[33]) {
     out[32] = '\0';
 }
 
-static void formatPeerLine(char* out, size_t outLen, const uint8_t peer[16],
-                           uint32_t unread) {
+// Resolve display name: lookupName (cache) then live nodes by hash bytes.
+static std::string resolvePeerName(const uint8_t peer[16]) {
     char hex[33];
     peerToHex32(peer, hex);
+
     std::string name = g_announceMgr.lookupName(hex);
+    if (!name.empty()) return name;
+
+    const DiscoveredNode* n = g_announceMgr.findNode(rs::Bytes(peer, 16));
+    if (n && !n->name.empty()) return n->name;
+
+    n = g_announceMgr.findNodeByHex(hex);
+    if (n && !n->name.empty()) return n->name;
+
+    for (const auto& node : g_announceMgr.nodes()) {
+        if (node.hash.size() == 16 &&
+            memcmp(node.hash.data(), peer, 16) == 0 &&
+            !node.name.empty())
+            return node.name;
+    }
+    return {};
+}
+
+static void formatPeerLine(char* out, size_t outLen, const uint8_t peer[16],
+                           uint32_t unread) {
+    std::string name = resolvePeerName(peer);
     if (!name.empty()) {
         if (unread > 0)
             snprintf(out, outLen, "%.18s *%u", name.c_str(), (unsigned)unread);
@@ -288,7 +310,9 @@ static void applyView(const handheld::storage::ConversationView& v) {
     if (g_msgRowCount >= MSG_ROWS) return;
     MsgRow& r = g_msgRows[g_msgRowCount];
     r.used = true;
-    formatPeerLine(r.line1, sizeof(r.line1), v.peer, v.unreadCount);
+    memcpy(r.peer, v.peer, 16);
+    r.unread = v.unreadCount;
+    formatPeerLine(r.line1, sizeof(r.line1), r.peer, r.unread);
     size_t pl = v.previewLength;
     if (pl >= sizeof(r.line2)) pl = sizeof(r.line2) - 1;
     memcpy(r.line2, v.preview, pl);
@@ -297,6 +321,12 @@ static void applyView(const handheld::storage::ConversationView& v) {
         if ((unsigned char)r.line2[k] < 32 || (unsigned char)r.line2[k] > 126)
             r.line2[k] = '?';
     }
+    {
+        char hex[33];
+        peerToHex32(r.peer, hex);
+        Serial.printf("[MSG] row peer=%s name=\"%s\" unread=%u\n",
+                      hex, resolvePeerName(r.peer).c_str(), (unsigned)r.unread);
+    }
     g_msgRowCount++;
 }
 
@@ -304,7 +334,9 @@ static void applySelectorOnly(const handheld::storage::ConversationSelector& s) 
     if (g_msgRowCount >= MSG_ROWS) return;
     MsgRow& r = g_msgRows[g_msgRowCount];
     r.used = true;
-    formatPeerLine(r.line1, sizeof(r.line1), s.cursor.peer, 0);
+    memcpy(r.peer, s.cursor.peer, 16);
+    r.unread = 0;
+    formatPeerLine(r.line1, sizeof(r.line1), r.peer, 0);
     r.line2[0] = '\0';
     g_msgRowCount++;
 }
@@ -428,6 +460,8 @@ static void loadMessageRows(bool force = false) {
         for (size_t i = 0; i < ids.size() && g_msgRowCount < MSG_ROWS; i++) {
             MsgRow& r = g_msgRows[g_msgRowCount];
             r.used = true;
+            memset(r.peer, 0, 16);
+            r.unread = 0;
             snprintf(r.line1, sizeof(r.line1), "msg %.12s", ids[i].c_str());
             r.line2[0] = '\0';
             g_msgRowCount++;
@@ -556,11 +590,13 @@ static void build_home() {
 }
 
 static void build_messages() {
-	for (int i = 0; i < g_msgRowCount; i++) {
-		if (g_msgRows[i].used)
-			formatPeerLine(g_msgRows[i].line1, sizeof(g_msgRows[i].line1),
-						   g_msgRows[i].peer, g_msgRows[i].unread);
-	}
+    // Re-resolve names at draw time (announce may have arrived after cache fill)
+    for (int i = 0; i < g_msgRowCount; i++) {
+        if (g_msgRows[i].used)
+            formatPeerLine(g_msgRows[i].line1, sizeof(g_msgRows[i].line1),
+                           g_msgRows[i].peer, g_msgRows[i].unread);
+    }
+
     clear_screen();
     make_header("Messages");
     int y = 40;
@@ -634,8 +670,8 @@ void setup() {
     delay(400);
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 10");
-    Serial.println(" names + boot announce");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 11");
+    Serial.println(" name resolve on draw + name cache load");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
