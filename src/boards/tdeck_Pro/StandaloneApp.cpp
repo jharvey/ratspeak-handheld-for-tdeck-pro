@@ -109,6 +109,7 @@ void next_screen();
 void doAnnounce();
 void doSendTest(const char* body);
 void loadMessageRows(bool force);
+void appendAnnouncedPeers();  // E23: fill empty slots from AnnounceManager
 void loadHistoryRows();
 void composeClear();
 void composeAppend(char c);
@@ -762,12 +763,64 @@ void loadHistoryRows() {
         Serial.printf("[HIST] loaded %d rows\n", g_histRowCount);
 }
 
+
+// E23: Top up Messages rows from recently announced peers so the user can
+// select one and send a keyboard reply even with no prior conversation.
+void appendAnnouncedPeers() {
+    if (g_msgRowCount >= MSG_ROWS) return;
+
+    const uint8_t* local = nullptr;
+    if (g_protoReady) local = g_proto.localDestHash();
+
+    const auto& nodes = g_announceMgr.nodes();
+    int added = 0;
+    for (const auto& node : nodes) {
+        if (g_msgRowCount >= MSG_ROWS) break;
+        if (node.hash.size() != 16) continue;
+        if (local && memcmp(node.hash.data(), local, 16) == 0) continue;
+
+        bool already = false;
+        for (int i = 0; i < g_msgRowCount; i++) {
+            if (g_msgRows[i].used &&
+                memcmp(g_msgRows[i].peer, node.hash.data(), 16) == 0) {
+                already = true;
+                break;
+            }
+        }
+        if (already) continue;
+
+        MsgRow& r = g_msgRows[g_msgRowCount];
+        r.used = true;
+        memcpy(r.peer, node.hash.data(), 16);
+        r.unread = 0;
+        formatPeerLine(r.line1, sizeof(r.line1), r.peer, 0);
+        // Distinguish announce-only peers (no conversation yet).
+        if (node.rssi != 0)
+            snprintf(r.line2, sizeof(r.line2), "(ann %d dBm)", node.rssi);
+        else
+            snprintf(r.line2, sizeof(r.line2), "(announced)");
+        g_msgRowCount++;
+        added++;
+        char hex[33];
+        peerToHex32(r.peer, hex);
+        Serial.printf("[MSG] ann peer=%s name=\"%s\" rssi=%d\n",
+                      hex, node.name.empty() ? "-" : node.name.c_str(), node.rssi);
+    }
+    if (added)
+        Serial.printf("[MSG] appended %d announced peer(s) total=%d\n",
+                      added, g_msgRowCount);
+}
+
 void loadMessageRows(bool force) {
     if (g_storeReady) g_msgStore.poll();
     const uint32_t rev = g_storeReady ? g_msgStore.revision() : 0;
 
     if (g_msgRowsLoaded && !force && g_msgRowCount > 0 && rev == g_msgCacheRevision) {
         Serial.printf("[MSG] using cached %d rows rev=%u\n", g_msgRowCount, (unsigned)rev);
+        // E23: still top up empty slots from newly announced peers
+        const int before = g_msgRowCount;
+        appendAnnouncedPeers();
+        if (g_msgRowCount > before) clampSelPeer();
         return;
     }
     if (g_msgRowsLoaded && rev != g_msgCacheRevision)
@@ -777,18 +830,19 @@ void loadMessageRows(bool force) {
     g_msgRowCount = 0;
     g_msgNote[0] = '\0';
     for (int i = 0; i < MSG_ROWS; i++) g_msgRows[i].used = false;
-    if (!g_storeReady) {
-        snprintf(g_msgNote, sizeof(g_msgNote), "(no store)");
-        return;
+
+    Serial.printf("[MSG] load free_int=%u rev=%u store=%d\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                  (unsigned)rev, (int)g_storeReady);
+
+    if (g_storeReady) {
+        if (!tryConversationPage(MSG_ROWS)) tryConversationPage(1);
     }
 
-    Serial.printf("[MSG] load free_int=%u rev=%u\n",
-                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-                  (unsigned)rev);
+    // E23: fill remaining rows from AnnounceManager nodes (keyboard TX targets)
+    appendAnnouncedPeers();
 
-    if (!tryConversationPage(MSG_ROWS)) tryConversationPage(1);
-
-    if (g_msgRowCount == 0) {
+    if (g_msgRowCount == 0 && g_storeReady) {
         auto ids = g_msgStore.startupRecentMessageIds(MSG_ROWS);
         for (size_t i = 0; i < ids.size() && g_msgRowCount < MSG_ROWS; i++) {
             MsgRow& r = g_msgRows[g_msgRowCount];
@@ -802,18 +856,27 @@ void loadMessageRows(bool force) {
     }
 
     if (g_msgRowCount == 0) {
-        uint32_t c = g_msgStore.totalConversations();
-        int u = g_msgStore.totalUnreadCount();
-        if (c > 0)
-            snprintf(g_msgNote, sizeof(g_msgNote), "(%u stored, list empty)", (unsigned)c);
-        else if (u > 0)
-            snprintf(g_msgNote, sizeof(g_msgNote), "(%d unread, list empty)", u);
-        else
-            snprintf(g_msgNote, sizeof(g_msgNote), "(no conversations)");
+        int nAnn = g_announceMgr.nodeCount();
+        if (g_storeReady) {
+            uint32_t c = g_msgStore.totalConversations();
+            int u = g_msgStore.totalUnreadCount();
+            if (c > 0)
+                snprintf(g_msgNote, sizeof(g_msgNote), "(%u stored, list empty)", (unsigned)c);
+            else if (u > 0)
+                snprintf(g_msgNote, sizeof(g_msgNote), "(%d unread, list empty)", u);
+            else if (nAnn > 0)
+                snprintf(g_msgNote, sizeof(g_msgNote), "(%d ann, wait list)", nAnn);
+            else
+                snprintf(g_msgNote, sizeof(g_msgNote), "(no peers yet)");
+        } else if (nAnn > 0) {
+            snprintf(g_msgNote, sizeof(g_msgNote), "(%d ann, no store)", nAnn);
+        } else {
+            snprintf(g_msgNote, sizeof(g_msgNote), "(no peers yet)");
+        }
         g_msgRowsLoaded = false;
     } else {
         g_msgRowsLoaded = true;
-        g_msgCacheRevision = g_msgStore.revision();
+        g_msgCacheRevision = g_storeReady ? g_msgStore.revision() : 0;
         clampSelPeer();
         Serial.printf("[MSG] loaded %d rows rev=%u sel=%d\n",
                       g_msgRowCount, (unsigned)g_msgCacheRevision, g_selPeer);
@@ -984,7 +1047,7 @@ void build_messages() {
         snprintf(foot, sizeof(foot), ">%.28s", g_compose);
         make_footer(foot);
     } else {
-        make_footer("2/3 Msgs  H=hist p=peer");
+        make_footer("2/3 Msgs p=peer type+Enter");
     }
 }
 
@@ -1132,8 +1195,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 22b");
-    Serial.println(" touch peer select (row stays on Msgs)");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 23");
+    Serial.println(" announced peers in list -> keyboard TX");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -1193,7 +1256,7 @@ bool begin() {
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready");
     g_bootAnnAt = millis() + 3000;
-    Serial.println("[HINT] type+Enter | pause~1.6s glass | touch=row/next | p H a t");
+    Serial.println("[HINT] type+Enter=send | p=peer | touch=row | H hist | a ann | r reload");
     return true;
 }
 
