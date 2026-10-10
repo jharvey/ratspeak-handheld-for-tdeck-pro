@@ -72,8 +72,11 @@ KEYBOARD HINTS
 
 TOUCH HINTS
 -----------
-  Messages list row    select that peer (redraw with >)
-  elsewhere / fail     next screen (same as pre-E22 INT)
+  Messages peer row    select that peer; STAY on Messages (even if 1 peer)
+  Messages header/foot next screen
+  History any tap      back to conversation list
+  Home / Settings      next screen
+  CST328 coords work; peer band starts ~y=76 (after Convs/Unread)
 
 FILE MAP
 --------

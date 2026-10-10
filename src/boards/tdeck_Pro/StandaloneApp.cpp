@@ -484,32 +484,51 @@ bool cst328Read(int16_t& x, int16_t& y) {
     return true;
 }
 
-// Messages content rows start ~y=40; each row ~46px with preview.
-// Tap in row band -> select peer. Otherwise next screen.
+// Messages list: Convs + Unread occupy y=40..~104, then peer rows.
+// Each peer row is ~46 px (name + optional preview).
+// Tap a peer row -> select it (redraw only when selection changes).
+// Same-peer tap stays on Messages. Anywhere else -> next screen.
 bool handleTouchAt(int16_t x, int16_t y) {
     Serial.printf("[TOUCH] xy=%d,%d screen=%u\n", (int)x, (int)y, (unsigned)g_screen);
     if (g_screen == SCR_MESSAGES && !g_showHistory && g_msgRowCount > 0) {
-        const int contentTop = 40;
-        const int rowH = 46;
-        if (y >= contentTop && y < EPD_HEIGHT - 28) {
-            int row = (y - contentTop) / rowH;
+        // Header: y=40 Convs, y=68 Unread, y+=8 -> peers start ~104
+        const int peersTop = 104;
+        const int rowH     = 46;
+        if (y >= peersTop && y < EPD_HEIGHT - 28) {
+            int row = (y - peersTop) / rowH;
             if (row < 0) row = 0;
             if (row >= g_msgRowCount) row = g_msgRowCount - 1;
-            if (row != g_selPeer) {
-                g_selPeer = row;
-                clampSelPeer();
-                char hex[33];
-                peerToHex32(g_msgRows[g_selPeer].peer, hex);
-                Serial.printf("[PEER] touch sel=%d/%d %s\n",
-                              g_selPeer, g_msgRowCount, hex);
-                show_screen(SCR_MESSAGES);
+
+            const int was = g_selPeer;
+            g_selPeer = row;
+            clampSelPeer();
+
+            char hex[33];
+            peerToHex32(g_msgRows[g_selPeer].peer, hex);
+            Serial.printf("[PEER] touch sel=%d/%d (was %d) %s\n",
+                          g_selPeer, g_msgRowCount, was, hex);
+
+            if (g_selPeer != was) {
+                show_screen(SCR_MESSAGES);   // selection changed -> redraw
                 return true;
             }
-            // same peer: still redraw is unnecessary; fall through to next
+            // already selected — stay on Messages, no fullRefresh
+            Serial.println("[PEER] already selected — stay on Messages");
+            return true;
         }
     }
     next_screen();
     return true;  // next_screen already drew
+}
+    // History view: any tap returns to the conversation list (not next screen).
+    if (g_screen == SCR_MESSAGES && g_showHistory) {
+        g_showHistory = false;
+        show_screen(SCR_MESSAGES);
+        return true;
+    }
+
+    next_screen();
+    return true;
 }
 
 
@@ -1117,7 +1136,7 @@ bool begin() {
     Serial.println();
     Serial.println("========================================");
     Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 22");
-    Serial.println(" touch peer select (CST328)");
+    Serial.println(" touch peer select (row stays on Msgs)");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
