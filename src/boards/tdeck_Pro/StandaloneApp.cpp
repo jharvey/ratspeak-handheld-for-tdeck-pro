@@ -487,7 +487,8 @@ bool cst328Read(int16_t& x, int16_t& y) {
 // Messages list: Convs + Unread occupy y=40..~104, then peer rows.
 // Each peer row is ~46 px (name + optional preview).
 // Tap a peer row -> select it (redraw only when selection changes).
-// Same-peer tap stays on Messages. Anywhere else -> next screen.
+// Same-peer tap stays on Messages. History tap returns to list.
+// Anywhere else -> next screen.
 bool handleTouchAt(int16_t x, int16_t y) {
     Serial.printf("[TOUCH] xy=%d,%d screen=%u\n", (int)x, (int)y, (unsigned)g_screen);
     if (g_screen == SCR_MESSAGES && !g_showHistory && g_msgRowCount > 0) {
@@ -517,18 +518,14 @@ bool handleTouchAt(int16_t x, int16_t y) {
             return true;
         }
     }
-    next_screen();
-    return true;  // next_screen already drew
-}
-    // History view: any tap returns to the conversation list (not next screen).
+    // History view: any tap returns to the conversation list.
     if (g_screen == SCR_MESSAGES && g_showHistory) {
         g_showHistory = false;
         show_screen(SCR_MESSAGES);
         return true;
     }
-
     next_screen();
-    return true;
+    return true;  // next_screen already drew
 }
 
 
@@ -1135,7 +1132,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 22");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 22b");
     Serial.println(" touch peer select (row stays on Msgs)");
     Serial.println("========================================");
 
