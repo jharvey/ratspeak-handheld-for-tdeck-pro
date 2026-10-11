@@ -1,226 +1,139 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-11 (E23 TX + e-ink refresh + energy roadmap)
+Last updated: 2026-10-11 (Phase G1 Plus-like tabs)
 ================================================================================
 
 OVERALL GOALS
 -------------
 1. Port Ratspeak to T-Deck Pro (GDEQ031T10 240x320 e-ink).
 2. Keep Cooperative / Node green.
-3. Standalone e-ink bring-up (not full Plus UI).
-4. After messaging is solid: energy reduction (sleep, duty-cycled RX).
-5. Later: clean upstream-friendly history.
+3. Standalone e-ink bring-up (not full Plus UI / not ui/lvgl import).
+4. Plus-like information architecture on e-ink (5 bottom tabs).
+5. After messaging + shell solid: energy reduction (sleep, duty-cycled RX).
+6. Later: clean upstream-friendly history.
 
 STANDALONE RULES
 ----------------
 Exclude LvglApplication.cpp and ui/lvgl. Include boards/tdeck_Pro.
 bindDeviceOwner() before ProtocolRuntime. Prefer full files on Windows
 (patches often break on CRLF / Tortoise). ASCII only.
-Single fullRefresh per screen change (current policy — see E-INK REFRESH).
+Single fullRefresh per screen/tab change (current policy).
 GxEPD2 page_height=16; firstPage+drawBitmap; flush non-white->black.
 fat_label: single stroke. Protocol BEFORE LVGL. Internal node if PSRAM size=0.
 Code layout: thin main.cpp + StandaloneApp.h/.cpp.
-Do not break TX/RX or cooperative while adding sleep later.
+Do not break TX/RX or cooperative while adding sleep or UI parity.
+
+PLUS PARITY GOAL (Phase G)
+--------------------------
+Match T-Deck Plus standalone *structure and data*, not LCD chrome:
+
+  Plus bottom tabs:  Home | Chats | Contacts | Peers | Settings
+  Pro e-ink tabs:    Home | Chats | Cont    | Peers | Set
+
+Adaptations:
+  - Portrait 240x320 vs Plus landscape 320x240
+  - E-ink full refresh on tab change; no color / no trackball
+  - Keyboard + CST328 touch (no trackball hold gestures yet)
+  - Fat-text shell only (no import of ui/lvgl)
+
+Path: evolve StandaloneApp shell first (G1+). Importing Plus LVGL is a
+later optional G2 and would lift the exclude rule deliberately.
 
 PHASE STATUS
 ------------
-A-D         * DONE * panel, LVGL shell (Home / Messages / Settings)
-E1-E6       * DONE * battery, dest, LoRa, proto-before-LVGL, internal node
-E7          * DONE * ConversationSelector page + ConversationView detail
-E8          * DONE * revision-aware message cache
-E9          * DONE * manual announce (serial a); inbound LXMF
-E10         * DONE * boot announce (+3s)
-E11         * DONE * loadNameCache + resolvePeerName on draw
-E12         * DONE * serial t fixed ping LXMF
-E13         * DONE * StandaloneApp split; Messages auto-redraw
-E14         * DONE * LvglPort 20/10/5 line strip alloc
-E15         * DONE * line serial t | t <text> compose
-E16         * DONE * AI-guide catch-up
-E17         * DONE * History toggle (serial H); counters on glass
-E18         * DONE * History body snippets (requestRecord cap >= header)
-E19         * DONE * Keyboard text compose (TCA8418, no per-key refresh)
-E20         * DONE * Peer select (p) + mark-read on History open
-E21         * DONE * Deferred compose-on-glass (idle ~1.6s then one refresh)
-E22         * DONE * CST328 touch: Messages row tap selects peer; else next
-E23         * DONE * announced peers in Messages list; keyboard TX live
-            Hardware: body=" HELLO" / "KY" / "LLO FROM PRO" outcome=0 + LoRa TX
-            Peer replies inbound; History bidirectional
+A-D         * DONE * panel, LVGL shell (early Home / Messages / Settings)
+E1-E23      * DONE * proto, announce, inbox, outbound, history, compose,
+              peer select, touch row, announced peers as TX targets
+G1          * IN   * Plus-like 5-tab bar + touch zones + tab content
+              Home / Chats / Contacts / Peers / Settings
 
 Hardware proof (E21-E23):
-  Compose idle redraw; TX outcome=0; touch peer select stays on Msgs
+  Compose idle redraw; TX outcome=0; touch peer select stays on list
   Heap ~22-24K free_int stable post-draw
-
-Bring-up is "basically running": announce, inbox, outbound, history,
-keyboard compose, peer select, touch. Next UI polish optional; energy
-work is a separate phase after that (see ENERGY ROADMAP).
 
 DEVICE FACTS
 ------------
-PSRAM: found=1 size=0 — use INTERNAL only; Settings shows "PSRAM n/a".
-  Hardware is 8MB OPI; size=0 = board/build map not active. Fix is
-  platformio/board flags + probe, not app archaeology. Defer until
-  after energy phase or only as a focused experiment.
-Heap: ~45K post-proto; ~28K post-LVGL (10-line strip); ~24K steady after UI.
-Touch: CST328 @ 0x1A (not GT911). Minimal 0xD000 finger-1 read in
-  StandaloneApp — no SensorLib dependency. Soft-fail keeps INT-only next.
-Outbound: lxmfSubmit to selected MsgRow peer (g_selPeer).
-Compose: 120-char buffer; idle ~1.6s one fullRefresh for footer ">text".
-Peer: serial/kb p cycles; Messages list shows >; History mark-reads sel.
-  E23 also fills free rows from AnnounceManager::nodes() as "(ann ...)" targets.
-Keyboard shortcuts (compose empty only): a=announce t=ping H=history p=peer.
-  Leading space avoids H/t/a/p swallowing first letter of a message.
-Battery: ~1400-1500 mAh LiPo. E-ink refresh energy is negligible at messaging
-  rates; always-on MCU + continuous LoRa RX dominate (see ENERGY ROADMAP).
+PSRAM: found=1 size=0 — INTERNAL only. OPI 8MB on silicon; fix later.
+Heap: ~24K steady after UI.
+Touch: CST328 @ 0x1A. Minimal read in StandaloneApp.
+Battery: ~1400-1500 mAh. E-ink refresh negligible; MCU+RX dominate.
 
-SERIAL HINTS (line + Enter)
----------------------------
-  t / t hello / t:hi   send to selected peer
-  H                    toggle History (marks read)
-  p                    cycle selected peer
-  c                    clear compose buffer
-  a r n h m s / 1 2 3  announce / reload / next / home / msgs / settings
+LAYOUT + TOUCH ZONES (G1 — keep in sync with code)
+--------------------------------------------------
+Canvas: EPD_WIDTH=240, EPD_HEIGHT=320 (portrait).
 
-KEYBOARD HINTS
---------------
-  type + pause ~1.6s   compose on glass footer
-  Enter (nonempty)     send to selected peer
-  Enter (empty)        next screen
-  a / t / H / p        shortcuts only when compose empty
-  (type a space first if message should start with H/t/a/p)
+  Header:     y = 0 .. 32     title + 3px rule
+  Content:    y = 36 .. CONTENT_BOTTOM
+  Compose:    y = TAB_TOP - 22  (when buffer non-empty)
+  Tab bar:    y = TAB_TOP .. 319
 
-TOUCH HINTS
+Constants (StandaloneApp.cpp):
+  TAB_H   = 34
+  TAB_TOP = EPD_HEIGHT - TAB_H     // 286
+  TAB_W   = EPD_WIDTH / 5          // 48
+  CONTENT_BOTTOM = TAB_TOP - 4
+  PEERS_TOP = 104                  // list rows start
+  ROW_H   = 46                     // name + optional preview
+
+Tab touch (y >= TAB_TOP):
+  x 0..47   -> Home
+  x 48..95  -> Chats
+  x 96..143 -> Contacts
+  x 144..191-> Peers
+  x 192..239-> Settings
+  Same-tab tap = no refresh.
+
+List row touch (Chats / Contacts / Peers, y >= PEERS_TOP, y < CONTENT_BOTTOM):
+  row = (y - PEERS_TOP) / ROW_H  -> select peer; redraw only if changed.
+
+History (Chats only, H key): any content tap returns to Chats list.
+Home / Settings content taps: ignore (stay on tab).
+
+TAB CONTENT
 -----------
-  Messages peer row    select that peer; STAY on Messages (even if same peer)
-  Messages header/foot next screen
-  History any tap      back to conversation list
-  Home / Settings      next screen
-  CST328 coords work; peers band starts ~y=104 (after Convs/Unread)
+Home
+  Battery, LoRa, RSSI, SNR, Paths, Links, LXMF Q, LOCAL_DEST
+  Shortcut: a = announce
 
-E-INK REFRESH (GDEQ031T10 / GxEPD2)
------------------------------------
-Panel: Good Display GDEQ031T10 240x320, controller via GxEPD2_310_GDEQ031T10.
+Chats  (former Messages)
+  Convs / Unread, conversation + announced rows, compose, History (H)
+  Select peer (touch / p), type+Enter TX, H = history toggle
 
-Theory (Applied Science / Krasnow "E-paper hacking: fastest possible refresh"):
-  - Full waveform = long multi-phase drive; particles fully settled; flashes.
-  - Partial / differential = compare new vs previous buffer; drive only deltas.
-  - Speed comes from shorter LUTs (lookup tables / waveforms). Tradeoff:
-    less contrast, ghosting builds unless a full clean is done periodically.
-  - Practical rule from Good Display / LilyGO for this panel:
-      after ~5 consecutive fast or partial refreshes, do one full refresh.
+Contacts
+  Conversation peers only (no announce-only fill)
+  Select + type+Enter TX
 
-GxEPD2 already supports this panel (no extra library required):
+Peers
+  AnnounceManager nodes only
+  Select + type+Enter TX; a = announce if empty
 
-  hasPartialUpdate       = true
-  hasFastPartialUpdate   = true
-  useFastFullUpdate      = true   // shorter full; disable for cold temps
-  full_refresh_time      ~ 1100 ms
-  partial_refresh_time   ~ 700 ms
+Settings
+  Radio preset name, freq, TX power, last announce/TX, protocol, PSRAM
 
-  API surface used today / available next:
-    g_epd.setFullWindow();   firstPage/nextPage  -> full refresh (current path)
-    g_epd.setPartialWindow(x,y,w,h); firstPage/nextPage -> partial region
-    refresh(false) full, refresh(true) partial (higher-level helpers)
+SERIAL / KEYBOARD
+-----------------
+  type + pause ~1.6s   compose on glass
+  Enter (nonempty)     send to selected peer
+  Enter (empty)        next tab
+  a / t / H / p        shortcuts when compose empty
+  1=Home 2=Chats 3=Contacts 4=Peers 5=Settings
+  c                    clear compose (serial)
+  n                    next tab
+  r                    reload rows
+  Leading space avoids H/t/a/p swallowing first letter of a message.
 
-DisplayEink today:
-  fullRefresh() only — setFullWindow + drawBitmap of whole FB.
-  refreshIfDirty() always calls fullRefresh().
-  Policy: one fullRefresh per screen change (Home/Msgs/Settings/History).
+E-INK REFRESH
+-------------
+Full refresh on every tab/screen change (current).
+Optional E24: partial for compose footer + selection marker only;
+  force full every 5 partials. GxEPD2 already has partial/fast APIs.
+Panel energy at 5 msg/day is negligible vs always-on radio.
 
-Recommended UI policy (E24 optional partial experiment):
-  1. Screen *change* (Home <-> Msgs <-> Settings, enter/leave History)
-       -> fullRefresh (clean slate).
-  2. In-place updates (compose footer, peer ">" marker, unread count)
-       -> partialRefresh of dirty region (or full window partial).
-  3. Keep a partial counter; every N (default 5) partials force one full.
-  4. Do not invent custom LUTs first — stock GxEPD2 fast/partial is enough
-       to trial. Custom waveforms only if ghosting is unacceptable.
-  5. After hibernate / long power-off, first update must be full (previous
-       buffer may be invalid for differential).
-
-Panel energy (5 msg/day scale): ~11 mW during refresh, ~0.017 mW standby.
-  Full ~0.001 mAh/update; partial slightly less. Negligible vs radio/MCU.
-  Partial is a UX win, not a battery tradeoff at messaging rates.
-
-Reference:
-  https://www.youtube.com/watch?v=MsbiO8EAsGw  (Krasnow LUT / partial)
-  http://benkrasnow.blogspot.com/2017/10/fast-partial-refresh-on-42-e-paper.html
-  Good Display GDEQ031T10 notes: full / fast / partial; full after 5 partials
-  GxEPD2: src/gdeq/GxEPD2_310_GDEQ031T10.h
-
-LIB TO USE
-----------
-GxEPD2 (already linked; ZinggJM). Do NOT add a second e-ink stack.
-DisplayEink is the thin wrapper — extend it with partialRefresh() rather
-than calling g_epd from StandaloneApp directly.
-No SensorLib for touch; no extra waveform lib needed for first partial trial.
-
-ENERGY ROADMAP (after messaging is solid)
------------------------------------------
-Do this only when bring-up is "basically running" (E23-level: TX/RX, compose,
-peer select). Goal: stretch 1400-1500 mAh from ~1-3 days always-on toward
-many days / weeks at low message rates. Keep cooperative green; optional
-compile flag or serial command to disable sleep while debugging.
-
-Why energy work is separate:
-  - Current standalone loop is always awake: proto.loop + continuous LoRa RX.
-  - E-ink refresh is NOT the drain (see above). MCU + SX1262 RX are.
-  - Sleep changes timing, IRQ paths, and protocol assumptions — easy to
-    break messaging if done mid-bring-up.
-
-Dominant loads today (order of magnitude):
-  ESP32-S3 active + protocol loop   ~20-40 mA
-  SX1262 continuous receive         ~5-10 mA
-  E-ink standby / rare refresh      ~uA / bursts
-  -> Always-on class runtime: about 1-3 days on 1500 mAh.
-
-Phased energy work (suggested order):
-
-  F1  Measure baseline
-      - Log free_int is not enough: add periodic battery % / mV (BQ27220).
-      - Optional: serial "power" line with last RSSI, uptime, bat.
-      - Know before/after when changing sleep.
-
-  F2  Idle light-sleep between loop work
-      - When no key/touch/serial/pending TX and radio quiet for N ms,
-        esp_light_sleep or timed delay with radio still in RX if needed.
-      - Wake sources: TCA8418 INT, CST328 INT, SX1262 DIO, timer.
-      - Must not starve proto.loop / lxmfPoll / announce.loop.
-
-  F3  Radio duty-cycle / WOR (biggest win)
-      - Continuous RX is the long-term killer.
-      - Prefer SX1262 duty-cycle RX or wake-on-radio where protocol allows.
-      - Document impact on latency (message may wait for next RX window).
-      - Keep a "always listen" debug mode for field tests.
-
-  F4  Deep sleep between sparse sessions (optional, aggressive)
-      - Only if product goal is rare check-ins, not interactive messenger.
-      - Hibernate e-ink (GxEPD2 hibernate); cold-sleep radio; deep sleep MCU.
-      - Wake: timer, or GPIO from radio/keyboard.
-      - First e-ink update after wake must be full refresh.
-      - Protocol state must survive or re-init cleanly from flash.
-
-  F5  Peripheral power gates
-      - BOARD_GPS_EN, BOARD_1V8_EN, BOARD_LORA_EN, BOARD_6609_EN already
-        defined — gate GPS/audio/unused rails when idle.
-      - Do not cut LoRa or e-ink power while session active.
-
-  F6  UI policy that helps energy
-      - Partial refresh for in-place updates (E24) — small win, better UX.
-      - Avoid auto fullRedraw storms (already rate-limited).
-      - Dim/disable unnecessary live counters when idle.
-
-  F7  PSRAM (optional, parallel experiment)
-      - size=0 today; OPI 8MB on silicon. Fix board_build qio_opi + probe
-        sketch before moving protocol node to SPIRAM.
-      - Not required for energy; required for larger protocol profiles.
-
-Expected outcomes (rough, not measured on this unit):
-  - Always-on RX (today):           ~1-3 days
-  - Light-sleep + duty-cycled RX:   many days at 5 msg/day
-  - Deep sleep + rare wake:         weeks+ (interactive UX suffers)
-
-Never claim a runtime number without a measured baseline on the same
-firmware + battery %.
+ENERGY ROADMAP (after shell + messaging solid)
+----------------------------------------------
+F1 baseline battery %; F2 light-sleep; F3 LoRa duty-cycle/WOR;
+F4 deep sleep only for sparse check-ins; F5 rail gates; F6 UI policy.
+Do not mix sleep into G1 tab work.
 
 FILE MAP
 --------
@@ -231,24 +144,16 @@ src/boards/tdeck_Pro/Eink/LvglPort.*
 
 NEXT
 ----
-Near-term (still bring-up / UX, no sleep yet):
-  1. Optional E24: partialRefresh for compose footer + selection marker;
-     full still on screen change; force full every 5 partials.
-  2. Optional: trim leading/trailing spaces on TX body; fix markRead reject.
-  3. Optional: calibrate row Y from multi-peer touch logs.
-
-After messaging stays solid on hardware:
-  4. ENERGY F1 baseline (battery % logging).
-  5. ENERGY F2-F3 light-sleep + radio duty-cycle (largest gains).
-  6. ENERGY F4 deep sleep only if product wants sparse check-ins.
-  7. PSRAM OPI map as focused experiment (probe first).
-  8. Keep cooperative green on every change.
+G1 verify on hardware: tab bar draws; touch hits correct tab; TX from
+  Chats/Contacts/Peers still outcome=0; History still works.
+Optional G1.1: denser tab labels / icons; fix markRead reject.
+Optional E24 partial refresh.
+Then ENERGY F1 baseline.
+Keep cooperative green.
 
 ONE-LINER
 ---------
-Standalone: protocol + e-ink + announce + inbox + outbound + history
-+ keyboard compose (idle-on-glass) + peer select (p/touch) + mark-read
-+ announced peers as TX targets; fullRefresh per screen change; GxEPD2
-ready for partial. Internal heap only. PSRAM size=0. After solid TX/RX:
-measure battery, then light-sleep + duty-cycled LoRa for multi-day life.
+Standalone e-ink Plus-shaped shell: 5 bottom tabs (Home Chats Cont Peers
+Set), keyboard TX, announce peers, history; fullRefresh per tab change;
+internal heap; sleep planned after solid.
 ================================================================================

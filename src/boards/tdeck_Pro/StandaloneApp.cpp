@@ -45,7 +45,14 @@ bool g_protoReady = false;
 SX1262* g_radio = nullptr;
 LoRaInterface* g_loraIf = nullptr;
 
-enum ScreenId : uint8_t { SCR_HOME = 0, SCR_MESSAGES, SCR_SETTINGS, SCR_COUNT };
+enum ScreenId : uint8_t {
+    SCR_HOME = 0,
+    SCR_CHATS,      // Plus: Chats (conversations + compose + history)
+    SCR_CONTACTS,   // Plus: Contacts (messaged / named peers)
+    SCR_PEERS,      // Plus: Peers (announced nodes)
+    SCR_SETTINGS,
+    SCR_COUNT
+};
 ScreenId g_screen = SCR_HOME;
 lv_obj_t* g_root = nullptr;
 
@@ -106,6 +113,12 @@ constexpr uint32_t MSG_REDRAW_MIN_MS = 2500;
 void peerToHex32(const uint8_t peer[16], char out[33]);
 void show_screen(ScreenId id);
 void next_screen();
+const char* tabLabel(ScreenId id);
+void draw_tab_bar();
+void draw_compose_or_hint(const char* idleHint);
+void build_chats();
+void build_contacts();
+void build_peers();
 void doAnnounce();
 void doSendTest(const char* body);
 void loadMessageRows(bool force);
@@ -485,50 +498,80 @@ bool cst328Read(int16_t& x, int16_t& y) {
     return true;
 }
 
-// Messages list: Convs + Unread occupy y=40..~104, then peer rows.
-// Each peer row is ~46 px (name + optional preview).
-// Tap a peer row -> select it (redraw only when selection changes).
-// Same-peer tap stays on Messages. History tap returns to list.
-// Anywhere else -> next screen.
-bool handleTouchAt(int16_t x, int16_t y) {
-    Serial.printf("[TOUCH] xy=%d,%d screen=%u\n", (int)x, (int)y, (unsigned)g_screen);
-    if (g_screen == SCR_MESSAGES && !g_showHistory && g_msgRowCount > 0) {
-        // Header: y=40 Convs, y=68 Unread, y+=8 -> peers start ~104
-        const int peersTop = 104;
-        const int rowH     = 46;
-        if (y >= peersTop && y < EPD_HEIGHT - 28) {
-            int row = (y - peersTop) / rowH;
-            if (row < 0) row = 0;
-            if (row >= g_msgRowCount) row = g_msgRowCount - 1;
+// ---------------------------------------------------------------------------
+// Layout (240x320 portrait, Plus-like)
+//   Header bar: y=0..32
+//   Content:    y=36 .. TAB_TOP-4
+//   Tab bar:    y=TAB_TOP .. EPD_HEIGHT-1  (5 equal tabs, width TAB_W)
+// Touch hit-test uses these constants; keep in sync with draw_tab_bar().
+// ---------------------------------------------------------------------------
+constexpr int TAB_H     = 34;
+constexpr int TAB_TOP   = EPD_HEIGHT - TAB_H;   // 286 on 320
+constexpr int TAB_W     = EPD_WIDTH / 5;        // 48
+constexpr int CONTENT_BOTTOM = TAB_TOP - 4;     // leave gap above tabs
+constexpr int PEERS_TOP = 104;  // after Convs/Unread rows on list screens
+constexpr int ROW_H     = 46;
 
-            const int was = g_selPeer;
-            g_selPeer = row;
-            clampSelPeer();
-
-            char hex[33];
-            peerToHex32(g_msgRows[g_selPeer].peer, hex);
-            Serial.printf("[PEER] touch sel=%d/%d (was %d) %s\n",
-                          g_selPeer, g_msgRowCount, was, hex);
-
-            if (g_selPeer != was) {
-                show_screen(SCR_MESSAGES);   // selection changed -> redraw
-                return true;
-            }
-            // already selected — stay on Messages, no fullRefresh
-            Serial.println("[PEER] already selected — stay on Messages");
-            return true;
-        }
+const char* tabLabel(ScreenId id) {
+    switch (id) {
+        case SCR_HOME:     return "Home";
+        case SCR_CHATS:    return "Chats";
+        case SCR_CONTACTS: return "Cont";
+        case SCR_PEERS:    return "Peers";
+        case SCR_SETTINGS: return "Set";
+        default:           return "?";
     }
-    // History view: any tap returns to the conversation list.
-    if (g_screen == SCR_MESSAGES && g_showHistory) {
-        g_showHistory = false;
-        show_screen(SCR_MESSAGES);
-        return true;
-    }
-    next_screen();
-    return true;  // next_screen already drew
 }
 
+// Tab bar touch: x maps to tab index. Content touches handled per-screen.
+bool handleTouchAt(int16_t x, int16_t y) {
+    Serial.printf("[TOUCH] xy=%d,%d screen=%u\n", (int)x, (int)y, (unsigned)g_screen);
+
+    // Bottom tab bar — always wins
+    if (y >= TAB_TOP) {
+        int tab = x / TAB_W;
+        if (tab < 0) tab = 0;
+        if (tab >= (int)SCR_COUNT) tab = (int)SCR_COUNT - 1;
+        ScreenId want = (ScreenId)tab;
+        Serial.printf("[TAB] touch -> %s (%d)\n", tabLabel(want), tab);
+        if (want == g_screen) return true;  // same tab, no refresh
+        if (want != SCR_CHATS) g_showHistory = false;
+        show_screen(want);
+        return true;
+    }
+
+    // History view: any content tap returns to Chats list
+    if (g_screen == SCR_CHATS && g_showHistory) {
+        g_showHistory = false;
+        show_screen(SCR_CHATS);
+        return true;
+    }
+
+    // List screens: peer row select (Chats / Contacts / Peers)
+    if ((g_screen == SCR_CHATS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS) &&
+        g_msgRowCount > 0 && y >= PEERS_TOP && y < CONTENT_BOTTOM) {
+        int row = (y - PEERS_TOP) / ROW_H;
+        if (row < 0) row = 0;
+        if (row >= g_msgRowCount) row = g_msgRowCount - 1;
+        const int was = g_selPeer;
+        g_selPeer = row;
+        clampSelPeer();
+        char hex[33];
+        peerToHex32(g_msgRows[g_selPeer].peer, hex);
+        Serial.printf("[PEER] touch sel=%d/%d (was %d) %s\n",
+                      g_selPeer, g_msgRowCount, was, hex);
+        if (g_selPeer != was) {
+            show_screen(g_screen);
+            return true;
+        }
+        Serial.println("[PEER] already selected — stay");
+        return true;
+    }
+
+    // Home / Settings content: no-op (stay); do not cycle tabs
+    Serial.println("[TOUCH] content ignore");
+    return true;
+}
 
 void applyView(const handheld::storage::ConversationView& v) {
     if (g_msgRowCount >= MSG_ROWS) return;
@@ -952,19 +995,51 @@ void make_header(const char* title) {
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
 }
 
-void make_footer(const char* text) {
-    fat_label(g_root, text, 8, EPD_HEIGHT - 22);
-}
-
 void add_row(int& y, const char* left, const char* right) {
     fat_label(g_root, left, 8, y);
-    fat_label(g_root, right, 110, y);
-    y += 28;
+    fat_label(g_root, right, 120, y);
+    y += 24;
+}
+
+// Plus-like bottom tab bar: Home | Chats | Cont | Peers | Set
+// Active tab marked with ">". Hit-test constants in handleTouchAt.
+void draw_tab_bar() {
+    lv_obj_t* top = lv_obj_create(g_root);
+    lv_obj_set_size(top, EPD_WIDTH, 2);
+    lv_obj_set_pos(top, 0, TAB_TOP);
+    lv_obj_set_style_bg_color(top, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(top, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(top, 0, 0);
+    lv_obj_set_style_radius(top, 0, 0);
+    lv_obj_clear_flag(top, LV_OBJ_FLAG_SCROLLABLE);
+
+    for (int i = 0; i < (int)SCR_COUNT; i++) {
+        char lab[12];
+        if ((ScreenId)i == g_screen)
+            snprintf(lab, sizeof(lab), ">%s", tabLabel((ScreenId)i));
+        else
+            snprintf(lab, sizeof(lab), " %s", tabLabel((ScreenId)i));
+        // Center-ish each 48px slot
+        int x = i * TAB_W + 2;
+        fat_label(g_root, lab, x, TAB_TOP + 8);
+    }
+}
+
+// Compose line sits just above the tab bar when non-empty.
+void draw_compose_or_hint(const char* idleHint) {
+    if (g_composeLen > 0) {
+        char foot[40];
+        snprintf(foot, sizeof(foot), ">%.28s", g_compose);
+        fat_label(g_root, foot, 8, TAB_TOP - 22);
+    } else if (idleHint && idleHint[0]) {
+        fat_label(g_root, idleHint, 8, TAB_TOP - 22);
+    }
+    draw_tab_bar();
 }
 
 void build_home() {
     clear_screen();
-    make_header("Ratspeak");
+    make_header("Home");
     int y = 40;
     char batLine[28];
     snprintf(batLine, sizeof(batLine), "%s %s", g_batStr, g_pctStr);
@@ -972,59 +1047,36 @@ void build_home() {
     add_row(y, "LoRa", g_loraStr);
     add_row(y, "RSSI", g_rssiStr);
     add_row(y, "SNR", g_snrStr);
-    y += 6;
+    y += 4;
     add_row(y, "Paths", g_pathsStr);
     add_row(y, "Links", g_linksStr);
     add_row(y, "LXMF Q", g_lxmfqStr);
-    y += 10;
+    y += 6;
     fat_label(g_root, "LOCAL_DEST", 8, y);
-    y += 26;
+    y += 24;
     fat_label(g_root, g_destHex, 8, y);
-    make_footer("1/3 Home  Enter/touch next");
+    y += 28;
+    fat_label(g_root, "a=Announce", 8, y);
+    draw_compose_or_hint("Home");
 }
 
-void build_messages() {
+// Shared list body for Chats / Contacts / Peers (uses g_msgRows).
+void build_list_body(const char* title, const char* emptyNote) {
     for (int i = 0; i < g_msgRowCount; i++) {
         if (g_msgRows[i].used)
             formatPeerLine(g_msgRows[i].line1, sizeof(g_msgRows[i].line1),
                            g_msgRows[i].peer, g_msgRows[i].unread);
     }
     clear_screen();
-    if (g_showHistory) {
-        make_header("History");
-        int y = 40;
-        if (g_msgRowCount > 0 && g_msgRows[g_selPeer].used) {
-            char hdr[32];
-            snprintf(hdr, sizeof(hdr), ">%s", g_msgRows[g_selPeer].line1);
-            fat_label(g_root, hdr, 8, y);
-            y += 26;
-        }
-        if (g_histRowCount == 0) {
-            fat_label(g_root, g_histNote[0] ? g_histNote : "(empty)", 8, y);
-        } else {
-            for (int i = 0; i < g_histRowCount; i++) {
-                fat_label(g_root, g_histRows[i].line, 8, y);
-                y += 26;
-                if (y > EPD_HEIGHT - 40) break;
-            }
-        }
-        if (g_composeLen > 0) {
-            char foot[40];
-            snprintf(foot, sizeof(foot), ">%.28s", g_compose);
-            make_footer(foot);
-        } else {
-            make_footer("H=list  type+Enter=send");
-        }
-        return;
-    }
-    make_header("Messages");
+    make_header(title);
     int y = 40;
-    add_row(y, "Convs", g_convStr);
-    add_row(y, "Unread", g_unreadStr);
-    y += 8;
+    fat_label(g_root, g_convStr, 8, y); y += 24;
+    fat_label(g_root, g_unreadStr, 8, y); y += 12;
+
     if (g_msgRowCount == 0) {
-        fat_label(g_root, g_msgNote[0] ? g_msgNote : "(empty)", 8, y);
+        fat_label(g_root, emptyNote && emptyNote[0] ? emptyNote : "(empty)", 8, y + 8);
     } else {
+        y = PEERS_TOP;
         for (int i = 0; i < g_msgRowCount; i++) {
             char marked[32];
             if (i == g_selPeer)
@@ -1039,16 +1091,71 @@ void build_messages() {
             } else {
                 y += 4;
             }
-            if (y > EPD_HEIGHT - 40) break;
+            if (y > CONTENT_BOTTOM - 4) break;
         }
     }
-    if (g_composeLen > 0) {
-        char foot[40];
-        snprintf(foot, sizeof(foot), ">%.28s", g_compose);
-        make_footer(foot);
-    } else {
-        make_footer("2/3 Msgs p=peer type+Enter");
+}
+
+void build_chats() {
+    if (g_showHistory) {
+        clear_screen();
+        make_header("History");
+        int y = 40;
+        if (g_msgRowCount > 0 && g_msgRows[g_selPeer].used) {
+            char hdr[32];
+            snprintf(hdr, sizeof(hdr), ">%s", g_msgRows[g_selPeer].line1);
+            fat_label(g_root, hdr, 8, y);
+            y += 26;
+        }
+        if (g_histRowCount == 0) {
+            fat_label(g_root, g_histNote[0] ? g_histNote : "(empty)", 8, y);
+        } else {
+            for (int i = 0; i < g_histRowCount; i++) {
+                fat_label(g_root, g_histRows[i].line, 8, y);
+                y += 26;
+                if (y > CONTENT_BOTTOM - 4) break;
+            }
+        }
+        draw_compose_or_hint("H=back touch=back");
+        return;
     }
+    // Full load: conversations + announced (TX targets)
+    loadMessageRows(false);
+    build_list_body("Chats", g_msgNote[0] ? g_msgNote : "(no chats)");
+    draw_compose_or_hint("type+Enter p=peer H=hist");
+}
+
+void build_contacts() {
+    // Contacts = peers we have conversations with (no announce-only fill)
+    g_showHistory = false;
+    g_msgRowsLoaded = false;  // invalidate shared cache (Chats needs full reload)
+    if (g_storeReady) g_msgStore.poll();
+    g_msgRowCount = 0;
+    g_msgNote[0] = '\0';
+    for (int i = 0; i < MSG_ROWS; i++) g_msgRows[i].used = false;
+    if (g_storeReady) {
+        if (!tryConversationPage(MSG_ROWS)) tryConversationPage(1);
+    }
+    if (g_msgRowCount == 0)
+        snprintf(g_msgNote, sizeof(g_msgNote), "(no contacts yet)");
+    clampSelPeer();
+    build_list_body("Contacts", g_msgNote);
+    draw_compose_or_hint("tap row type+Enter");
+}
+
+void build_peers() {
+    // Peers = announced nodes only
+    g_showHistory = false;
+    g_msgRowsLoaded = false;  // invalidate shared cache
+    g_msgRowCount = 0;
+    g_msgNote[0] = '\0';
+    for (int i = 0; i < MSG_ROWS; i++) g_msgRows[i].used = false;
+    appendAnnouncedPeers();
+    if (g_msgRowCount == 0)
+        snprintf(g_msgNote, sizeof(g_msgNote), "(no peers — a=ann)");
+    clampSelPeer();
+    build_list_body("Peers", g_msgNote);
+    draw_compose_or_hint("tap row type+Enter");
 }
 
 void build_settings() {
@@ -1063,7 +1170,7 @@ void build_settings() {
     add_row(y, "TX power", txp);
     add_row(y, "Announce", g_announceStr);
     add_row(y, "Last TX", g_txStr);
-    y += 8;
+    y += 6;
     fat_label(g_root, g_protoReady ? "(protocol up)" : "(protocol off)", 8, y);
     y += 24;
     fat_label(g_root, "a=ann  type+Enter=tx", 8, y);
@@ -1074,30 +1181,25 @@ void build_settings() {
     else
         snprintf(ps, sizeof(ps), "PSRAM n/a");
     fat_label(g_root, ps, 8, y);
-    if (g_composeLen > 0) {
-        char foot[40];
-        snprintf(foot, sizeof(foot), ">%.28s", g_compose);
-        make_footer(foot);
-    } else {
-        make_footer("3/3 Setup Enter/touch next");
-    }
+    draw_compose_or_hint("Settings");
 }
 
 void show_screen(ScreenId id) {
     g_screen = id;
     refreshLiveData();
-    if (id == SCR_MESSAGES) loadMessageRows(false);
     switch (id) {
-        case SCR_HOME: build_home(); break;
-        case SCR_MESSAGES: build_messages(); break;
+        case SCR_HOME:     build_home(); break;
+        case SCR_CHATS:    build_chats(); break;
+        case SCR_CONTACTS: build_contacts(); break;
+        case SCR_PEERS:    build_peers(); break;
         case SCR_SETTINGS: build_settings(); break;
-        default: build_home(); break;
+        default:           build_home(); break;
     }
     lv_refr_now(nullptr);
     g_display.refreshIfDirty();
     if (g_storeReady) g_lastUiRevision = g_msgStore.revision();
     g_composeDirty = false;
-    Serial.printf("[UI] screen %u drawn\n", (unsigned)id);
+    Serial.printf("[UI] screen %u (%s) drawn\n", (unsigned)id, tabLabel(id));
 }
 
 void next_screen() {
@@ -1105,7 +1207,7 @@ void next_screen() {
 }
 
 void maybeAutoRedrawMessages() {
-    if (g_screen != SCR_MESSAGES || !g_storeReady) return;
+    if (g_screen != SCR_CHATS || !g_storeReady) return;
     g_msgStore.poll();
     const uint32_t rev = g_msgStore.revision();
     if (rev == g_lastUiRevision) return;
@@ -1113,7 +1215,7 @@ void maybeAutoRedrawMessages() {
     g_lastMsgRedrawMs = millis();
     Serial.printf("[UI] auto Messages redraw rev %u -> %u\n",
                   (unsigned)g_lastUiRevision, (unsigned)rev);
-    show_screen(SCR_MESSAGES);
+    show_screen(SCR_CHATS);
 }
 
 // E21: after typing pauses, one fullRefresh so the footer shows the compose line.
@@ -1167,18 +1269,19 @@ bool handleKeyEvent(const KeyEvent& ev) {
             }
             if (ev.character == 't' || ev.character == 'T') {
                 doSendTest(nullptr);
-                return (g_screen == SCR_SETTINGS || g_screen == SCR_MESSAGES);
+                return (g_screen == SCR_SETTINGS || g_screen == SCR_CHATS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS);
             }
             if (ev.character == 'H') {
                 g_showHistory = !g_showHistory;
                 if (g_showHistory) loadHistoryRows();
-                show_screen(SCR_MESSAGES);
+                show_screen(SCR_CHATS);
                 return false;
             }
             if (ev.character == 'p' || ev.character == 'P') {
                 if (cycleSelPeer()) {
                     if (g_showHistory) loadHistoryRows();
-                    return (g_screen == SCR_MESSAGES);
+                    return (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS ||
+                            g_screen == SCR_PEERS);
                 }
                 return false;
             }
@@ -1318,18 +1421,18 @@ void loop() {
                     if (!*body) body = nullptr;
                 }
                 doSendTest(body);
-                if (g_screen == SCR_SETTINGS || g_screen == SCR_MESSAGES)
+                if (g_screen == SCR_SETTINGS || g_screen == SCR_CHATS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS)
                     show_screen(g_screen);
             } else if (p[0] == 'a' || p[0] == 'A') {
                 doAnnounce();
                 if (g_screen == SCR_SETTINGS) show_screen(SCR_SETTINGS);
             } else if (p[0] == 'r' || p[0] == 'R') {
                 loadMessageRows(true);
-                show_screen(SCR_MESSAGES);
+                show_screen(SCR_CHATS);
             } else if (p[0] == 'H') {
                 g_showHistory = !g_showHistory;
                 if (g_showHistory) loadHistoryRows();
-                show_screen(SCR_MESSAGES);
+                show_screen(SCR_CHATS);
             } else if (p[0] == 'n' || p[0] == 'N' || p[0] == '>') {
                 g_showHistory = false;
                 next_screen();
@@ -1338,20 +1441,28 @@ void loop() {
                 show_screen(SCR_HOME);
             } else if (p[0] == 'm' || p[0] == 'M' || p[0] == '2') {
                 g_showHistory = false;
-                show_screen(SCR_MESSAGES);
-            } else if (p[0] == 's' || p[0] == 'S' || p[0] == '3') {
+                show_screen(SCR_CHATS);
+            } else if (p[0] == '3') {
+                g_showHistory = false;
+                show_screen(SCR_CONTACTS);
+            } else if (p[0] == 'e' || p[0] == 'E' || p[0] == '4') {
+                g_showHistory = false;
+                show_screen(SCR_PEERS);
+            } else if (p[0] == 's' || p[0] == 'S' || p[0] == '5') {
                 g_showHistory = false;
                 show_screen(SCR_SETTINGS);
             } else if (p[0] == 'c' || p[0] == 'C') {
                 // serial clear compose
                 composeClear();
                 Serial.println("[COMPOSE] cleared");
-                if (g_screen == SCR_MESSAGES || g_screen == SCR_SETTINGS)
+                if (g_screen == SCR_CHATS || g_screen == SCR_SETTINGS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS)
                     show_screen(g_screen);
             } else if (p[0] == 'p' || p[0] == 'P') {
                 if (cycleSelPeer()) {
                     if (g_showHistory) loadHistoryRows();
-                    if (g_screen == SCR_MESSAGES) show_screen(SCR_MESSAGES);
+                    if (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS ||
+                        g_screen == SCR_PEERS)
+                        show_screen(g_screen);
                 }
             } else {
                 Serial.printf("[CMD] unknown \"%s\" (t/a/r/n/m/h/s/H/c/p)\n", p);
