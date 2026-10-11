@@ -511,15 +511,18 @@ bool cst328Read(int16_t& x, int16_t& y) {
 // Active tab: black filled box + white label (e-ink invert highlight).
 // Touch hit-test must stay in sync with draw_nav().
 // ---------------------------------------------------------------------------
-constexpr int TOP_H          = 36;
-constexpr int BOT_H          = 40;
-constexpr int BOT_TOP        = EPD_HEIGHT - BOT_H;          // 280
-constexpr int CONTENT_TOP    = TOP_H + 4;                   // 40
-constexpr int CONTENT_BOTTOM = BOT_TOP - 4;                 // 276
+constexpr int TOP_H          = 42;
+constexpr int BOT_H          = 46;
+constexpr int BOT_TOP        = EPD_HEIGHT - BOT_H;          // 274
+constexpr int CONTENT_TOP    = TOP_H + 6;                   // 48
+constexpr int CONTENT_BOTTOM = BOT_TOP - 4;                 // 270
 constexpr int TOP_TAB_W      = EPD_WIDTH / 2;               // 120
 constexpr int BOT_TAB_W      = EPD_WIDTH / 3;               // 80
-constexpr int PEERS_TOP      = CONTENT_TOP + 56;            // after conv/unread lines
+constexpr int PEERS_TOP      = CONTENT_TOP + 52;            // after summary lines
 constexpr int ROW_H          = 46;
+// Home Announce button band (touch target)
+constexpr int HOME_ANN_Y     = 200;
+constexpr int HOME_ANN_H     = 40;
 
 const char* tabLabel(ScreenId id) {
     switch (id) {
@@ -600,6 +603,16 @@ bool handleTouchAt(int16_t x, int16_t y) {
             return true;
         }
         Serial.println("[PEER] already selected — stay");
+        return true;
+    }
+
+    // Home: Announce button
+    if (g_screen == SCR_HOME &&
+        y >= HOME_ANN_Y && y < HOME_ANN_Y + HOME_ANN_H &&
+        x >= 16 && x < EPD_WIDTH - 16) {
+        Serial.println("[HOME] touch Announce");
+        doAnnounce();
+        show_screen(SCR_HOME);
         return true;
     }
 
@@ -1017,45 +1030,86 @@ void clear_screen() {
     }
 }
 
-// Draw one nav box. active => black fill + white text (e-ink highlight).
+// Nav box: e-ink readable selection (not thin white-on-black text).
+// Active  = thick border + solid black left accent + black text (double-draw).
+// Inactive = thin border + black text.
 void draw_nav_box(int x, int y, int w, int h, const char* label, bool active) {
     lv_obj_t* box = lv_obj_create(g_root);
     lv_obj_set_size(box, w - 2, h - 2);
     lv_obj_set_pos(box, x + 1, y + 1);
     lv_obj_set_style_radius(box, 0, 0);
-    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_set_style_border_width(box, active ? 3 : 1, 0);
     lv_obj_set_style_border_color(box, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(box, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(box, 0, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
     if (active) {
-        lv_obj_set_style_bg_color(box, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
-    } else {
-        lv_obj_set_style_bg_color(box, lv_color_white(), 0);
-        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+        // Wide black accent bar (readable highlight without thin white glyphs)
+        lv_obj_t* accent = lv_obj_create(g_root);
+        lv_obj_set_size(accent, 10, h - 6);
+        lv_obj_set_pos(accent, x + 3, y + 3);
+        lv_obj_set_style_radius(accent, 0, 0);
+        lv_obj_set_style_border_width(accent, 0, 0);
+        lv_obj_set_style_bg_color(accent, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(accent, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(accent, LV_OBJ_FLAG_SCROLLABLE);
+
+        // Bottom underline bar for extra selected weight
+        lv_obj_t* under = lv_obj_create(g_root);
+        lv_obj_set_size(under, w - 6, 4);
+        lv_obj_set_pos(under, x + 3, y + h - 7);
+        lv_obj_set_style_radius(under, 0, 0);
+        lv_obj_set_style_border_width(under, 0, 0);
+        lv_obj_set_style_bg_color(under, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(under, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(under, LV_OBJ_FLAG_SCROLLABLE);
     }
 
-    lv_obj_t* lab = lv_label_create(g_root);
-    lv_label_set_text(lab, label);
-    lv_obj_set_style_text_font(lab, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(lab, active ? lv_color_white() : lv_color_black(), 0);
-    // rough horizontal center of box
-    const int tw = (int)strlen(label) * 9;  // ~montserrat_16 width
+    // Black text; double-draw for active = wider/bolder stroke on e-ink
+    const int tw = (int)strlen(label) * 10;
     int lx = x + (w - tw) / 2;
-    if (lx < x + 4) lx = x + 4;
-    lv_obj_set_pos(lab, lx, y + (h - 18) / 2);
+    if (active) lx += 4;  // room for accent bar
+    if (lx < x + 14) lx = x + 14;
+    int ly = y + (h - 18) / 2;
+    for (int k = 0; k < (active ? 3 : 1); k++) {
+        int ox = lx + (k == 1 ? 1 : 0);
+        int oy = ly + (k == 2 ? 1 : 0);
+        lv_obj_t* lab = lv_label_create(g_root);
+        lv_label_set_text(lab, label);
+        lv_obj_set_style_text_font(lab, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(lab, lv_color_black(), 0);
+        lv_obj_set_pos(lab, ox, oy);
+    }
 }
 
-// Top: Home | Settings. Bottom: Chats | Cont | Peers. Selected = inverted box.
 void draw_nav() {
-    // Top row
     draw_nav_box(0,            0, TOP_TAB_W, TOP_H, "Home",     g_screen == SCR_HOME);
     draw_nav_box(TOP_TAB_W,    0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS);
-
-    // Bottom row
     draw_nav_box(0,             BOT_TOP, BOT_TAB_W, BOT_H, "Chats", g_screen == SCR_CHATS);
     draw_nav_box(BOT_TAB_W,     BOT_TOP, BOT_TAB_W, BOT_H, "Cont",  g_screen == SCR_CONTACTS);
     draw_nav_box(BOT_TAB_W * 2, BOT_TOP, BOT_TAB_W, BOT_H, "Peers", g_screen == SCR_PEERS);
+}
+
+// Action button (Home Announce, etc.) — boxed, touchable.
+void draw_action_btn(int x, int y, int w, int h, const char* label) {
+    lv_obj_t* box = lv_obj_create(g_root);
+    lv_obj_set_size(box, w, h);
+    lv_obj_set_pos(box, x, y);
+    lv_obj_set_style_radius(box, 0, 0);
+    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_set_style_border_color(box, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(box, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(box, 0, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    const int tw = (int)strlen(label) * 10;
+    int lx = x + (w - tw) / 2;
+    if (lx < x + 6) lx = x + 6;
+    fat_label(g_root, label, lx, y + (h - 18) / 2);
+    // slight bold
+    fat_label(g_root, label, lx + 1, y + (h - 18) / 2);
 }
 
 void draw_compose_or_hint(const char* idleHint) {
@@ -1071,33 +1125,41 @@ void draw_compose_or_hint(const char* idleHint) {
 
 void add_row(int& y, const char* left, const char* right) {
     fat_label(g_root, left, 8, y);
-    fat_label(g_root, right, 120, y);
-    y += 24;
+    fat_label(g_root, right, 118, y);
+    y += 22;
 }
 
+// ---- Screens (Plus-like content) ----
+
 void build_home() {
+    // Plus Home: identity + device status + Announce action
     clear_screen();
     int y = CONTENT_TOP;
+    fat_label(g_root, "Identity", 8, y); y += 22;
+    fat_label(g_root, g_destHex, 8, y); y += 26;
+
     char batLine[28];
     snprintf(batLine, sizeof(batLine), "%s %s", g_batStr, g_pctStr);
     add_row(y, "Battery", batLine);
     add_row(y, "LoRa", g_loraStr);
     add_row(y, "RSSI", g_rssiStr);
     add_row(y, "SNR", g_snrStr);
-    y += 4;
+    y += 2;
     add_row(y, "Paths", g_pathsStr);
     add_row(y, "Links", g_linksStr);
-    add_row(y, "LXMF Q", g_lxmfqStr);
-    y += 6;
-    fat_label(g_root, "LOCAL_DEST", 8, y);
-    y += 24;
-    fat_label(g_root, g_destHex, 8, y);
-    y += 28;
-    fat_label(g_root, "a=Announce", 8, y);
+    add_row(y, "Queued", g_lxmfqStr);
+    y += 4;
+    char annLine[28];
+    snprintf(annLine, sizeof(annLine), "Ann %s", g_announceStr);
+    fat_label(g_root, annLine, 8, y);
+    y += 26;
+
+    // Announce button (Plus: Select Announce)
+    draw_action_btn(16, HOME_ANN_Y, EPD_WIDTH - 32, HOME_ANN_H, "Announce");
     draw_compose_or_hint("");
 }
 
-void build_list_body(const char* emptyNote) {
+void build_list_body(const char* summary1, const char* summary2, const char* emptyNote) {
     for (int i = 0; i < g_msgRowCount; i++) {
         if (g_msgRows[i].used)
             formatPeerLine(g_msgRows[i].line1, sizeof(g_msgRows[i].line1),
@@ -1105,8 +1167,8 @@ void build_list_body(const char* emptyNote) {
     }
     clear_screen();
     int y = CONTENT_TOP;
-    fat_label(g_root, g_convStr, 8, y); y += 24;
-    fat_label(g_root, g_unreadStr, 8, y);
+    if (summary1 && summary1[0]) { fat_label(g_root, summary1, 8, y); y += 22; }
+    if (summary2 && summary2[0]) { fat_label(g_root, summary2, 8, y); }
 
     if (g_msgRowCount == 0) {
         fat_label(g_root, emptyNote && emptyNote[0] ? emptyNote : "(empty)",
@@ -1133,9 +1195,11 @@ void build_list_body(const char* emptyNote) {
 }
 
 void build_chats() {
+    // Plus Chats: inbox threads, open to read/reply
     if (g_showHistory) {
         clear_screen();
         int y = CONTENT_TOP;
+        fat_label(g_root, "Thread", 8, y); y += 22;
         if (g_msgRowCount > 0 && g_msgRows[g_selPeer].used) {
             char hdr[32];
             snprintf(hdr, sizeof(hdr), ">%s", g_msgRows[g_selPeer].line1);
@@ -1143,7 +1207,7 @@ void build_chats() {
             y += 26;
         }
         if (g_histRowCount == 0) {
-            fat_label(g_root, g_histNote[0] ? g_histNote : "(empty)", 8, y);
+            fat_label(g_root, g_histNote[0] ? g_histNote : "(no messages)", 8, y);
         } else {
             for (int i = 0; i < g_histRowCount; i++) {
                 fat_label(g_root, g_histRows[i].line, 8, y);
@@ -1151,15 +1215,19 @@ void build_chats() {
                 if (y > CONTENT_BOTTOM - 4) break;
             }
         }
-        draw_compose_or_hint("H=back touch=back");
+        draw_compose_or_hint("H=back  type+Enter=reply");
         return;
     }
     loadMessageRows(false);
-    build_list_body(g_msgNote[0] ? g_msgNote : "(no chats)");
-    draw_compose_or_hint("type+Enter p=peer H=hist");
+    char s1[28], s2[28];
+    snprintf(s1, sizeof(s1), "Inbox  %s", g_convStr);
+    snprintf(s2, sizeof(s2), "%s", g_unreadStr);
+    build_list_body(s1, s2, g_msgNote[0] ? g_msgNote : "(no chats)");
+    draw_compose_or_hint("type+Enter  H=thread  p=peer");
 }
 
 void build_contacts() {
+    // Plus Contacts: saved / messaged peers
     g_showHistory = false;
     g_msgRowsLoaded = false;
     if (g_storeReady) g_msgStore.poll();
@@ -1172,11 +1240,14 @@ void build_contacts() {
     if (g_msgRowCount == 0)
         snprintf(g_msgNote, sizeof(g_msgNote), "(no contacts yet)");
     clampSelPeer();
-    build_list_body(g_msgNote);
-    draw_compose_or_hint("tap row type+Enter");
+    char s1[28];
+    snprintf(s1, sizeof(s1), "Saved  %d", g_msgRowCount);
+    build_list_body(s1, "tap to select", g_msgNote);
+    draw_compose_or_hint("type+Enter to message");
 }
 
 void build_peers() {
+    // Plus Peers: discovered messaging peers (announces)
     g_showHistory = false;
     g_msgRowsLoaded = false;
     g_msgRowCount = 0;
@@ -1184,34 +1255,38 @@ void build_peers() {
     for (int i = 0; i < MSG_ROWS; i++) g_msgRows[i].used = false;
     appendAnnouncedPeers();
     if (g_msgRowCount == 0)
-        snprintf(g_msgNote, sizeof(g_msgNote), "(no peers - a=ann)");
+        snprintf(g_msgNote, sizeof(g_msgNote), "(none - Announce on Home)");
     clampSelPeer();
-    build_list_body(g_msgNote);
-    draw_compose_or_hint("tap row type+Enter");
+    char s1[28];
+    snprintf(s1, sizeof(s1), "Discovered  %d", g_msgRowCount);
+    build_list_body(s1, "tap to select", g_msgNote);
+    draw_compose_or_hint("type+Enter to message");
 }
 
 void build_settings() {
+    // Plus Settings: radio, device, status
     clear_screen();
     int y = CONTENT_TOP;
+    fat_label(g_root, "Radio", 8, y); y += 22;
     char freq[20], txp[12];
     snprintf(freq, sizeof(freq), "%.1f MHz", LORA_DEFAULT_FREQ / 1e6f);
     snprintf(txp, sizeof(txp), "%d dBm", LORA_DEFAULT_TX_POWER);
-    add_row(y, "Radio", "Long Fast");
+    add_row(y, "Preset", "Long Fast");
     add_row(y, "Freq", freq);
     add_row(y, "TX power", txp);
+    y += 6;
+    fat_label(g_root, "Device", 8, y); y += 22;
     add_row(y, "Announce", g_announceStr);
     add_row(y, "Last TX", g_txStr);
-    y += 6;
-    fat_label(g_root, g_protoReady ? "(protocol up)" : "(protocol off)", 8, y);
-    y += 24;
-    fat_label(g_root, "a=ann  type+Enter=tx", 8, y);
-    y += 24;
-    char ps[40];
+    add_row(y, "Protocol", g_protoReady ? "up" : "off");
+    char ps[24];
     if (ESP.getPsramSize() > 0)
-        snprintf(ps, sizeof(ps), "PSRAM %uK", (unsigned)(ESP.getPsramSize() / 1024));
+        snprintf(ps, sizeof(ps), "%uK", (unsigned)(ESP.getPsramSize() / 1024));
     else
-        snprintf(ps, sizeof(ps), "PSRAM n/a");
-    fat_label(g_root, ps, 8, y);
+        snprintf(ps, sizeof(ps), "n/a");
+    add_row(y, "PSRAM", ps);
+    y += 8;
+    fat_label(g_root, "a=Announce from Home", 8, y);
     draw_compose_or_hint("");
 }
 
@@ -1234,7 +1309,6 @@ void show_screen(ScreenId id) {
 }
 
 void next_screen() {
-    // Cycle: Home -> Chats -> Contacts -> Peers -> Settings -> Home
     show_screen((ScreenId)((g_screen + 1) % SCR_COUNT));
 }
 

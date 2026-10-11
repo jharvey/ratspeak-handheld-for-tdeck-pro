@@ -1,107 +1,100 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-11 (Phase G1.1 two-row boxed nav)
+Last updated: 2026-10-11 (Phase G1.2 Plus content + readable nav)
 ================================================================================
 
 OVERALL GOALS
 -------------
 1. Port Ratspeak to T-Deck Pro (GDEQ031T10 240x320 e-ink).
 2. Keep Cooperative / Node green.
-3. Standalone e-ink bring-up (not full Plus UI / not ui/lvgl import).
-4. Plus-like information architecture on e-ink (5 sections, two-row nav).
-5. After messaging + shell solid: energy reduction (sleep, duty-cycled RX).
-6. Later: clean upstream-friendly history.
+3. Standalone e-ink (exclude LvglApplication / ui/lvgl).
+4. Plus-like IA and content on e-ink; two-row boxed nav.
+5. After solid: energy reduction (sleep, duty-cycled RX).
 
 STANDALONE RULES
 ----------------
 Exclude LvglApplication.cpp and ui/lvgl. Include boards/tdeck_Pro.
-bindDeviceOwner() before ProtocolRuntime. Prefer full files on Windows.
-ASCII only. Single fullRefresh per tab change.
-GxEPD2 page_height=16; firstPage+drawBitmap; flush non-white->black.
-fat_label: single stroke. Protocol BEFORE LVGL. Internal node if PSRAM size=0.
-Code layout: thin main.cpp + StandaloneApp.h/.cpp.
-
-PLUS PARITY (Phase G)
----------------------
-Same five sections as Plus, different chrome for e-ink portrait:
-
-  TOP row (2 boxes):   Home | Settings
-  BOTTOM row (3 boxes): Chats | Cont | Peers
-
-No page title header — selection is shown by inverted (black) box on the
-active nav button. Content fills the middle band only.
+bindDeviceOwner() before ProtocolRuntime. Full files preferred (Windows).
+ASCII only. FullRefresh per tab change. Protocol BEFORE LVGL.
+Internal node if PSRAM size=0. thin main + StandaloneApp.
 
 PHASE STATUS
 ------------
-A-D, E1-E23  * DONE * messaging bring-up
-G1           * DONE * first 5-tab bottom bar (cramped; replaced)
-G1.1         * IN   * two-row boxed nav + invert highlight, no title bar
+E1-E23   * DONE * TX/RX compose history announce peers touch
+G1       * DONE * first bottom 5-tab (replaced)
+G1.1     * DONE * two-row nav
+G1.2     * IN   * readable nav highlight; Plus-like screen content;
+           Home Announce button (touch + key a)
 
-LAYOUT + TOUCH (G1.1 — keep in sync with code)
-----------------------------------------------
-Canvas: 240 x 320 portrait.
+NAV (G1.2)
+----------
+TOP  y=0..41:     [ Home ][ Settings ]     TOP_H=42, TOP_TAB_W=120
+BOT  y=274..319:  [ Chats][ Cont ][ Peers] BOT_H=46, BOT_TAB_W=80
+Content: y=48..270
 
-  TOP_NAV:   y = 0 .. TOP_H-1          TOP_H = 36
-             [ Home 120px ][ Settings 120px ]
-  Content:   y = CONTENT_TOP .. CONTENT_BOTTOM
-             CONTENT_TOP = 40, CONTENT_BOTTOM = 276
-  Compose:   y = BOT_TOP - 22 when buffer non-empty
-  BOT_NAV:   y = BOT_TOP .. 319        BOT_TOP = 280, BOT_H = 40
-             [ Chats 80 ][ Cont 80 ][ Peers 80 ]
-
-List rows (Chats/Contacts/Peers):
-  PEERS_TOP = 96, ROW_H = 46
+Active tab (readable on e-ink — NOT thin white-on-black):
+  thick 3px border + 10px black left accent + 4px bottom underline
+  black text double-drawn (wider stroke)
+Inactive: 1px border, black text
 
 Touch:
-  y < 36          -> top tab by x < 120 = Home else Settings
-  y >= 280        -> bottom tab by x/80 = Chats | Cont | Peers
-  list content    -> peer row select
-  History content -> back to Chats
-  same-tab tap    -> no refresh
+  y < 42           top tab (Home / Settings)
+  y >= 274         bottom tab (Chats / Cont / Peers)
+  Home Announce:   y 200..240, x 16..224 -> doAnnounce()
+  list rows:       y >= PEERS_TOP (~100), ROW_H=46
 
-Active tab draw:
-  draw_nav_box(..., active=true) => black fill + white label
-  inactive => white fill + black border + black label
+PLUS-LIKE SCREEN CONTENT
+------------------------
+Home (Plus: identity + device + Announce)
+  Identity / dest hash
+  Battery, LoRa, RSSI, SNR, Paths, Links, Queued
+  Ann status line
+  [ Announce ] button (touch or key a)
 
-TAB CONTENT (unchanged data)
-----------------------------
-Home      Battery LoRa RSSI/SNR paths links Q dest announce
-Chats     Convs/unread, conv+announced rows, compose, H=history
-Contacts  Conversation peers only
-Peers     AnnounceManager nodes only
-Settings  Radio freq power announce TX protocol PSRAM
+Chats (Plus: inbox)
+  Inbox N conv / unread
+  Thread list (convs + announced TX targets)
+  H = open thread history; type+Enter reply
 
-SERIAL / KEYBOARD
------------------
-  1=Home 2=Chats 3=Contacts 4=Peers 5=Settings
-  n=next tab  a=announce  t=ping  H=history  p=cycle peer
-  c=clear compose  type+Enter=send
-  Leading space avoids H/t/a/p swallowing first letter.
+Contacts (Plus: saved peers)
+  Saved N — conversation peers only
+  tap select, type+Enter message
+
+Peers (Plus: discovered)
+  Discovered N — AnnounceManager nodes
+  tap select, type+Enter message
+
+Settings (Plus: radio + device)
+  Radio: preset, freq, TX power
+  Device: announce, last TX, protocol, PSRAM
+
+SERIAL / KEYS
+-------------
+1 Home  2 Chats  3 Contacts  4 Peers  5 Settings
+a Announce  t ping  H history  p cycle peer  c clear compose
+type+Enter send  n next tab
 
 E-INK / ENERGY
 --------------
-Full refresh on tab change. Optional later: partial for compose/selection.
-Energy roadmap F1-F7 after shell solid (see prior guide). Panel energy
-negligible at messaging rates; MCU+RX dominate.
+Full refresh on tab change. Panel energy negligible vs MCU+RX.
+Energy F1-F7 after shell solid.
 
 FILE MAP
 --------
 src/boards/tdeck_Pro/StandaloneApp.*
-src/boards/tdeck_Pro/Eink/DisplayEink.*
-src/boards/tdeck_Pro/Eink/LvglPort.*
-src/boards/tdeck_Pro/main.cpp
+src/boards/tdeck_Pro/Eink/*
 
 NEXT
 ----
-1. Flash G1.1 — confirm boxes, invert highlight, no title clash.
-2. Optional: tighter box padding / label centering.
-3. Optional E24 partial refresh.
-4. ENERGY F1 baseline when messaging stays solid.
-5. Keep cooperative green.
+1. Flash G1.2 — confirm nav readability + Home Announce touch
+2. Optional: name display on Home from identity manager
+3. Optional E24 partial refresh
+4. ENERGY F1 when messaging solid
+5. Keep cooperative green
 
 ONE-LINER
 ---------
-Standalone e-ink: two-row boxed nav (Home|Settings top, Chats|Cont|Peers
-bottom), invert highlight for active tab, no page title; keyboard TX and
-announce peers; fullRefresh per tab; internal heap.
+Plus-shaped e-ink shell: Home|Settings top, Chats|Cont|Peers bottom;
+readable accent highlight; Home Announce button; inbox/contacts/peers
+content aligned with Plus; keyboard TX; fullRefresh per tab.
 ================================================================================
