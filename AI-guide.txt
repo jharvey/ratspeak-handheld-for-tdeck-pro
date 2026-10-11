@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-11 (Phase G1 Plus-like tabs)
+Last updated: 2026-10-11 (Phase G1.1 two-row boxed nav)
 ================================================================================
 
 OVERALL GOALS
@@ -8,152 +8,100 @@ OVERALL GOALS
 1. Port Ratspeak to T-Deck Pro (GDEQ031T10 240x320 e-ink).
 2. Keep Cooperative / Node green.
 3. Standalone e-ink bring-up (not full Plus UI / not ui/lvgl import).
-4. Plus-like information architecture on e-ink (5 bottom tabs).
+4. Plus-like information architecture on e-ink (5 sections, two-row nav).
 5. After messaging + shell solid: energy reduction (sleep, duty-cycled RX).
 6. Later: clean upstream-friendly history.
 
 STANDALONE RULES
 ----------------
 Exclude LvglApplication.cpp and ui/lvgl. Include boards/tdeck_Pro.
-bindDeviceOwner() before ProtocolRuntime. Prefer full files on Windows
-(patches often break on CRLF / Tortoise). ASCII only.
-Single fullRefresh per screen/tab change (current policy).
+bindDeviceOwner() before ProtocolRuntime. Prefer full files on Windows.
+ASCII only. Single fullRefresh per tab change.
 GxEPD2 page_height=16; firstPage+drawBitmap; flush non-white->black.
 fat_label: single stroke. Protocol BEFORE LVGL. Internal node if PSRAM size=0.
 Code layout: thin main.cpp + StandaloneApp.h/.cpp.
-Do not break TX/RX or cooperative while adding sleep or UI parity.
 
-PLUS PARITY GOAL (Phase G)
---------------------------
-Match T-Deck Plus standalone *structure and data*, not LCD chrome:
+PLUS PARITY (Phase G)
+---------------------
+Same five sections as Plus, different chrome for e-ink portrait:
 
-  Plus bottom tabs:  Home | Chats | Contacts | Peers | Settings
-  Pro e-ink tabs:    Home | Chats | Cont    | Peers | Set
+  TOP row (2 boxes):   Home | Settings
+  BOTTOM row (3 boxes): Chats | Cont | Peers
 
-Adaptations:
-  - Portrait 240x320 vs Plus landscape 320x240
-  - E-ink full refresh on tab change; no color / no trackball
-  - Keyboard + CST328 touch (no trackball hold gestures yet)
-  - Fat-text shell only (no import of ui/lvgl)
-
-Path: evolve StandaloneApp shell first (G1+). Importing Plus LVGL is a
-later optional G2 and would lift the exclude rule deliberately.
+No page title header — selection is shown by inverted (black) box on the
+active nav button. Content fills the middle band only.
 
 PHASE STATUS
 ------------
-A-D         * DONE * panel, LVGL shell (early Home / Messages / Settings)
-E1-E23      * DONE * proto, announce, inbox, outbound, history, compose,
-              peer select, touch row, announced peers as TX targets
-G1          * IN   * Plus-like 5-tab bar + touch zones + tab content
-              Home / Chats / Contacts / Peers / Settings
+A-D, E1-E23  * DONE * messaging bring-up
+G1           * DONE * first 5-tab bottom bar (cramped; replaced)
+G1.1         * IN   * two-row boxed nav + invert highlight, no title bar
 
-Hardware proof (E21-E23):
-  Compose idle redraw; TX outcome=0; touch peer select stays on list
-  Heap ~22-24K free_int stable post-draw
+LAYOUT + TOUCH (G1.1 — keep in sync with code)
+----------------------------------------------
+Canvas: 240 x 320 portrait.
 
-DEVICE FACTS
-------------
-PSRAM: found=1 size=0 — INTERNAL only. OPI 8MB on silicon; fix later.
-Heap: ~24K steady after UI.
-Touch: CST328 @ 0x1A. Minimal read in StandaloneApp.
-Battery: ~1400-1500 mAh. E-ink refresh negligible; MCU+RX dominate.
+  TOP_NAV:   y = 0 .. TOP_H-1          TOP_H = 36
+             [ Home 120px ][ Settings 120px ]
+  Content:   y = CONTENT_TOP .. CONTENT_BOTTOM
+             CONTENT_TOP = 40, CONTENT_BOTTOM = 276
+  Compose:   y = BOT_TOP - 22 when buffer non-empty
+  BOT_NAV:   y = BOT_TOP .. 319        BOT_TOP = 280, BOT_H = 40
+             [ Chats 80 ][ Cont 80 ][ Peers 80 ]
 
-LAYOUT + TOUCH ZONES (G1 — keep in sync with code)
---------------------------------------------------
-Canvas: EPD_WIDTH=240, EPD_HEIGHT=320 (portrait).
+List rows (Chats/Contacts/Peers):
+  PEERS_TOP = 96, ROW_H = 46
 
-  Header:     y = 0 .. 32     title + 3px rule
-  Content:    y = 36 .. CONTENT_BOTTOM
-  Compose:    y = TAB_TOP - 22  (when buffer non-empty)
-  Tab bar:    y = TAB_TOP .. 319
+Touch:
+  y < 36          -> top tab by x < 120 = Home else Settings
+  y >= 280        -> bottom tab by x/80 = Chats | Cont | Peers
+  list content    -> peer row select
+  History content -> back to Chats
+  same-tab tap    -> no refresh
 
-Constants (StandaloneApp.cpp):
-  TAB_H   = 34
-  TAB_TOP = EPD_HEIGHT - TAB_H     // 286
-  TAB_W   = EPD_WIDTH / 5          // 48
-  CONTENT_BOTTOM = TAB_TOP - 4
-  PEERS_TOP = 104                  // list rows start
-  ROW_H   = 46                     // name + optional preview
+Active tab draw:
+  draw_nav_box(..., active=true) => black fill + white label
+  inactive => white fill + black border + black label
 
-Tab touch (y >= TAB_TOP):
-  x 0..47   -> Home
-  x 48..95  -> Chats
-  x 96..143 -> Contacts
-  x 144..191-> Peers
-  x 192..239-> Settings
-  Same-tab tap = no refresh.
-
-List row touch (Chats / Contacts / Peers, y >= PEERS_TOP, y < CONTENT_BOTTOM):
-  row = (y - PEERS_TOP) / ROW_H  -> select peer; redraw only if changed.
-
-History (Chats only, H key): any content tap returns to Chats list.
-Home / Settings content taps: ignore (stay on tab).
-
-TAB CONTENT
------------
-Home
-  Battery, LoRa, RSSI, SNR, Paths, Links, LXMF Q, LOCAL_DEST
-  Shortcut: a = announce
-
-Chats  (former Messages)
-  Convs / Unread, conversation + announced rows, compose, History (H)
-  Select peer (touch / p), type+Enter TX, H = history toggle
-
-Contacts
-  Conversation peers only (no announce-only fill)
-  Select + type+Enter TX
-
-Peers
-  AnnounceManager nodes only
-  Select + type+Enter TX; a = announce if empty
-
-Settings
-  Radio preset name, freq, TX power, last announce/TX, protocol, PSRAM
+TAB CONTENT (unchanged data)
+----------------------------
+Home      Battery LoRa RSSI/SNR paths links Q dest announce
+Chats     Convs/unread, conv+announced rows, compose, H=history
+Contacts  Conversation peers only
+Peers     AnnounceManager nodes only
+Settings  Radio freq power announce TX protocol PSRAM
 
 SERIAL / KEYBOARD
 -----------------
-  type + pause ~1.6s   compose on glass
-  Enter (nonempty)     send to selected peer
-  Enter (empty)        next tab
-  a / t / H / p        shortcuts when compose empty
   1=Home 2=Chats 3=Contacts 4=Peers 5=Settings
-  c                    clear compose (serial)
-  n                    next tab
-  r                    reload rows
-  Leading space avoids H/t/a/p swallowing first letter of a message.
+  n=next tab  a=announce  t=ping  H=history  p=cycle peer
+  c=clear compose  type+Enter=send
+  Leading space avoids H/t/a/p swallowing first letter.
 
-E-INK REFRESH
--------------
-Full refresh on every tab/screen change (current).
-Optional E24: partial for compose footer + selection marker only;
-  force full every 5 partials. GxEPD2 already has partial/fast APIs.
-Panel energy at 5 msg/day is negligible vs always-on radio.
-
-ENERGY ROADMAP (after shell + messaging solid)
-----------------------------------------------
-F1 baseline battery %; F2 light-sleep; F3 LoRa duty-cycle/WOR;
-F4 deep sleep only for sparse check-ins; F5 rail gates; F6 UI policy.
-Do not mix sleep into G1 tab work.
+E-INK / ENERGY
+--------------
+Full refresh on tab change. Optional later: partial for compose/selection.
+Energy roadmap F1-F7 after shell solid (see prior guide). Panel energy
+negligible at messaging rates; MCU+RX dominate.
 
 FILE MAP
 --------
-src/boards/tdeck_Pro/main.cpp
 src/boards/tdeck_Pro/StandaloneApp.*
 src/boards/tdeck_Pro/Eink/DisplayEink.*
 src/boards/tdeck_Pro/Eink/LvglPort.*
+src/boards/tdeck_Pro/main.cpp
 
 NEXT
 ----
-G1 verify on hardware: tab bar draws; touch hits correct tab; TX from
-  Chats/Contacts/Peers still outcome=0; History still works.
-Optional G1.1: denser tab labels / icons; fix markRead reject.
-Optional E24 partial refresh.
-Then ENERGY F1 baseline.
-Keep cooperative green.
+1. Flash G1.1 — confirm boxes, invert highlight, no title clash.
+2. Optional: tighter box padding / label centering.
+3. Optional E24 partial refresh.
+4. ENERGY F1 baseline when messaging stays solid.
+5. Keep cooperative green.
 
 ONE-LINER
 ---------
-Standalone e-ink Plus-shaped shell: 5 bottom tabs (Home Chats Cont Peers
-Set), keyboard TX, announce peers, history; fullRefresh per tab change;
-internal heap; sleep planned after solid.
+Standalone e-ink: two-row boxed nav (Home|Settings top, Chats|Cont|Peers
+bottom), invert highlight for active tab, no page title; keyboard TX and
+announce peers; fullRefresh per tab; internal heap.
 ================================================================================
