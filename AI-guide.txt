@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-11 (Phase G1.2 Plus content + readable nav)
+Last updated: 2026-10-11 (Phase G1.3 Plus Home tiles)
 ================================================================================
 
 OVERALL GOALS
@@ -8,93 +8,67 @@ OVERALL GOALS
 1. Port Ratspeak to T-Deck Pro (GDEQ031T10 240x320 e-ink).
 2. Keep Cooperative / Node green.
 3. Standalone e-ink (exclude LvglApplication / ui/lvgl).
-4. Plus-like IA and content on e-ink; two-row boxed nav.
+4. Match Plus IA and Home card/tile layout on e-ink.
 5. After solid: energy reduction (sleep, duty-cycled RX).
 
 STANDALONE RULES
 ----------------
 Exclude LvglApplication.cpp and ui/lvgl. Include boards/tdeck_Pro.
-bindDeviceOwner() before ProtocolRuntime. Full files preferred (Windows).
+bindDeviceOwner() before ProtocolRuntime. Full files preferred.
 ASCII only. FullRefresh per tab change. Protocol BEFORE LVGL.
-Internal node if PSRAM size=0. thin main + StandaloneApp.
+Internal node if PSRAM size=0.
 
 PHASE STATUS
 ------------
-E1-E23   * DONE * TX/RX compose history announce peers touch
-G1       * DONE * first bottom 5-tab (replaced)
-G1.1     * DONE * two-row nav
-G1.2     * IN   * readable nav highlight; Plus-like screen content;
-           Home Announce button (touch + key a)
+E1-E23  * DONE * messaging
+G1-G1.2 * DONE * nav iterations
+G1.3    * IN   * Plus Home identity+3x2 tiles+ANNOUNCE; Settings|Home;
+          Contact label; centered nav; list row cards
 
-NAV (G1.2)
+NAV (G1.3)
 ----------
-TOP  y=0..41:     [ Home ][ Settings ]     TOP_H=42, TOP_TAB_W=120
-BOT  y=274..319:  [ Chats][ Cont ][ Peers] BOT_H=46, BOT_TAB_W=80
-Content: y=48..270
+TOP y=0..39:   [ Settings ][ Home ]   (Home on RIGHT for right thumb)
+BOT y=276..319:[ Chats 70 | Contact 100 | Peers 70 ]
+Active: thick border + bottom underline + bold centered label
 
-Active tab (readable on e-ink — NOT thin white-on-black):
-  thick 3px border + 10px black left accent + 4px bottom underline
-  black text double-drawn (wider stroke)
-Inactive: 1px border, black text
+PLUS HOME (reference: T-Deck Plus photo)
+----------------------------------------
+Identity card: IDENTITY, ONLINE/OFFLINE, short dest, LXMF hash
+3x2 tiles:  LORA | TCP | WIFI
+            PEERS| AUDIO| GPS
+  (TCP/WIFI/AUDIO/GPS show OFF/n/a until wired)
+Status: "Listening for peers" / "Announced: …"
+Button: ANNOUNCE (right side, touch x>=120, y~230)
 
-Touch:
-  y < 42           top tab (Home / Settings)
-  y >= 274         bottom tab (Chats / Cont / Peers)
-  Home Announce:   y 200..240, x 16..224 -> doAnnounce()
-  list rows:       y >= PEERS_TOP (~100), ROW_H=46
+OTHER SCREENS
+-------------
+Chats:    Inbox summary + boxed thread rows
+Contact:  Contacts N + boxed rows
+Peers:    Peers N + discovered rows
+Settings: Radio card + Device card (boxed sections)
 
-PLUS-LIKE SCREEN CONTENT
-------------------------
-Home (Plus: identity + device + Announce)
-  Identity / dest hash
-  Battery, LoRa, RSSI, SNR, Paths, Links, Queued
-  Ann status line
-  [ Announce ] button (touch or key a)
-
-Chats (Plus: inbox)
-  Inbox N conv / unread
-  Thread list (convs + announced TX targets)
-  H = open thread history; type+Enter reply
-
-Contacts (Plus: saved peers)
-  Saved N — conversation peers only
-  tap select, type+Enter message
-
-Peers (Plus: discovered)
-  Discovered N — AnnounceManager nodes
-  tap select, type+Enter message
-
-Settings (Plus: radio + device)
-  Radio: preset, freq, TX power
-  Device: announce, last TX, protocol, PSRAM
+TOUCH
+-----
+y < 40:        Settings (x<120) | Home (x>=120)
+y >= 276:      Chats | Contact | Peers (unequal widths)
+Home ANNOUNCE: y>=230, x>=120
+List rows:     PEERS_TOP + ROW_H bands
 
 SERIAL / KEYS
 -------------
-1 Home  2 Chats  3 Contacts  4 Peers  5 Settings
-a Announce  t ping  H history  p cycle peer  c clear compose
-type+Enter send  n next tab
-
-E-INK / ENERGY
---------------
-Full refresh on tab change. Panel energy negligible vs MCU+RX.
-Energy F1-F7 after shell solid.
-
-FILE MAP
---------
-src/boards/tdeck_Pro/StandaloneApp.*
-src/boards/tdeck_Pro/Eink/*
+1 Settings? — still 1=Home 2=Chats 3=Contacts 4=Peers 5=Settings
+a=Announce  H=thread  p=peer  type+Enter=send
 
 NEXT
 ----
-1. Flash G1.2 — confirm nav readability + Home Announce touch
-2. Optional: name display on Home from identity manager
-3. Optional E24 partial refresh
-4. ENERGY F1 when messaging solid
+1. Flash G1.3 — confirm Home tiles, Settings left, Contact fits
+2. Wire real peer count into PEERS tile from AnnounceManager
+3. Optional: display name on Identity card
+4. ENERGY F1 after solid
 5. Keep cooperative green
 
 ONE-LINER
 ---------
-Plus-shaped e-ink shell: Home|Settings top, Chats|Cont|Peers bottom;
-readable accent highlight; Home Announce button; inbox/contacts/peers
-content aligned with Plus; keyboard TX; fullRefresh per tab.
+Plus-like e-ink Home (identity + 3x2 tiles + ANNOUNCE); nav Settings|Home
+top, Chats|Contact|Peers bottom; boxed list rows; keyboard TX.
 ================================================================================
