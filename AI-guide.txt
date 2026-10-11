@@ -1,62 +1,44 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-11 (Phase G1.4 Plus menus + Announce fit)
+Last updated: 2026-10-11 (Phase G1.5 tight pack + true center)
 ================================================================================
 
 OVERALL GOALS
 -------------
-1. Port Ratspeak to T-Deck Pro (GDEQ031T10 240x320 e-ink).
-2. Keep Cooperative / Node green.
-3. Standalone e-ink (exclude ui/lvgl import).
-4. Match Plus screen structure (Home tiles, list menus, Settings rows).
-5. After solid: energy reduction.
+1. Port Ratspeak to T-Deck Pro e-ink standalone.
+2. Keep Cooperative green. Exclude ui/lvgl import.
+3. Plus-like Home tiles + menu screens; tight e-ink packing.
 
-STANDALONE RULES
-----------------
-Exclude LvglApplication.cpp and ui/lvgl. boards/tdeck_Pro only.
-Full files preferred. FullRefresh per tab. Protocol BEFORE LVGL.
-Internal heap if PSRAM size=0.
-
-PHASE STATUS
-------------
-E1-E23 * DONE * messaging
-G1.4   * IN   * centered nav; full-width Announce; Plus-like Settings/
-         Contacts/Peers/Chats menu rows
+PHASE: G1.5
+-----------
+- Zero gap between top nav and Identity (CONTENT_TOP = TOP_H)
+- Nav boxes full cell size (no 1px inset strips)
+- Labels centered via lv_txt_get_width
+- Tile gap 2px; identity 56px; tiles 42px → room for full-width Announce
+- BOT: Chats 72 | Contact 96 | Peers 72
 
 NAV
 ---
-TOP: [ Settings | Home ]  (Home right, right-thumb)
-BOT: [ Chats 70 | Contact 100 | Peers 70 ]
-Labels centered (~8px/glyph). Active: thick border + underline.
+TOP: Settings | Home (Home right)
+BOT: Chats | Contact | Peers
+Active: thick border + underline; text truly centered
 
-HOME (Plus reference)
----------------------
-Identity card: IDENTITY / ONLINE / dest / LXMF
-3x2 tiles: LORA TCP WIFI / PEERS AUDIO GPS
-"Listening for peers" + "Announced: …"
-Full-width [ Announce ] button (not narrow right box — was clipping)
-
-OTHER SCREENS (Plus reference photos)
--------------------------------------
-Chats:    CHATS header + boxed thread rows
-Contact:  Share My QR row + CONTACTS (N) + ID rows
-Peers:    RECENT PEERS (N) + name + ID rows
-Settings: SETTINGS + Identity & Device / Battery / LoRa / Announce rows
-          (title + subtitle + ">")
-
-TOUCH
------
-Top/bot tabs as before. Home Announce: y>=200 below tiles (full width).
+HOME PACKING (top → bottom, no spare strips)
+--------------------------------------------
+[Settings|Home] 36px
+[Identity card] 56px  flush
+[3x2 tiles]     42+2+42
+[Listening / Announced]
+[Announce]      34px full width
+[Chats|Contact|Peers] 40px
 
 NEXT
 ----
-1. Flash G1.4 — Confirm Announce full string, nav centered
-2. Wire TCP/WIFI tiles when available
-3. ENERGY F1 after solid
-4. Keep cooperative green
+Flash G1.5 — confirm no white gutters, centered tabs, Announce visible.
+Keep cooperative green.
 
 ONE-LINER
 ---------
-Plus-shaped e-ink: centered Settings|Home, Chats|Contact|Peers; Home tiles
-+ full-width Announce; Settings/Contacts/Peers as Plus menu rows.
+Tight Plus-like Home: flush nav/identity/tiles, true-centered labels,
+full-width Announce with room to spare.
 ================================================================================

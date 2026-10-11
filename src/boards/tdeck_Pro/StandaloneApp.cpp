@@ -511,25 +511,25 @@ bool cst328Read(int16_t& x, int16_t& y) {
 // Active tab: black filled box + white label (e-ink invert highlight).
 // Touch hit-test must stay in sync with draw_nav().
 // ---------------------------------------------------------------------------
-constexpr int TOP_H          = 40;
-constexpr int BOT_H          = 44;
-constexpr int BOT_TOP        = EPD_HEIGHT - BOT_H;          // 276
-constexpr int CONTENT_TOP    = TOP_H + 4;                   // 44
-constexpr int CONTENT_BOTTOM = BOT_TOP - 2;                 // 274
+constexpr int TOP_H          = 36;
+constexpr int BOT_H          = 40;
+constexpr int BOT_TOP        = EPD_HEIGHT - BOT_H;          // 280
+constexpr int CONTENT_TOP    = TOP_H;                      // 36 — no gap under nav
+constexpr int CONTENT_BOTTOM = BOT_TOP;                    // flush to bot nav
 constexpr int TOP_TAB_W      = EPD_WIDTH / 2;               // 120
-// Bottom: Chats | Contact | Peers — Contact needs more width
-constexpr int BOT_CHATS_W    = 70;
-constexpr int BOT_CONTACT_W  = 100;
-constexpr int BOT_PEERS_W    = 70;  // 70+100+70=240
-constexpr int PEERS_TOP      = CONTENT_TOP + 48;
-constexpr int ROW_H          = 44;
-// Home grid (Plus-like tiles)
-constexpr int TILE_GAP       = 4;
-constexpr int TILE_W         = (EPD_WIDTH - 16 - TILE_GAP * 2) / 3;  // ~72
-constexpr int TILE_H         = 44;
-constexpr int HOME_GRID_Y    = 112;
-constexpr int HOME_ANN_Y     = 218;
-constexpr int HOME_ANN_H     = 32;
+// Bottom: Chats | Contact | Peers
+constexpr int BOT_CHATS_W    = 72;
+constexpr int BOT_CONTACT_W  = 96;
+constexpr int BOT_PEERS_W    = 72;  // 72+96+72=240
+constexpr int PEERS_TOP      = CONTENT_TOP + 40;
+constexpr int ROW_H          = 42;
+// Home grid — zero outer margin, 2px tile gap
+constexpr int TILE_GAP       = 2;
+constexpr int TILE_W         = (EPD_WIDTH - TILE_GAP * 2) / 3;  // 78
+constexpr int TILE_H         = 42;
+constexpr int HOME_ID_H      = 56;   // identity card height
+constexpr int HOME_GRID_Y    = CONTENT_TOP + HOME_ID_H;    // 92
+constexpr int HOME_ANN_H     = 34;
 
 const char* tabLabel(ScreenId id) {
     switch (id) {
@@ -1041,18 +1041,19 @@ void clear_screen() {
     }
 }
 
-// Centered label — measure with ~8px/glyph for montserrat_16 (was 9–10, too wide → left bias)
+// Centered label — use LVGL text width when possible for true center
 void draw_label_centered(int x, int y, int w, int h, const char* label, bool bold) {
-    const int n = (int)strlen(label);
-    const int tw = n * 8;
-    int lx = x + (w - tw) / 2;
-    if (lx < x + 2) lx = x + 2;
+    const lv_font_t* font = &lv_font_montserrat_16;
+    lv_coord_t tw = lv_txt_get_width(label, strlen(label), font, 0, LV_TEXT_FLAG_NONE);
+    if (tw <= 0) tw = (lv_coord_t)(strlen(label) * 7);
+    int lx = x + (w - (int)tw) / 2;
+    if (lx < x) lx = x;
     int ly = y + (h - 16) / 2;
     if (ly < y) ly = y;
     for (int k = 0; k < (bold ? 2 : 1); k++) {
         lv_obj_t* lab = lv_label_create(g_root);
         lv_label_set_text(lab, label);
-        lv_obj_set_style_text_font(lab, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_font(lab, font, 0);
         lv_obj_set_style_text_color(lab, lv_color_black(), 0);
         lv_obj_set_pos(lab, lx + k, ly);
     }
@@ -1074,9 +1075,10 @@ void draw_tile(int x, int y, int w, int h, const char* title, const char* value)
 }
 
 void draw_nav_box(int x, int y, int w, int h, const char* label, bool active) {
+    // Full cell size — shared borders with neighbors (no gap strips)
     lv_obj_t* box = lv_obj_create(g_root);
-    lv_obj_set_size(box, w - 2, h - 2);
-    lv_obj_set_pos(box, x + 1, y + 1);
+    lv_obj_set_size(box, w, h);
+    lv_obj_set_pos(box, x, y);
     lv_obj_set_style_radius(box, 0, 0);
     lv_obj_set_style_border_width(box, active ? 3 : 1, 0);
     lv_obj_set_style_border_color(box, lv_color_black(), 0);
@@ -1086,15 +1088,15 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active) {
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
     if (active) {
         lv_obj_t* under = lv_obj_create(g_root);
-        lv_obj_set_size(under, w - 10, 3);
-        lv_obj_set_pos(under, x + 5, y + h - 6);
+        lv_obj_set_size(under, w - 8, 3);
+        lv_obj_set_pos(under, x + 4, y + h - 5);
         lv_obj_set_style_radius(under, 0, 0);
         lv_obj_set_style_border_width(under, 0, 0);
         lv_obj_set_style_bg_color(under, lv_color_black(), 0);
         lv_obj_set_style_bg_opa(under, LV_OPA_COVER, 0);
         lv_obj_clear_flag(under, LV_OBJ_FLAG_SCROLLABLE);
     }
-    draw_label_centered(x + 1, y, w - 2, h - (active ? 5 : 0), label, active);
+    draw_label_centered(x, y, w, h - (active ? 4 : 0), label, active);
 }
 
 void draw_nav() {
@@ -1160,12 +1162,12 @@ void add_row(int& y, const char* left, const char* right) {
 
 void build_home() {
     clear_screen();
-    int y = CONTENT_TOP;
+    const int y0 = CONTENT_TOP;  // flush under top nav
 
-    // Identity card
+    // Identity — full width, no side gap, flush under Settings|Home
     lv_obj_t* idBox = lv_obj_create(g_root);
-    lv_obj_set_size(idBox, EPD_WIDTH - 8, 62);
-    lv_obj_set_pos(idBox, 4, y);
+    lv_obj_set_size(idBox, EPD_WIDTH, HOME_ID_H);
+    lv_obj_set_pos(idBox, 0, y0);
     lv_obj_set_style_radius(idBox, 0, 0);
     lv_obj_set_style_border_width(idBox, 2, 0);
     lv_obj_set_style_border_color(idBox, lv_color_black(), 0);
@@ -1174,18 +1176,18 @@ void build_home() {
     lv_obj_set_style_pad_all(idBox, 0, 0);
     lv_obj_clear_flag(idBox, LV_OBJ_FLAG_SCROLLABLE);
 
-    fat_label(g_root, "IDENTITY", 10, y + 3);
+    fat_label(g_root, "IDENTITY", 6, y0 + 2);
     const char* on = (g_loraIf && g_loraIf->isOnline()) ? "ONLINE" : "OFFLINE";
-    fat_label(g_root, on, 150, y + 3);
+    fat_label(g_root, on, 152, y0 + 2);
     char shortId[14];
     snprintf(shortId, sizeof(shortId), "%.10s", g_destHex);
-    fat_label(g_root, shortId, 10, y + 22);
+    fat_label(g_root, shortId, 6, y0 + 20);
     char lxmfLine[28];
     snprintf(lxmfLine, sizeof(lxmfLine), "LXMF %.10s", g_destHex);
-    fat_label(g_root, lxmfLine, 10, y + 40);
+    fat_label(g_root, lxmfLine, 6, y0 + 38);
 
-    // 3x2 tiles
-    const int gx = 4;
+    // 3x2 tiles — flush, 2px gaps only
+    const int gx = 0;
     const int gy = HOME_GRID_Y;
     const int tw = TILE_W;
     const int th = TILE_H;
@@ -1197,21 +1199,20 @@ void build_home() {
         strcpy(peerN, "0");
     const char* loraV = (g_loraIf && g_loraIf->isOnline()) ? "ON" : "OFF";
 
-    draw_tile(gx,                  gy,            tw, th, "LORA",  loraV);
-    draw_tile(gx + tw + gap,       gy,            tw, th, "TCP",   "OFF");
-    draw_tile(gx + 2*(tw + gap),   gy,            tw, th, "WIFI",  "OFF");
-    draw_tile(gx,                  gy + th + gap, tw, th, "PEERS", peerN);
-    draw_tile(gx + tw + gap,       gy + th + gap, tw, th, "AUDIO", "n/a");
-    draw_tile(gx + 2*(tw + gap),   gy + th + gap, tw, th, "GPS",   "n/a");
+    draw_tile(gx,                gy,            tw, th, "LORA",  loraV);
+    draw_tile(gx + tw + gap,     gy,            tw, th, "TCP",   "OFF");
+    draw_tile(gx + 2*(tw + gap), gy,            tw, th, "WIFI",  "OFF");
+    draw_tile(gx,                gy + th + gap, tw, th, "PEERS", peerN);
+    draw_tile(gx + tw + gap,     gy + th + gap, tw, th, "AUDIO", "n/a");
+    draw_tile(gx + 2*(tw + gap), gy + th + gap, tw, th, "GPS",   "n/a");
 
-    // Status + full-width Announce (fits; no clipped ANNOUNCE in narrow box)
-    int sy = gy + 2 * (th + gap) + 6;
-    fat_label(g_root, "Listening for peers", 8, sy);
+    // Status + full-width Announce — packed under tiles
+    int sy = gy + 2 * (th + gap) + 2;
+    fat_label(g_root, "Listening for peers", 4, sy);
     char annAgo[28];
     snprintf(annAgo, sizeof(annAgo), "Announced: %s", g_announceStr);
-    fat_label(g_root, annAgo, 8, sy + 18);
-    // Short label "Announce" centered in full-width button
-    draw_action_btn(4, sy + 40, EPD_WIDTH - 8, HOME_ANN_H, "Announce");
+    fat_label(g_root, annAgo, 4, sy + 16);
+    draw_action_btn(0, sy + 34, EPD_WIDTH, HOME_ANN_H, "Announce");
 
     draw_compose_or_hint("");
 }
