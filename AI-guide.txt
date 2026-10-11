@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-11 (E23 TX + e-ink refresh methods)
+Last updated: 2026-10-11 (E23 TX + e-ink refresh + energy roadmap)
 ================================================================================
 
 OVERALL GOALS
@@ -8,7 +8,8 @@ OVERALL GOALS
 1. Port Ratspeak to T-Deck Pro (GDEQ031T10 240x320 e-ink).
 2. Keep Cooperative / Node green.
 3. Standalone e-ink bring-up (not full Plus UI).
-4. Later: clean upstream-friendly history.
+4. After messaging is solid: energy reduction (sleep, duty-cycled RX).
+5. Later: clean upstream-friendly history.
 
 STANDALONE RULES
 ----------------
@@ -19,6 +20,7 @@ Single fullRefresh per screen change (current policy — see E-INK REFRESH).
 GxEPD2 page_height=16; firstPage+drawBitmap; flush non-white->black.
 fat_label: single stroke. Protocol BEFORE LVGL. Internal node if PSRAM size=0.
 Code layout: thin main.cpp + StandaloneApp.h/.cpp.
+Do not break TX/RX or cooperative while adding sleep later.
 
 PHASE STATUS
 ------------
@@ -48,9 +50,16 @@ Hardware proof (E21-E23):
   Compose idle redraw; TX outcome=0; touch peer select stays on Msgs
   Heap ~22-24K free_int stable post-draw
 
+Bring-up is "basically running": announce, inbox, outbound, history,
+keyboard compose, peer select, touch. Next UI polish optional; energy
+work is a separate phase after that (see ENERGY ROADMAP).
+
 DEVICE FACTS
 ------------
 PSRAM: found=1 size=0 — use INTERNAL only; Settings shows "PSRAM n/a".
+  Hardware is 8MB OPI; size=0 = board/build map not active. Fix is
+  platformio/board flags + probe, not app archaeology. Defer until
+  after energy phase or only as a focused experiment.
 Heap: ~45K post-proto; ~28K post-LVGL (10-line strip); ~24K steady after UI.
 Touch: CST328 @ 0x1A (not GT911). Minimal 0xD000 finger-1 read in
   StandaloneApp — no SensorLib dependency. Soft-fail keeps INT-only next.
@@ -60,6 +69,8 @@ Peer: serial/kb p cycles; Messages list shows >; History mark-reads sel.
   E23 also fills free rows from AnnounceManager::nodes() as "(ann ...)" targets.
 Keyboard shortcuts (compose empty only): a=announce t=ping H=history p=peer.
   Leading space avoids H/t/a/p swallowing first letter of a message.
+Battery: ~1400-1500 mAh LiPo. E-ink refresh energy is negligible at messaging
+  rates; always-on MCU + continuous LoRa RX dominate (see ENERGY ROADMAP).
 
 SERIAL HINTS (line + Enter)
 ---------------------------
@@ -115,7 +126,7 @@ DisplayEink today:
   refreshIfDirty() always calls fullRefresh().
   Policy: one fullRefresh per screen change (Home/Msgs/Settings/History).
 
-Recommended future policy (E24 optional partial experiment):
+Recommended UI policy (E24 optional partial experiment):
   1. Screen *change* (Home <-> Msgs <-> Settings, enter/leave History)
        -> fullRefresh (clean slate).
   2. In-place updates (compose footer, peer ">" marker, unread count)
@@ -125,6 +136,10 @@ Recommended future policy (E24 optional partial experiment):
        to trial. Custom waveforms only if ghosting is unacceptable.
   5. After hibernate / long power-off, first update must be full (previous
        buffer may be invalid for differential).
+
+Panel energy (5 msg/day scale): ~11 mW during refresh, ~0.017 mW standby.
+  Full ~0.001 mAh/update; partial slightly less. Negligible vs radio/MCU.
+  Partial is a UX win, not a battery tradeoff at messaging rates.
 
 Reference:
   https://www.youtube.com/watch?v=MsbiO8EAsGw  (Krasnow LUT / partial)
@@ -139,6 +154,74 @@ DisplayEink is the thin wrapper — extend it with partialRefresh() rather
 than calling g_epd from StandaloneApp directly.
 No SensorLib for touch; no extra waveform lib needed for first partial trial.
 
+ENERGY ROADMAP (after messaging is solid)
+-----------------------------------------
+Do this only when bring-up is "basically running" (E23-level: TX/RX, compose,
+peer select). Goal: stretch 1400-1500 mAh from ~1-3 days always-on toward
+many days / weeks at low message rates. Keep cooperative green; optional
+compile flag or serial command to disable sleep while debugging.
+
+Why energy work is separate:
+  - Current standalone loop is always awake: proto.loop + continuous LoRa RX.
+  - E-ink refresh is NOT the drain (see above). MCU + SX1262 RX are.
+  - Sleep changes timing, IRQ paths, and protocol assumptions — easy to
+    break messaging if done mid-bring-up.
+
+Dominant loads today (order of magnitude):
+  ESP32-S3 active + protocol loop   ~20-40 mA
+  SX1262 continuous receive         ~5-10 mA
+  E-ink standby / rare refresh      ~uA / bursts
+  -> Always-on class runtime: about 1-3 days on 1500 mAh.
+
+Phased energy work (suggested order):
+
+  F1  Measure baseline
+      - Log free_int is not enough: add periodic battery % / mV (BQ27220).
+      - Optional: serial "power" line with last RSSI, uptime, bat.
+      - Know before/after when changing sleep.
+
+  F2  Idle light-sleep between loop work
+      - When no key/touch/serial/pending TX and radio quiet for N ms,
+        esp_light_sleep or timed delay with radio still in RX if needed.
+      - Wake sources: TCA8418 INT, CST328 INT, SX1262 DIO, timer.
+      - Must not starve proto.loop / lxmfPoll / announce.loop.
+
+  F3  Radio duty-cycle / WOR (biggest win)
+      - Continuous RX is the long-term killer.
+      - Prefer SX1262 duty-cycle RX or wake-on-radio where protocol allows.
+      - Document impact on latency (message may wait for next RX window).
+      - Keep a "always listen" debug mode for field tests.
+
+  F4  Deep sleep between sparse sessions (optional, aggressive)
+      - Only if product goal is rare check-ins, not interactive messenger.
+      - Hibernate e-ink (GxEPD2 hibernate); cold-sleep radio; deep sleep MCU.
+      - Wake: timer, or GPIO from radio/keyboard.
+      - First e-ink update after wake must be full refresh.
+      - Protocol state must survive or re-init cleanly from flash.
+
+  F5  Peripheral power gates
+      - BOARD_GPS_EN, BOARD_1V8_EN, BOARD_LORA_EN, BOARD_6609_EN already
+        defined — gate GPS/audio/unused rails when idle.
+      - Do not cut LoRa or e-ink power while session active.
+
+  F6  UI policy that helps energy
+      - Partial refresh for in-place updates (E24) — small win, better UX.
+      - Avoid auto fullRedraw storms (already rate-limited).
+      - Dim/disable unnecessary live counters when idle.
+
+  F7  PSRAM (optional, parallel experiment)
+      - size=0 today; OPI 8MB on silicon. Fix board_build qio_opi + probe
+        sketch before moving protocol node to SPIRAM.
+      - Not required for energy; required for larger protocol profiles.
+
+Expected outcomes (rough, not measured on this unit):
+  - Always-on RX (today):           ~1-3 days
+  - Light-sleep + duty-cycled RX:   many days at 5 msg/day
+  - Deep sleep + rare wake:         weeks+ (interactive UX suffers)
+
+Never claim a runtime number without a measured baseline on the same
+firmware + battery %.
+
 FILE MAP
 --------
 src/boards/tdeck_Pro/main.cpp
@@ -148,17 +231,24 @@ src/boards/tdeck_Pro/Eink/LvglPort.*
 
 NEXT
 ----
-1. Optional E24: partialRefresh for compose footer + selection marker;
-   full still on screen change; force full every 5 partials.
-2. Optional: trim leading/trailing spaces on TX body; fix markRead reject.
-3. Optional: calibrate row Y from multi-peer touch logs.
-4. PSRAM OPI map later.
-5. Keep cooperative green.
+Near-term (still bring-up / UX, no sleep yet):
+  1. Optional E24: partialRefresh for compose footer + selection marker;
+     full still on screen change; force full every 5 partials.
+  2. Optional: trim leading/trailing spaces on TX body; fix markRead reject.
+  3. Optional: calibrate row Y from multi-peer touch logs.
+
+After messaging stays solid on hardware:
+  4. ENERGY F1 baseline (battery % logging).
+  5. ENERGY F2-F3 light-sleep + radio duty-cycle (largest gains).
+  6. ENERGY F4 deep sleep only if product wants sparse check-ins.
+  7. PSRAM OPI map as focused experiment (probe first).
+  8. Keep cooperative green on every change.
 
 ONE-LINER
 ---------
 Standalone: protocol + e-ink + announce + inbox + outbound + history
 + keyboard compose (idle-on-glass) + peer select (p/touch) + mark-read
 + announced peers as TX targets; fullRefresh per screen change; GxEPD2
-ready for partial. Internal heap only. PSRAM size=0.
+ready for partial. Internal heap only. PSRAM size=0. After solid TX/RX:
+measure battery, then light-sleep + duty-cycled LoRa for multi-day life.
 ================================================================================
