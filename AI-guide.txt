@@ -1,74 +1,62 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-11 (Phase G1.3 Plus Home tiles)
+Last updated: 2026-10-11 (Phase G1.4 Plus menus + Announce fit)
 ================================================================================
 
 OVERALL GOALS
 -------------
 1. Port Ratspeak to T-Deck Pro (GDEQ031T10 240x320 e-ink).
 2. Keep Cooperative / Node green.
-3. Standalone e-ink (exclude LvglApplication / ui/lvgl).
-4. Match Plus IA and Home card/tile layout on e-ink.
-5. After solid: energy reduction (sleep, duty-cycled RX).
+3. Standalone e-ink (exclude ui/lvgl import).
+4. Match Plus screen structure (Home tiles, list menus, Settings rows).
+5. After solid: energy reduction.
 
 STANDALONE RULES
 ----------------
-Exclude LvglApplication.cpp and ui/lvgl. Include boards/tdeck_Pro.
-bindDeviceOwner() before ProtocolRuntime. Full files preferred.
-ASCII only. FullRefresh per tab change. Protocol BEFORE LVGL.
-Internal node if PSRAM size=0.
+Exclude LvglApplication.cpp and ui/lvgl. boards/tdeck_Pro only.
+Full files preferred. FullRefresh per tab. Protocol BEFORE LVGL.
+Internal heap if PSRAM size=0.
 
 PHASE STATUS
 ------------
-E1-E23  * DONE * messaging
-G1-G1.2 * DONE * nav iterations
-G1.3    * IN   * Plus Home identity+3x2 tiles+ANNOUNCE; Settings|Home;
-          Contact label; centered nav; list row cards
+E1-E23 * DONE * messaging
+G1.4   * IN   * centered nav; full-width Announce; Plus-like Settings/
+         Contacts/Peers/Chats menu rows
 
-NAV (G1.3)
-----------
-TOP y=0..39:   [ Settings ][ Home ]   (Home on RIGHT for right thumb)
-BOT y=276..319:[ Chats 70 | Contact 100 | Peers 70 ]
-Active: thick border + bottom underline + bold centered label
+NAV
+---
+TOP: [ Settings | Home ]  (Home right, right-thumb)
+BOT: [ Chats 70 | Contact 100 | Peers 70 ]
+Labels centered (~8px/glyph). Active: thick border + underline.
 
-PLUS HOME (reference: T-Deck Plus photo)
-----------------------------------------
-Identity card: IDENTITY, ONLINE/OFFLINE, short dest, LXMF hash
-3x2 tiles:  LORA | TCP | WIFI
-            PEERS| AUDIO| GPS
-  (TCP/WIFI/AUDIO/GPS show OFF/n/a until wired)
-Status: "Listening for peers" / "Announced: …"
-Button: ANNOUNCE (right side, touch x>=120, y~230)
+HOME (Plus reference)
+---------------------
+Identity card: IDENTITY / ONLINE / dest / LXMF
+3x2 tiles: LORA TCP WIFI / PEERS AUDIO GPS
+"Listening for peers" + "Announced: …"
+Full-width [ Announce ] button (not narrow right box — was clipping)
 
-OTHER SCREENS
--------------
-Chats:    Inbox summary + boxed thread rows
-Contact:  Contacts N + boxed rows
-Peers:    Peers N + discovered rows
-Settings: Radio card + Device card (boxed sections)
+OTHER SCREENS (Plus reference photos)
+-------------------------------------
+Chats:    CHATS header + boxed thread rows
+Contact:  Share My QR row + CONTACTS (N) + ID rows
+Peers:    RECENT PEERS (N) + name + ID rows
+Settings: SETTINGS + Identity & Device / Battery / LoRa / Announce rows
+          (title + subtitle + ">")
 
 TOUCH
 -----
-y < 40:        Settings (x<120) | Home (x>=120)
-y >= 276:      Chats | Contact | Peers (unequal widths)
-Home ANNOUNCE: y>=230, x>=120
-List rows:     PEERS_TOP + ROW_H bands
-
-SERIAL / KEYS
--------------
-1 Settings? — still 1=Home 2=Chats 3=Contacts 4=Peers 5=Settings
-a=Announce  H=thread  p=peer  type+Enter=send
+Top/bot tabs as before. Home Announce: y>=200 below tiles (full width).
 
 NEXT
 ----
-1. Flash G1.3 — confirm Home tiles, Settings left, Contact fits
-2. Wire real peer count into PEERS tile from AnnounceManager
-3. Optional: display name on Identity card
-4. ENERGY F1 after solid
-5. Keep cooperative green
+1. Flash G1.4 — Confirm Announce full string, nav centered
+2. Wire TCP/WIFI tiles when available
+3. ENERGY F1 after solid
+4. Keep cooperative green
 
 ONE-LINER
 ---------
-Plus-like e-ink Home (identity + 3x2 tiles + ANNOUNCE); nav Settings|Home
-top, Chats|Contact|Peers bottom; boxed list rows; keyboard TX.
+Plus-shaped e-ink: centered Settings|Home, Chats|Contact|Peers; Home tiles
++ full-width Announce; Settings/Contacts/Peers as Plus menu rows.
 ================================================================================
