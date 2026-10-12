@@ -1228,7 +1228,7 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, ch
     // Underline tight under hotkey glyph
     lv_obj_t* bar = lv_obj_create(g_root);
     lv_obj_set_size(bar, (int)cw + 2, 2);
-    lv_obj_set_pos(bar, lx + (int)bw, ly + 14);
+    lv_obj_set_pos(bar, lx + (int)bw, ly + 16);
     lv_obj_set_style_radius(bar, 0, 0);
     lv_obj_set_style_border_width(bar, 0, 0);
     lv_obj_set_style_bg_color(bar, lv_color_black(), 0);
@@ -1368,16 +1368,17 @@ void build_home() {
     lv_obj_set_style_pad_all(idBox, 0, 0);
     lv_obj_clear_flag(idBox, LV_OBJ_FLAG_SCROLLABLE);
 
+    fat_label(g_root, "IDENTITY", 6, y0 + 2);
     const char* on = (g_loraIf && g_loraIf->isOnline()) ? "ONLINE" : "OFFLINE";
-    fat_label(g_root, on, 6, y0 + 2);
+    // Slightly left of far-right (was ~152); keep clear of battery gauge
+    fat_label(g_root, on, 118, y0 + 2);
     int pct = 0;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
-    draw_battery_gauge(EPD_WIDTH - 70, y0 + 3, 40, 14, pct);
-    fat_label(g_root, "IDENTITY", 6, y0 + 20);
+    draw_battery_gauge(EPD_WIDTH - 58, y0 + 3, 32, 14, pct);
     char shortId[14];
     snprintf(shortId, sizeof(shortId), "%.10s", g_destHex);
-    fat_label(g_root, shortId, 90, y0 + 20);
+    fat_label(g_root, shortId, 6, y0 + 20);
     char lxmfLine[28];
     snprintf(lxmfLine, sizeof(lxmfLine), "LXMF %.10s", g_destHex);
     fat_label(g_root, lxmfLine, 6, y0 + 38);
@@ -1653,11 +1654,14 @@ bool handleKeyEvent(const KeyEvent& ev) {
         if (g_composeLen > 0) {
             char body[COMPOSE_CAP + 1];
             memcpy(body, g_compose, g_composeLen + 1);
+            Serial.printf("[TX] Enter compose len=%u body=\"%s\"\n",
+                          (unsigned)g_composeLen, body);
             composeClear();
             g_composeMode = false;
             doSendTest(body);
             return true;
         }
+        Serial.println("[KEY] Enter empty — next screen");
         next_screen();
         return false;
     }
@@ -1678,11 +1682,14 @@ bool handleKeyEvent(const KeyEvent& ev) {
         // A announce  S settings  H home  I inbox  M msg box  P peers
         // V view thread  N next peer  T test ping
         if (g_composeLen == 0) {
-            if (ev.character >= '1' && ev.character <= '9') {
+            const bool onMsgScreens =
+                (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS ||
+                 g_screen == SCR_PEERS);
+
+            // 1-9: select peer row on messaging screens only
+            if (onMsgScreens && ev.character >= '1' && ev.character <= '9') {
                 int idx = ev.character - '1';
-                if ((g_screen == SCR_CHATS || g_screen == SCR_CONTACTS ||
-                     g_screen == SCR_PEERS) &&
-                    idx < g_msgRowCount && g_msgRows[idx].used) {
+                if (idx < g_msgRowCount && g_msgRows[idx].used) {
                     g_selPeer = idx;
                     char hex[33];
                     peerToHex32(g_msgRows[idx].peer, hex);
@@ -1692,54 +1699,64 @@ bool handleKeyEvent(const KeyEvent& ev) {
                     return false;
                 }
             }
-            if (ev.character == 'a' || ev.character == 'A') {
-                doAnnounce();
-                if (g_featAudio) g_audio.playAnnounce();
-                return true;
-            }
-            if (ev.character == 's' || ev.character == 'S') {
-                g_showHistory = false;
-                show_screen(SCR_SETTINGS);
-                return false;
-            }
-            if (ev.character == 'h' || ev.character == 'H') {
-                g_showHistory = false;
-                show_screen(SCR_HOME);
-                return false;
-            }
-            if (ev.character == 'm' || ev.character == 'M') {
-                g_showHistory = false;
-                show_screen(SCR_CHATS);  // Msg Box
-                return false;
-            }
-            if (ev.character == 'c' || ev.character == 'C') {
-                g_showHistory = false;
-                show_screen(SCR_CONTACTS);
-                return false;
-            }
-            if (ev.character == 'p' || ev.character == 'P') {
-                g_showHistory = false;
-                show_screen(SCR_PEERS);
-                return false;
-            }
-            if (ev.character == 'v' || ev.character == 'V') {
-                g_showHistory = !g_showHistory;
-                if (g_showHistory) loadHistoryRows();
-                show_screen(SCR_CHATS);
-                return false;
-            }
-            if (ev.character == 'n' || ev.character == 'N') {
-                if (cycleSelPeer()) {
+
+            // On Msg Box / Contact / Peers: letters always type (fix HELLO→Home)
+            // Only V=thread N=next T=test remain as shortcuts there.
+            if (onMsgScreens) {
+                if (ev.character == 'v' || ev.character == 'V') {
+                    g_showHistory = !g_showHistory;
                     if (g_showHistory) loadHistoryRows();
-                    return (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS ||
-                            g_screen == SCR_PEERS);
+                    show_screen(SCR_CHATS);
+                    return false;
                 }
-                return false;
-            }
-            if (ev.character == 't' || ev.character == 'T') {
-                doSendTest(nullptr);
-                return (g_screen == SCR_SETTINGS || g_screen == SCR_CHATS ||
-                        g_screen == SCR_CONTACTS || g_screen == SCR_PEERS);
+                if (ev.character == 'n' || ev.character == 'N') {
+                    if (cycleSelPeer()) {
+                        if (g_showHistory) loadHistoryRows();
+                        return true;
+                    }
+                    return false;
+                }
+                if (ev.character == 't' || ev.character == 'T') {
+                    doSendTest(nullptr);
+                    return true;
+                }
+                // fall through to composeAppend
+            } else {
+                // Home / Settings: full nav shortcuts
+                if (ev.character == 'a' || ev.character == 'A') {
+                    doAnnounce();
+                    if (g_featAudio) g_audio.playAnnounce();
+                    return true;
+                }
+                if (ev.character == 's' || ev.character == 'S') {
+                    g_showHistory = false;
+                    show_screen(SCR_SETTINGS);
+                    return false;
+                }
+                if (ev.character == 'h' || ev.character == 'H') {
+                    g_showHistory = false;
+                    show_screen(SCR_HOME);
+                    return false;
+                }
+                if (ev.character == 'm' || ev.character == 'M') {
+                    g_showHistory = false;
+                    show_screen(SCR_CHATS);
+                    return false;
+                }
+                if (ev.character == 'c' || ev.character == 'C') {
+                    g_showHistory = false;
+                    show_screen(SCR_CONTACTS);
+                    return false;
+                }
+                if (ev.character == 'p' || ev.character == 'P') {
+                    g_showHistory = false;
+                    show_screen(SCR_PEERS);
+                    return false;
+                }
+                if (ev.character == 't' || ev.character == 'T') {
+                    doSendTest(nullptr);
+                    return true;
+                }
             }
         }
         composeAppend(ev.character);
