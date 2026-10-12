@@ -1145,7 +1145,7 @@ void draw_tile(int x, int y, int w, int h, const char* title, const char* value)
     draw_label_centered(x, y + h / 2, w, 18, value, true);
 }
 
-void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, char hotkey = 0) {
+void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, char hotkey) {
     lv_obj_t* box = lv_obj_create(g_root);
     lv_obj_set_size(box, w, h);
     lv_obj_set_pos(box, x, y);
