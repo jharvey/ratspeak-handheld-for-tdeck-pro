@@ -12,6 +12,7 @@
 #include "config/BoardConfig.h"
 #include "Eink/DisplayEink.h"
 #include "Eink/LvglPort.h"
+#include "audio/AudioNotify.h"
 #include "hal/Keyboard.h"
 #include "radio/SX1262.h"
 #include "storage/FlashStore.h"
@@ -33,6 +34,12 @@ DisplayEink g_display;
 Keyboard g_kb;
 bool g_kbOk = false;
 bool g_touchOk = false;  // E22: CST328 present
+AudioNotify g_audio;
+bool g_featAudio = true;   // beep+vibe on inbound when true
+bool g_featWifi  = false;
+bool g_featTcp   = false;
+bool g_featGps   = false;
+bool g_featLora  = true;   // display/radio intent (radio stays up for mesh)
 
 FlashStore g_flash;
 IdentityManager g_idMgr;
@@ -406,22 +413,42 @@ std::string resolvePeerName(const uint8_t peer[16]) {
 }
 
 void formatPeerLine(char* out, size_t outLen, const uint8_t peer[16], uint32_t unread) {
+    // Prefer announce / cache display name (Plus-style); short hash only if unnamed
     std::string name = resolvePeerName(peer);
     if (!name.empty()) {
         if (unread > 0)
-            snprintf(out, outLen, "%.18s *%u", name.c_str(), (unsigned)unread);
+            snprintf(out, outLen, "%.16s *%u", name.c_str(), (unsigned)unread);
         else
-            snprintf(out, outLen, "%.20s", name.c_str());
+            snprintf(out, outLen, "%.18s", name.c_str());
         return;
     }
     if (unread > 0)
-        snprintf(out, outLen, "%02x%02x%02x%02x%02x%02x%02x%02x *%u",
-                 peer[0], peer[1], peer[2], peer[3],
-                 peer[4], peer[5], peer[6], peer[7], (unsigned)unread);
+        snprintf(out, outLen, "%02x%02x%02x%02x… *%u",
+                 peer[0], peer[1], peer[2], peer[3], (unsigned)unread);
     else
-        snprintf(out, outLen, "%02x%02x%02x%02x%02x%02x%02x%02x",
-                 peer[0], peer[1], peer[2], peer[3],
-                 peer[4], peer[5], peer[6], peer[7]);
+        snprintf(out, outLen, "%02x%02x%02x%02x…",
+                 peer[0], peer[1], peer[2], peer[3]);
+}
+
+void formatPeerSub(char* out, size_t outLen, const uint8_t peer[16], const char* preview) {
+    if (preview && preview[0]) {
+        snprintf(out, outLen, "%.24s", preview);
+        return;
+    }
+    char hex[33];
+    peerToHex32(peer, hex);
+    snprintf(out, outLen, "ID: %.16s", hex);
+}
+
+void notifyInbound() {
+    if (!g_featAudio) return;
+    g_audio.requestMessage();
+#if defined(BOARD_MOTOR_PIN) && (BOARD_MOTOR_PIN >= 0)
+    pinMode(BOARD_MOTOR_PIN, OUTPUT);
+    digitalWrite(BOARD_MOTOR_PIN, HIGH);
+    delay(40);
+    digitalWrite(BOARD_MOTOR_PIN, LOW);
+#endif
 }
 
 void composeClear() {
@@ -534,7 +561,7 @@ constexpr int HOME_ANN_H     = 34;
 const char* tabLabel(ScreenId id) {
     switch (id) {
         case SCR_HOME:     return "Home";
-        case SCR_CHATS:    return "Chats";
+        case SCR_CHATS:    return "Inbox";
         case SCR_CONTACTS: return "Contact";
         case SCR_PEERS:    return "Peers";
         case SCR_SETTINGS: return "Settings";
@@ -618,13 +645,40 @@ bool handleTouchAt(int16_t x, int16_t y) {
     }
 
     // Home: Announce button
-    // Full-width Announce button under status lines
-    if (g_screen == SCR_HOME &&
-        y >= 200 && y < BOT_TOP - 4) {
-        Serial.println("[HOME] touch Announce");
-        doAnnounce();
-        show_screen(SCR_HOME);
-        return true;
+    // Home: status tiles toggle (3x2 grid) then Announce
+    if (g_screen == SCR_HOME) {
+        const int gy = HOME_GRID_Y;
+        const int tw = TILE_W;
+        const int th = TILE_H;
+        const int gap = TILE_GAP;
+        if (y >= gy && y < gy + 2 * (th + gap)) {
+            int col = x / (tw + gap);
+            if (col > 2) col = 2;
+            int row = (y - gy) / (th + gap);
+            if (row > 1) row = 1;
+            int idx = row * 3 + col;
+            // 0 LORA 1 TCP 2 WIFI 3 PEERS 4 AUDIO 5 GPS
+            if (idx == 0) { g_featLora = !g_featLora; Serial.printf("[FEAT] LORA %s\n", g_featLora?"ON":"OFF"); }
+            else if (idx == 1) { g_featTcp = !g_featTcp; Serial.printf("[FEAT] TCP %s\n", g_featTcp?"ON":"OFF"); }
+            else if (idx == 2) { g_featWifi = !g_featWifi; Serial.printf("[FEAT] WIFI %s\n", g_featWifi?"ON":"OFF"); }
+            else if (idx == 4) {
+                g_featAudio = !g_featAudio;
+                g_audio.setEnabled(g_featAudio);
+                Serial.printf("[FEAT] AUDIO %s\n", g_featAudio?"ON":"OFF");
+                if (g_featAudio) notifyInbound();  // sample beep
+            }
+            else if (idx == 5) { g_featGps = !g_featGps; Serial.printf("[FEAT] GPS %s\n", g_featGps?"ON":"OFF"); }
+            // PEERS tile (3) is status only
+            show_screen(SCR_HOME);
+            return true;
+        }
+        if (y >= gy + 2 * (th + gap) && y < BOT_TOP - 2) {
+            Serial.println("[HOME] touch Announce");
+            doAnnounce();
+            if (g_featAudio) g_audio.playAnnounce();
+            show_screen(SCR_HOME);
+            return true;
+        }
     }
 
     Serial.println("[TOUCH] content ignore");
@@ -1103,7 +1157,7 @@ void draw_nav() {
     draw_nav_box(0,         0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS);
     draw_nav_box(TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home",     g_screen == SCR_HOME);
     int x0 = 0;
-    draw_nav_box(x0, BOT_TOP, BOT_CHATS_W, BOT_H, "Chats", g_screen == SCR_CHATS);
+    draw_nav_box(x0, BOT_TOP, BOT_CHATS_W, BOT_H, "Inbox", g_screen == SCR_CHATS);
     x0 += BOT_CHATS_W;
     draw_nav_box(x0, BOT_TOP, BOT_CONTACT_W, BOT_H, "Contact", g_screen == SCR_CONTACTS);
     x0 += BOT_CONTACT_W;
@@ -1197,14 +1251,13 @@ void build_home() {
         snprintf(peerN, sizeof(peerN), "%u", (unsigned)g_msgStore.totalConversations());
     else
         strcpy(peerN, "0");
-    const char* loraV = (g_loraIf && g_loraIf->isOnline()) ? "ON" : "OFF";
-
+    const char* loraV = g_featLora && g_loraIf && g_loraIf->isOnline() ? "ON" : "OFF";
     draw_tile(gx,                gy,            tw, th, "LORA",  loraV);
-    draw_tile(gx + tw + gap,     gy,            tw, th, "TCP",   "OFF");
-    draw_tile(gx + 2*(tw + gap), gy,            tw, th, "WIFI",  "OFF");
+    draw_tile(gx + tw + gap,     gy,            tw, th, "TCP",   g_featTcp ? "ON" : "OFF");
+    draw_tile(gx + 2*(tw + gap), gy,            tw, th, "WIFI",  g_featWifi ? "ON" : "OFF");
     draw_tile(gx,                gy + th + gap, tw, th, "PEERS", peerN);
-    draw_tile(gx + tw + gap,     gy + th + gap, tw, th, "AUDIO", "n/a");
-    draw_tile(gx + 2*(tw + gap), gy + th + gap, tw, th, "GPS",   "n/a");
+    draw_tile(gx + tw + gap,     gy + th + gap, tw, th, "AUDIO", g_featAudio ? "ON" : "OFF");
+    draw_tile(gx + 2*(tw + gap), gy + th + gap, tw, th, "GPS",   g_featGps ? "ON" : "OFF");
 
     // Status + full-width Announce — packed under tiles
     int sy = gy + 2 * (th + gap) + 2;
@@ -1274,9 +1327,9 @@ void build_chats() {
     }
     loadMessageRows(false);
     char sec[32];
-    snprintf(sec, sizeof(sec), "CHATS  %s  %s", g_convStr, g_unreadStr);
+    snprintf(sec, sizeof(sec), "INBOX  %s  %s", g_convStr, g_unreadStr);
     build_list_body(sec, g_msgNote[0] ? g_msgNote : "(no chats)");
-    draw_compose_or_hint("type+Enter  H=thread");
+    draw_compose_or_hint("type+Enter  V=thread  N=peer");
 }
 
 void build_contacts() {
@@ -1295,14 +1348,14 @@ void build_contacts() {
     clampSelPeer();
 
     clear_screen();
-    int y = CONTENT_TOP;
+    int y = CONTENT_TOP + 4;
     // Share My QR row (Plus) — display only on e-ink
-    draw_menu_row(y, 36, "Share My QR", g_destHex, false);
-    y += 42;
+    draw_menu_row(y, 40, "Share My QR", g_destHex, false);
+    y += 48;
     char sec[28];
     snprintf(sec, sizeof(sec), "CONTACTS (%d)", g_msgRowCount);
     fat_label(g_root, sec, 8, y);
-    y += 22;
+    y += 26;
     if (g_msgRowCount == 0) {
         fat_label(g_root, g_msgNote, 8, y);
     } else {
@@ -1463,21 +1516,46 @@ bool handleKeyEvent(const KeyEvent& ev) {
         // Single-letter shortcuts only when compose is empty
         // (so "a" alone still announces, "t" alone still pings).
         if (g_composeLen == 0) {
+                        // Navigation (compose empty only) — no letter clash
+            // A announce  S settings  H home  I inbox  C contact  P peers
+            // V view thread  N next peer  T test ping
             if (ev.character == 'a' || ev.character == 'A') {
                 doAnnounce();
-                return (g_screen == SCR_SETTINGS);
+                if (g_featAudio) g_audio.playAnnounce();
+                return true;
             }
-            if (ev.character == 't' || ev.character == 'T') {
-                doSendTest(nullptr);
-                return (g_screen == SCR_SETTINGS || g_screen == SCR_CHATS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS);
+            if (ev.character == 's' || ev.character == 'S') {
+                g_showHistory = false;
+                show_screen(SCR_SETTINGS);
+                return false;
             }
-            if (ev.character == 'H') {
+            if (ev.character == 'h' || ev.character == 'H') {
+                g_showHistory = false;
+                show_screen(SCR_HOME);
+                return false;
+            }
+            if (ev.character == 'i' || ev.character == 'I') {
+                g_showHistory = false;
+                show_screen(SCR_CHATS);
+                return false;
+            }
+            if (ev.character == 'c' || ev.character == 'C') {
+                g_showHistory = false;
+                show_screen(SCR_CONTACTS);
+                return false;
+            }
+            if (ev.character == 'p' || ev.character == 'P') {
+                g_showHistory = false;
+                show_screen(SCR_PEERS);
+                return false;
+            }
+            if (ev.character == 'v' || ev.character == 'V') {
                 g_showHistory = !g_showHistory;
                 if (g_showHistory) loadHistoryRows();
                 show_screen(SCR_CHATS);
                 return false;
             }
-            if (ev.character == 'p' || ev.character == 'P') {
+            if (ev.character == 'n' || ev.character == 'N') {
                 if (cycleSelPeer()) {
                     if (g_showHistory) loadHistoryRows();
                     return (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS ||
@@ -1485,7 +1563,12 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 }
                 return false;
             }
-        }
+            if (ev.character == 't' || ev.character == 'T') {
+                doSendTest(nullptr);
+                return (g_screen == SCR_SETTINGS || g_screen == SCR_CHATS ||
+                        g_screen == SCR_CONTACTS || g_screen == SCR_PEERS);
+            }
+
         composeAppend(ev.character);
         return false;
     }
@@ -1550,6 +1633,21 @@ bool begin() {
     g_kbOk = g_kb.begin();
     if (g_kbOk) Serial.println("[KEYBOARD] TCA8418 keyboard ready");
 
+    g_audio.begin();
+    g_audio.setEnabled(g_featAudio);
+#if defined(BOARD_MOTOR_PIN) && (BOARD_MOTOR_PIN >= 0)
+    pinMode(BOARD_MOTOR_PIN, OUTPUT);
+    digitalWrite(BOARD_MOTOR_PIN, LOW);
+#endif
+    Serial.printf("[AUDIO] notify %s motor=%d\n",
+                  g_audio.isReady() ? "ready" : "no-i2s",
+#if defined(BOARD_MOTOR_PIN)
+                  BOARD_MOTOR_PIN
+#else
+                  -1
+#endif
+    );
+
     // E22: probe CST328 (already reset earlier). Soft-fail keeps INT-only next.
     Wire.beginTransmission(TOUCH_I2C_ADDR);
     g_touchOk = (Wire.endTransmission() == 0);
@@ -1567,6 +1665,18 @@ void loop() {
     if (g_protoReady) g_proto.loop();
     if (g_storeReady) g_msgStore.poll();
     g_announceMgr.loop();
+    g_audio.loop();
+
+    // Beep+vibe on new inbound (revision bump while not composing)
+    static uint32_t s_prevRev = 0;
+    if (g_storeReady) {
+        uint32_t rev = g_msgStore.revision();
+        if (s_prevRev != 0 && rev > s_prevRev && g_composeLen == 0) {
+            if (g_msgStore.totalUnreadCount() > 0)
+                notifyInbound();
+        }
+        s_prevRev = rev;
+    }
 
     if (!g_bootAnnDone && g_bootAnnAt != 0 && millis() >= g_bootAnnAt) {
         g_bootAnnDone = true;
