@@ -40,6 +40,10 @@ bool g_featWifi  = false;
 bool g_featTcp   = false;
 bool g_featGps   = false;
 bool g_featLora  = true;   // display/radio intent (radio stays up for mesh)
+uint32_t g_lastPeerAutoMs = 0;
+size_t   g_lastPeerCount  = 0;
+bool     g_peerDirty      = false;
+bool     g_composeMode    = false;  // true while typing a message
 
 FlashStore g_flash;
 IdentityManager g_idMgr;
@@ -122,7 +126,7 @@ void show_screen(ScreenId id);
 void next_screen();
 const char* tabLabel(ScreenId id);
 void draw_nav();
-void draw_nav_box(int x, int y, int w, int h, const char* label, bool active);
+void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, char hotkey = 0);
 void draw_compose_or_hint(const char* idleHint);
 void build_chats();
 void build_contacts();
@@ -465,6 +469,7 @@ void composeLog() {
 
 void composeAppend(char c) {
     if (c < 32 || c > 126) return;
+    g_composeMode = true;
     if (g_composeLen >= COMPOSE_CAP) {
         Serial.println("[COMPOSE] full");
         return;
@@ -545,9 +550,11 @@ constexpr int CONTENT_TOP    = TOP_H;                      // 36 — no gap unde
 constexpr int CONTENT_BOTTOM = BOT_TOP;                    // flush to bot nav
 constexpr int TOP_TAB_W      = EPD_WIDTH / 2;               // 120
 // Bottom: Chats | Contact | Peers
-constexpr int BOT_CHATS_W    = 64;
-constexpr int BOT_CONTACT_W  = 112;  // Msg Box needs width
-constexpr int BOT_PEERS_W    = 64;   // 64+112+64=240
+// Bottom order: Contact | Msg Box | Peers
+constexpr int BOT_CONTACT_W  = 80;
+constexpr int BOT_MSGBOX_W   = 96;
+constexpr int BOT_PEERS_W    = 64;   // 80+96+64=240
+constexpr int BOT_CHATS_W    = BOT_MSGBOX_W;  // SCR_CHATS = Msg Box
 constexpr int PEERS_TOP      = CONTENT_TOP + 40;
 constexpr int ROW_H          = 42;
 // Home grid — zero outer margin, 2px tile gap
@@ -561,8 +568,8 @@ constexpr int HOME_ANN_H     = 34;
 const char* tabLabel(ScreenId id) {
     switch (id) {
         case SCR_HOME:     return "Home";
-        case SCR_CHATS:    return "Inbox";
-        case SCR_CONTACTS: return "Msg Box";
+        case SCR_CHATS:    return "Msg Box";
+        case SCR_CONTACTS: return "Contact";
         case SCR_PEERS:    return "Peers";
         case SCR_SETTINGS: return "Settings";
         default:           return "?";
@@ -602,11 +609,11 @@ bool handleTouchAt(int16_t x, int16_t y) {
 
     // Bottom nav: Chats | Contact | Peers (unequal widths)
     if (y >= BOT_TOP) {
-        ScreenId want = SCR_CHATS;
-        if (x < BOT_CHATS_W)
-            want = SCR_CHATS;
-        else if (x < BOT_CHATS_W + BOT_CONTACT_W)
+        ScreenId want = SCR_CONTACTS;
+        if (x < BOT_CONTACT_W)
             want = SCR_CONTACTS;
+        else if (x < BOT_CONTACT_W + BOT_MSGBOX_W)
+            want = SCR_CHATS;   // Msg Box
         else
             want = SCR_PEERS;
         Serial.printf("[TAB] bot -> %s\n", tabLabel(want));
@@ -645,6 +652,16 @@ bool handleTouchAt(int16_t x, int16_t y) {
     }
 
     // Home: Announce button
+    // Compose Back (top-right above bottom nav)
+    if ((g_composeLen > 0 || g_composeMode) &&
+        y >= BOT_TOP - 24 && y < BOT_TOP && x >= EPD_WIDTH - 64) {
+        composeClear();
+        g_composeMode = false;
+        Serial.println("[COMPOSE] back — leave message mode");
+        show_screen(g_screen);
+        return true;
+    }
+
     // Home: status tiles toggle (3x2 grid) then Announce
     if (g_screen == SCR_HOME) {
         const int gy = HOME_GRID_Y;
@@ -1128,8 +1145,7 @@ void draw_tile(int x, int y, int w, int h, const char* title, const char* value)
     draw_label_centered(x, y + h / 2, w, 18, value, true);
 }
 
-void draw_nav_box(int x, int y, int w, int h, const char* label, bool active) {
-    // Full cell size — shared borders with neighbors (no gap strips)
+void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, char hotkey = 0) {
     lv_obj_t* box = lv_obj_create(g_root);
     lv_obj_set_size(box, w, h);
     lv_obj_set_pos(box, x, y);
@@ -1151,17 +1167,54 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active) {
         lv_obj_clear_flag(under, LV_OBJ_FLAG_SCROLLABLE);
     }
     draw_label_centered(x, y, w, h - (active ? 4 : 0), label, active);
+    // Underline hotkey letter in label (e.g. C in Contact, M in Msg Box)
+    if (hotkey) {
+        char hk = (char)toupper((unsigned char)hotkey);
+        const char* pos = label;
+        int idx = -1;
+        for (int i = 0; label[i]; i++) {
+            if (toupper((unsigned char)label[i]) == hk) { idx = i; break; }
+        }
+        if (idx >= 0) {
+            const lv_font_t* font = &lv_font_montserrat_16;
+            lv_coord_t full = lv_txt_get_width(label, strlen(label), font, 0, LV_TEXT_FLAG_NONE);
+            if (full <= 0) full = (lv_coord_t)(strlen(label) * 7);
+            int lx = x + (w - (int)full) / 2;
+            if (lx < x) lx = x;
+            char before[24];
+            if (idx > 0) {
+                memcpy(before, label, (size_t)idx);
+                before[idx] = '\0';
+            } else before[0] = '\0';
+            lv_coord_t bw = before[0]
+                ? lv_txt_get_width(before, strlen(before), font, 0, LV_TEXT_FLAG_NONE)
+                : 0;
+            char one[2] = { label[idx], 0 };
+            lv_coord_t cw = lv_txt_get_width(one, 1, font, 0, LV_TEXT_FLAG_NONE);
+            if (cw <= 0) cw = 8;
+            int uy = y + (h - (active ? 4 : 0)) / 2 + 14;
+            lv_obj_t* bar = lv_obj_create(g_root);
+            lv_obj_set_size(bar, (int)cw, 2);
+            lv_obj_set_pos(bar, lx + (int)bw, uy);
+            lv_obj_set_style_radius(bar, 0, 0);
+            lv_obj_set_style_border_width(bar, 0, 0);
+            lv_obj_set_style_bg_color(bar, lv_color_black(), 0);
+            lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+            lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+        }
+    }
 }
 
 void draw_nav() {
-    draw_nav_box(0,         0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS);
-    draw_nav_box(TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home",     g_screen == SCR_HOME);
+    draw_nav_box(0,         0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS, 'S');
+    draw_nav_box(TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home",     g_screen == SCR_HOME, 'H');
     int x0 = 0;
-    draw_nav_box(x0, BOT_TOP, BOT_CHATS_W, BOT_H, "Inbox", g_screen == SCR_CHATS);
-    x0 += BOT_CHATS_W;
-    draw_nav_box(x0, BOT_TOP, BOT_CONTACT_W, BOT_H, "Msg Box", g_screen == SCR_CONTACTS);
+    // Hotkey letter underlined in draw_nav_box via hotkey char
+    draw_nav_box(x0, BOT_TOP, BOT_CONTACT_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, 'C');
     x0 += BOT_CONTACT_W;
-    draw_nav_box(x0, BOT_TOP, BOT_PEERS_W, BOT_H, "Peers", g_screen == SCR_PEERS);
+    draw_nav_box(x0, BOT_TOP, BOT_MSGBOX_W, BOT_H, "Msg Box", g_screen == SCR_CHATS, 'M');
+    x0 += BOT_MSGBOX_W;
+    draw_nav_box(x0, BOT_TOP, BOT_PEERS_W, BOT_H, "Peers", g_screen == SCR_PEERS, 'P');
 }
 
 // Full-width action button (Announce) — short label fits montserrat_16
@@ -1198,10 +1251,22 @@ void draw_menu_row(int y, int h, const char* title, const char* sub, bool select
 }
 
 void draw_compose_or_hint(const char* idleHint) {
-    if (g_composeLen > 0) {
+    if (g_composeLen > 0 || g_composeMode) {
         char foot[40];
-        snprintf(foot, sizeof(foot), ">%.28s", g_compose);
+        snprintf(foot, sizeof(foot), ">%.26s", g_compose);
         fat_label(g_root, foot, 8, BOT_TOP - 18);
+        // On-screen Back to leave message mode
+        lv_obj_t* bk = lv_obj_create(g_root);
+        lv_obj_set_size(bk, 56, 22);
+        lv_obj_set_pos(bk, EPD_WIDTH - 60, BOT_TOP - 22);
+        lv_obj_set_style_radius(bk, 0, 0);
+        lv_obj_set_style_border_width(bk, 2, 0);
+        lv_obj_set_style_border_color(bk, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(bk, lv_color_white(), 0);
+        lv_obj_set_style_bg_opa(bk, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(bk, 0, 0);
+        lv_obj_clear_flag(bk, LV_OBJ_FLAG_SCROLLABLE);
+        fat_label(g_root, "Back", EPD_WIDTH - 52, BOT_TOP - 20);
     } else if (idleHint && idleHint[0]) {
         fat_label(g_root, idleHint, 8, BOT_TOP - 18);
     }
@@ -1212,6 +1277,48 @@ void add_row(int& y, const char* left, const char* right) {
     fat_label(g_root, left, 8, y);
     fat_label(g_root, right, 118, y);
     y += 22;
+}
+
+void draw_battery_gauge(int x, int y, int w, int h, int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    // Outer body
+    lv_obj_t* body = lv_obj_create(g_root);
+    lv_obj_set_size(body, w, h);
+    lv_obj_set_pos(body, x, y);
+    lv_obj_set_style_radius(body, 0, 0);
+    lv_obj_set_style_border_width(body, 2, 0);
+    lv_obj_set_style_border_color(body, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(body, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(body, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(body, 0, 0);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    // Tip
+    lv_obj_t* tip = lv_obj_create(g_root);
+    lv_obj_set_size(tip, 4, h / 2);
+    lv_obj_set_pos(tip, x + w, y + h / 4);
+    lv_obj_set_style_radius(tip, 0, 0);
+    lv_obj_set_style_border_width(tip, 1, 0);
+    lv_obj_set_style_border_color(tip, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(tip, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(tip, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(tip, LV_OBJ_FLAG_SCROLLABLE);
+    // Fill
+    int inner = w - 6;
+    int fw = (inner * pct) / 100;
+    if (fw > 0) {
+        lv_obj_t* fill = lv_obj_create(g_root);
+        lv_obj_set_size(fill, fw, h - 6);
+        lv_obj_set_pos(fill, x + 3, y + 3);
+        lv_obj_set_style_radius(fill, 0, 0);
+        lv_obj_set_style_border_width(fill, 0, 0);
+        lv_obj_set_style_bg_color(fill, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
+    }
+    char ps[8];
+    snprintf(ps, sizeof(ps), "%d%%", pct);
+    fat_label(g_root, ps, x + w + 10, y);
 }
 
 void build_home() {
@@ -1232,7 +1339,11 @@ void build_home() {
 
     fat_label(g_root, "IDENTITY", 6, y0 + 2);
     const char* on = (g_loraIf && g_loraIf->isOnline()) ? "ONLINE" : "OFFLINE";
-    fat_label(g_root, on, 152, y0 + 2);
+    fat_label(g_root, on, 100, y0 + 2);
+    int pct = 0;
+    if (g_pctStr[0] && g_pctStr[0] != '-')
+        pct = atoi(g_pctStr);
+    draw_battery_gauge(160, y0 + 4, 36, 14, pct);
     char shortId[14];
     snprintf(shortId, sizeof(shortId), "%.10s", g_destHex);
     fat_label(g_root, shortId, 6, y0 + 20);
@@ -1327,9 +1438,9 @@ void build_chats() {
     }
     loadMessageRows(false);
     char sec[32];
-    snprintf(sec, sizeof(sec), "INBOX  %s  %s", g_convStr, g_unreadStr);
+    snprintf(sec, sizeof(sec), "MSG BOX  %s  %s", g_convStr, g_unreadStr);
     build_list_body(sec, g_msgNote[0] ? g_msgNote : "(no chats)");
-    draw_compose_or_hint("type+Enter  V=thread  N=peer");
+    draw_compose_or_hint("type+Enter send  V=thread  Back=esc");
 }
 
 void build_contacts() {
@@ -1353,7 +1464,7 @@ void build_contacts() {
     draw_menu_row(y, 40, "Share My QR", g_destHex, false);
     y += 48;
     char sec[28];
-    snprintf(sec, sizeof(sec), "MSG BOX (%d)", g_msgRowCount);
+    snprintf(sec, sizeof(sec), "CONTACTS (%d)", g_msgRowCount);
     fat_label(g_root, sec, 8, y);
     y += 26;
     if (g_msgRowCount == 0) {
@@ -1376,7 +1487,9 @@ void build_contacts() {
 }
 
 void build_peers() {
-    // Plus Peers: RECENT PEERS section (trusted when we have saved names)
+    g_lastPeerCount = g_announceMgr.nodes().size();
+    g_peerDirty = false;
+    // Plus Peers: RECENT PEERS section
     g_showHistory = false;
     g_msgRowsLoaded = false;
     g_msgRowCount = 0;
@@ -1473,6 +1586,25 @@ void maybeAutoRedrawMessages() {
 
 // E21: after typing pauses, one fullRefresh so the footer shows the compose line.
 // Never refresh per keypress — only when idle and dirty.
+// Peers screen: refresh when announce set grows; throttle full refresh to 30s
+void maybeAutoRedrawPeers() {
+    if (g_screen != SCR_PEERS || g_composeLen > 0) return;
+    size_t n = g_announceMgr.nodes().size();
+    if (n == g_lastPeerCount && !g_peerDirty) return;
+    uint32_t now = millis();
+    bool first = (g_lastPeerAutoMs == 0);
+    if (!first && (now - g_lastPeerAutoMs) < 30000u) {
+        g_peerDirty = true;  // pending until throttle allows
+        return;
+    }
+    g_lastPeerCount = n;
+    g_lastPeerAutoMs = now;
+    g_peerDirty = false;
+    Serial.printf("[PEER] auto-refresh count=%u\n", (unsigned)n);
+    show_screen(SCR_PEERS);
+}
+
+
 void maybeComposeRedraw() {
     if (!g_composeDirty) return;
     if (g_lastComposeMs == 0) return;
@@ -1492,6 +1624,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
             char body[COMPOSE_CAP + 1];
             memcpy(body, g_compose, g_composeLen + 1);
             composeClear();
+            g_composeMode = false;
             doSendTest(body);
             return true;
         }
@@ -1530,12 +1663,12 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 show_screen(SCR_HOME);
                 return false;
             }
-            if (ev.character == 'i' || ev.character == 'I') {
+            if (ev.character == 'm' || ev.character == 'M') {
                 g_showHistory = false;
-                show_screen(SCR_CHATS);
+                show_screen(SCR_CHATS);  // Msg Box
                 return false;
             }
-            if (ev.character == 'm' || ev.character == 'M') {
+            if (ev.character == 'c' || ev.character == 'C') {
                 g_showHistory = false;
                 show_screen(SCR_CONTACTS);
                 return false;
@@ -1681,6 +1814,7 @@ void loop() {
     }
 
     maybeAutoRedrawMessages();
+    maybeAutoRedrawPeers();
     maybeComposeRedraw();
 
     if (g_kbOk) {
