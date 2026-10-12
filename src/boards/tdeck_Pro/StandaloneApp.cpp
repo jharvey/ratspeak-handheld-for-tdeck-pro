@@ -1397,7 +1397,7 @@ void build_home() {
     fat_label(g_root, "IDENTITY", 6, y0 + 2);
     const char* on = (g_loraIf && g_loraIf->isOnline()) ? "ONLINE" : "OFFLINE";
     // ~30px left of prior 118; gauge ~15px left of prior far-right
-    fat_label(g_root, on, 88, y0 + 2);
+    fat_label(g_root, on, 93, y0 + 2);
     int pct = 0;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
@@ -1670,7 +1670,16 @@ void maybeComposeRedraw() {
     // Avoid full e-ink rebuild when heap is tight — Enter needs room for lxmfSubmit
     size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     if (freeInt < 14000) {
-        Serial.printf("[UI] skip compose redraw low heap %u\n", (unsigned)freeInt);
+        // Rate-limit: one log per 5s, and push next attempt out so we do not spin
+        static uint32_t s_lastSkipLog = 0;
+        uint32_t now = millis();
+        if (now - s_lastSkipLog > 5000u) {
+            s_lastSkipLog = now;
+            Serial.printf("[UI] skip compose redraw low heap %u (will retry)\n",
+                          (unsigned)freeInt);
+        }
+        // Defer without clearing dirty — but don't re-check every loop
+        g_lastMsgRedrawMs = now;
         return;
     }
     g_lastMsgRedrawMs = millis();
@@ -1802,8 +1811,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.11");
-    Serial.println(" TX rej8/OOM retry + layout");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.12");
+    Serial.println(" no skip-log flood + ONLINE +5");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
