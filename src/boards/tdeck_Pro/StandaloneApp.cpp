@@ -344,15 +344,44 @@ void doSendTest(const char* body) {
     const uint8_t* dest = g_msgRows[g_selPeer].peer;
     char hex[33];
     peerToHex32(dest, hex);
+    size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     Serial.printf("[TX] to %s body=\"%s\" free_int=%u\n", hex, local,
-                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+                  (unsigned)freeInt);
+
+    // Rejection 8 seen under low internal heap (~12K) — wait and retry once
+    if (freeInt < 16000) {
+        Serial.printf("[TX] low heap %u — pause before submit\n", (unsigned)freeInt);
+        delay(200);
+        freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        Serial.printf("[TX] heap after pause %u\n", (unsigned)freeInt);
+    }
 
     auto sub = g_proto.lxmfSubmit(dest, nullptr, 0,
                                   (const uint8_t*)local, n, false);
     if (!sub.accepted()) {
-        snprintf(g_txStr, sizeof(g_txStr), "rej %u", (unsigned)sub.rejection);
-        Serial.printf("[TX] rejected %u\n", (unsigned)sub.rejection);
-        return;
+        unsigned r = (unsigned)sub.rejection;
+        snprintf(g_txStr, sizeof(g_txStr), "rej %u", r);
+        // Best-effort labels (protocol enum may vary)
+        const char* why = "?";
+        if (r == 8) why = "resource/OOM";
+        else if (r == 1) why = "not-ready";
+        else if (r == 7) why = "no-path?";
+        Serial.printf("[TX] rejected %u (%s) free_int=%u\n",
+                      r, why, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        if (r == 8) {
+            delay(300);
+            sub = g_proto.lxmfSubmit(dest, nullptr, 0,
+                                     (const uint8_t*)local, n, false);
+            if (sub.accepted()) {
+                Serial.println("[TX] retry accepted after OOM pause");
+            } else {
+                Serial.printf("[TX] retry still rejected %u — reboot may free heap\n",
+                              (unsigned)sub.rejection);
+                return;
+            }
+        } else {
+            return;
+        }
     }
     lastTx = millis();
     strcpy(g_txStr, "pending");
@@ -558,7 +587,7 @@ constexpr int BOT_CONTACT_W  = 80;
 constexpr int BOT_MSGBOX_W   = 96;
 constexpr int BOT_PEERS_W    = 64;   // 80+96+64=240
 constexpr int BOT_CHATS_W    = BOT_MSGBOX_W;  // SCR_CHATS = Msg Box
-constexpr int PEERS_TOP      = CONTENT_TOP + 40;
+constexpr int PEERS_TOP      = CONTENT_TOP + 28;  // after section header
 constexpr int ROW_H          = 42;
 // Home grid — zero outer margin, 2px tile gap
 constexpr int TILE_GAP       = 2;
@@ -646,11 +675,8 @@ bool handleTouchAt(int16_t x, int16_t y) {
         peerToHex32(g_msgRows[g_selPeer].peer, hex);
         Serial.printf("[PEER] touch sel=%d/%d (was %d) %s\n",
                       g_selPeer, g_msgRowCount, was, hex);
-        if (g_selPeer != was) {
-            show_screen(g_screen);
-            return true;
-        }
-        Serial.println("[PEER] already selected — stay");
+        // Always refresh so 1> selection is visible even if same row
+        show_screen(g_screen);
         return true;
     }
 
@@ -1370,12 +1396,12 @@ void build_home() {
 
     fat_label(g_root, "IDENTITY", 6, y0 + 2);
     const char* on = (g_loraIf && g_loraIf->isOnline()) ? "ONLINE" : "OFFLINE";
-    // Slightly left of far-right (was ~152); keep clear of battery gauge
-    fat_label(g_root, on, 118, y0 + 2);
+    // ~30px left of prior 118; gauge ~15px left of prior far-right
+    fat_label(g_root, on, 88, y0 + 2);
     int pct = 0;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
-    draw_battery_gauge(EPD_WIDTH - 58, y0 + 3, 32, 14, pct);
+    draw_battery_gauge(EPD_WIDTH - 72, y0 + 3, 32, 14, pct);
     char shortId[14];
     snprintf(shortId, sizeof(shortId), "%.10s", g_destHex);
     fat_label(g_root, shortId, 6, y0 + 20);
@@ -1640,11 +1666,16 @@ void maybeComposeRedraw() {
     if (!g_composeDirty) return;
     if (g_lastComposeMs == 0) return;
     if ((millis() - g_lastComposeMs) < COMPOSE_IDLE_MS) return;
-    // Share rate limit with message auto-redraw so e-ink is not hammered.
     if (millis() - g_lastMsgRedrawMs < MSG_REDRAW_MIN_MS) return;
+    // Avoid full e-ink rebuild when heap is tight — Enter needs room for lxmfSubmit
+    size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    if (freeInt < 14000) {
+        Serial.printf("[UI] skip compose redraw low heap %u\n", (unsigned)freeInt);
+        return;
+    }
     g_lastMsgRedrawMs = millis();
     Serial.printf("[UI] compose idle redraw len=%u\n", (unsigned)g_composeLen);
-    show_screen(g_screen);  // clears g_composeDirty
+    show_screen(g_screen);
 }
 
 // Handle one keyboard event. Returns true if a full screen redraw is needed.
@@ -1771,8 +1802,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.7");
-    Serial.println(" Msg Box tab + send path");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.11");
+    Serial.println(" TX rej8/OOM retry + layout");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();

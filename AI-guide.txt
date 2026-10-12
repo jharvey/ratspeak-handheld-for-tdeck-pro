@@ -1,69 +1,48 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-11 (Phase G1.10 — HELLO typing fix + full roadmap)
+Last updated: 2026-10-11 (Phase G1.11 — TX rej 8 / heap)
 ================================================================================
 
-OVERALL GOALS
--------------
-1. T-Deck Pro standalone e-ink Ratspeak (Plus-like IA).
-2. Keep Cooperative / Node green. Exclude ui/lvgl import.
-3. Reliable select-peer + send/receive with Plus; then energy work.
+CRITICAL: TX rejected 8
+-----------------------
+Serial showed:
+  [TX] to 659b… body="HELLO" free_int=12236
+  [TX] rejected 8
 
-CRITICAL FIX (G1.10)
---------------------
-On Msg Box / Contact / Peers, letter keys ALWAYS type into compose.
-Previously H in HELLO was treated as “Home” while compose was empty,
-so Enter only advanced screens and nothing was transmitted.
-Nav shortcuts A/S/H/C/M/P apply on Home and Settings only.
-On messaging screens: 1-9 select peer, V=thread, N=next, T=test ping.
+Code 8 is treated as resource/OOM (internal heap too low for lxmfSubmit).
+Announce still works (smaller packet). Plus “now” is announce, not message.
 
-NAV
----
-TOP: Settings (S_) | Home (H_)
-BOT: Contact (C_) | Msg Box (M_) | Peers (P_)
-Hotkey: bold letter + underline ~2px under glyph (ly+16).
+G1.11 mitigations:
+  - Pause + retry once if free_int < 16K or rejection==8
+  - Skip compose idle fullRefresh when free_int < 14K (saves heap for Enter)
+  - After flash, if still rej 8: reboot, go Peers, select, type, Enter QUICKLY
+    before compose idle redraw; watch free_int in [TX] line
 
-HOME LAYOUT
------------
-IDENTITY left; ONLINE slightly left of right edge (~x118);
-battery gauge far right. Dest + LXMF below. Tiles + Announce.
+If retry still fails: PSRAM (P1) is the real fix for SMALL node heap.
 
-MESSAGE FLOW
+LAYOUT (G1.11)
+--------------
+ONLINE at x≈88 (~30px left of prior). Battery gauge ~15px left.
+Hotkey underline at ly+16.
+
+TOUCH / KEYS
 ------------
-1. Peers or Msg Box → press 1 (or tap) so row shows 1>
-2. Type HELLO (letters no longer steal nav)
-3. Enter → serial: [TX] Enter compose … then [TX] to <hash> … outcome=0
-4. Plus should show the bubble under Pro’s dest (ca53afea…)
-5. Escape compose: on-screen “press ^ to go back”
+Tap peer row always redraws selection.
+Digits 1-9 may need SYM on T-Deck keyboard for number layer.
+Letters type freely on Msg Box/Contact/Peers.
 
-If Enter with empty compose: next screen (expected).
-If [TX] no peer: select a row first.
-
-ANNOUNCE
---------
-Home Announce / key A (from Home). Plus “now”/“5s” under RECENT PEERS
-means Pro announce is heard.
-
-GUI MATRIX
-----------
-WORKS: nav, Home tiles, Announce, numbered peers, compose+Enter TX path,
-       peer auto-refresh 30s, AUDIO soft notify, on-screen Back
-PARTIAL: display names; WIFI/TCP/GPS tiles UI-only; delivery badges N/A
-NOT YET: QR bitmap, trusted-list edit, sleep
-
-FUTURE INCREMENTS (do not drop these)
-------------------------------------
-P1  PSRAM — size=0 today; fix qio_opi / probe; larger protocol node when mapped.
-P2  Live GUI data — replace dummy TCP/WIFI/GPS/name/preview with protocol truth.
-P3  Keyboard backlight — BOARD_KEYBOARD_LED PWM + idle timeout.
-P4  Compile speed — ccache, narrower rebuilds, avoid mass header churn,
-    Windows Defender excludes for .pio/build.
-P5  Partial e-ink (E24) — compose footer only after fullRefresh solid.
-P6  ENERGY F1–F7 — baseline mA, light-sleep, duty-cycled RX / WOR.
-P7  Plus parity — QR on e-ink, delivery state, trusted contacts section.
+FUTURE INCREMENTS (keep)
+------------------------
+P1  PSRAM map (size=0) — enables larger node, fixes OOM TX
+P2  Live tile data (TCP/WIFI/GPS/names)
+P3  Keyboard backlight
+P4  Faster compiles (ccache, narrower rebuilds)
+P5  Partial e-ink refresh
+P6  ENERGY F1–F7 sleep / duty-cycle RX
+P7  Plus parity (QR, delivery, trusted list)
 
 ONE-LINER
 ---------
-Messaging screens type freely (HELLO no longer jumps Home); roadmap keeps
-PSRAM, energy, backlight, faster builds; ONLINE + underline polish.
+HELLO composes and submits; rej 8 = low heap — retry + skip redraw;
+PSRAM still the durable fix; roadmap preserved.
 ================================================================================
