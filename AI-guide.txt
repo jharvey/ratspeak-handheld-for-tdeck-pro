@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-11 (Phase G1.13 — TX rej 8 / heap)
+Last updated: 2026-10-11 (Phase G1.14 — TX rej 8 / heap)
 ================================================================================
 
 CRITICAL: TX rejected 8

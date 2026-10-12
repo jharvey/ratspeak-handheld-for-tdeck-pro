@@ -348,9 +348,16 @@ void doSendTest(const char* body) {
     Serial.printf("[TX] to %s body=\"%s\" free_int=%u\n", hex, local,
                   (unsigned)freeInt);
 
-    // Rejection 8 seen under low internal heap (~12K) — wait and retry once
-    if (freeInt < 16000) {
-        Serial.printf("[TX] low heap %u — pause before submit\n", (unsigned)freeInt);
+    // Free LVGL widget tree to reclaim internal heap for lxmfSubmit (rej 8)
+    if (g_root) {
+        lv_obj_clean(g_root);
+        Serial.printf("[TX] lv_obj_clean free_int=%u\n",
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    }
+    delay(50);
+    freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    if (freeInt < 18000) {
+        Serial.printf("[TX] still low heap %u — extra pause\n", (unsigned)freeInt);
         delay(200);
         freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
         Serial.printf("[TX] heap after pause %u\n", (unsigned)freeInt);
@@ -675,9 +682,12 @@ bool handleTouchAt(int16_t x, int16_t y) {
         peerToHex32(g_msgRows[g_selPeer].peer, hex);
         Serial.printf("[PEER] touch sel=%d/%d (was %d) %s\n",
                       g_selPeer, g_msgRowCount, was, hex);
-        // Always refresh so 1> selection is visible even if same row
-        show_screen(g_screen);
-        return true;
+        if (g_selPeer != was) {
+            show_screen(g_screen);  // only full refresh when selection changes
+            return true;
+        }
+        Serial.println("[PEER] selected — type message then Enter");
+        return true;  // no fullRefresh (preserves heap for TX)
     }
 
     // Home: Announce button
@@ -1669,7 +1679,7 @@ void maybeComposeRedraw() {
     if (millis() - g_lastMsgRedrawMs < MSG_REDRAW_MIN_MS) return;
     // Avoid full e-ink rebuild when heap is tight — Enter needs room for lxmfSubmit
     size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    if (freeInt < 14000) {
+    if (freeInt < 16000) {
         // One log per 30s max; defer recheck 15s — avoids serial flood / apparent crash
         static uint32_t s_lastSkipLog = 0;
         uint32_t now = millis();
@@ -1703,6 +1713,12 @@ bool handleKeyEvent(const KeyEvent& ev) {
             g_composeMode = false;
             doSendTest(body);
             return true;
+        }
+        // Empty Enter on messaging screens: stay put (was jumping to Settings)
+        if (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS ||
+            g_screen == SCR_PEERS) {
+            Serial.println("[KEY] Enter empty — type a message first");
+            return false;
         }
         Serial.println("[KEY] Enter empty — next screen");
         next_screen();
@@ -1745,7 +1761,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
                     peerToHex32(g_msgRows[idx].peer, hex);
                     Serial.printf("[PEER] key %c -> sel=%d %s\n",
                                   ev.character, g_selPeer, hex);
-                    show_screen(g_screen);
+                    Serial.println("[PEER] selected — type message then Enter");
+                    // No fullRefresh on re-select; heap must stay free for TX
                     return false;
                 }
                 Serial.printf("[PEER] key %c ignored (rows=%d)\n",
@@ -1824,8 +1841,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.13");
-    Serial.println(" digits select + skip calm + layout -5");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.14");
+    Serial.println(" free LVGL before TX; no empty-Enter leave");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
