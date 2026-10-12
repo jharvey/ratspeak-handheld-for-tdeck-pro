@@ -318,7 +318,7 @@ void doSendTest(const char* body) {
     clampSelPeer();
     if (g_msgRowCount == 0 || !g_msgRows[g_selPeer].used) {
         strcpy(g_txStr, "no peer");
-        Serial.println("[TX] no peer");
+        Serial.println("[TX] no peer — open Peers/Msg Box, press 1-9 or tap a row first");
         return;
     }
     static unsigned long lastTx = 0;
@@ -371,10 +371,13 @@ void doSendTest(const char* body) {
                           (unsigned)ir.outcome, (unsigned)ir.error,
                           (int)ir.txSuppressed);
             g_proto.lxmfAcknowledge(sub.ticket);
-            if (ir.outcome == handheld::storage::Outcome::Committed)
+            if (ir.outcome == handheld::storage::Outcome::Committed) {
                 strcpy(g_txStr, ir.txSuppressed ? "saved" : "sent");
-            else
+                g_msgRowsLoaded = false;
+                if (g_featAudio) g_audio.playMessage();
+            } else {
                 snprintf(g_txStr, sizeof(g_txStr), "fail %u", (unsigned)ir.error);
+            }
             return;
         }
         strcpy(g_txStr, "invalid");
@@ -654,7 +657,7 @@ bool handleTouchAt(int16_t x, int16_t y) {
     // Home: Announce button
     // Compose Back (top-right above bottom nav)
     if ((g_composeLen > 0 || g_composeMode) &&
-        y >= BOT_TOP - 24 && y < BOT_TOP && x >= EPD_WIDTH - 64) {
+        y >= BOT_TOP - 36 && y < BOT_TOP) {
         composeClear();
         g_composeMode = false;
         Serial.println("[COMPOSE] back — leave message mode");
@@ -1166,43 +1169,71 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, ch
         lv_obj_set_style_bg_opa(under, LV_OPA_COVER, 0);
         lv_obj_clear_flag(under, LV_OBJ_FLAG_SCROLLABLE);
     }
-    draw_label_centered(x, y, w, h - (active ? 4 : 0), label, active);
-    // Underline hotkey letter in label (e.g. C in Contact, M in Msg Box)
+
+    const lv_font_t* font = &lv_font_montserrat_16;
+    lv_coord_t full = lv_txt_get_width(label, strlen(label), font, 0, LV_TEXT_FLAG_NONE);
+    if (full <= 0) full = (lv_coord_t)(strlen(label) * 7);
+    int lx = x + (w - (int)full) / 2;
+    if (lx < x + 2) lx = x + 2;
+    int ly = y + (h - (active ? 4 : 0) - 16) / 2;
+    if (ly < y) ly = y;
+
+    int idx = -1;
     if (hotkey) {
         char hk = (char)toupper((unsigned char)hotkey);
-        const char* pos = label;
-        int idx = -1;
         for (int i = 0; label[i]; i++) {
             if (toupper((unsigned char)label[i]) == hk) { idx = i; break; }
         }
-        if (idx >= 0) {
-            const lv_font_t* font = &lv_font_montserrat_16;
-            lv_coord_t full = lv_txt_get_width(label, strlen(label), font, 0, LV_TEXT_FLAG_NONE);
-            if (full <= 0) full = (lv_coord_t)(strlen(label) * 7);
-            int lx = x + (w - (int)full) / 2;
-            if (lx < x) lx = x;
-            char before[24];
-            if (idx > 0) {
-                memcpy(before, label, (size_t)idx);
-                before[idx] = '\0';
-            } else before[0] = '\0';
-            lv_coord_t bw = before[0]
-                ? lv_txt_get_width(before, strlen(before), font, 0, LV_TEXT_FLAG_NONE)
-                : 0;
-            char one[2] = { label[idx], 0 };
-            lv_coord_t cw = lv_txt_get_width(one, 1, font, 0, LV_TEXT_FLAG_NONE);
-            if (cw <= 0) cw = 8;
-            int uy = y + (h - (active ? 4 : 0)) / 2 + 14;
-            lv_obj_t* bar = lv_obj_create(g_root);
-            lv_obj_set_size(bar, (int)cw, 2);
-            lv_obj_set_pos(bar, lx + (int)bw, uy);
-            lv_obj_set_style_radius(bar, 0, 0);
-            lv_obj_set_style_border_width(bar, 0, 0);
-            lv_obj_set_style_bg_color(bar, lv_color_black(), 0);
-            lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-            lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    }
+    if (idx < 0) {
+        draw_label_centered(x, y, w, h - (active ? 4 : 0), label, active);
+        return;
+    }
+
+    char before[24] = {0};
+    if (idx > 0) {
+        memcpy(before, label, (size_t)idx);
+        before[idx] = '\0';
+    }
+    lv_coord_t bw = before[0]
+        ? lv_txt_get_width(before, strlen(before), font, 0, LV_TEXT_FLAG_NONE) : 0;
+    char one[2] = { label[idx], 0 };
+    lv_coord_t cw = lv_txt_get_width(one, 1, font, 0, LV_TEXT_FLAG_NONE);
+    if (cw <= 0) cw = 8;
+    const char* after = label + idx + 1;
+
+    if (before[0]) {
+        lv_obj_t* lab = lv_label_create(g_root);
+        lv_label_set_text(lab, before);
+        lv_obj_set_style_text_font(lab, font, 0);
+        lv_obj_set_style_text_color(lab, lv_color_black(), 0);
+        lv_obj_set_pos(lab, lx, ly);
+    }
+    for (int k = 0; k < 2; k++) {
+        lv_obj_t* lab = lv_label_create(g_root);
+        lv_label_set_text(lab, one);
+        lv_obj_set_style_text_font(lab, font, 0);
+        lv_obj_set_style_text_color(lab, lv_color_black(), 0);
+        lv_obj_set_pos(lab, lx + (int)bw + k, ly);
+    }
+    if (after && after[0]) {
+        for (int k = 0; k < (active ? 2 : 1); k++) {
+            lv_obj_t* lab = lv_label_create(g_root);
+            lv_label_set_text(lab, after);
+            lv_obj_set_style_text_font(lab, font, 0);
+            lv_obj_set_style_text_color(lab, lv_color_black(), 0);
+            lv_obj_set_pos(lab, lx + (int)bw + (int)cw + k, ly);
         }
     }
+    // Underline tight under hotkey glyph
+    lv_obj_t* bar = lv_obj_create(g_root);
+    lv_obj_set_size(bar, (int)cw + 2, 2);
+    lv_obj_set_pos(bar, lx + (int)bw, ly + 14);
+    lv_obj_set_style_radius(bar, 0, 0);
+    lv_obj_set_style_border_width(bar, 0, 0);
+    lv_obj_set_style_bg_color(bar, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
 }
 
 void draw_nav() {
@@ -1254,11 +1285,11 @@ void draw_compose_or_hint(const char* idleHint) {
     if (g_composeLen > 0 || g_composeMode) {
         char foot[40];
         snprintf(foot, sizeof(foot), ">%.26s", g_compose);
-        fat_label(g_root, foot, 8, BOT_TOP - 18);
-        // On-screen Back to leave message mode
+        fat_label(g_root, foot, 8, BOT_TOP - 52);
+        // Large Back control — leave message mode
         lv_obj_t* bk = lv_obj_create(g_root);
-        lv_obj_set_size(bk, 56, 22);
-        lv_obj_set_pos(bk, EPD_WIDTH - 60, BOT_TOP - 22);
+        lv_obj_set_size(bk, EPD_WIDTH - 8, 28);
+        lv_obj_set_pos(bk, 4, BOT_TOP - 32);
         lv_obj_set_style_radius(bk, 0, 0);
         lv_obj_set_style_border_width(bk, 2, 0);
         lv_obj_set_style_border_color(bk, lv_color_black(), 0);
@@ -1266,7 +1297,7 @@ void draw_compose_or_hint(const char* idleHint) {
         lv_obj_set_style_bg_opa(bk, LV_OPA_COVER, 0);
         lv_obj_set_style_pad_all(bk, 0, 0);
         lv_obj_clear_flag(bk, LV_OBJ_FLAG_SCROLLABLE);
-        fat_label(g_root, "Back", EPD_WIDTH - 52, BOT_TOP - 20);
+        fat_label(g_root, "press ^ to go back", 16, BOT_TOP - 28);
     } else if (idleHint && idleHint[0]) {
         fat_label(g_root, idleHint, 8, BOT_TOP - 18);
     }
@@ -1337,16 +1368,16 @@ void build_home() {
     lv_obj_set_style_pad_all(idBox, 0, 0);
     lv_obj_clear_flag(idBox, LV_OBJ_FLAG_SCROLLABLE);
 
-    fat_label(g_root, "IDENTITY", 6, y0 + 2);
     const char* on = (g_loraIf && g_loraIf->isOnline()) ? "ONLINE" : "OFFLINE";
-    fat_label(g_root, on, 100, y0 + 2);
+    fat_label(g_root, on, 6, y0 + 2);
     int pct = 0;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
-    draw_battery_gauge(160, y0 + 4, 36, 14, pct);
+    draw_battery_gauge(EPD_WIDTH - 70, y0 + 3, 40, 14, pct);
+    fat_label(g_root, "IDENTITY", 6, y0 + 20);
     char shortId[14];
     snprintf(shortId, sizeof(shortId), "%.10s", g_destHex);
-    fat_label(g_root, shortId, 6, y0 + 20);
+    fat_label(g_root, shortId, 90, y0 + 20);
     char lxmfLine[28];
     snprintf(lxmfLine, sizeof(lxmfLine), "LXMF %.10s", g_destHex);
     fat_label(g_root, lxmfLine, 6, y0 + 38);
@@ -1398,7 +1429,8 @@ void build_list_body(const char* section, const char* emptyNote) {
     } else {
         for (int i = 0; i < g_msgRowCount; i++) {
             char title[28], sub[28];
-            snprintf(title, sizeof(title), "%s%s",
+            snprintf(title, sizeof(title), "%d%s %s",
+                     i + 1,
                      (i == g_selPeer) ? ">" : " ",
                      g_msgRows[i].line1);
             if (g_msgRows[i].line2[0])
@@ -1472,8 +1504,8 @@ void build_contacts() {
     } else {
         for (int i = 0; i < g_msgRowCount; i++) {
             char title[28], sub[36];
-            snprintf(title, sizeof(title), "%s%s",
-                     (i == g_selPeer) ? ">" : " ",
+            snprintf(title, sizeof(title), "%d%s %s",
+                     i + 1, (i == g_selPeer) ? ">" : " ",
                      g_msgRows[i].line1);
             char hex[33];
             peerToHex32(g_msgRows[i].peer, hex);
@@ -1483,7 +1515,7 @@ void build_contacts() {
             if (y > CONTENT_BOTTOM - 8) break;
         }
     }
-    draw_compose_or_hint("type+Enter to message");
+    draw_compose_or_hint("1-9 select  type+Enter");
 }
 
 void build_peers() {
@@ -1511,8 +1543,8 @@ void build_peers() {
     } else {
         for (int i = 0; i < g_msgRowCount; i++) {
             char title[28], sub[36];
-            snprintf(title, sizeof(title), "%s%s",
-                     (i == g_selPeer) ? ">" : " ",
+            snprintf(title, sizeof(title), "%d%s %s",
+                     i + 1, (i == g_selPeer) ? ">" : " ",
                      g_msgRows[i].line1);
             char hex[33];
             peerToHex32(g_msgRows[i].peer, hex);
@@ -1522,15 +1554,13 @@ void build_peers() {
             if (y > CONTENT_BOTTOM - 8) break;
         }
     }
-    draw_compose_or_hint("type+Enter to message");
+    draw_compose_or_hint("1-9 select  type+Enter");
 }
 
 void build_settings() {
     // Plus Settings: menu rows with subtitle + >
     clear_screen();
-    int y = CONTENT_TOP;
-    fat_label(g_root, "SETTINGS", 8, y);
-    y += 24;
+    int y = CONTENT_TOP + 2;
 
     char batSub[28];
     snprintf(batSub, sizeof(batSub), "%s %s", g_batStr, g_pctStr);
@@ -1648,6 +1678,20 @@ bool handleKeyEvent(const KeyEvent& ev) {
         // A announce  S settings  H home  I inbox  M msg box  P peers
         // V view thread  N next peer  T test ping
         if (g_composeLen == 0) {
+            if (ev.character >= '1' && ev.character <= '9') {
+                int idx = ev.character - '1';
+                if ((g_screen == SCR_CHATS || g_screen == SCR_CONTACTS ||
+                     g_screen == SCR_PEERS) &&
+                    idx < g_msgRowCount && g_msgRows[idx].used) {
+                    g_selPeer = idx;
+                    char hex[33];
+                    peerToHex32(g_msgRows[idx].peer, hex);
+                    Serial.printf("[PEER] key %c -> sel=%d %s\n",
+                                  ev.character, g_selPeer, hex);
+                    show_screen(g_screen);
+                    return false;
+                }
+            }
             if (ev.character == 'a' || ev.character == 'A') {
                 doAnnounce();
                 if (g_featAudio) g_audio.playAnnounce();

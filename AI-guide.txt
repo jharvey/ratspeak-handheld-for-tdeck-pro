@@ -1,104 +1,55 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-11 (Phase G1.8 Contact|Msg Box|Peers + roadmap)
+Last updated: 2026-10-11 (Phase G1.9)
 ================================================================================
 
-OVERALL GOALS
--------------
-1. T-Deck Pro standalone e-ink Ratspeak (Plus-like IA).
-2. Keep Cooperative / Node green. Exclude ui/lvgl import.
-3. Select peer + send message; notify on RX; solid UX then energy.
+NAV
+---
+TOP: Settings (S_) | Home (H_)
+BOT: Contact (C_) | Msg Box (M_) | Peers (P_)
+Hotkey letter is bold + underline tight under the glyph.
 
-NAV (G1.8)
-----------
-TOP: Settings (S underlined) | Home (H underlined)
-BOT: Contact (C) | Msg Box (M) | Peers (P)
-  widths 80 | 96 | 64 — hotkey letter underlined in label
+KEYS (compose empty)
+--------------------
+1-9  select peer row on Contact / Msg Box / Peers
+A Announce  S Settings  H Home  C Contact  M Msg Box  P Peers
+V thread  N next peer  T test ping
+type+Enter send   on-screen "press ^ to go back" leaves compose
 
-KEYS (compose buffer empty)
----------------------------
-  A  Announce     S  Settings     H  Home
-  C  Contact      M  Msg Box      P  Peers
-  V  View thread  N  Next peer    T  Test ping
-  Enter          send if typing, else next tab
-  Back (on-glass) leave message mode / clear compose
-  Alt / Sym      handled by keyboard HAL (case / symbol layer)
-
-MESSAGE MODE
-------------
-1. Open Contact / Msg Box / Peers
-2. Select peer (tap row or N) until >
-3. Type — enters message mode (footer shows text + Back)
-4. Enter — TX to selected peer
-5. Escape — tap on-screen Back (or clear compose)
-
-PEER LIST AUTO-REFRESH
+MESSAGE / TX CHECKLIST
 ----------------------
-On Peers screen, when announce set grows: redraw.
-Throttle: at most one full e-ink refresh per 30 seconds.
-Pending changes apply on next allowed window.
+1. On Peers or Msg Box, ensure a row is selected (1> name or tap)
+2. Serial should show [PEER] key/touch sel=N <hash>
+3. Type message, Enter
+4. Expect [TX] to <hash> body="..." then outcome=0 and [LORA_IF] TX
+5. If [TX] no peer — nothing selected; pick 1-9 or tap first
+
+Announce: Home Announce or key A → [ANN] / [LORA_IF] TX
+Plus "5s" under RECENT PEERS = Pro announce heard recently (good).
+If Plus does not show Pro messages: confirm Pro serial shows TX outcome=0
+and dest hash matches Plus identity; both on same freq/preset.
 
 HOME
 ----
-Identity + ONLINE/OFFLINE + battery gauge (fill bar + %)
-3x2 tiles (tap to toggle soft flags)
-Announce button
+ONLINE left, battery gauge right (no overlap)
+IDENTITY + dest + LXMF below
+Tiles + Announce
 
-GUI FEATURE MATRIX
+SETTINGS
+--------
+No SETTINGS title under nav — rows start immediately under top tabs.
+
+PEERS AUTO-REFRESH
 ------------------
-WORKS
-  [x] Nav + hotkey underlines
-  [x] Home tiles, Announce, battery gauge
-  [x] Msg Box / Contact / Peers lists
-  [x] Keyboard compose + Enter TX
-  [x] Peer select + send
-  [x] Peers auto-refresh (30s throttle)
-  [x] AUDIO soft toggle + beep/vibe on unread
-  [x] On-screen Back to leave compose
+Throttle 30s between full refreshes when announce set grows.
 
-PARTIAL
-  [~] Display names (only if announce carried a name)
-  [~] WIFI/TCP/GPS tiles UI-only
-  [~] LORA tile OFF does not power-down radio
-  [~] Share My QR shows hash only (no QR bitmap)
-  [~] Hold left/right 1s escape (prefer on-screen Back for now)
-
-NOT YET
-  [ ] Delivery badges (DELIVERED / UNCONFIRMED)
-  [ ] Contact rename / trusted list
-  [ ] Real WiFi/TCP/GPS stacks on Home tiles
-  [ ] Sleep / duty-cycled RX
-
-FUTURE INCREMENTS (keep these on the roadmap)
----------------------------------------------
-P1  PSRAM — board still reports size=0; fix qio_opi / init probe sketch;
-    re-enable larger protocol node when PSRAM maps.
-
-P2  Dummy GUI data — replace remaining placeholders (TCP/WIFI/GPS values,
-    identity display name, last-message previews) with live protocol data.
-
-P3  Keyboard backlight — BOARD_KEYBOARD_LED PWM / on activity timeout;
-    respect Settings “Screen & Input” style control when added.
-
-P4  Compile speed — stop full rebuilds: ccache, reduce unity builds,
-    narrow build_src_filter, avoid touching headers that force mass rebuild,
-    Windows long-path / antivirus excludes for .pio/build.
-
-P5  Partial e-ink refresh (E24) — after fullRefresh is solid; GxEPD2 partial
-    for compose footer only.
-
-P6  ENERGY F1–F7 — baseline mA log, light-sleep between RX windows, WOR.
-
-P7  Plus parity extras — QR on e-ink, delivery state, trusted contacts section.
-
-HOW TO SEND (quick)
--------------------
-Msg Box or Peers → select row → type → Enter
-Serial: [TX] outcome=0 and [LORA_IF] TX …
+ROADMAP (keep)
+--------------
+P1 PSRAM map  P2 live tile data  P3 KB backlight
+P4 faster compiles  P5 partial e-ink  P6 energy  P7 Plus extras
 
 ONE-LINER
 ---------
-Contact|Msg Box|Peers with underlined hotkeys; battery gauge; 30s-throttled
-peer auto-refresh; message mode + on-screen Back; roadmap keeps PSRAM /
-dummy data / KB backlight / faster compiles.
+Numbered peers (1-9), tight hotkey underlines, ONLINE+gauge layout,
+larger compose Back, clearer TX-no-peer diagnostics.
 ================================================================================
