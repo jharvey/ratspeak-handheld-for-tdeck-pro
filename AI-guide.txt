@@ -1,51 +1,48 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-11 (Phase G1.14 — TX rej 8 / heap)
+Last updated: 2026-10-12 (Phase G1.15 — Recovering, not OOM)
 ================================================================================
 
-CRITICAL: TX rejected 8
------------------------
-Serial showed:
-  [TX] to 659b… body="HELLO" free_int=12236
-  [TX] rejected 8
+CRITICAL: TX rejected 8 = Recovering (NOT out-of-memory)
+--------------------------------------------------------
+OutgoingContract::Rejection:
+  0 None  1 Busy  2 Invalid  3 TooLarge  4 NoMemory
+  5 Unavailable  6 Fenced  7 Exhausted  8 Recovering  9 Stopped
 
-Code 8 is treated as resource/OOM (internal heap too low for lxmfSubmit).
-Announce still works (smaller packet). Plus “now” is announce, not message.
+RustLxmfEngine starts with _recovering=true and rejects submits until it has
+finished replaying pending outbound rows from MessageStore (ReadPending until
+empty). Announce uses a different path, so it still works while Recovering.
 
-G1.12: ONLINE +5px; compose low-heap skip log rate-limited (was flooding
-serial ~10+/sec and looking like a crash).
+G1.15: before lxmfSubmit, pump g_proto.loop() + g_msgStore.poll() ~3s, then
+retry up to 8 times on Recovering/Busy with more pump between attempts.
 
-G1.11 mitigations:
-  - Pause + retry once if free_int < 16K or rejection==8
-  - Skip compose idle fullRefresh when free_int < 14K (saves heap for Enter)
-  - After flash, if still rej 8: reboot, go Peers, select, type, Enter QUICKLY
-    before compose idle redraw; watch free_int in [TX] line
+If still Recovering after retries: pending outbound in flash may be stuck;
+consider clearing message store / factory path (careful) or wait longer after
+boot before first send.
 
-If retry still fails: PSRAM (P1) is the real fix for SMALL node heap.
-
-LAYOUT (G1.11)
---------------
-ONLINE at x≈88 (~30px left of prior). Battery gauge ~15px left.
-Hotkey underline at ly+16.
-
-TOUCH / KEYS
+MESSAGE FLOW
 ------------
-Tap peer row always redraws selection.
-Digits 1-9 may need SYM on T-Deck keyboard for number layer.
-Letters type freely on Msg Box/Contact/Peers.
+1. Announce both devices
+2. Peers → tap row (serial: selected — type message then Enter)
+3. Type HELLO → Enter
+4. Expect [TX] pumping recovery… then accepted / outcome=0 / LORA_IF TX
+5. Empty Enter on Peers stays put (does not go to Settings)
+
+Plus “sent” waiting for ack is expected until Pro delivers proof; inbound RX
+212-byte frames on Pro mean Plus packets arrive — store/UI may still lag.
 
 FUTURE INCREMENTS (keep)
 ------------------------
-P1  PSRAM map (size=0) — enables larger node, fixes OOM TX
+P1  PSRAM map (size=0) — larger node, less pressure
 P2  Live tile data (TCP/WIFI/GPS/names)
 P3  Keyboard backlight
 P4  Faster compiles (ccache, narrower rebuilds)
 P5  Partial e-ink refresh
 P6  ENERGY F1–F7 sleep / duty-cycle RX
 P7  Plus parity (QR, delivery, trusted list)
+P8  Diagnose stuck Recovering (stuck CreateOutgoing in flash)
 
 ONE-LINER
 ---------
-HELLO composes and submits; rej 8 = low heap — retry + skip redraw;
-PSRAM still the durable fix; roadmap preserved.
+rej 8 = Recovering (outbound replay); pump store+proto before submit; roadmap kept.
 ================================================================================

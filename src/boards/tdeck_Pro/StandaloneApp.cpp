@@ -348,42 +348,66 @@ void doSendTest(const char* body) {
     Serial.printf("[TX] to %s body=\"%s\" free_int=%u\n", hex, local,
                   (unsigned)freeInt);
 
-    // Free LVGL widget tree to reclaim internal heap for lxmfSubmit (rej 8)
-    if (g_root) {
-        lv_obj_clean(g_root);
-        Serial.printf("[TX] lv_obj_clean free_int=%u\n",
-                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    // OutgoingContract::Rejection:
+    // 0 None 1 Busy 2 Invalid 3 TooLarge 4 NoMemory 5 Unavailable
+    // 6 Fenced 7 Exhausted 8 Recovering 9 Stopped
+    // Recovering = engine replaying pending outbound from flash; must loop until done.
+    auto rejectionName = [](unsigned r) -> const char* {
+        switch (r) {
+            case 0: return "None";
+            case 1: return "Busy";
+            case 2: return "Invalid";
+            case 3: return "TooLarge";
+            case 4: return "NoMemory";
+            case 5: return "Unavailable";
+            case 6: return "Fenced";
+            case 7: return "Exhausted";
+            case 8: return "Recovering";
+            case 9: return "Stopped";
+            default: return "?";
+        }
+    };
+
+    // Drive recovery: MessageStore + protocol must tick until Recovering clears.
+    Serial.println("[TX] pumping recovery before submit...");
+    for (int i = 0; i < 150; i++) {
+        g_proto.loop();
+        if (g_storeReady) g_msgStore.poll();
+        delay(20);
     }
-    delay(50);
-    freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    if (freeInt < 18000) {
-        Serial.printf("[TX] still low heap %u — extra pause\n", (unsigned)freeInt);
-        delay(200);
-        freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-        Serial.printf("[TX] heap after pause %u\n", (unsigned)freeInt);
-    }
+    Serial.printf("[TX] after recovery pump free_int=%u\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
     auto sub = g_proto.lxmfSubmit(dest, nullptr, 0,
                                   (const uint8_t*)local, n, false);
     if (!sub.accepted()) {
         unsigned r = (unsigned)sub.rejection;
         snprintf(g_txStr, sizeof(g_txStr), "rej %u", r);
-        // Best-effort labels (protocol enum may vary)
-        const char* why = "?";
-        if (r == 8) why = "resource/OOM";
-        else if (r == 1) why = "not-ready";
-        else if (r == 7) why = "no-path?";
         Serial.printf("[TX] rejected %u (%s) free_int=%u\n",
-                      r, why, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-        if (r == 8) {
-            delay(300);
-            sub = g_proto.lxmfSubmit(dest, nullptr, 0,
-                                     (const uint8_t*)local, n, false);
-            if (sub.accepted()) {
-                Serial.println("[TX] retry accepted after OOM pause");
-            } else {
-                Serial.printf("[TX] retry still rejected %u — reboot may free heap\n",
-                              (unsigned)sub.rejection);
+                      r, rejectionName(r),
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        // Recovering/Busy: keep pumping and retry several times
+        if (r == 8 || r == 1) {
+            for (int attempt = 0; attempt < 8; attempt++) {
+                for (int i = 0; i < 50; i++) {
+                    g_proto.loop();
+                    if (g_storeReady) g_msgStore.poll();
+                    delay(20);
+                }
+                sub = g_proto.lxmfSubmit(dest, nullptr, 0,
+                                         (const uint8_t*)local, n, false);
+                if (sub.accepted()) {
+                    Serial.printf("[TX] accepted after recovery wait attempt %d\n",
+                                  attempt + 1);
+                    break;
+                }
+                Serial.printf("[TX] still %u (%s) attempt %d\n",
+                              (unsigned)sub.rejection,
+                              rejectionName((unsigned)sub.rejection),
+                              attempt + 1);
+            }
+            if (!sub.accepted()) {
+                Serial.println("[TX] give up — engine still Recovering/Busy");
                 return;
             }
         } else {
@@ -1841,8 +1865,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.14");
-    Serial.println(" free LVGL before TX; no empty-Enter leave");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.15");
+    Serial.println(" wait Recovering before lxmfSubmit");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
