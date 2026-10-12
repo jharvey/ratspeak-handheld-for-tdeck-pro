@@ -545,9 +545,9 @@ constexpr int CONTENT_TOP    = TOP_H;                      // 36 — no gap unde
 constexpr int CONTENT_BOTTOM = BOT_TOP;                    // flush to bot nav
 constexpr int TOP_TAB_W      = EPD_WIDTH / 2;               // 120
 // Bottom: Chats | Contact | Peers
-constexpr int BOT_CHATS_W    = 72;
-constexpr int BOT_CONTACT_W  = 96;
-constexpr int BOT_PEERS_W    = 72;  // 72+96+72=240
+constexpr int BOT_CHATS_W    = 64;
+constexpr int BOT_CONTACT_W  = 112;  // Msg Box needs width
+constexpr int BOT_PEERS_W    = 64;   // 64+112+64=240
 constexpr int PEERS_TOP      = CONTENT_TOP + 40;
 constexpr int ROW_H          = 42;
 // Home grid — zero outer margin, 2px tile gap
@@ -562,7 +562,7 @@ const char* tabLabel(ScreenId id) {
     switch (id) {
         case SCR_HOME:     return "Home";
         case SCR_CHATS:    return "Inbox";
-        case SCR_CONTACTS: return "Contact";
+        case SCR_CONTACTS: return "Msg Box";
         case SCR_PEERS:    return "Peers";
         case SCR_SETTINGS: return "Settings";
         default:           return "?";
@@ -1159,7 +1159,7 @@ void draw_nav() {
     int x0 = 0;
     draw_nav_box(x0, BOT_TOP, BOT_CHATS_W, BOT_H, "Inbox", g_screen == SCR_CHATS);
     x0 += BOT_CHATS_W;
-    draw_nav_box(x0, BOT_TOP, BOT_CONTACT_W, BOT_H, "Contact", g_screen == SCR_CONTACTS);
+    draw_nav_box(x0, BOT_TOP, BOT_CONTACT_W, BOT_H, "Msg Box", g_screen == SCR_CONTACTS);
     x0 += BOT_CONTACT_W;
     draw_nav_box(x0, BOT_TOP, BOT_PEERS_W, BOT_H, "Peers", g_screen == SCR_PEERS);
 }
@@ -1353,7 +1353,7 @@ void build_contacts() {
     draw_menu_row(y, 40, "Share My QR", g_destHex, false);
     y += 48;
     char sec[28];
-    snprintf(sec, sizeof(sec), "CONTACTS (%d)", g_msgRowCount);
+    snprintf(sec, sizeof(sec), "MSG BOX (%d)", g_msgRowCount);
     fat_label(g_root, sec, 8, y);
     y += 26;
     if (g_msgRowCount == 0) {
@@ -1493,19 +1493,17 @@ bool handleKeyEvent(const KeyEvent& ev) {
             memcpy(body, g_compose, g_composeLen + 1);
             composeClear();
             doSendTest(body);
-            return true;  // redraw current screen
+            return true;
         }
         next_screen();
-        return false;  // next_screen already drew
+        return false;
     }
 
-    // Backspace
     if (ev.del) {
         composeBackspace();
-        return false;  // no e-ink refresh while typing
+        return false;
     }
 
-    // Space
     if (ev.space) {
         composeAppend(' ');
         return false;
@@ -1513,12 +1511,10 @@ bool handleKeyEvent(const KeyEvent& ev) {
 
     // Printable character
     if (ev.character >= 32 && ev.character <= 126) {
-        // Single-letter shortcuts only when compose is empty
-        // (so "a" alone still announces, "t" alone still pings).
+        // Shortcuts only when compose is empty
+        // A announce  S settings  H home  I inbox  M msg box  P peers
+        // V view thread  N next peer  T test ping
         if (g_composeLen == 0) {
-                        // Navigation (compose empty only) — no letter clash
-            // A announce  S settings  H home  I inbox  C contact  P peers
-            // V view thread  N next peer  T test ping
             if (ev.character == 'a' || ev.character == 'A') {
                 doAnnounce();
                 if (g_featAudio) g_audio.playAnnounce();
@@ -1539,7 +1535,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 show_screen(SCR_CHATS);
                 return false;
             }
-            if (ev.character == 'c' || ev.character == 'C') {
+            if (ev.character == 'm' || ev.character == 'M') {
                 g_showHistory = false;
                 show_screen(SCR_CONTACTS);
                 return false;
@@ -1568,7 +1564,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 return (g_screen == SCR_SETTINGS || g_screen == SCR_CHATS ||
                         g_screen == SCR_CONTACTS || g_screen == SCR_PEERS);
             }
-
+        }
         composeAppend(ev.character);
         return false;
     }
@@ -1576,13 +1572,13 @@ bool handleKeyEvent(const KeyEvent& ev) {
     return false;
 }
 
-}  // namespace
+}  // namespace (anonymous)
 
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase E chunk 23");
-    Serial.println(" announced peers in list -> keyboard TX");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.7");
+    Serial.println(" Msg Box tab + send path");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();

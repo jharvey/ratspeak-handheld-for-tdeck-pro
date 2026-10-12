@@ -1,81 +1,40 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-11 (Phase G1.6 feature matrix + Inbox + audio)
+Last updated: 2026-10-11 (Phase G1.7 Msg Box + brace fix)
 ================================================================================
 
-OVERALL GOALS
--------------
-1. T-Deck Pro standalone e-ink Ratspeak (Plus-like IA).
-2. Keep Cooperative / Node green. Exclude ui/lvgl import.
-3. Select peer + send message reliably; notify on RX.
+COMPILE NOTE (G1.7)
+-------------------
+StandaloneApp.cpp had a missing '}' after the G1.6 key-handler edit
+(anonymous namespace never closed before begin()). Fixed in G1.7.
 
-PHASE G1.6
+NAV LABELS
 ----------
-- Bottom tab "Chats" renamed **Inbox** (key I) — frees C for Contact
-- Keys (compose empty): A S H I C P + V thread + N next-peer + T ping
-- Home tiles toggle LORA/TCP/WIFI/AUDIO/GPS (soft flags)
-- AUDIO ON → beep (AudioNotify) + motor pulse on new unread
-- Contact list spacing fixed (no overlap under Share My QR)
-- Names: formatPeerLine prefers announce display name
+TOP: Settings | Home
+BOT: Inbox (64) | Msg Box (112) | Peers (64)
 
-GUI FEATURE MATRIX
+KEYS (compose empty)
+--------------------
+A Announce   S Settings   H Home
+I Inbox      M Msg Box    P Peers
+V thread     N next peer  T test ping
+type+Enter = send to selected peer
+
+GUI MATRIX (short)
 ------------------
-WORKS
-  [x] Top nav Settings | Home (Home right)
-  [x] Bottom nav Inbox | Contact | Peers (touch + keys)
-  [x] Home identity card + 3x2 tiles + Announce button
-  [x] Announce (touch / key A / serial a)
-  [x] Inbox: conversation list, select peer (touch / N)
-  [x] Contact: Share My QR + conversation peers
-  [x] Peers: announced nodes as TX targets
-  [x] Keyboard compose + Enter → lxmfSubmit TX
-  [x] History/thread view (key V on Inbox)
-  [x] Settings menu rows (status display)
-  [x] LoRa RX/TX path, boot announce
-  [x] Soft AUDIO toggle + notify on unread bump
+WORKS: nav, Home tiles+Announce, Inbox/Msg Box/Peers lists, keyboard TX,
+       soft AUDIO beep+vibe, select peer + send
+PARTIAL: display names (need announce name), tile WIFI/TCP/GPS not wired
+NOT YET: QR bitmap, delivery badges, sleep, PSRAM
 
-PARTIAL / LIMITED
-  [~] Display names — only if announce carried a name (else short hash)
-  [~] Tile toggles — UI state; WIFI/TCP/GPS not wired to stacks yet
-  [~] LORA tile OFF — does not power-down radio (mesh stays up)
-  [~] Share My QR — shows dest hash only (no QR bitmap on e-ink yet)
-  [~] Delivery state (DELIVERED etc.) — not on glass yet
-
-NOT YET
-  [ ] Full Plus LVGL chrome / color
-  [ ] Contact rename / trusted list separate from conversations
-  [ ] WiFi/TCP/GPS real enable
-  [ ] Deep settings editors (freq pickers)
-  [ ] PSRAM mapped (size=0)
-  [ ] Sleep / duty-cycled RX (energy F-series)
-
-HOW TO SELECT PEER + SEND
--------------------------
-1. Open Inbox (touch bottom-left or key I) or Peers (P) or Contact (C)
-2. Tap a row (or key N to cycle) until ">" marks the peer
-3. Type message (leading space if it would start with A/S/H/I/C/P/V/N/T)
-4. Pause ~1.6s to see footer, or just press Enter to send
-5. Serial confirms [TX] outcome=0 and [LORA_IF] TX …
-
-KEYS (compose buffer empty)
----------------------------
-  A  Announce          S  Settings
-  H  Home              I  Inbox
-  C  Contact           P  Peers
-  V  View thread       N  Next peer
-  T  Test ping         Enter empty = next tab
-When typing a message, letters go to compose (not shortcuts).
-
-NEXT STEPS (priority)
----------------------
-1. Verify send path on hardware after G1.6 flash
-2. Improve name display when peer announces as "tdeck" / custom
-3. Optional: delivery badge on Inbox rows
-4. Wire WIFI/GPS only when stacks ready
-5. ENERGY F1 baseline after messaging solid
+HOW TO SEND
+-----------
+1. I or P or M → list
+2. Tap row or N until >
+3. Type message (leading space if starts with shortcut letter)
+4. Enter → [TX] outcome=0
 
 ONE-LINER
 ---------
-Inbox|Contact|Peers + A/S/H/I/C/P keys; tile AUDIO beep+vibe on RX;
-select row, type+Enter to TX; Plus-like Home tiles.
+Msg Box replaces Contact; brace fix; Inbox|Msg Box|Peers; M key.
 ================================================================================
