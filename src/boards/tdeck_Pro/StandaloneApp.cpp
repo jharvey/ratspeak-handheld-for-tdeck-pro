@@ -1865,8 +1865,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.15");
-    Serial.println(" wait Recovering before lxmfSubmit");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.16");
+    Serial.println(" no INT-next when CST328 present");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -1989,10 +1989,16 @@ void loop() {
     if (lastInt == HIGH && tInt == LOW && (millis() - lastTouchMs > 400)) {
         lastTouchMs = millis();
         int16_t tx = 0, ty = 0;
-        if (g_touchOk && cst328Read(tx, ty)) {
-            handleTouchAt(tx, ty);
+        if (g_touchOk) {
+            // CST328 present: only act on successful coordinate reads.
+            // Failed reads used to call next_screen() → jump to Settings after peer tap.
+            if (cst328Read(tx, ty))
+                handleTouchAt(tx, ty);
+            else
+                Serial.println("[TOUCH] INT no-xy (ignored)");
         } else {
-            Serial.println("[TOUCH] INT next");
+            // Soft-fail path when no touch IC: INT alone cycles screens
+            Serial.println("[TOUCH] INT next (no CST328)");
             next_screen();
         }
     }
