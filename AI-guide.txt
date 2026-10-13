@@ -1,55 +1,26 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-13 (Phase G1.19 — fix PSRAM next)
+Last updated: 2026-10-13 (Phase G1.20 — QSPI not OPI)
 ================================================================================
 
-WHY PSRAM NOW
--------------
-TX path works past Recovering, but MessageStore CreateOutgoing fails:
-  outcome=1 (Failed) err=2 (Allocation) at free_int≈20K after lv_obj_clean.
+PSRAM ROOT CAUSE
+----------------
+Official LilyGO T-Deck-Pro board JSON uses:
+  "memory_type": "qio_qspi"   // 8M QSPI PSRAM
 
-[PSRAM] found=1 size=0 free=0 caps_spiram=0
-  → chip ID seen, OPI PSRAM not mapped into the address space.
-Without SPIRAM the node stays RS_HANDHELD_PROFILE_SMALL on INTERNAL only;
-MessageStore cannot allocate outbound records under the e-ink/LVGL heap load.
+We had qio_opi (OPI) → chip ID seen (found=1) but never mapped (size=0).
 
-FIX (board definition)
-----------------------
-1. Copy lilygo_t_deck_pro.json into repo boards/
-2. In platformio.ini [tdeck_Pro_base]:
-     board = lilygo_t_deck_pro
-     board_build.arduino.memory_type = qio_opi
-     -DBOARD_HAS_PSRAM
-   (do not use lilygo-t-display-s3 variant for Pro)
-3. fullclean + rebuild + upload
-4. Expect: [PSRAM] found=1 size=8388608 … then [PROTO] try SPIRAM|8BIT
+Fix: boards/lilygo_t_deck_pro.json + platformio memory_type = qio_qspi
+Then fullclean + rebuild (memory_type is a link/boot config).
 
-See platformio-tdeck-pro-psram-snippet.ini and lilygo_t_deck_pro.json artifacts.
-
-MESSAGE / TX STATUS
--------------------
-WORKS: announce both ways, peer select, compose, submit accepted after recovery
-FAILS: durable CreateOutgoing → Allocation until PSRAM mapped
-Plus “sent” waiting for ack is expected until Pro actually TX LXMF.
-
-REJECTION / OUTCOME CHEATSHEET
-------------------------------
-Outgoing Rejection: 8=Recovering 4=NoMemory 1=Busy
-storage Outcome: 0=Committed 1=Failed 2=Cancelled
-storage Error: 2=Allocation
-
-FUTURE (keep)
--------------
-P1  PSRAM map (THIS STEP)
-P2  Live tile data
-P3  Keyboard backlight
-P4  Faster compiles
-P5  Partial e-ink
-P6  Energy / sleep
-P7  Plus parity
-P8  Stuck Recovering diagnostics (boot drain helped)
-
-ONE-LINER
+TX STATUS
 ---------
-Yes fix PSRAM: found=1 size=0 blocks Allocation; use lilygo_t_deck_pro qio_opi board.
+Recovering fixed; submit accepts; CreateOutgoing fails Allocation without SPIRAM.
+After QSPI maps, expect SPIRAM proto + outcome=0 Committed.
+
+FUTURE
+------
+P1 PSRAM map (qio_qspi THIS STEP)
+P2 Live tiles  P3 KB backlight  P4 compile speed
+P5 partial e-ink  P6 energy  P7 Plus parity
 ================================================================================

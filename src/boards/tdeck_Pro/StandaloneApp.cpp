@@ -233,8 +233,8 @@ void logPsram() {
                   (unsigned)capSp, (unsigned)capIn);
     if (found && sz == 0) {
         Serial.println("[PSRAM] WARN chip seen but size=0 — OPI not mapped");
-        Serial.println("[PSRAM] Fix: board=lilygo_t_deck_pro (qio_opi, variant esp32s3)");
-        Serial.println("[PSRAM]      board_build.arduino.memory_type=qio_opi -DBOARD_HAS_PSRAM");
+        Serial.println("[PSRAM] Fix: board=lilygo_t_deck_pro memory_type=qio_qspi");
+        Serial.println("[PSRAM]      (Pro uses QSPI PSRAM, not OPI qio_opi)");
     } else if (found && sz > 0) {
         Serial.printf("[PSRAM] OK mapped %u KB — protocol can use SPIRAM\n",
                       (unsigned)(sz / 1024));
@@ -1953,8 +1953,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.19");
-    Serial.println(" PSRAM diagnose + board json");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.20");
+    Serial.println(" QSPI PSRAM (not OPI)");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
