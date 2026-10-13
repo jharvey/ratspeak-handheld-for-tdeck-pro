@@ -351,7 +351,6 @@ void doSendTest(const char* body) {
     // OutgoingContract::Rejection:
     // 0 None 1 Busy 2 Invalid 3 TooLarge 4 NoMemory 5 Unavailable
     // 6 Fenced 7 Exhausted 8 Recovering 9 Stopped
-    // Recovering = engine replaying pending outbound from flash; must loop until done.
     auto rejectionName = [](unsigned r) -> const char* {
         switch (r) {
             case 0: return "None";
@@ -367,15 +366,42 @@ void doSendTest(const char* body) {
             default: return "?";
         }
     };
+    // storage::Outcome: 0 Committed 1 Failed 2 Cancelled
+    // storage::Error: 0 None 1 Unavailable 2 Allocation 3 InvalidRecord ...
+    auto errorName = [](unsigned e) -> const char* {
+        switch (e) {
+            case 0: return "None";
+            case 1: return "Unavailable";
+            case 2: return "Allocation";
+            case 3: return "InvalidRecord";
+            case 4: return "CounterExhausted";
+            case 5: return "RevisionExhausted";
+            case 6: return "Read";
+            case 7: return "Write";
+            case 8: return "Verify";
+            case 9: return "Rename";
+            case 10: return "Stale";
+            case 11: return "Cancelled";
+            case 12: return "Internal";
+            default: return "?";
+        }
+    };
 
-    // Drive recovery: MessageStore + protocol must tick until Recovering clears.
-    Serial.println("[TX] pumping recovery before submit...");
-    for (int i = 0; i < 150; i++) {
+    // Reclaim LVGL widgets so MessageStore CreateOutgoing can allocate
+    if (g_root) {
+        lv_obj_clean(g_root);
+        Serial.printf("[TX] lv_obj_clean free_int=%u\n",
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    }
+    delay(30);
+
+    // Short recovery tick (boot drain should have finished Recovering)
+    for (int i = 0; i < 30; i++) {
         g_proto.loop();
         if (g_storeReady) g_msgStore.poll();
-        delay(20);
+        delay(10);
     }
-    Serial.printf("[TX] after recovery pump free_int=%u\n",
+    Serial.printf("[TX] pre-submit free_int=%u\n",
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
     auto sub = g_proto.lxmfSubmit(dest, nullptr, 0,
@@ -386,19 +412,17 @@ void doSendTest(const char* body) {
         Serial.printf("[TX] rejected %u (%s) free_int=%u\n",
                       r, rejectionName(r),
                       (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-        // Recovering/Busy: keep pumping and retry several times
         if (r == 8 || r == 1) {
-            for (int attempt = 0; attempt < 8; attempt++) {
-                for (int i = 0; i < 50; i++) {
+            for (int attempt = 0; attempt < 5; attempt++) {
+                for (int i = 0; i < 40; i++) {
                     g_proto.loop();
                     if (g_storeReady) g_msgStore.poll();
-                    delay(20);
+                    delay(15);
                 }
                 sub = g_proto.lxmfSubmit(dest, nullptr, 0,
                                          (const uint8_t*)local, n, false);
                 if (sub.accepted()) {
-                    Serial.printf("[TX] accepted after recovery wait attempt %d\n",
-                                  attempt + 1);
+                    Serial.printf("[TX] accepted after wait attempt %d\n", attempt + 1);
                     break;
                 }
                 Serial.printf("[TX] still %u (%s) attempt %d\n",
@@ -407,7 +431,7 @@ void doSendTest(const char* body) {
                               attempt + 1);
             }
             if (!sub.accepted()) {
-                Serial.println("[TX] give up — engine still Recovering/Busy");
+                Serial.println("[TX] give up — still Recovering/Busy");
                 return;
             }
         } else {
@@ -427,16 +451,65 @@ void doSendTest(const char* body) {
             continue;
         }
         if (p == handheld::outgoing::Poll::Ready) {
-            Serial.printf("[TX] outcome=%u err=%u suppressed=%d\n",
-                          (unsigned)ir.outcome, (unsigned)ir.error,
-                          (int)ir.txSuppressed);
+            unsigned oc = (unsigned)ir.outcome;
+            unsigned er = (unsigned)ir.error;
+            // Outcome: 0 Committed 1 Failed 2 Cancelled
+            const char* ocName = oc == 0 ? "Committed" : oc == 1 ? "Failed" : oc == 2 ? "Cancelled" : "?";
+            Serial.printf("[TX] outcome=%u (%s) err=%u (%s) suppressed=%d free_int=%u\n",
+                          oc, ocName, er,
+                          er == 0 ? "None" : er == 1 ? "Unavailable" : er == 2 ? "Allocation"
+                          : er == 3 ? "InvalidRecord" : er == 7 ? "Write" : "?",
+                          (int)ir.txSuppressed,
+                          (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
             g_proto.lxmfAcknowledge(sub.ticket);
             if (ir.outcome == handheld::storage::Outcome::Committed) {
                 strcpy(g_txStr, ir.txSuppressed ? "saved" : "sent");
                 g_msgRowsLoaded = false;
                 if (g_featAudio) g_audio.playMessage();
+            } else if (ir.error == handheld::storage::Error::Allocation) {
+                // Retry once after another clean — Allocation at ~12K is common
+                Serial.println("[TX] Allocation fail — clean+retry once");
+                if (g_root) lv_obj_clean(g_root);
+                delay(50);
+                for (int i = 0; i < 20; i++) {
+                    g_proto.loop();
+                    if (g_storeReady) g_msgStore.poll();
+                    delay(10);
+                }
+                auto sub2 = g_proto.lxmfSubmit(dest, nullptr, 0,
+                                               (const uint8_t*)local, n, false);
+                if (!sub2.accepted()) {
+                    snprintf(g_txStr, sizeof(g_txStr), "alloc rej");
+                    Serial.printf("[TX] retry rejected %u free_int=%u\n",
+                                  (unsigned)sub2.rejection,
+                                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+                    return;
+                }
+                for (int j = 0; j < 800; j++) {
+                    g_proto.loop();
+                    if (g_storeReady) g_msgStore.poll();
+                    handheld::outgoing::InitialResult ir2{};
+                    auto p2 = g_proto.lxmfPoll(sub2.ticket, ir2);
+                    if (p2 == handheld::outgoing::Poll::Pending) { delay(10); continue; }
+                    if (p2 == handheld::outgoing::Poll::Ready) {
+                        g_proto.lxmfAcknowledge(sub2.ticket);
+                        Serial.printf("[TX] retry outcome=%u err=%u free_int=%u\n",
+                                      (unsigned)ir2.outcome, (unsigned)ir2.error,
+                                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+                        if (ir2.outcome == handheld::storage::Outcome::Committed) {
+                            strcpy(g_txStr, ir2.txSuppressed ? "saved" : "sent");
+                            g_msgRowsLoaded = false;
+                            if (g_featAudio) g_audio.playMessage();
+                        } else {
+                            snprintf(g_txStr, sizeof(g_txStr), "fail %u", (unsigned)ir2.error);
+                        }
+                        return;
+                    }
+                    break;
+                }
+                strcpy(g_txStr, "alloc timeout");
             } else {
-                snprintf(g_txStr, sizeof(g_txStr), "fail %u", (unsigned)ir.error);
+                snprintf(g_txStr, sizeof(g_txStr), "fail %u", er);
             }
             return;
         }
@@ -1865,8 +1938,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.17");
-    Serial.println(" boot LXMF recovery drain before UI");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.18");
+    Serial.println(" Allocation retry + clean before TX");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
