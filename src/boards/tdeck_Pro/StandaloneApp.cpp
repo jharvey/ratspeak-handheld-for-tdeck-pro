@@ -221,11 +221,26 @@ bool initRadio() {
 }
 
 void logPsram() {
+    // found=1 size=0 means the chip ID was seen but OPI PSRAM was not mapped.
+    // Board must use memory_type=qio_opi + BOARD_HAS_PSRAM (see lilygo_t_deck_pro.json).
+    bool found = psramFound();
+    size_t sz = ESP.getPsramSize();
+    size_t fr = ESP.getFreePsram();
+    size_t capSp = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    size_t capIn = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     Serial.printf("[PSRAM] found=%d size=%u free=%u  caps_spiram=%u caps_int=%u\n",
-                  (int)psramFound(), (unsigned)ESP.getPsramSize(),
-                  (unsigned)ESP.getFreePsram(),
-                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
-                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+                  (int)found, (unsigned)sz, (unsigned)fr,
+                  (unsigned)capSp, (unsigned)capIn);
+    if (found && sz == 0) {
+        Serial.println("[PSRAM] WARN chip seen but size=0 — OPI not mapped");
+        Serial.println("[PSRAM] Fix: board=lilygo_t_deck_pro (qio_opi, variant esp32s3)");
+        Serial.println("[PSRAM]      board_build.arduino.memory_type=qio_opi -DBOARD_HAS_PSRAM");
+    } else if (found && sz > 0) {
+        Serial.printf("[PSRAM] OK mapped %u KB — protocol can use SPIRAM\n",
+                      (unsigned)(sz / 1024));
+    } else {
+        Serial.println("[PSRAM] none — stuck on INTERNAL SMALL node");
+    }
 }
 
 bool tryProto(uint32_t caps, const char* label) {
@@ -1938,8 +1953,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.18");
-    Serial.println(" Allocation retry + clean before TX");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.19");
+    Serial.println(" PSRAM diagnose + board json");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();

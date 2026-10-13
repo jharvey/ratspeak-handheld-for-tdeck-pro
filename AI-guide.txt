@@ -1,57 +1,55 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-12 (Phase G1.18 — Recovering, not OOM)
+Last updated: 2026-10-13 (Phase G1.19 — fix PSRAM next)
 ================================================================================
 
-CRITICAL: TX rejected 8 = Recovering (NOT out-of-memory)
---------------------------------------------------------
-OutgoingContract::Rejection:
-  0 None  1 Busy  2 Invalid  3 TooLarge  4 NoMemory
-  5 Unavailable  6 Fenced  7 Exhausted  8 Recovering  9 Stopped
+WHY PSRAM NOW
+-------------
+TX path works past Recovering, but MessageStore CreateOutgoing fails:
+  outcome=1 (Failed) err=2 (Allocation) at free_int≈20K after lv_obj_clean.
 
-RustLxmfEngine starts with _recovering=true and rejects submits until it has
-finished replaying pending outbound rows from MessageStore (ReadPending until
-empty). Announce uses a different path, so it still works while Recovering.
+[PSRAM] found=1 size=0 free=0 caps_spiram=0
+  → chip ID seen, OPI PSRAM not mapped into the address space.
+Without SPIRAM the node stays RS_HANDHELD_PROFILE_SMALL on INTERNAL only;
+MessageStore cannot allocate outbound records under the e-ink/LVGL heap load.
 
-G1.18: After recovery works, submit can still fail outcome=Failed err=Allocation
-(storage::Error::Allocation=2) at ~12K free. lv_obj_clean before submit + one retry.
+FIX (board definition)
+----------------------
+1. Copy lilygo_t_deck_pro.json into repo boards/
+2. In platformio.ini [tdeck_Pro_base]:
+     board = lilygo_t_deck_pro
+     board_build.arduino.memory_type = qio_opi
+     -DBOARD_HAS_PSRAM
+   (do not use lilygo-t-display-s3 variant for Pro)
+3. fullclean + rebuild + upload
+4. Expect: [PSRAM] found=1 size=8388608 … then [PROTO] try SPIRAM|8BIT
 
-G1.17: Boot pumps LXMF recovery ~3s BEFORE display/LVGL while heap ~40K.
-Stuck Recovering was caused by recovery never finishing after UI ate the heap.
+See platformio-tdeck-pro-psram-snippet.ini and lilygo_t_deck_pro.json artifacts.
 
-G1.16: When CST328 is present, failed touch reads no longer call next_screen()
-(that was jumping Peers → Settings after a peer tap).
+MESSAGE / TX STATUS
+-------------------
+WORKS: announce both ways, peer select, compose, submit accepted after recovery
+FAILS: durable CreateOutgoing → Allocation until PSRAM mapped
+Plus “sent” waiting for ack is expected until Pro actually TX LXMF.
 
-G1.15: before lxmfSubmit, pump g_proto.loop() + g_msgStore.poll() ~3s, then
-retry up to 8 times on Recovering/Busy with more pump between attempts.
+REJECTION / OUTCOME CHEATSHEET
+------------------------------
+Outgoing Rejection: 8=Recovering 4=NoMemory 1=Busy
+storage Outcome: 0=Committed 1=Failed 2=Cancelled
+storage Error: 2=Allocation
 
-If still Recovering after retries: pending outbound in flash may be stuck;
-consider clearing message store / factory path (careful) or wait longer after
-boot before first send.
-
-MESSAGE FLOW
-------------
-1. Announce both devices
-2. Peers → tap row (serial: selected — type message then Enter)
-3. Type HELLO → Enter
-4. Expect [TX] pumping recovery… then accepted / outcome=0 / LORA_IF TX
-5. Empty Enter on Peers stays put (does not go to Settings)
-
-Plus “sent” waiting for ack is expected until Pro delivers proof; inbound RX
-212-byte frames on Pro mean Plus packets arrive — store/UI may still lag.
-
-FUTURE INCREMENTS (keep)
-------------------------
-P1  PSRAM map (size=0) — larger node, less pressure
-P2  Live tile data (TCP/WIFI/GPS/names)
+FUTURE (keep)
+-------------
+P1  PSRAM map (THIS STEP)
+P2  Live tile data
 P3  Keyboard backlight
-P4  Faster compiles (ccache, narrower rebuilds)
-P5  Partial e-ink refresh
-P6  ENERGY F1–F7 sleep / duty-cycle RX
-P7  Plus parity (QR, delivery, trusted list)
-P8  Diagnose stuck Recovering (stuck CreateOutgoing in flash)
+P4  Faster compiles
+P5  Partial e-ink
+P6  Energy / sleep
+P7  Plus parity
+P8  Stuck Recovering diagnostics (boot drain helped)
 
 ONE-LINER
 ---------
-rej 8 = Recovering (outbound replay); pump store+proto before submit; roadmap kept.
+Yes fix PSRAM: found=1 size=0 blocks Allocation; use lilygo_t_deck_pro qio_opi board.
 ================================================================================
