@@ -1953,8 +1953,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.20");
-    Serial.println(" QSPI PSRAM (not OPI)");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.21");
+    Serial.println(" PSRAM + bidirectional LXMF OK");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();

@@ -1,26 +1,87 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-13 (Phase G1.20 — QSPI not OPI)
+Last updated: 2026-10-13 (Phase G1.21 — PSRAM + bidirectional LXMF OK)
 ================================================================================
 
-PSRAM ROOT CAUSE
-----------------
-Official LilyGO T-Deck-Pro board JSON uses:
-  "memory_type": "qio_qspi"   // 8M QSPI PSRAM
+MILESTONE (G1.20/G1.21)
+-----------------------
+[PSRAM] found=1 size=~8MB caps_spiram=~8MB  (QSPI, not OPI)
+[PROTO] try SPIRAM|8BIT — node on SPIRAM
+[TX] outcome=0 (Committed) err=0 — outbound HELLO saved + LoRa TX
+Inbound _i.json written; Msg Box shows unread; Plus↔Pro messages both ways.
 
-We had qio_opi (OPI) → chip ID seen (found=1) but never mapped (size=0).
+Board must use:
+  board = lilygo_t_deck_pro
+  board_build.arduino.memory_type = qio_qspi   // NOT qio_opi
+  -DBOARD_HAS_PSRAM
+  "-I${PROJECT_DIR}/src/boards/tdeck_Pro"
+Official LilyGO T-Deck-Pro is QSPI PSRAM. OPI left found=1 size=0.
 
-Fix: boards/lilygo_t_deck_pro.json + platformio memory_type = qio_qspi
-Then fullclean + rebuild (memory_type is a link/boot config).
+HOW TO SEND (Pro)
+-----------------
+1. Announce (boot or Home ANNOUNCE)
+2. P or bottom Peers tab → tap peer (or digit 1–9)
+3. Type message → Enter
+4. Serial: outcome=0 Committed + [LORA_IF] TX
 
-TX STATUS
+HOW TO READ
+-----------
+Msg Box tab: conversation list (unread counts)
+History (H) when implemented on selected peer
+Touch peer row stays on Peers; type then Enter
+
+WORKS
+-----
+- QSPI PSRAM map + SPIRAM protocol + LVGL draw buf in SPIRAM
+- Boot LXMF recovery drain before UI
+- Announce TX/RX, peer list from announces
+- Compose + lxmfSubmit + Committed + LoRa TX
+- Inbound store (_i.json) + Msg Box unread
+- Nav: Settings|Home top; Contact|Msg Box|Peers bottom
+- Touch peer select; digit 1–9 select; empty Enter stays on msg screens
+- Keyboard shortcuts when compose empty (A/S/H/P/…) on Home
+- Audio notify path present; CST328 touch (no INT→next when present)
+
+PARTIAL / GAPS
+--------------
+- Msg Box is list-level, not full Plus chat thread UI
+- Delivery/ack status not shown on e-ink like Plus
+- Home tiles still partly static (TCP/WIFI/GPS)
+- Peer auto-refresh throttle OK; history browse thin
+- Contact rename / trusted list / QR not ported
+- Partial e-ink refresh not used (fullRefresh only)
+- Energy sleep / WOR not implemented
+- Keyboard backlight not driven
+- Compile still rebuilds a lot (ccache / narrower filters)
+
+REJECTION / OUTCOME (reference)
+-------------------------------
+Outgoing Rejection: 0 None … 4 NoMemory … 8 Recovering 9 Stopped
+storage Outcome: 0 Committed 1 Failed 2 Cancelled
+storage Error: 2 Allocation (was the pre-PSRAM failure mode)
+
+NEXT PHASE SUGGESTIONS (pick order with user)
+---------------------------------------------
+N1  Msg Box / History: show last N messages for selected peer (Plus-like thread)
+N2  Delivery status on UI (queued/sent/delivered) after lxmfPoll
+N3  Home live tiles: pathCount, linkCount, real RSSI/SNR, battery gauge polish
+N4  Partial e-ink refresh for compose/idle updates (less flash, still careful of
+    Good Display partial rules)
+N5  Energy: light-sleep between beats, radio duty-cycle notes in guide
+N6  Keyboard backlight on key activity
+N7  Contacts = saved names; Peers = announced; clear copy + select→compose
+N8  Faster builds (ccache, src filter, LTO careful)
+N9  Upstream rebase / cooperative green keep
+
+STANDALONE RULES (unchanged)
+----------------------------
+EXCLUDE LvglApplication.cpp and ui/lvgl sources
+INCLUDE boards/tdeck_Pro (DisplayEink, LvglPort, LvglStubs, StandaloneApp)
+Keep single fullRefresh-per-screen-change until N4
+Prefer small compile-ready full files
+
+ONE-LINER
 ---------
-Recovering fixed; submit accepts; CreateOutgoing fails Allocation without SPIRAM.
-After QSPI maps, expect SPIRAM proto + outcome=0 Committed.
-
-FUTURE
-------
-P1 PSRAM map (qio_qspi THIS STEP)
-P2 Live tiles  P3 KB backlight  P4 compile speed
-P5 partial e-ink  P6 energy  P7 Plus parity
+QSPI PSRAM mapped; bidirectional LXMF works. Next: chat history UI, status,
+partial refresh, energy — user picks order.
 ================================================================================
