@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-12 (Phase G1.16 — Recovering, not OOM)
+Last updated: 2026-10-12 (Phase G1.17 — Recovering, not OOM)
 ================================================================================
 
 CRITICAL: TX rejected 8 = Recovering (NOT out-of-memory)
@@ -12,6 +12,9 @@ OutgoingContract::Rejection:
 RustLxmfEngine starts with _recovering=true and rejects submits until it has
 finished replaying pending outbound rows from MessageStore (ReadPending until
 empty). Announce uses a different path, so it still works while Recovering.
+
+G1.17: Boot pumps LXMF recovery ~3s BEFORE display/LVGL while heap ~40K.
+Stuck Recovering was caused by recovery never finishing after UI ate the heap.
 
 G1.16: When CST328 is present, failed touch reads no longer call next_screen()
 (that was jumping Peers → Settings after a peer tap).

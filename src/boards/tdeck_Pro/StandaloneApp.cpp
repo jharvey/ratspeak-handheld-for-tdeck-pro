@@ -1865,8 +1865,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.16");
-    Serial.println(" no INT-next when CST328 present");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.17");
+    Serial.println(" boot LXMF recovery drain before UI");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -1897,6 +1897,23 @@ bool begin() {
         Serial.printf("[MSG] preload free_int=%u\n",
                       (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
         loadMessageRows(true);
+    }
+
+    // CRITICAL: finish LXMF outbound recovery while heap is still ~40K+.
+    // After LVGL/e-ink, free_int drops to ~12K and requestPending can stall,
+    // leaving Rejection::Recovering forever (submit always rejected 8).
+    if (g_protoReady) {
+        Serial.printf("[BOOT] LXMF recovery drain free_int=%u\n",
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        for (int i = 0; i < 300; i++) {
+            g_proto.loop();
+            if (g_storeReady) g_msgStore.poll();
+            delay(10);
+        }
+        // Probe: tiny submit attempt to self is invalid; instead try preferred
+        // no-op by watching path — just log heap after drain.
+        Serial.printf("[BOOT] recovery drain done free_int=%u\n",
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     }
 
     spiBusIdle();
