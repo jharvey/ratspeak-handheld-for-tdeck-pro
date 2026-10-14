@@ -1476,7 +1476,10 @@ void draw_nav() {
     // Hotkey letter underlined in draw_nav_box via hotkey char
     draw_nav_box(x0, BOT_TOP, BOT_CONTACT_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, 'C');
     x0 += BOT_CONTACT_W;
-    draw_nav_box(x0, BOT_TOP, BOT_MSGBOX_W, BOT_H, "Msg Box", g_screen == SCR_CHATS, 'M');
+    if (g_screen == SCR_CHATS && g_showHistory)
+        draw_nav_box(x0, BOT_TOP, BOT_MSGBOX_W, BOT_H, "Back", true, 'B');
+    else
+        draw_nav_box(x0, BOT_TOP, BOT_MSGBOX_W, BOT_H, "Msg Box", g_screen == SCR_CHATS, 'M');
     x0 += BOT_MSGBOX_W;
     draw_nav_box(x0, BOT_TOP, BOT_PEERS_W, BOT_H, "Peers", g_screen == SCR_PEERS, 'P');
 }
@@ -1693,7 +1696,7 @@ void build_list_body(const char* section, const char* emptyNote) {
     }
 }
 
-// Plus-style: inbound left (white), outbound right (black fill)
+// Plus-style outline bubbles: left=in, right=out; BOTH white bg / black text
 static void draw_chat_bubble(int y, const char* text, bool incoming, const char* status) {
     const int margin = 4;
     const int maxW = EPD_WIDTH - 28;
@@ -1710,7 +1713,7 @@ static void draw_chat_bubble(int y, const char* text, bool incoming, const char*
     lv_obj_set_style_radius(box, 4, 0);
     lv_obj_set_style_border_width(box, 2, 0);
     lv_obj_set_style_border_color(box, lv_color_black(), 0);
-    lv_obj_set_style_bg_color(box, incoming ? lv_color_white() : lv_color_black(), 0);
+    lv_obj_set_style_bg_color(box, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(box, 0, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
@@ -1718,11 +1721,10 @@ static void draw_chat_bubble(int y, const char* text, bool incoming, const char*
     lv_obj_t* lab = lv_label_create(box);
     lv_label_set_text(lab, text);
     lv_obj_set_style_text_font(lab, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lab, incoming ? lv_color_black() : lv_color_white(), 0);
+    lv_obj_set_style_text_color(lab, lv_color_black(), 0);
     lv_obj_align(lab, LV_ALIGN_LEFT_MID, 4, 0);
 
     if (!incoming && status && status[0]) {
-        // status under bubble, right-ish
         int sx = x;
         if (sx + 40 > EPD_WIDTH - 4) sx = EPD_WIDTH - 44;
         fat_label(g_root, status, sx, y + h + 1);
@@ -1765,14 +1767,14 @@ void build_chats() {
                 if (y > CONTENT_BOTTOM - 30) break;
             }
         }
-        draw_compose_or_hint("type+Enter  Back/V=list");
+        draw_compose_or_hint("type+Enter=send  Back=list");
         return;
     }
     loadMessageRows(false);
     char sec[36];
     snprintf(sec, sizeof(sec), "MSG BOX %s %s", g_convStr, g_unreadStr);
     build_list_body(sec, g_msgNote[0] ? g_msgNote : "(no chats)");
-    draw_compose_or_hint("tap row=thread  V=thread");
+    draw_compose_or_hint("tap=open  type+Enter=send");
 }
 
 void build_contacts() {
@@ -2112,8 +2114,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.26");
-    Serial.println(" white bubbles + Back tab");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.27");
+    Serial.println(" white out bubbles + Msg Box send");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
