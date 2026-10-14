@@ -794,7 +794,18 @@ ScreenId botTabScreen(int i) {
 bool handleTouchAt(int16_t x, int16_t y) {
     Serial.printf("[TOUCH] xy=%d,%d screen=%u\n", (int)x, (int)y, (unsigned)g_screen);
 
-    // Top nav: Home | Settings
+    // Message mode: only Back Up bars (top or bottom full width)
+    if (inMessageUi()) {
+        if (y < TOP_H || y >= BOT_TOP) {
+            Serial.println("[TAB] Back Up (message mode)");
+            goBackFromMessage();
+            return true;
+        }
+        // Content area: keep thread open (do not dismiss on body tap)
+        return false;
+    }
+
+    // Top nav: Settings | Home
     if (y < TOP_H) {
         int i = (x < TOP_TAB_W) ? 0 : 1;
         ScreenId want = topTabScreen(i);
@@ -805,33 +816,19 @@ bool handleTouchAt(int16_t x, int16_t y) {
         return true;
     }
 
-    // Bottom nav: Contact | Msg Box/Back | Peers
+    // Bottom nav: Contact | Msg Box | Peers
     if (y >= BOT_TOP) {
         ScreenId want = SCR_CONTACTS;
         if (x < BOT_CONTACT_W)
             want = SCR_CONTACTS;
         else if (x < BOT_CONTACT_W + BOT_MSGBOX_W)
-            want = SCR_CHATS;   // Msg Box or Back when in thread
+            want = SCR_CHATS;
         else
             want = SCR_PEERS;
-        Serial.printf("[TAB] bot -> %s hist=%d\n", tabLabel(want), (int)g_showHistory);
-        // Back: same Msg Box zone while thread open → close thread to list
-        if (want == SCR_CHATS && g_screen == SCR_CHATS && g_showHistory) {
-            g_showHistory = false;
-            Serial.println("[TAB] Back → Msg Box list");
-            show_screen(SCR_CHATS);
-            return true;
-        }
+        Serial.printf("[TAB] bot -> %s\n", tabLabel(want));
         if (want == g_screen) return true;
-        if (want != SCR_CHATS) g_showHistory = false;
-        show_screen(want);
-        return true;
-    }
-
-    // History: any content tap returns to Chats list
-    if (g_screen == SCR_CHATS && g_showHistory) {
         g_showHistory = false;
-        show_screen(SCR_CHATS);
+        show_screen(want);
         return true;
     }
 
@@ -1767,7 +1764,7 @@ void build_chats() {
                 if (y > CONTENT_BOTTOM - 30) break;
             }
         }
-        draw_compose_or_hint("type+Enter=send  Back=list");
+        draw_compose_or_hint("type+Enter=send  ^=Back");
         return;
     }
     loadMessageRows(false);
@@ -1806,12 +1803,17 @@ void build_contacts() {
     } else {
         for (int i = 0; i < g_msgRowCount; i++) {
             char title[28], sub[36];
+            // 1> Name (or short ID from line1)
             snprintf(title, sizeof(title), "%d%s %s",
                      i + 1, (i == g_selPeer) ? ">" : " ",
                      g_msgRows[i].line1);
-            char hex[33];
-            peerToHex32(g_msgRows[i].peer, hex);
-            snprintf(sub, sizeof(sub), "ID: %.16s", hex);
+            if (g_msgRows[i].line2[0])
+                snprintf(sub, sizeof(sub), "%.28s", g_msgRows[i].line2);
+            else {
+                char hex[33];
+                peerToHex32(g_msgRows[i].peer, hex);
+                snprintf(sub, sizeof(sub), "%.12s…", hex);
+            }
             draw_menu_row(y, 44, title, sub, i == g_selPeer);
             y += 48;
             if (y > CONTENT_BOTTOM - 8) break;
@@ -1848,15 +1850,19 @@ void build_peers() {
             snprintf(title, sizeof(title), "%d%s %s",
                      i + 1, (i == g_selPeer) ? ">" : " ",
                      g_msgRows[i].line1);
-            char hex[33];
-            peerToHex32(g_msgRows[i].peer, hex);
-            snprintf(sub, sizeof(sub), "ID: %.16s", hex);
+            if (g_msgRows[i].line2[0])
+                snprintf(sub, sizeof(sub), "%.28s", g_msgRows[i].line2);
+            else {
+                char hex[33];
+                peerToHex32(g_msgRows[i].peer, hex);
+                snprintf(sub, sizeof(sub), "%.12s…", hex);
+            }
             draw_menu_row(y, 44, title, sub, i == g_selPeer);
             y += 48;
             if (y > CONTENT_BOTTOM - 8) break;
         }
     }
-    draw_compose_or_hint("1-9 select  type+Enter");
+    draw_compose_or_hint("1-9 select  type+Enter=send");
 }
 
 void build_settings() {
@@ -1877,9 +1883,11 @@ void build_settings() {
     draw_menu_row(y, 44, "LoRa", loraSub, false); y += 48;
     char annSub[28];
     snprintf(annSub, sizeof(annSub), "Ann %s", g_announceStr);
-    draw_menu_row(y, 44, "Announce / TX", annSub, false);
+    draw_menu_row(y, 44, "Announce / TX", annSub, false); y += 48;
+    draw_menu_row(y, 44, "Rename peer", "serial: n:Name", false); y += 48;
+    draw_menu_row(y, 36, "KB backlight", "serial: L on/off", false);
 
-    draw_compose_or_hint("");
+    draw_compose_or_hint("n:Name rename sel peer");
 }
 
 void show_screen(ScreenId id) {
@@ -1967,6 +1975,15 @@ void maybeComposeRedraw() {
 
 // Handle one keyboard event. Returns true if a full screen redraw is needed.
 bool handleKeyEvent(const KeyEvent& ev) {
+    // Keyboard Up (^) = Back when in message/thread mode
+    if (ev.up) {
+        if (inMessageUi()) {
+            goBackFromMessage();
+            return true;
+        }
+        return false;
+    }
+
     // Enter: send compose if non-empty, else next screen.
     if (ev.enter) {
         if (g_composeLen > 0) {
@@ -2114,8 +2131,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.27");
-    Serial.println(" white out bubbles + Msg Box send");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.28");
+    Serial.println(" msg mode Back Up + names");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -2290,6 +2307,32 @@ void loop() {
                 doSendTest(body);
                 if (g_screen == SCR_SETTINGS || g_screen == SCR_CHATS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS)
                     show_screen(g_screen);
+            } else if ((p[0] == 'n' || p[0] == 'N') && p[1] == ':') {
+                // n:DisplayName — name the selected peer (Msg Box/Peers/Contact)
+                const char* nm = p + 2;
+                while (*nm == ' ') nm++;
+                if (!*nm) {
+                    Serial.println("[NAME] usage: n:Alice");
+                } else if (g_msgRowCount <= 0 || !g_msgRows[g_selPeer].used) {
+                    Serial.println("[NAME] select a peer first (Peers/Msg Box)");
+                } else {
+                    char hex[33];
+                    peerToHex32(g_msgRows[g_selPeer].peer, hex);
+                    if (g_announceMgr.setContactName(std::string(hex), std::string(nm))) {
+                        g_announceMgr.saveNameCache();
+                        Serial.printf("[NAME] %s -> \"%s\"\n", hex, nm);
+                        g_msgRowsLoaded = false;
+                        show_screen(g_screen);
+                    } else {
+                        Serial.println("[NAME] setContactName failed");
+                    }
+                }
+            } else if (p[0] == 'L' && p[1] == 0) {
+                static bool s_lit = false;
+                s_lit = !s_lit;
+                if (s_lit) g_kb.backlightOn();
+                else g_kb.backlightOff();
+                Serial.printf("[KB] backlight %s\n", s_lit ? "ON" : "OFF");
             } else if (p[0] == 'F') {
                 // Serial F — erase+format LittleFS (works even when !_ready)
                 Serial.println("[FLASH] serial F recovery");

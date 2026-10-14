@@ -1,38 +1,44 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-14 (Phase G1.26)
+Last updated: 2026-10-14 (Phase G1.28)
 ================================================================================
 
-G1.26 UI
---------
-- Chat bubbles: BOTH sides white fill / black text (Plus-like outline boxes)
-  Left = inbound, Right = outbound; status under outbound
-- Thread Back: middle bottom tab becomes "Back" while in thread
-  Tap Back or press B → Msg Box list; V still toggles
+MESSAGE MODE UI
+---------------
+When composing OR viewing a chat thread:
+  • Top + bottom bars become only "Back Up  ^" (no Home/Settings/tabs)
+  • Touch either bar → leave thread / clear compose
+  • Keyboard Up arrow (^) → same Back
+  • B key (empty compose) → Back from thread
 
-COM PORT WITHOUT RECOMPILE
---------------------------
-Editing upload_port in platformio.ini can dirty the env and force big rebuilds.
-Override port on the CLI instead:
+LIST ROWS
+---------
+  1> NameOrShortId
+     preview or short hash on second line
+Names come from announce cache; rename selected peer via serial:
+  n:Alice
 
-  pio run -e tdeck_pro_cooperative -t upload --upload-port COM9
-  pio device monitor --port COM9 --baud 115200
+SETTINGS (chip-away)
+--------------------
+Shows Identity, Battery, LoRa, Announce, Rename hint, KB backlight hint.
+Serial L toggles keyboard backlight.
 
-BAT (repo root or copy next to project):
-  upload-com.bat COM9          — upload last build only
-  monitor-com.bat COM9         — serial monitor
-  build-upload-com.bat COM9    — incremental build + upload
+NEXT FEATURE IDEAS
+------------------
+S1  Settings: tap row actions (announce, toggle backlight)
+S2  Set local display name (our announce name)
+S3  Delivery status polish on bubbles
+S4  Partial e-ink for compose footer only
+S5  Energy / light sleep between beats
+S6  Contacts: save/unsave peer
+S7  Faster builds / ccache
 
-VS Code:
-  Terminal → Run Task… after adding vscode-tasks-snippet.json entries to
-  .vscode/tasks.json (Upload COM8 / COM9, Monitor COM8 / COM9).
-  Or PlatformIO: project tasks with custom upload_port in a [env:…] that
-  extends cooperative WITHOUT changing shared upload_port — better still CLI.
-
-Optional: comment out upload_port / monitor_port in [common] so PIO auto-detects
-when only one board is plugged in.
+HOW TO TEXT
+-----------
+Msg Box: tap peer → type → Enter  |  Peers: same
+Back Up ^ to leave message mode
 
 ONE-LINER
 ---------
-White L/R bubbles; Back tab; use --upload-port COMx / bat to avoid ini rebuilds.
+G1.28: message mode = Back Up only; Up key backs; n:Name; list preview line.
 ================================================================================
