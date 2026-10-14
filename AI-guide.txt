@@ -1,32 +1,35 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-13 (Phase G1.24)
+Last updated: 2026-10-14 (Phase G1.25 — Plus-style chat bubbles)
 ================================================================================
 
-2nd PRO: still no ID after G1.23
---------------------------------
-FlashStore::format() requires _ready==true. After corrupt mount, _ready is
-false, so format() returns false immediately — "format failed".
+RECOVERY OK (2nd Pro)
+---------------------
+Partition erase → fresh identity dest=dd6c489bc0e0… announce + TX/RX with Plus.
 
-G1.24 recoverCorruptLittleFS():
-  1. Find littlefs/spiffs data partition
-  2. esp_partition_erase_range entire partition
-  3. LittleFS.begin(true, …) format mount
-  4. FlashStore::begin() for identity dirs + protocol
+G1.25 THREAD UI (like Plus)
+---------------------------
+Msg Box → tap peer (or V) → CHAT thread:
+  • Inbound (from peer):  LEFT  white bubble, black text
+  • Outbound (from us):   RIGHT black bubble, white text
+  • Outbound status under bubble: queued / sent / deliv
+  • Header = peer name; "last: sent" after TX
 
-Serial F uses the same path. After success: reboot, expect:
-  [FLASH] LittleFS ready
-  [IDMGR] …
-  [PROTO] up dest=…
-  [ANN] sent
+HOW TO OPEN
+-----------
+Msg Box list → tap conversation row
+OR V while a peer is selected
+Peers: select + type + Enter still sends without opening thread
 
-HOME TILES
-----------
-LORA shows RSSI when available (negative dBm is valid).
-AUDIO/LORA tiles toggle on touch — expected.
-PATH/LINK/PEERS/LXMFQ are status only.
+BOARD
+-----
+qio_qspi PSRAM; recoverCorruptLittleFS on corrupt mount
+
+NEXT
+----
+N4 partial e-ink  N5 energy  N6 KB backlight
 
 ONE-LINER
 ---------
-G1.24: erase+format partition when FlashStore::format cannot run (!_ready).
+G1.25: chat thread left=in / right=out bubbles matching Plus layout.
 ================================================================================
