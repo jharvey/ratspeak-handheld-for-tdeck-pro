@@ -687,6 +687,26 @@ void composeBackspace() {
     composeLog();
 }
 
+bool inMessageUi() {
+    return g_showHistory || g_composeLen > 0 || g_composeMode;
+}
+
+void goBackFromMessage() {
+    bool changed = false;
+    if (g_composeLen > 0 || g_composeMode) {
+        composeClear();
+        g_composeMode = false;
+        changed = true;
+        Serial.println("[UI] Back — cleared compose");
+    }
+    if (g_showHistory) {
+        g_showHistory = false;
+        changed = true;
+        Serial.println("[UI] Back — left thread");
+    }
+    if (changed) show_screen(g_screen);
+}
+
 void clampSelPeer() {
     if (g_msgRowCount <= 0) {
         g_selPeer = 0;
