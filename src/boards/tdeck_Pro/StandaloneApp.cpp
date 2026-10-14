@@ -8,6 +8,8 @@
 #include <string.h>
 #include <string>
 #include <esp_heap_caps.h>
+#include <esp_partition.h>
+#include <LittleFS.h>
 
 #include "config/BoardConfig.h"
 #include "Eink/DisplayEink.h"
@@ -252,20 +254,47 @@ bool tryProto(uint32_t caps, const char* label) {
                          &g_announceMgr, RS_HANDHELD_PROFILE_SMALL, caps);
 }
 
+// When FlashStore::begin fails on corrupt media, format() is a no-op because
+// it requires _ready==true. Bypass: erase SPIFFS/littlefs partition, format, remount.
+bool recoverCorruptLittleFS() {
+    Serial.println("[FLASH] recoverCorruptLittleFS…");
+    const esp_partition_t* part =
+        esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "littlefs");
+    if (!part)
+        part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
+    if (!part)
+        part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, nullptr);
+    if (!part) {
+        Serial.println("[FLASH] no data/spiffs partition found");
+        return false;
+    }
+    Serial.printf("[FLASH] erase label=%s size=%u offset=0x%x\n",
+                  part->label, (unsigned)part->size, (unsigned)part->address);
+    LittleFS.end();
+    esp_err_t e = esp_partition_erase_range(part, 0, part->size);
+    if (e != ESP_OK) {
+        Serial.printf("[FLASH] erase failed err=0x%x\n", (unsigned)e);
+        return false;
+    }
+    // format=true mounts a fresh FS on the blank partition
+    if (!LittleFS.begin(true, "/littlefs", 10, part->label)) {
+        Serial.println("[FLASH] LittleFS.begin(format) failed after erase");
+        return false;
+    }
+    LittleFS.end();
+    Serial.println("[FLASH] partition erased + formatted — calling FlashStore::begin");
+    return g_flash.begin();
+}
+
 bool initStorageAndProto() {
-    // Corrupted LittleFS (new board / bad flash) → mount fails and proto stays off.
-    // Factory policy refuses auto-format of non-blank media; standalone retries once.
+    // Corrupted LittleFS → mount fails, FlashStore::format refuses (!_ready).
     if (!g_flash.begin()) {
-        Serial.println("[FLASH] begin failed — one-shot format recovery");
-        if (!g_flash.format()) {
-            Serial.println("[FLASH] format failed — no identity/announce");
+        Serial.println("[FLASH] begin failed — partition erase recovery");
+        if (!recoverCorruptLittleFS()) {
+            Serial.println("[FLASH] recovery failed — no identity/announce");
             return false;
         }
-        Serial.println("[FLASH] format OK — fresh FS");
-        if (!g_flash.begin()) {
-            Serial.println("[FLASH] begin still failed after format");
-            return false;
-        }
+        Serial.println("[FLASH] recovery OK — fresh FS");
     }
     g_idMgr.begin(&g_flash, nullptr);
     if (!g_msgStore.begin(&g_flash, nullptr, false)) return false;
@@ -2017,8 +2046,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.23");
-    Serial.println(" flash format recovery + RSSI tile");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.24");
+    Serial.println(" LittleFS partition erase recovery");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -2193,14 +2222,14 @@ void loop() {
                 doSendTest(body);
                 if (g_screen == SCR_SETTINGS || g_screen == SCR_CHATS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS)
                     show_screen(g_screen);
-            } else if (p[0] == 'F' && (p[1] == 0 || p[1] == ' ' || p[1] == 'o')) {
-                // Serial: F or format — wipe LittleFS (new device recovery)
-                Serial.println("[FLASH] serial format requested");
-                if (g_flash.format() && g_flash.begin()) {
-                    Serial.println("[FLASH] format+begin OK — reboot recommended");
+            } else if (p[0] == 'F') {
+                // Serial F — erase+format LittleFS (works even when !_ready)
+                Serial.println("[FLASH] serial F recovery");
+                if (recoverCorruptLittleFS()) {
+                    Serial.println("[FLASH] OK — reboot now for clean identity");
                     strcpy(g_announceStr, "fmt ok");
                 } else {
-                    Serial.println("[FLASH] format failed");
+                    Serial.println("[FLASH] recovery failed");
                     strcpy(g_announceStr, "fmt fail");
                 }
                 show_screen(g_screen);

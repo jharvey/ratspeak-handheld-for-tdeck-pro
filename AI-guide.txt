@@ -1,57 +1,32 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-13 (Phase G1.23)
+Last updated: 2026-10-13 (Phase G1.24)
 ================================================================================
 
-HOME TILES (N3) — what the photo shows
---------------------------------------
-IDENTITY ONLINE + battery %     identity hash / LXMF dest
-LORA  ON or RSSI (e.g. -14dBm)  radio up; RSSI after RX
-PATH  p0                        pathCount (mesh routes known)
-LINK  l0                        linkCount (direct links)
-PEERS 0/1                       announced_nodes / stored_conversations
-AUDIO ON                        beep+vibe toggle (tap tile)
-LXMFQ 0                         outbound queue depth
-Listening… / Announced: …       last announce result
-Announce button                 force announce (5s rate limit)
+2nd PRO: still no ID after G1.23
+--------------------------------
+FlashStore::format() requires _ready==true. After corrupt mount, _ready is
+false, so format() returns false immediately — "format failed".
 
-"Announced: never" = no successful announce this boot yet (or proto off).
-PATH/LINK stay 0 until Reticulum learns routes — normal at first contact.
+G1.24 recoverCorruptLittleFS():
+  1. Find littlefs/spiffs data partition
+  2. esp_partition_erase_range entire partition
+  3. LittleFS.begin(true, …) format mount
+  4. FlashStore::begin() for identity dirs + protocol
 
-SECOND PRO: [ANN] proto off + LittleFS corrupt
----------------------------------------------
-Log:
-  esp_littlefs: Corrupted dir pair … mount failed (-84)
-  [FLASH] Mount failed; existing data preserved for recovery
-  [ANN] proto off
-
-No identity → empty dest → cannot announce.
-G1.23: if begin() fails, one-shot LittleFS format then retry.
-Manual: serial type  F  then Enter (format), then reboot.
-
-After format on 2nd Pro you should see:
-  [FLASH] LittleFS ready …
-  [IDMGR] … identities
+Serial F uses the same path. After success: reboot, expect:
+  [FLASH] LittleFS ready
+  [IDMGR] …
   [PROTO] up dest=…
-  [ANN] sent …
+  [ANN] sent
 
-Then announce both Pros; each should appear under Peers on the other.
-
-BOARD / PSRAM
--------------
-qio_qspi (not OPI); lilygo_t_deck_pro.json; -I boards/tdeck_Pro
-
-MSG FLOW
---------
-Send: Peers → tap → type → Enter
-Thread: Msg Box → tap row (or V)
-N2: last TX + [sent]/queued] on thread lines
-
-NEXT
-----
-N4 partial e-ink  N5 energy  N6 KB backlight  N7 contacts polish
+HOME TILES
+----------
+LORA shows RSSI when available (negative dBm is valid).
+AUDIO/LORA tiles toggle on touch — expected.
+PATH/LINK/PEERS/LXMFQ are status only.
 
 ONE-LINER
 ---------
-G1.23: explain Home tiles; auto-format corrupted FS so 2nd Pro gets an identity.
+G1.24: erase+format partition when FlashStore::format cannot run (!_ready).
 ================================================================================
