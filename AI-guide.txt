@@ -1,46 +1,57 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-13 (Phase G1.22 — N1+N2+N3)
+Last updated: 2026-10-13 (Phase G1.23)
 ================================================================================
 
-MILESTONE
----------
-QSPI PSRAM (~8MB) + bidirectional LXMF (Committed + inbound store).
+HOME TILES (N3) — what the photo shows
+--------------------------------------
+IDENTITY ONLINE + battery %     identity hash / LXMF dest
+LORA  ON or RSSI (e.g. -14dBm)  radio up; RSSI after RX
+PATH  p0                        pathCount (mesh routes known)
+LINK  l0                        linkCount (direct links)
+PEERS 0/1                       announced_nodes / stored_conversations
+AUDIO ON                        beep+vibe toggle (tap tile)
+LXMFQ 0                         outbound queue depth
+Listening… / Announced: …       last announce result
+Announce button                 force announce (5s rate limit)
 
-G1.22 COMBINED STEP
--------------------
-N1 Thread: Msg Box → tap peer opens CHAT history (V toggles list/thread).
-           HIST_ROWS=6; after TX, thread reloads if open.
-N2 Status: last TX line on thread; outbound rows show [queued/sent/deliv/…]
-           from StoredRecordHeader.status.
-N3 Live Home tiles:
-           LORA = RSSI (or ON/OFF)
-           PATH = pathCount   LINK = linkCount
-           PEERS = announced/conversations
-           AUDIO toggle   LXMFQ = queued count
+"Announced: never" = no successful announce this boot yet (or proto off).
+PATH/LINK stay 0 until Reticulum learns routes — normal at first contact.
 
-HOW TO USE
-----------
-Send: Peers → tap peer → type → Enter  (or Msg Box thread)
-Read thread: Msg Box → tap conversation row  OR  V on Msg Box
-Home: live RSSI / paths / links / queue
+SECOND PRO: [ANN] proto off + LittleFS corrupt
+---------------------------------------------
+Log:
+  esp_littlefs: Corrupted dir pair … mount failed (-84)
+  [FLASH] Mount failed; existing data preserved for recovery
+  [ANN] proto off
 
-BOARD
------
-lilygo_t_deck_pro.json  memory_type=qio_qspi  BOARD_HAS_PSRAM
--I src/boards/tdeck_Pro
+No identity → empty dest → cannot announce.
+G1.23: if begin() fails, one-shot LittleFS format then retry.
+Manual: serial type  F  then Enter (format), then reboot.
 
-WORKS
------
-PSRAM, SPIRAM proto, announce, compose TX, inbound, nav, touch, recovery drain
-N1/N2/N3 as above
+After format on 2nd Pro you should see:
+  [FLASH] LittleFS ready …
+  [IDMGR] … identities
+  [PROTO] up dest=…
+  [ANN] sent …
+
+Then announce both Pros; each should appear under Peers on the other.
+
+BOARD / PSRAM
+-------------
+qio_qspi (not OPI); lilygo_t_deck_pro.json; -I boards/tdeck_Pro
+
+MSG FLOW
+--------
+Send: Peers → tap → type → Enter
+Thread: Msg Box → tap row (or V)
+N2: last TX + [sent]/queued] on thread lines
 
 NEXT
 ----
-N4 Partial e-ink  N5 Energy  N6 KB backlight  N7 Contacts polish
-N8 Faster builds  N9 Upstream rebase
+N4 partial e-ink  N5 energy  N6 KB backlight  N7 contacts polish
 
 ONE-LINER
 ---------
-G1.22: thread + TX status + live Home tiles on working PSRAM mesh.
+G1.23: explain Home tiles; auto-format corrupted FS so 2nd Pro gets an identity.
 ================================================================================

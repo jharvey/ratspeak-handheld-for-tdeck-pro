@@ -253,7 +253,20 @@ bool tryProto(uint32_t caps, const char* label) {
 }
 
 bool initStorageAndProto() {
-    if (!g_flash.begin()) return false;
+    // Corrupted LittleFS (new board / bad flash) → mount fails and proto stays off.
+    // Factory policy refuses auto-format of non-blank media; standalone retries once.
+    if (!g_flash.begin()) {
+        Serial.println("[FLASH] begin failed — one-shot format recovery");
+        if (!g_flash.format()) {
+            Serial.println("[FLASH] format failed — no identity/announce");
+            return false;
+        }
+        Serial.println("[FLASH] format OK — fresh FS");
+        if (!g_flash.begin()) {
+            Serial.println("[FLASH] begin still failed after format");
+            return false;
+        }
+    }
     g_idMgr.begin(&g_flash, nullptr);
     if (!g_msgStore.begin(&g_flash, nullptr, false)) return false;
     g_storeReady = true;
@@ -1576,8 +1589,8 @@ void build_home() {
     // N3: live path/link/RSSI (refreshLiveData already called from show_screen)
     char loraV[14], peerV[14], pathV[14];
     if (g_featLora && g_loraIf && g_loraIf->isOnline()) {
-        // Prefer RSSI string e.g. "-14 dBm" → compact
-        if (g_rssiStr[0] && g_rssiStr[0] != '-')
+        // RSSI is negative dBm — still a valid reading (was wrongly treated as missing)
+        if (g_rssiStr[0] && !(g_rssiStr[0] == '-' && g_rssiStr[1] == '\0'))
             snprintf(loraV, sizeof(loraV), "%s", g_rssiStr);
         else
             strcpy(loraV, "ON");
@@ -2004,8 +2017,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.22");
-    Serial.println(" N1 thread + N2 TX status + N3 live tiles");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.23");
+    Serial.println(" flash format recovery + RSSI tile");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -2097,7 +2110,7 @@ bool begin() {
     show_screen(SCR_HOME);
     Serial.println("[BOOT] ready");
     g_bootAnnAt = millis() + 3000;
-    Serial.println("[HINT] type+Enter=send | p=peer | touch=row | H hist | a ann | r reload");
+    Serial.println("[HINT] type+Enter=send | p=peer | V=thread | a=ann | F=formatFS");
     return true;
 }
 
@@ -2180,6 +2193,17 @@ void loop() {
                 doSendTest(body);
                 if (g_screen == SCR_SETTINGS || g_screen == SCR_CHATS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS)
                     show_screen(g_screen);
+            } else if (p[0] == 'F' && (p[1] == 0 || p[1] == ' ' || p[1] == 'o')) {
+                // Serial: F or format — wipe LittleFS (new device recovery)
+                Serial.println("[FLASH] serial format requested");
+                if (g_flash.format() && g_flash.begin()) {
+                    Serial.println("[FLASH] format+begin OK — reboot recommended");
+                    strcpy(g_announceStr, "fmt ok");
+                } else {
+                    Serial.println("[FLASH] format failed");
+                    strcpy(g_announceStr, "fmt fail");
+                }
+                show_screen(g_screen);
             } else if (p[0] == 'a' || p[0] == 'A') {
                 doAnnounce();
                 if (g_screen == SCR_SETTINGS) show_screen(SCR_SETTINGS);
