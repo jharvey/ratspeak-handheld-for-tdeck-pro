@@ -1,35 +1,38 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-14 (Phase G1.25 — Plus-style chat bubbles)
+Last updated: 2026-10-14 (Phase G1.26)
 ================================================================================
 
-RECOVERY OK (2nd Pro)
----------------------
-Partition erase → fresh identity dest=dd6c489bc0e0… announce + TX/RX with Plus.
+G1.26 UI
+--------
+- Chat bubbles: BOTH sides white fill / black text (Plus-like outline boxes)
+  Left = inbound, Right = outbound; status under outbound
+- Thread Back: middle bottom tab becomes "Back" while in thread
+  Tap Back or press B → Msg Box list; V still toggles
 
-G1.25 THREAD UI (like Plus)
----------------------------
-Msg Box → tap peer (or V) → CHAT thread:
-  • Inbound (from peer):  LEFT  white bubble, black text
-  • Outbound (from us):   RIGHT black bubble, white text
-  • Outbound status under bubble: queued / sent / deliv
-  • Header = peer name; "last: sent" after TX
+COM PORT WITHOUT RECOMPILE
+--------------------------
+Editing upload_port in platformio.ini can dirty the env and force big rebuilds.
+Override port on the CLI instead:
 
-HOW TO OPEN
------------
-Msg Box list → tap conversation row
-OR V while a peer is selected
-Peers: select + type + Enter still sends without opening thread
+  pio run -e tdeck_pro_cooperative -t upload --upload-port COM9
+  pio device monitor --port COM9 --baud 115200
 
-BOARD
------
-qio_qspi PSRAM; recoverCorruptLittleFS on corrupt mount
+BAT (repo root or copy next to project):
+  upload-com.bat COM9          — upload last build only
+  monitor-com.bat COM9         — serial monitor
+  build-upload-com.bat COM9    — incremental build + upload
 
-NEXT
-----
-N4 partial e-ink  N5 energy  N6 KB backlight
+VS Code:
+  Terminal → Run Task… after adding vscode-tasks-snippet.json entries to
+  .vscode/tasks.json (Upload COM8 / COM9, Monitor COM8 / COM9).
+  Or PlatformIO: project tasks with custom upload_port in a [env:…] that
+  extends cooperative WITHOUT changing shared upload_port — better still CLI.
+
+Optional: comment out upload_port / monitor_port in [common] so PIO auto-detects
+when only one board is plugged in.
 
 ONE-LINER
 ---------
-G1.25: chat thread left=in / right=out bubbles matching Plus layout.
+White L/R bubbles; Back tab; use --upload-port COMx / bat to avoid ini rebuilds.
 ================================================================================

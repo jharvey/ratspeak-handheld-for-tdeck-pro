@@ -1,0 +1,96 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Upload COM8 (no ini edit)",
+      "type": "shell",
+      "command": "pio run -e tdeck_pro_cooperative -t upload --upload-port COM8",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Upload COM9 (no ini edit)",
+      "type": "shell",
+      "command": "pio run -e tdeck_pro_cooperative -t upload --upload-port COM9",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Build + Upload COM8",
+      "type": "shell",
+      "command": "pio run -e tdeck_pro_cooperative -t upload --upload-port COM8",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Build + Upload COM9",
+      "type": "shell",
+      "command": "pio run -e tdeck_pro_cooperative -t upload --upload-port COM9",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Monitor COM8",
+      "type": "shell",
+      "command": "pio device monitor --port COM8 --baud 115200",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Monitor COM9",
+      "type": "shell",
+      "command": "pio device monitor --port COM9 --baud 115200",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "List serial ports",
+      "type": "shell",
+      "command": "pio device list",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    }
+  ]
+}

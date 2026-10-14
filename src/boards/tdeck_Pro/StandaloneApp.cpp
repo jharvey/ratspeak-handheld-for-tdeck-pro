@@ -805,16 +805,23 @@ bool handleTouchAt(int16_t x, int16_t y) {
         return true;
     }
 
-    // Bottom nav: Chats | Contact | Peers (unequal widths)
+    // Bottom nav: Contact | Msg Box/Back | Peers
     if (y >= BOT_TOP) {
         ScreenId want = SCR_CONTACTS;
         if (x < BOT_CONTACT_W)
             want = SCR_CONTACTS;
         else if (x < BOT_CONTACT_W + BOT_MSGBOX_W)
-            want = SCR_CHATS;   // Msg Box
+            want = SCR_CHATS;   // Msg Box or Back when in thread
         else
             want = SCR_PEERS;
-        Serial.printf("[TAB] bot -> %s\n", tabLabel(want));
+        Serial.printf("[TAB] bot -> %s hist=%d\n", tabLabel(want), (int)g_showHistory);
+        // Back: same Msg Box zone while thread open → close thread to list
+        if (want == SCR_CHATS && g_screen == SCR_CHATS && g_showHistory) {
+            g_showHistory = false;
+            Serial.println("[TAB] Back → Msg Box list");
+            show_screen(SCR_CHATS);
+            return true;
+        }
         if (want == g_screen) return true;
         if (want != SCR_CHATS) g_showHistory = false;
         show_screen(want);
@@ -1758,7 +1765,7 @@ void build_chats() {
                 if (y > CONTENT_BOTTOM - 30) break;
             }
         }
-        draw_compose_or_hint("type+Enter  V=list");
+        draw_compose_or_hint("type+Enter  Back/V=list");
         return;
     }
     loadMessageRows(false);
@@ -2029,6 +2036,14 @@ bool handleKeyEvent(const KeyEvent& ev) {
             // On Msg Box / Contact / Peers: letters always type (fix HELLO→Home)
             // Only V=thread N=next T=test remain as shortcuts there.
             if (onMsgScreens) {
+                if (ev.character == 'b' || ev.character == 'B') {
+                    if (g_showHistory) {
+                        g_showHistory = false;
+                        show_screen(SCR_CHATS);
+                        Serial.println("[KEY] Back → Msg Box list");
+                        return false;
+                    }
+                }
                 if (ev.character == 'v' || ev.character == 'V') {
                     g_showHistory = !g_showHistory;
                     if (g_showHistory) loadHistoryRows();
@@ -2097,8 +2112,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.25");
-    Serial.println(" Plus-style chat bubbles L/R");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.26");
+    Serial.println(" white bubbles + Back tab");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
