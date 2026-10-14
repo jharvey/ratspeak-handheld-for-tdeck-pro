@@ -96,9 +96,11 @@ char g_msgNote[40] = "";
 bool g_msgRowsLoaded = false;
 uint32_t g_msgCacheRevision = 0;
 
-constexpr int HIST_ROWS = 4;
+constexpr int HIST_ROWS = 6;
 struct HistRow {
-    char line[28];
+    char line[36];   // "> HELLO" or "< hi"
+    char st[8];      // out: sent/queued/deliv; in: ""
+    bool incoming;
     bool used;
 };
 HistRow g_histRows[HIST_ROWS];
@@ -481,6 +483,8 @@ void doSendTest(const char* body) {
                 strcpy(g_txStr, ir.txSuppressed ? "saved" : "sent");
                 g_msgRowsLoaded = false;
                 if (g_featAudio) g_audio.playMessage();
+                // N1/N2: refresh thread so new outbound appears with status
+                if (g_showHistory) loadHistoryRows();
             } else if (ir.error == handheld::storage::Error::Allocation) {
                 // Retry once after another clean — Allocation at ~12K is common
                 Serial.println("[TX] Allocation fail — clean+retry once");
@@ -515,6 +519,7 @@ void doSendTest(const char* body) {
                             strcpy(g_txStr, ir2.txSuppressed ? "saved" : "sent");
                             g_msgRowsLoaded = false;
                             if (g_featAudio) g_audio.playMessage();
+                            if (g_showHistory) loadHistoryRows();
                         } else {
                             snprintf(g_txStr, sizeof(g_txStr), "fail %u", (unsigned)ir2.error);
                         }
@@ -794,6 +799,14 @@ bool handleTouchAt(int16_t x, int16_t y) {
         peerToHex32(g_msgRows[g_selPeer].peer, hex);
         Serial.printf("[PEER] touch sel=%d/%d (was %d) %s\n",
                       g_selPeer, g_msgRowCount, was, hex);
+        // N1: on Msg Box, open thread for this peer
+        if (g_screen == SCR_CHATS) {
+            g_showHistory = true;
+            loadHistoryRows();
+            show_screen(SCR_CHATS);
+            Serial.println("[PEER] Msg Box → thread");
+            return true;
+        }
         if (g_selPeer != was) {
             show_screen(g_screen);  // only full refresh when selection changes
             return true;
@@ -827,16 +840,20 @@ bool handleTouchAt(int16_t x, int16_t y) {
             int idx = row * 3 + col;
             // 0 LORA 1 TCP 2 WIFI 3 PEERS 4 AUDIO 5 GPS
             if (idx == 0) { g_featLora = !g_featLora; Serial.printf("[FEAT] LORA %s\n", g_featLora?"ON":"OFF"); }
-            else if (idx == 1) { g_featTcp = !g_featTcp; Serial.printf("[FEAT] TCP %s\n", g_featTcp?"ON":"OFF"); }
-            else if (idx == 2) { g_featWifi = !g_featWifi; Serial.printf("[FEAT] WIFI %s\n", g_featWifi?"ON":"OFF"); }
+            else if (idx == 1 || idx == 2) {
+                Serial.printf("[FEAT] PATH/LINK status-only paths=%s links=%s\n",
+                              g_pathsStr, g_linksStr);
+            }
             else if (idx == 4) {
                 g_featAudio = !g_featAudio;
                 g_audio.setEnabled(g_featAudio);
                 Serial.printf("[FEAT] AUDIO %s\n", g_featAudio?"ON":"OFF");
-                if (g_featAudio) notifyInbound();  // sample beep
+                if (g_featAudio) notifyInbound();
             }
-            else if (idx == 5) { g_featGps = !g_featGps; Serial.printf("[FEAT] GPS %s\n", g_featGps?"ON":"OFF"); }
-            // PEERS tile (3) is status only
+            else if (idx == 5) {
+                Serial.printf("[FEAT] LXMFQ=%s (status)\n", g_lxmfqStr);
+            }
+            // PEERS tile (3) status only
             show_screen(SCR_HOME);
             return true;
         }
@@ -949,7 +966,12 @@ bool tryConversationPage(uint8_t limit) {
 void loadHistoryRows() {
     g_histRowCount = 0;
     g_histNote[0] = '\0';
-    for (int i = 0; i < HIST_ROWS; i++) g_histRows[i].used = false;
+    for (int i = 0; i < HIST_ROWS; i++) {
+        g_histRows[i].used = false;
+        g_histRows[i].incoming = false;
+        g_histRows[i].line[0] = '\0';
+        g_histRows[i].st[0] = '\0';
+    }
 
     clampSelPeer();
     if (!g_storeReady || g_msgRowCount == 0 || !g_msgRows[g_selPeer].used) {
@@ -1071,12 +1093,26 @@ void loadHistoryRows() {
             if ((unsigned char)snip[k] < 32 || (unsigned char)snip[k] > 126)
                 snip[k] = '?';
         }
+        h.incoming = entries[i].incoming;
         if (copy)
             snprintf(h.line, sizeof(h.line), "%s %s", arrow, snip);
         else
             snprintf(h.line, sizeof(h.line), "%s#%u", arrow, (unsigned)entries[i].counter);
-        Serial.printf("[HIST] %s#%u \"%s\" tlen=%u clen=%u\n",
-                      arrow, (unsigned)entries[i].counter, snip,
+        // N2: coarse status from stored LXMF status byte (outbound only)
+        h.st[0] = '\0';
+        if (!entries[i].incoming) {
+            // LXMFStatus-ish: 0 queued 1 sending 2 sent 3 delivered 4 failed …
+            switch (hdr.status) {
+                case 0: strcpy(h.st, "queued"); break;
+                case 1: strcpy(h.st, "send"); break;
+                case 2: strcpy(h.st, "sent"); break;
+                case 3: strcpy(h.st, "deliv"); break;
+                case 4: strcpy(h.st, "fail"); break;
+                default: snprintf(h.st, sizeof(h.st), "s%u", (unsigned)hdr.status); break;
+            }
+        }
+        Serial.printf("[HIST] %s#%u \"%s\" st=%s tlen=%u clen=%u\n",
+                      arrow, (unsigned)entries[i].counter, snip, h.st,
                       (unsigned)hdr.titleLength, (unsigned)hdr.contentLength);
     }
 
@@ -1537,18 +1573,33 @@ void build_home() {
     const int tw = TILE_W;
     const int th = TILE_H;
     const int gap = TILE_GAP;
-    char peerN[8];
-    if (g_storeReady)
-        snprintf(peerN, sizeof(peerN), "%u", (unsigned)g_msgStore.totalConversations());
-    else
-        strcpy(peerN, "0");
-    const char* loraV = g_featLora && g_loraIf && g_loraIf->isOnline() ? "ON" : "OFF";
+    // N3: live path/link/RSSI (refreshLiveData already called from show_screen)
+    char loraV[14], peerV[14], pathV[14];
+    if (g_featLora && g_loraIf && g_loraIf->isOnline()) {
+        // Prefer RSSI string e.g. "-14 dBm" → compact
+        if (g_rssiStr[0] && g_rssiStr[0] != '-')
+            snprintf(loraV, sizeof(loraV), "%s", g_rssiStr);
+        else
+            strcpy(loraV, "ON");
+    } else {
+        strcpy(loraV, "OFF");
+    }
+    // PEERS: announced nodes + stored conversations
+    {
+        int ann = g_announceMgr.nodeCount();
+        unsigned conv = g_storeReady ? g_msgStore.totalConversations() : 0;
+        snprintf(peerV, sizeof(peerV), "%d/%u", ann, conv);
+    }
+    // Reuse TCP tile for paths, WIFI for links when those features off (live mesh stats)
+    snprintf(pathV, sizeof(pathV), "p%s", g_pathsStr);
+    char linkV[14];
+    snprintf(linkV, sizeof(linkV), "l%s", g_linksStr);
     draw_tile(gx,                gy,            tw, th, "LORA",  loraV);
-    draw_tile(gx + tw + gap,     gy,            tw, th, "TCP",   g_featTcp ? "ON" : "OFF");
-    draw_tile(gx + 2*(tw + gap), gy,            tw, th, "WIFI",  g_featWifi ? "ON" : "OFF");
-    draw_tile(gx,                gy + th + gap, tw, th, "PEERS", peerN);
+    draw_tile(gx + tw + gap,     gy,            tw, th, "PATH",  pathV);
+    draw_tile(gx + 2*(tw + gap), gy,            tw, th, "LINK",  linkV);
+    draw_tile(gx,                gy + th + gap, tw, th, "PEERS", peerV);
     draw_tile(gx + tw + gap,     gy + th + gap, tw, th, "AUDIO", g_featAudio ? "ON" : "OFF");
-    draw_tile(gx + 2*(tw + gap), gy + th + gap, tw, th, "GPS",   g_featGps ? "ON" : "OFF");
+    draw_tile(gx + 2*(tw + gap), gy + th + gap, tw, th, "LXMFQ", g_lxmfqStr);
 
     // Status + full-width Announce — packed under tiles
     int sy = gy + 2 * (th + gap) + 2;
@@ -1953,8 +2004,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.21");
-    Serial.println(" PSRAM + bidirectional LXMF OK");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.22");
+    Serial.println(" N1 thread + N2 TX status + N3 live tiles");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();

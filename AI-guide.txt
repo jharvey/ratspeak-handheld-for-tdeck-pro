@@ -1,87 +1,46 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-13 (Phase G1.21 — PSRAM + bidirectional LXMF OK)
+Last updated: 2026-10-13 (Phase G1.22 — N1+N2+N3)
 ================================================================================
 
-MILESTONE (G1.20/G1.21)
------------------------
-[PSRAM] found=1 size=~8MB caps_spiram=~8MB  (QSPI, not OPI)
-[PROTO] try SPIRAM|8BIT — node on SPIRAM
-[TX] outcome=0 (Committed) err=0 — outbound HELLO saved + LoRa TX
-Inbound _i.json written; Msg Box shows unread; Plus↔Pro messages both ways.
+MILESTONE
+---------
+QSPI PSRAM (~8MB) + bidirectional LXMF (Committed + inbound store).
 
-Board must use:
-  board = lilygo_t_deck_pro
-  board_build.arduino.memory_type = qio_qspi   // NOT qio_opi
-  -DBOARD_HAS_PSRAM
-  "-I${PROJECT_DIR}/src/boards/tdeck_Pro"
-Official LilyGO T-Deck-Pro is QSPI PSRAM. OPI left found=1 size=0.
+G1.22 COMBINED STEP
+-------------------
+N1 Thread: Msg Box → tap peer opens CHAT history (V toggles list/thread).
+           HIST_ROWS=6; after TX, thread reloads if open.
+N2 Status: last TX line on thread; outbound rows show [queued/sent/deliv/…]
+           from StoredRecordHeader.status.
+N3 Live Home tiles:
+           LORA = RSSI (or ON/OFF)
+           PATH = pathCount   LINK = linkCount
+           PEERS = announced/conversations
+           AUDIO toggle   LXMFQ = queued count
 
-HOW TO SEND (Pro)
------------------
-1. Announce (boot or Home ANNOUNCE)
-2. P or bottom Peers tab → tap peer (or digit 1–9)
-3. Type message → Enter
-4. Serial: outcome=0 Committed + [LORA_IF] TX
+HOW TO USE
+----------
+Send: Peers → tap peer → type → Enter  (or Msg Box thread)
+Read thread: Msg Box → tap conversation row  OR  V on Msg Box
+Home: live RSSI / paths / links / queue
 
-HOW TO READ
------------
-Msg Box tab: conversation list (unread counts)
-History (H) when implemented on selected peer
-Touch peer row stays on Peers; type then Enter
+BOARD
+-----
+lilygo_t_deck_pro.json  memory_type=qio_qspi  BOARD_HAS_PSRAM
+-I src/boards/tdeck_Pro
 
 WORKS
 -----
-- QSPI PSRAM map + SPIRAM protocol + LVGL draw buf in SPIRAM
-- Boot LXMF recovery drain before UI
-- Announce TX/RX, peer list from announces
-- Compose + lxmfSubmit + Committed + LoRa TX
-- Inbound store (_i.json) + Msg Box unread
-- Nav: Settings|Home top; Contact|Msg Box|Peers bottom
-- Touch peer select; digit 1–9 select; empty Enter stays on msg screens
-- Keyboard shortcuts when compose empty (A/S/H/P/…) on Home
-- Audio notify path present; CST328 touch (no INT→next when present)
+PSRAM, SPIRAM proto, announce, compose TX, inbound, nav, touch, recovery drain
+N1/N2/N3 as above
 
-PARTIAL / GAPS
---------------
-- Msg Box is list-level, not full Plus chat thread UI
-- Delivery/ack status not shown on e-ink like Plus
-- Home tiles still partly static (TCP/WIFI/GPS)
-- Peer auto-refresh throttle OK; history browse thin
-- Contact rename / trusted list / QR not ported
-- Partial e-ink refresh not used (fullRefresh only)
-- Energy sleep / WOR not implemented
-- Keyboard backlight not driven
-- Compile still rebuilds a lot (ccache / narrower filters)
-
-REJECTION / OUTCOME (reference)
--------------------------------
-Outgoing Rejection: 0 None … 4 NoMemory … 8 Recovering 9 Stopped
-storage Outcome: 0 Committed 1 Failed 2 Cancelled
-storage Error: 2 Allocation (was the pre-PSRAM failure mode)
-
-NEXT PHASE SUGGESTIONS (pick order with user)
----------------------------------------------
-N1  Msg Box / History: show last N messages for selected peer (Plus-like thread)
-N2  Delivery status on UI (queued/sent/delivered) after lxmfPoll
-N3  Home live tiles: pathCount, linkCount, real RSSI/SNR, battery gauge polish
-N4  Partial e-ink refresh for compose/idle updates (less flash, still careful of
-    Good Display partial rules)
-N5  Energy: light-sleep between beats, radio duty-cycle notes in guide
-N6  Keyboard backlight on key activity
-N7  Contacts = saved names; Peers = announced; clear copy + select→compose
-N8  Faster builds (ccache, src filter, LTO careful)
-N9  Upstream rebase / cooperative green keep
-
-STANDALONE RULES (unchanged)
-----------------------------
-EXCLUDE LvglApplication.cpp and ui/lvgl sources
-INCLUDE boards/tdeck_Pro (DisplayEink, LvglPort, LvglStubs, StandaloneApp)
-Keep single fullRefresh-per-screen-change until N4
-Prefer small compile-ready full files
+NEXT
+----
+N4 Partial e-ink  N5 Energy  N6 KB backlight  N7 Contacts polish
+N8 Faster builds  N9 Upstream rebase
 
 ONE-LINER
 ---------
-QSPI PSRAM mapped; bidirectional LXMF works. Next: chat history UI, status,
-partial refresh, energy — user picks order.
+G1.22: thread + TX status + live Home tiles on working PSRAM mesh.
 ================================================================================
