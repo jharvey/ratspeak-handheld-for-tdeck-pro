@@ -1,32 +1,48 @@
 ================================================================================
 AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-15 (Phase G1.29)
+Last updated: 2026-10-15 (Phase G1.30)
 ================================================================================
 
-CONTACTS LIKE PLUS (G1.29)
---------------------------
-Screen shows two sections:
-  TRUSTED (n)     — saved contacts with display names
-  RECENT PEERS (n)— announced peers (short id until named)
+NAMES + ID EVERYWHERE
+---------------------
+Contacts, Peers, Msg Box list rows:
+  line1 = contact display name (or short id if unnamed)
+  line2 = ID: <hex>  (+ optional preview / RSSI)
 
-Save / name a peer (on-device, like Plus "Set contact name"):
-  1. Open Contact tab
-  2. Select peer: 1-9 or touch row
-  3. Enter (empty) → "Set contact name" screen
-  4. Type name (e.g. radio2)
-  5. Enter → setContactName + saveNode + name cache
-  6. Peer moves under TRUSTED with that name
+CONTACTS (G1.29+)
+-----------------
+TRUSTED + RECENT PEERS. Enter empty → name editor → setContactName+saveNode.
 
-Cancel: keyboard Up (^) or Back Up bar
+SETTINGS (G1.30) — Plus-like hierarchy
+--------------------------------------
+Root categories (1-9 or touch, Enter opens):
+  1 Identity & Device   — dest hash, firmware label (live)
+  2 Screen & Input      — e-ink N/A; KB light via serial L
+  3 Battery             — volts + % (live)
+  4 LoRa                — ON/OFF intent, region, RSSI (Enter toggles)
+  5 Network             — WiFi/TCP stubs (future)
+  6 Time & Location     — GPS stubs (future)
+  7 Alerts & Audio      — Audio ON/OFF (Enter toggles, live)
+  8 Diagnostics         — paths, links, heap, PSRAM, uptime (live)
+  9 Storage & Maint.    — heap/PSRAM; Enter on Send Announce
 
-Serial still works: n:Alice after selecting peer
+Back: keyboard Up (^) or touch header "< …" on sub-pages.
+Tab to Settings always opens root list.
 
-HOW TO TEXT
------------
-Msg Box / Peers: select → type → Enter
-Contacts: Enter opens name editor (not TX); use Peers/Msg Box to message
+WORKING vs STUB
+---------------
+Live: Battery, LoRa intent+RSSI, Audio toggle, Diagnostics, Announce, names
+Stub: WiFi/TCP, GPS, Theme/Dim, QR, Create Identity, Erase, Firmware check
+
+FUTURE
+------
+- Wire Create Identity / Erase Device carefully
+- WiFi client + TCP when cooperative stack allows
+- Key backlight GPIO if pin known
+- Partial e-ink refresh / sleep for energy
+- PSRAM already mapped (QSPI)
 
 ONE-LINER
 ---------
-G1.29: Contacts = Trusted + Recent; Enter=name/save like Plus video.
+G1.30: name+ID on lists; Settings hierarchy matching Plus with live toggles.
 ================================================================================

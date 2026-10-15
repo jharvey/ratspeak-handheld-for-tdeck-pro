@@ -42,6 +42,22 @@ bool g_featWifi  = false;
 bool g_featTcp   = false;
 bool g_featGps   = false;
 bool g_featLora  = true;   // display/radio intent (radio stays up for mesh)
+
+// Settings hierarchy (Plus-like). SET_ROOT = top list; others = sub-pages.
+enum SettingsPage : uint8_t {
+    SET_ROOT = 0,
+    SET_IDENTITY,
+    SET_SCREEN,
+    SET_BATTERY,
+    SET_LORA,
+    SET_NETWORK,
+    SET_TIME,
+    SET_AUDIO,
+    SET_DIAG,
+    SET_STORAGE,
+};
+SettingsPage g_settingsPage = SET_ROOT;
+int g_settingsSel = 0;  // highlighted row on current page
 uint32_t g_lastPeerAutoMs = 0;
 size_t   g_lastPeerCount  = 0;
 bool     g_peerDirty      = false;
@@ -150,6 +166,10 @@ void clampSelPeer();
 bool cycleSelPeer();
 bool cst328Read(int16_t& x, int16_t& y);  // E22
 bool handleTouchAt(int16_t x, int16_t y);  // true if already drew
+void settingsGoBack();
+void settingsActivate();
+bool inMessageUi();
+void goBackFromMessage();
 
 void spiBusIdle() {
     pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
@@ -617,13 +637,13 @@ std::string resolvePeerName(const uint8_t peer[16]) {
 }
 
 void formatPeerLine(char* out, size_t outLen, const uint8_t peer[16], uint32_t unread) {
-    // Prefer announce / cache display name (Plus-style); short hash only if unnamed
+    // Title: contact name if known, else short id (Plus-style)
     std::string name = resolvePeerName(peer);
     if (!name.empty()) {
         if (unread > 0)
-            snprintf(out, outLen, "%.16s *%u", name.c_str(), (unsigned)unread);
+            snprintf(out, outLen, "%.14s *%u", name.c_str(), (unsigned)unread);
         else
-            snprintf(out, outLen, "%.18s", name.c_str());
+            snprintf(out, outLen, "%.16s", name.c_str());
         return;
     }
     if (unread > 0)
@@ -635,13 +655,13 @@ void formatPeerLine(char* out, size_t outLen, const uint8_t peer[16], uint32_t u
 }
 
 void formatPeerSub(char* out, size_t outLen, const uint8_t peer[16], const char* preview) {
-    if (preview && preview[0]) {
-        snprintf(out, outLen, "%.24s", preview);
-        return;
-    }
+    // Always show ID; optional preview after
     char hex[33];
     peerToHex32(peer, hex);
-    snprintf(out, outLen, "ID: %.16s", hex);
+    if (preview && preview[0])
+        snprintf(out, outLen, "ID:%.10s %.10s", hex, preview);
+    else
+        snprintf(out, outLen, "ID: %.16s", hex);
 }
 
 void notifyInbound() {
@@ -946,13 +966,19 @@ void applyView(const handheld::storage::ConversationView& v) {
     memcpy(r.peer, v.peer, 16);
     r.unread = v.unreadCount;
     formatPeerLine(r.line1, sizeof(r.line1), r.peer, r.unread);
-    size_t pl = v.previewLength;
-    if (pl >= sizeof(r.line2)) pl = sizeof(r.line2) - 1;
-    memcpy(r.line2, v.preview, pl);
-    r.line2[pl] = '\0';
-    for (size_t k = 0; k < pl; k++) {
-        if ((unsigned char)r.line2[k] < 32 || (unsigned char)r.line2[k] > 126)
-            r.line2[k] = '?';
+    {
+        char prev[28] = "";
+        size_t pl = v.previewLength;
+        if (pl >= sizeof(prev)) pl = sizeof(prev) - 1;
+        if (pl > 0) {
+            memcpy(prev, v.preview, pl);
+            prev[pl] = '\0';
+            for (size_t k = 0; k < pl; k++) {
+                if ((unsigned char)prev[k] < 32 || (unsigned char)prev[k] > 126)
+                    prev[k] = '?';
+            }
+        }
+        formatPeerSub(r.line2, sizeof(r.line2), r.peer, prev[0] ? prev : nullptr);
     }
     char hex[33];
     peerToHex32(r.peer, hex);
@@ -1224,11 +1250,14 @@ void appendAnnouncedPeers() {
         memcpy(r.peer, node.hash.data(), 16);
         r.unread = 0;
         formatPeerLine(r.line1, sizeof(r.line1), r.peer, 0);
-        // Distinguish announce-only peers (no conversation yet).
-        if (node.rssi != 0)
-            snprintf(r.line2, sizeof(r.line2), "(ann %d dBm)", node.rssi);
-        else
-            snprintf(r.line2, sizeof(r.line2), "(announced)");
+        {
+            char hex[33];
+            peerToHex32(r.peer, hex);
+            if (node.rssi != 0)
+                snprintf(r.line2, sizeof(r.line2), "ID:%.12s %ddBm", hex, node.rssi);
+            else
+                snprintf(r.line2, sizeof(r.line2), "ID: %.16s", hex);
+        }
         g_msgRowCount++;
         added++;
         char hex[33];
@@ -1990,32 +2019,218 @@ void build_peers() {
     draw_compose_or_hint("1-9 select  type+Enter=send");
 }
 
-void build_settings() {
-    // Plus Settings: menu rows with subtitle + >
-    clear_screen();
-    int y = CONTENT_TOP + 2;
-
-    char batSub[28];
-    snprintf(batSub, sizeof(batSub), "%s %s", g_batStr, g_pctStr);
-    char loraSub[32];
-    snprintf(loraSub, sizeof(loraSub), "Long Fast %.0f MHz",
-             LORA_DEFAULT_FREQ / 1e6f);
-    char idSub[28];
-    snprintf(idSub, sizeof(idSub), "%.16s", g_destHex);
-
-    draw_menu_row(y, 44, "Identity & Device", idSub, false); y += 48;
-    draw_menu_row(y, 44, "Battery", batSub, false); y += 48;
-    draw_menu_row(y, 44, "LoRa", loraSub, false); y += 48;
-    char annSub[28];
-    snprintf(annSub, sizeof(annSub), "Ann %s", g_announceStr);
-    draw_menu_row(y, 44, "Announce / TX", annSub, false); y += 48;
-    draw_menu_row(y, 44, "Rename peer", "serial: n:Name", false); y += 48;
-    draw_menu_row(y, 36, "KB backlight", "serial: L on/off", false);
-
-    draw_compose_or_hint("n:Name rename sel peer");
+void settingsGoBack() {
+    if (g_settingsPage != SET_ROOT) {
+        g_settingsPage = SET_ROOT;
+        g_settingsSel = 0;
+        show_screen(SCR_SETTINGS);
+    }
 }
 
+void settingsActivate() {
+    // Activate highlighted row on current settings page
+    if (g_settingsPage == SET_ROOT) {
+        static const SettingsPage kMap[] = {
+            SET_IDENTITY, SET_SCREEN, SET_BATTERY, SET_LORA,
+            SET_NETWORK, SET_TIME, SET_AUDIO, SET_DIAG, SET_STORAGE
+        };
+        if (g_settingsSel >= 0 && g_settingsSel < 9) {
+            g_settingsPage = kMap[g_settingsSel];
+            g_settingsSel = 0;
+            show_screen(SCR_SETTINGS);
+        }
+        return;
+    }
+    // Sub-page actions
+    if (g_settingsPage == SET_AUDIO) {
+        if (g_settingsSel == 0) {
+            g_featAudio = !g_featAudio;
+            g_audio.setEnabled(g_featAudio);
+            Serial.printf("[FEAT] AUDIO %s\n", g_featAudio ? "ON" : "OFF");
+            if (g_featAudio) notifyInbound();
+            show_screen(SCR_SETTINGS);
+        }
+        return;
+    }
+    if (g_settingsPage == SET_LORA) {
+        if (g_settingsSel == 0) {
+            g_featLora = !g_featLora;
+            Serial.printf("[FEAT] LORA %s\n", g_featLora ? "ON" : "OFF");
+            show_screen(SCR_SETTINGS);
+        }
+        return;
+    }
+    if (g_settingsPage == SET_STORAGE) {
+        if (g_settingsSel == 5) {  // Send Announce
+            doAnnounce();
+            if (g_featAudio) g_audio.playAnnounce();
+            show_screen(SCR_SETTINGS);
+        }
+        return;
+    }
+}
+
+void build_settings() {
+    // Plus Settings hierarchy — live data where available; stubs otherwise
+    clear_screen();
+    int y = CONTENT_TOP + 2;
+    char a[36], b[36];
+
+    auto row = [&](const char* title, const char* sub, int idx) {
+        if (y > CONTENT_BOTTOM - 8) return;
+        draw_menu_row(y, 36, title, sub, idx == g_settingsSel);
+        y += 40;
+    };
+
+    if (g_settingsPage == SET_ROOT) {
+        fat_label(g_root, "SETTINGS", 4, y); y += 18;
+        snprintf(a, sizeof(a), "%.14s", g_destHex);
+        row("Identity & Device", a, 0);
+        row("Screen & Input", "e-ink / keys", 1);
+        snprintf(a, sizeof(a), "%s %s", g_batStr, g_pctStr);
+        row("Battery", a, 2);
+        snprintf(a, sizeof(a), "LF %.0fMHz %s", LORA_DEFAULT_FREQ / 1e6f,
+                 g_featLora ? "ON" : "OFF");
+        row("LoRa", a, 3);
+        row("Network", "WiFi/TCP stub", 4);
+        row("Time & Location", "stub", 5);
+        snprintf(a, sizeof(a), "Vol %s", g_featAudio ? "ON" : "OFF");
+        row("Alerts & Audio", a, 6);
+        snprintf(a, sizeof(a), "P%s L%s", g_pathsStr, g_linksStr);
+        row("Diagnostics", a, 7);
+        row("Storage & Maint.", "heap/flash", 8);
+        draw_compose_or_hint("1-9 open  Enter  ^=back");
+        return;
+    }
+
+    // Header with back
+    const char* titles[] = {
+        "SETTINGS", "Identity & Device", "Screen & Input", "Battery",
+        "LoRa", "Network", "Time & Location", "Alerts & Audio",
+        "Diagnostics", "Storage & Maint."
+    };
+    int ti = (int)g_settingsPage;
+    if (ti < 0 || ti > 9) ti = 0;
+    snprintf(a, sizeof(a), "< %s", titles[ti]);
+    fat_label(g_root, a, 4, y); y += 18;
+
+    if (g_settingsPage == SET_IDENTITY) {
+        row("Firmware", "Pro G1.30", 0);
+        snprintf(a, sizeof(a), "%.16s", g_destHex);
+        row("LXMF Address", a, 1);
+        snprintf(a, sizeof(a), "%.16s", g_destHex);
+        row("Identity Hash", a, 2);
+        row("Display Name", "(see announce)", 3);
+        row("Identity Slot", "0 active", 4);
+        row("Create Identity", "[reboot+erase]", 5);
+        draw_compose_or_hint("^=back to list");
+        return;
+    }
+    if (g_settingsPage == SET_SCREEN) {
+        row("Screen Bright", "e-ink N/A", 0);
+        row("Theme", "BW e-ink", 1);
+        row("Dim After", "N/A", 2);
+        row("Display Off", "N/A", 3);
+        row("Key Backlight", "serial: L", 4);
+        row("Keys Wake", "stub", 5);
+        draw_compose_or_hint("L serial toggle KB light");
+        return;
+    }
+    if (g_settingsPage == SET_BATTERY) {
+        snprintf(a, sizeof(a), "%s", g_pctStr);
+        row("Estimated Charge", a, 0);
+        snprintf(a, sizeof(a), "%s", g_batStr);
+        row("Battery Volts", a, 1);
+        row("Battery Display", "Bar+%", 2);
+        draw_compose_or_hint("^=back");
+        return;
+    }
+    if (g_settingsPage == SET_LORA) {
+        row("LoRa Radio", g_featLora ? "ON" : "OFF", 0);
+        snprintf(a, sizeof(a), "Americas (%.0f)", LORA_DEFAULT_FREQ / 1e6f);
+        row("Region Preset", a, 1);
+        row("Link Preset", "Long Fast", 2);
+        snprintf(a, sizeof(a), "%s", g_rssiStr);
+        row("Last RSSI", a, 3);
+        row("Developer RF", "locked", 4);
+        draw_compose_or_hint("Enter toggles LoRa intent");
+        return;
+    }
+    if (g_settingsPage == SET_NETWORK) {
+        row("WiFi Mode", "stub", 0);
+        row("Scan Networks", "[future]", 1);
+        row("WiFi SSID", "(not set)", 2);
+        row("TCP Server", "None", 3);
+        row("Port", "4242", 4);
+        row("LAN Discovery", "OFF", 5);
+        draw_compose_or_hint("WiFi/TCP future");
+        return;
+    }
+    if (g_settingsPage == SET_TIME) {
+        row("GPS Time Sync", "OFF", 0);
+        row("GPS Location", "OFF", 1);
+        row("Timezone", "local", 2);
+        row("24-Hour Clock", "OFF", 3);
+        draw_compose_or_hint("GPS future");
+        return;
+    }
+    if (g_settingsPage == SET_AUDIO) {
+        row("Audio Alerts", g_featAudio ? "ON" : "OFF", 0);
+        row("Volume", "default", 1);
+        row("Vibrate on msg", g_featAudio ? "ON" : "OFF", 2);
+        draw_compose_or_hint("Enter toggles audio");
+        return;
+    }
+    if (g_settingsPage == SET_DIAG) {
+        row("RNS Transport", g_protoReady ? "ACTIVE" : "OFF", 0);
+        snprintf(a, sizeof(a), "%s", g_pathsStr);
+        row("Known Paths", a, 1);
+        snprintf(a, sizeof(a), "%s", g_linksStr);
+        row("Live Links", a, 2);
+        snprintf(a, sizeof(a), "%s", g_rssiStr);
+        row("LoRa / RSSI", a, 3);
+        size_t hi = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        snprintf(a, sizeof(a), "%u KB", (unsigned)(hi / 1024));
+        row("Heap free", a, 4);
+        size_t ps = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        snprintf(a, sizeof(a), "%u KB", (unsigned)(ps / 1024));
+        row("PSRAM free", a, 5);
+        snprintf(a, sizeof(a), "%lu s", (unsigned long)(millis() / 1000UL));
+        row("Uptime", a, 6);
+        draw_compose_or_hint("^=back");
+        return;
+    }
+    if (g_settingsPage == SET_STORAGE) {
+        size_t hi = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        size_t ps = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        snprintf(a, sizeof(a), "%u KB", (unsigned)(hi / 1024));
+        row("Free Heap", a, 0);
+        snprintf(a, sizeof(a), "%u KB", (unsigned)(ps / 1024));
+        row("Free PSRAM", a, 1);
+        row("Flash", "LittleFS", 2);
+        row("SD Card", "optional", 3);
+        row("SD Msg Store", "flash", 4);
+        snprintf(a, sizeof(a), "Ann %s", g_announceStr);
+        row("Send Announce", a, 5);
+        row("Show QR Code", "[future]", 6);
+        row("Reboot Now", "hold power", 7);
+        draw_compose_or_hint("Enter on Announce to send");
+        return;
+    }
+    draw_compose_or_hint("^=back");
+}
+
+
 void show_screen(ScreenId id) {
+    if (id == SCR_SETTINGS && g_screen != SCR_SETTINGS) {
+        // Entering Settings from another tab → root list
+        g_settingsPage = SET_ROOT;
+        g_settingsSel = 0;
+    }
+    if (id != SCR_SETTINGS) {
+        // Leaving settings clears sub-page so next visit starts clean
+        // (keep if only redrawing same settings)
+    }
     g_screen = id;
     refreshLiveData();
     switch (id) {
@@ -2192,6 +2407,16 @@ bool handleKeyEvent(const KeyEvent& ev) {
                  g_screen == SCR_PEERS);
 
             // 1-9: select peer (never type digit while compose empty on msg screens)
+            if (g_screen == SCR_SETTINGS && g_composeLen == 0 &&
+                ev.character >= '1' && ev.character <= '9') {
+                g_settingsSel = (int)(ev.character - '1');
+                Serial.printf("[SET] key sel=%d\n", g_settingsSel);
+                if (g_settingsPage == SET_ROOT)
+                    settingsActivate();
+                else
+                    show_screen(SCR_SETTINGS);
+                return true;
+            }
             if (onMsgScreens && ev.character >= '1' && ev.character <= '9') {
                 if (g_msgRowCount == 0) {
                     if (g_screen == SCR_PEERS) {
@@ -2295,8 +2520,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.29");
-    Serial.println(" Contacts trusted+recent names");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.30");
+    Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
