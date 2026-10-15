@@ -116,6 +116,39 @@ char g_msgNote[40] = "";
 bool g_msgRowsLoaded = false;
 uint32_t g_msgCacheRevision = 0;
 
+// Local display-name overrides: show "1> RADIO1" even if announce name is "1".
+struct LocalName {
+    uint8_t peer[16];
+    char name[24];
+    bool used;
+};
+LocalName g_localNames[8] = {};
+void setLocalName(const uint8_t peer[16], const char* name) {
+    if (!peer || !name || !name[0]) return;
+    for (int i = 0; i < 8; i++) {
+        if (g_localNames[i].used && memcmp(g_localNames[i].peer, peer, 16) == 0) {
+            snprintf(g_localNames[i].name, sizeof(g_localNames[i].name), "%.23s", name);
+            return;
+        }
+    }
+    for (int i = 0; i < 8; i++) {
+        if (!g_localNames[i].used) {
+            g_localNames[i].used = true;
+            memcpy(g_localNames[i].peer, peer, 16);
+            snprintf(g_localNames[i].name, sizeof(g_localNames[i].name), "%.23s", name);
+            return;
+        }
+    }
+}
+const char* getLocalName(const uint8_t peer[16]) {
+    if (!peer) return nullptr;
+    for (int i = 0; i < 8; i++) {
+        if (g_localNames[i].used && memcmp(g_localNames[i].peer, peer, 16) == 0)
+            return g_localNames[i].name;
+    }
+    return nullptr;
+}
+
 constexpr int HIST_ROWS = 6;
 struct HistRow {
     char line[36];   // "> HELLO" or "< hi"
@@ -620,9 +653,21 @@ void peerToHex32(const uint8_t peer[16], char out[33]) {
 }
 
 std::string resolvePeerName(const uint8_t peer[16]) {
+    // Priority: user override > name cache > announce node.name
+    if (const char* loc = getLocalName(peer)) {
+        if (loc[0]) return std::string(loc);
+    }
     char hex[33];
     peerToHex32(peer, hex);
     std::string name = g_announceMgr.lookupName(hex);
+    if (!name.empty()) return name;
+    char hexUp[33];
+    for (int i = 0; i < 32; i++) {
+        char c = hex[i];
+        hexUp[i] = (c >= 'a' && c <= 'f') ? (char)(c - 32) : c;
+    }
+    hexUp[32] = 0;
+    name = g_announceMgr.lookupName(hexUp);
     if (!name.empty()) return name;
     const DiscoveredNode* n = g_announceMgr.findNode(rs::Bytes(peer, 16));
     if (n && !n->name.empty()) return n->name;
@@ -1253,6 +1298,14 @@ void appendAnnouncedPeers() {
         {
             char hex[33];
             peerToHex32(r.peer, hex);
+            if (const char* loc = getLocalName(r.peer)) {
+                snprintf(r.line1, sizeof(r.line1), "%.20s", loc);
+                r.saved = true;
+            } else {
+                std::string cached = g_announceMgr.lookupName(hex);
+                if (!cached.empty())
+                    snprintf(r.line1, sizeof(r.line1), "%.20s", cached.c_str());
+            }
             if (node.rssi != 0)
                 snprintf(r.line2, sizeof(r.line2), "ID:%.12s %ddBm", hex, node.rssi);
             else
@@ -1856,7 +1909,9 @@ void loadContactsRows() {
         memcpy(r.peer, node.hash.data(), 16);
         char hex[33];
         peerToHex32(r.peer, hex);
-        std::string nm = g_announceMgr.lookupName(hex);
+        std::string nm;
+        if (const char* loc = getLocalName(r.peer)) nm = loc;
+        if (nm.empty()) nm = g_announceMgr.lookupName(hex);
         if (nm.empty() && !node.name.empty()) nm = node.name;
         if (!nm.empty())
             snprintf(r.line1, sizeof(r.line1), "%.20s", nm.c_str());
@@ -2115,7 +2170,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.30", 0);
+        row("Firmware", "Pro G1.31", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2345,7 +2400,14 @@ bool handleKeyEvent(const KeyEvent& ev) {
             bool ok = g_announceMgr.setContactName(std::string(hex), std::string(body));
             g_announceMgr.saveNode(std::string(hex));
             g_announceMgr.saveNameCache();
-            Serial.printf("[NAME] save %s -> \"%s\" ok=%d\n", hex, body, (int)ok);
+            setLocalName(g_msgRows[g_selPeer].peer, body);
+            snprintf(g_msgRows[g_selPeer].line1, sizeof(g_msgRows[g_selPeer].line1),
+                     "%.20s", body);
+            g_msgRows[g_selPeer].saved = true;
+            formatPeerSub(g_msgRows[g_selPeer].line2, sizeof(g_msgRows[g_selPeer].line2),
+                          g_msgRows[g_selPeer].peer, nullptr);
+            Serial.printf("[NAME] save %s -> \"%s\" ok=%d line1=\"%s\"\n",
+                          hex, body, (int)ok, g_msgRows[g_selPeer].line1);
             g_nameEditMode = false;
             composeClear();
             g_composeMode = false;
@@ -2520,7 +2582,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.30");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.31");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
@@ -2709,7 +2771,15 @@ void loop() {
                     peerToHex32(g_msgRows[g_selPeer].peer, hex);
                     if (g_announceMgr.setContactName(std::string(hex), std::string(nm))) {
                         g_announceMgr.saveNameCache();
-                        Serial.printf("[NAME] %s -> \"%s\"\n", hex, nm);
+                        g_announceMgr.saveNode(std::string(hex));
+                        setLocalName(g_msgRows[g_selPeer].peer, nm);
+                        snprintf(g_msgRows[g_selPeer].line1, sizeof(g_msgRows[g_selPeer].line1),
+                                 "%.20s", nm);
+                        g_msgRows[g_selPeer].saved = true;
+                        formatPeerSub(g_msgRows[g_selPeer].line2, sizeof(g_msgRows[g_selPeer].line2),
+                                      g_msgRows[g_selPeer].peer, nullptr);
+                        Serial.printf("[NAME] %s -> \"%s\" line1=\"%s\"\n",
+                                      hex, nm, g_msgRows[g_selPeer].line1);
                         g_msgRowsLoaded = false;
                         show_screen(g_screen);
                     } else {
