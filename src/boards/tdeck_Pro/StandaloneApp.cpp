@@ -654,13 +654,24 @@ void peerToHex32(const uint8_t peer[16], char out[33]) {
 
 std::string resolvePeerName(const uint8_t peer[16]) {
     // Priority: user override > name cache > announce node.name
+    // Skip tiny placeholder announce names ("1") so list shows short id until renamed.
+    auto usable = [](const std::string& n) -> bool {
+        if (n.empty()) return false;
+        if (n.size() <= 2) {
+            // single digit / two-char placeholders from default display names
+            bool allDigit = true;
+            for (char c : n) if (c < '0' || c > '9') { allDigit = false; break; }
+            if (allDigit) return false;
+        }
+        return true;
+    };
     if (const char* loc = getLocalName(peer)) {
         if (loc[0]) return std::string(loc);
     }
     char hex[33];
     peerToHex32(peer, hex);
     std::string name = g_announceMgr.lookupName(hex);
-    if (!name.empty()) return name;
+    if (usable(name)) return name;
     char hexUp[33];
     for (int i = 0; i < 32; i++) {
         char c = hex[i];
@@ -668,14 +679,14 @@ std::string resolvePeerName(const uint8_t peer[16]) {
     }
     hexUp[32] = 0;
     name = g_announceMgr.lookupName(hexUp);
-    if (!name.empty()) return name;
+    if (usable(name)) return name;
     const DiscoveredNode* n = g_announceMgr.findNode(rs::Bytes(peer, 16));
-    if (n && !n->name.empty()) return n->name;
+    if (n && usable(n->name)) return n->name;
     n = g_announceMgr.findNodeByHex(hex);
-    if (n && !n->name.empty()) return n->name;
+    if (n && usable(n->name)) return n->name;
     for (const auto& node : g_announceMgr.nodes()) {
         if (node.hash.size() == 16 && memcmp(node.hash.data(), peer, 16) == 0 &&
-            !node.name.empty())
+            usable(node.name))
             return node.name;
     }
     return {};
@@ -755,11 +766,18 @@ void composeBackspace() {
 }
 
 bool inMessageUi() {
-    return g_showHistory || g_composeLen > 0 || g_composeMode;
+    return g_showHistory || g_composeLen > 0 || g_composeMode || g_nameEditMode;
 }
 
 void goBackFromMessage() {
     bool changed = false;
+    if (g_nameEditMode) {
+        g_nameEditMode = false;
+        composeClear();
+        g_composeMode = false;
+        changed = true;
+        Serial.println("[UI] Back — cancel name edit");
+    }
     if (g_composeLen > 0 || g_composeMode) {
         composeClear();
         g_composeMode = false;
@@ -772,6 +790,19 @@ void goBackFromMessage() {
         Serial.println("[UI] Back — left thread");
     }
     if (changed) show_screen(g_screen);
+}
+
+// Unified Back: message UI, Settings sub-page, or stay
+bool doBackAction() {
+    if (inMessageUi()) {
+        goBackFromMessage();
+        return true;
+    }
+    if (g_screen == SCR_SETTINGS && g_settingsPage != SET_ROOT) {
+        settingsGoBack();
+        return true;
+    }
+    return false;
 }
 
 void clampSelPeer() {
@@ -892,8 +923,13 @@ bool handleTouchAt(int16_t x, int16_t y) {
         return false;
     }
 
-    // Top nav: Settings | Home
+    // Top nav: Settings | Home  (on Settings sub-page, left half = Back)
     if (y < TOP_H) {
+        if (g_screen == SCR_SETTINGS && g_settingsPage != SET_ROOT) {
+            Serial.println("[TAB] Settings Back");
+            settingsGoBack();
+            return true;
+        }
         int i = (x < TOP_TAB_W) ? 0 : 1;
         ScreenId want = topTabScreen(i);
         Serial.printf("[TAB] top -> %s\n", tabLabel(want));
@@ -1606,20 +1642,34 @@ void draw_action_btn(int x, int y, int w, int h, const char* label) {
 
 // Plus-style settings/list row: title + subtitle + trailing ">"
 void draw_menu_row(int y, int h, const char* title, const char* sub, bool selected) {
+    // Box + labels parented to row so text stays inside bounds (no overlap).
     lv_obj_t* row = lv_obj_create(g_root);
-    lv_obj_set_size(row, EPD_WIDTH - 8, h);
-    lv_obj_set_pos(row, 4, y);
+    lv_obj_set_size(row, EPD_WIDTH - 4, h);
+    lv_obj_set_pos(row, 2, y);
     lv_obj_set_style_radius(row, 0, 0);
-    lv_obj_set_style_border_width(row, selected ? 2 : 1, 0);
+    lv_obj_set_style_border_width(row, selected ? 3 : 1, 0);
     lv_obj_set_style_border_color(row, lv_color_black(), 0);
-    lv_obj_set_style_bg_color(row, lv_color_white(), 0);
+    lv_obj_set_style_bg_color(row, selected ? lv_color_black() : lv_color_white(), 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    fat_label(g_root, title, 12, y + 4);
-    if (sub && sub[0])
-        fat_label(g_root, sub, 12, y + 22);
-    fat_label(g_root, ">", EPD_WIDTH - 22, y + (h - 16) / 2);
+
+    lv_color_t ink = selected ? lv_color_white() : lv_color_black();
+    const lv_font_t* font = &lv_font_montserrat_16;
+
+    lv_obj_t* t = lv_label_create(row);
+    lv_label_set_text(t, title ? title : "");
+    lv_obj_set_style_text_font(t, font, 0);
+    lv_obj_set_style_text_color(t, ink, 0);
+    lv_obj_set_pos(t, 6, (sub && sub[0]) ? 3 : (h - 14) / 2);
+
+    if (sub && sub[0]) {
+        lv_obj_t* s = lv_label_create(row);
+        lv_label_set_text(s, sub);
+        lv_obj_set_style_text_font(s, font, 0);
+        lv_obj_set_style_text_color(s, ink, 0);
+        lv_obj_set_pos(s, 6, 20);
+    }
 }
 
 void draw_compose_or_hint(const char* idleHint) {
@@ -2000,7 +2050,7 @@ void build_contacts() {
         snprintf(title, sizeof(title), "%d%s %s",
                  i + 1, (i == g_selPeer) ? ">" : " ", g_msgRows[i].line1);
         draw_menu_row(y, 40, title, g_msgRows[i].line2, i == g_selPeer);
-        y += 44;
+        y += 40;
         if (y > CONTENT_BOTTOM - 60) break;
     }
     if (!drewTrusted) {
@@ -2021,7 +2071,7 @@ void build_contacts() {
         snprintf(title, sizeof(title), "%d%s %s",
                  i + 1, (i == g_selPeer) ? ">" : " ", g_msgRows[i].line1);
         draw_menu_row(y, 40, title, g_msgRows[i].line2, i == g_selPeer);
-        y += 44;
+        y += 40;
         if (y > CONTENT_BOTTOM - 8) break;
     }
     if (!drewRecent) {
@@ -2066,8 +2116,8 @@ void build_peers() {
                 peerToHex32(g_msgRows[i].peer, hex);
                 snprintf(sub, sizeof(sub), "%.12s…", hex);
             }
-            draw_menu_row(y, 44, title, sub, i == g_selPeer);
-            y += 48;
+            draw_menu_row(y, 40, title, sub, i == g_selPeer);
+            y += 40;
             if (y > CONTENT_BOTTOM - 8) break;
         }
     }
@@ -2132,9 +2182,11 @@ void build_settings() {
     char a[36], b[36];
 
     auto row = [&](const char* title, const char* sub, int idx) {
-        if (y > CONTENT_BOTTOM - 8) return;
-        draw_menu_row(y, 36, title, sub, idx == g_settingsSel);
-        y += 40;
+        if (y > CONTENT_BOTTOM - 4) return;
+        // 34px row, no gap between boxes (avoids overlap + wasted space)
+        const int rh = 34;
+        draw_menu_row(y, rh, title, sub, idx == g_settingsSel);
+        y += rh;
     };
 
     if (g_settingsPage == SET_ROOT) {
@@ -2170,7 +2222,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.31", 0);
+        row("Firmware", "Pro G1.32", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2370,12 +2422,10 @@ void maybeComposeRedraw() {
 
 // Handle one keyboard event. Returns true if a full screen redraw is needed.
 bool handleKeyEvent(const KeyEvent& ev) {
-    // Keyboard Up (^) = Back when in message/thread mode
+    // Keyboard Up = Back (lone Shift on Pro keyboard; also ev.up if set)
     if (ev.up) {
-        if (inMessageUi()) {
-            goBackFromMessage();
-            return true;
-        }
+        Serial.println("[KEY] Up/Back");
+        if (doBackAction()) return true;
         return false;
     }
 
@@ -2582,7 +2632,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.31");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.32");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 

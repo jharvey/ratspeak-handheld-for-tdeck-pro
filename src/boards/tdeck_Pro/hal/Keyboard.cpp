@@ -304,9 +304,6 @@ void Keyboard::mapKey(uint8_t row, uint8_t col, bool pressed)
 
         // Double-tap Shift = toggle Caps Lock.
         _capsLock = !_capsLock;
-
-        // The second tap becomes the beginning of a new sequence,
-        // rather than allowing three rapid taps to immediately toggle again.
         _lastShiftPressMs = 0;
 
       } else {
@@ -314,9 +311,20 @@ void Keyboard::mapKey(uint8_t row, uint8_t col, bool pressed)
       }
 
       _shiftHeld = true;
+      _shiftAlone = true;
+      _shiftUsedAsMod = false;
     }
     else {
+      // Lone Shift tap (either bottom "up" key) = semantic Up / Back.
+      // If Shift was used with another key, it stays a modifier only.
+      if (_shiftAlone && !_shiftUsedAsMod) {
+        _event = {};
+        _event.up = true;
+        _hasEvent = true;
+      }
       _shiftHeld = false;
+      _shiftAlone = false;
+      _shiftUsedAsMod = false;
     }
 
     return;
@@ -366,6 +374,12 @@ void Keyboard::mapKey(uint8_t row, uint8_t col, bool pressed)
   // Only generate character/action events on key-down.
   if (!pressed) {
     return;
+  }
+
+  // Shift held + another key → not a lone Up.
+  if (_shiftHeld) {
+    _shiftUsedAsMod = true;
+    _shiftAlone = false;
   }
 
   // ---------------------------------------------------------------------------

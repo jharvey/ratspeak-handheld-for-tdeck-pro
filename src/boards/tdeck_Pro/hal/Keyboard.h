@@ -43,6 +43,9 @@ private:
   bool _shiftHeld = false;
   bool _altHeld = false;
   bool _symHeld = false;
+  // Track whether Shift was only a modifier or a lone press (→ KeyEvent.up).
+  bool _shiftAlone = false;
+  bool _shiftUsedAsMod = false;
 
   // Keyboard starts in uppercase/caps-lock mode.
   bool _capsLock = true;
