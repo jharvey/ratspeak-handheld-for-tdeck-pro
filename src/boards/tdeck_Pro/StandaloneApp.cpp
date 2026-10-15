@@ -83,14 +83,16 @@ char g_unreadStr[16] = "0 unread";
 char g_announceStr[20] = "never";
 char g_txStr[24]     = "-";
 
-constexpr int MSG_ROWS = 4;
+constexpr int MSG_ROWS = 6;
 struct MsgRow {
     char line1[28];
     char line2[28];
     uint8_t peer[16];
     uint32_t unread;
     bool used;
+    bool saved;  // true = trusted contact
 };
+bool g_nameEditMode = false;  // Contacts: type name then Enter to save
 MsgRow g_msgRows[MSG_ROWS];
 int g_msgRowCount = 0;
 int g_selPeer = 0;  // E20: selected MsgRow for TX / History / mark-read
@@ -940,6 +942,7 @@ void applyView(const handheld::storage::ConversationView& v) {
     if (g_msgRowCount >= MSG_ROWS) return;
     MsgRow& r = g_msgRows[g_msgRowCount];
     r.used = true;
+    r.saved = false;
     memcpy(r.peer, v.peer, 16);
     r.unread = v.unreadCount;
     formatPeerLine(r.line1, sizeof(r.line1), r.peer, r.unread);
@@ -962,6 +965,7 @@ void applySelectorOnly(const handheld::storage::ConversationSelector& s) {
     if (g_msgRowCount >= MSG_ROWS) return;
     MsgRow& r = g_msgRows[g_msgRowCount];
     r.used = true;
+    r.saved = false;
     memcpy(r.peer, s.cursor.peer, 16);
     r.unread = 0;
     formatPeerLine(r.line1, sizeof(r.line1), r.peer, 0);
@@ -1216,6 +1220,7 @@ void appendAnnouncedPeers() {
 
         MsgRow& r = g_msgRows[g_msgRowCount];
         r.used = true;
+        r.saved = false;
         memcpy(r.peer, node.hash.data(), 16);
         r.unread = 0;
         formatPeerLine(r.line1, sizeof(r.line1), r.peer, 0);
@@ -1254,7 +1259,7 @@ void loadMessageRows(bool force) {
 
     g_msgRowCount = 0;
     g_msgNote[0] = '\0';
-    for (int i = 0; i < MSG_ROWS; i++) g_msgRows[i].used = false;
+    for (int i = 0; i < MSG_ROWS; i++) { g_msgRows[i].used = false; g_msgRows[i].saved = false; }
 
     Serial.printf("[MSG] load free_int=%u rev=%u store=%d\n",
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
@@ -1272,6 +1277,7 @@ void loadMessageRows(bool force) {
         for (size_t i = 0; i < ids.size() && g_msgRowCount < MSG_ROWS; i++) {
             MsgRow& r = g_msgRows[g_msgRowCount];
             r.used = true;
+            r.saved = false;
             memset(r.peer, 0, 16);
             r.unread = 0;
             snprintf(r.line1, sizeof(r.line1), "msg %.12s", ids[i].c_str());
@@ -1794,52 +1800,151 @@ void build_chats() {
     draw_compose_or_hint("tap=open  type+Enter=send");
 }
 
-void build_contacts() {
-    // Plus Contacts: Share My QR header + contact rows
-    g_showHistory = false;
-    g_msgRowsLoaded = false;
-    if (g_storeReady) g_msgStore.poll();
+void loadContactsRows() {
+    // Plus-like: TRUSTED (saved) then RECENT (announced, not saved)
     g_msgRowCount = 0;
     g_msgNote[0] = '\0';
-    for (int i = 0; i < MSG_ROWS; i++) g_msgRows[i].used = false;
-    if (g_storeReady) {
-        if (!tryConversationPage(MSG_ROWS)) tryConversationPage(1);
+    for (int i = 0; i < MSG_ROWS; i++) {
+        g_msgRows[i].used = false;
+        g_msgRows[i].saved = false;
     }
-    if (g_msgRowCount == 0)
-        snprintf(g_msgNote, sizeof(g_msgNote), "(no contacts yet)");
+    const uint8_t* local = g_protoReady ? g_proto.localDestHash() : nullptr;
+    const auto& nodes = g_announceMgr.nodes();
+
+    auto addNode = [&](const DiscoveredNode& node, bool asSaved) {
+        if (g_msgRowCount >= MSG_ROWS) return;
+        if (node.hash.size() != 16) return;
+        if (local && memcmp(node.hash.data(), local, 16) == 0) return;
+        // dedupe
+        for (int i = 0; i < g_msgRowCount; i++) {
+            if (g_msgRows[i].used && memcmp(g_msgRows[i].peer, node.hash.data(), 16) == 0)
+                return;
+        }
+        MsgRow& r = g_msgRows[g_msgRowCount];
+        r.used = true;
+        r.saved = asSaved;
+        r.unread = 0;
+        memcpy(r.peer, node.hash.data(), 16);
+        char hex[33];
+        peerToHex32(r.peer, hex);
+        std::string nm = g_announceMgr.lookupName(hex);
+        if (nm.empty() && !node.name.empty()) nm = node.name;
+        if (!nm.empty())
+            snprintf(r.line1, sizeof(r.line1), "%.20s", nm.c_str());
+        else
+            snprintf(r.line1, sizeof(r.line1), "%.10s", hex);  // short id like Plus
+        // second line: full-ish id + age
+        unsigned long ageMs = (node.lastSeen > 0 && millis() >= node.lastSeen)
+                                  ? (millis() - node.lastSeen) : 0;
+        unsigned ageM = (unsigned)(ageMs / 60000UL);
+        if (asSaved)
+            snprintf(r.line2, sizeof(r.line2), "ID: %.14s", hex);
+        else if (ageM > 0)
+            snprintf(r.line2, sizeof(r.line2), "ID: %.10s  %um", hex, ageM);
+        else
+            snprintf(r.line2, sizeof(r.line2), "ID: %.14s", hex);
+        g_msgRowCount++;
+    };
+
+    // Pass 1: trusted / saved
+    for (const auto& node : nodes) {
+        if (node.saved) addNode(node, true);
+    }
+    // Also: name-cache entries that might not be in nodes yet
+    // (skip — nodes carry saved flag after saveNode)
+
+    // Pass 2: recent peers not saved
+    for (const auto& node : nodes) {
+        if (!node.saved) addNode(node, false);
+    }
     clampSelPeer();
+}
+
+void build_contacts() {
+    // Plus Contacts: TRUSTED CONTACTS + RECENT PEERS with names
+    g_showHistory = false;
+    g_msgRowsLoaded = false;
+    loadContactsRows();
 
     clear_screen();
-    int y = CONTENT_TOP + 4;
-    // Share My QR row (Plus) — display only on e-ink
-    draw_menu_row(y, 40, "Share My QR", g_destHex, false);
-    y += 48;
-    char sec[28];
-    snprintf(sec, sizeof(sec), "CONTACTS (%d)", g_msgRowCount);
-    fat_label(g_root, sec, 8, y);
-    y += 26;
-    if (g_msgRowCount == 0) {
-        fat_label(g_root, g_msgNote, 8, y);
-    } else {
-        for (int i = 0; i < g_msgRowCount; i++) {
-            char title[28], sub[36];
-            // 1> Name (or short ID from line1)
-            snprintf(title, sizeof(title), "%d%s %s",
-                     i + 1, (i == g_selPeer) ? ">" : " ",
-                     g_msgRows[i].line1);
-            if (g_msgRows[i].line2[0])
-                snprintf(sub, sizeof(sub), "%.28s", g_msgRows[i].line2);
-            else {
-                char hex[33];
-                peerToHex32(g_msgRows[i].peer, hex);
-                snprintf(sub, sizeof(sub), "%.12s…", hex);
-            }
-            draw_menu_row(y, 44, title, sub, i == g_selPeer);
-            y += 48;
-            if (y > CONTENT_BOTTOM - 8) break;
+    int y = CONTENT_TOP + 2;
+
+    if (g_nameEditMode) {
+        fat_label(g_root, "Set contact name", 4, y);
+        y += 20;
+        if (g_msgRowCount > 0 && g_msgRows[g_selPeer].used) {
+            char hex[33];
+            peerToHex32(g_msgRows[g_selPeer].peer, hex);
+            char sub[40];
+            snprintf(sub, sizeof(sub), "%.20s", g_msgRows[g_selPeer].line1);
+            fat_label(g_root, sub, 4, y);
+            y += 18;
+            snprintf(sub, sizeof(sub), "ID: %.16s", hex);
+            fat_label(g_root, sub, 4, y);
+            y += 22;
         }
+        fat_label(g_root, "Type name, Enter=save", 4, y);
+        y += 20;
+        if (g_composeLen > 0) {
+            char shown[40];
+            snprintf(shown, sizeof(shown), "Name: %s", g_compose);
+            fat_label(g_root, shown, 4, y);
+        } else {
+            fat_label(g_root, "Name: _", 4, y);
+        }
+        draw_compose_or_hint("Enter=save  ^=cancel");
+        return;
     }
-    draw_compose_or_hint("1-9 select  type+Enter");
+
+    int trusted = 0, recent = 0;
+    for (int i = 0; i < g_msgRowCount; i++) {
+        if (!g_msgRows[i].used) continue;
+        if (g_msgRows[i].saved) trusted++;
+        else recent++;
+    }
+
+    char hdr[28];
+    snprintf(hdr, sizeof(hdr), "TRUSTED (%d)", trusted);
+    fat_label(g_root, hdr, 4, y);
+    y += 18;
+
+    bool drewTrusted = false;
+    for (int i = 0; i < g_msgRowCount; i++) {
+        if (!g_msgRows[i].used || !g_msgRows[i].saved) continue;
+        drewTrusted = true;
+        char title[28];
+        snprintf(title, sizeof(title), "%d%s %s",
+                 i + 1, (i == g_selPeer) ? ">" : " ", g_msgRows[i].line1);
+        draw_menu_row(y, 40, title, g_msgRows[i].line2, i == g_selPeer);
+        y += 44;
+        if (y > CONTENT_BOTTOM - 60) break;
+    }
+    if (!drewTrusted) {
+        fat_label(g_root, "(none — save a peer)", 8, y);
+        y += 20;
+    }
+
+    y += 4;
+    snprintf(hdr, sizeof(hdr), "RECENT PEERS (%d)", recent);
+    fat_label(g_root, hdr, 4, y);
+    y += 18;
+
+    bool drewRecent = false;
+    for (int i = 0; i < g_msgRowCount; i++) {
+        if (!g_msgRows[i].used || g_msgRows[i].saved) continue;
+        drewRecent = true;
+        char title[28];
+        snprintf(title, sizeof(title), "%d%s %s",
+                 i + 1, (i == g_selPeer) ? ">" : " ", g_msgRows[i].line1);
+        draw_menu_row(y, 40, title, g_msgRows[i].line2, i == g_selPeer);
+        y += 44;
+        if (y > CONTENT_BOTTOM - 8) break;
+    }
+    if (!drewRecent) {
+        fat_label(g_root, "(none — Announce)", 8, y);
+    }
+
+    draw_compose_or_hint("1-9  Enter=name/msg");
 }
 
 void build_peers() {
@@ -1850,7 +1955,7 @@ void build_peers() {
     g_msgRowsLoaded = false;
     g_msgRowCount = 0;
     g_msgNote[0] = '\0';
-    for (int i = 0; i < MSG_ROWS; i++) g_msgRows[i].used = false;
+    for (int i = 0; i < MSG_ROWS; i++) { g_msgRows[i].used = false; g_msgRows[i].saved = false; }
     appendAnnouncedPeers();
     if (g_msgRowCount == 0)
         snprintf(g_msgNote, sizeof(g_msgNote), "(none — Announce on Home)");
@@ -2006,6 +2111,33 @@ bool handleKeyEvent(const KeyEvent& ev) {
 
     // Enter: send compose if non-empty, else next screen.
     if (ev.enter) {
+        // Contacts name-edit: save typed name as trusted contact
+        if (g_nameEditMode) {
+            if (g_composeLen == 0) {
+                Serial.println("[NAME] empty — type a name or ^=cancel");
+                return false;
+            }
+            if (g_msgRowCount <= 0 || !g_msgRows[g_selPeer].used) {
+                Serial.println("[NAME] no peer selected");
+                g_nameEditMode = false;
+                composeClear();
+                return true;
+            }
+            char body[COMPOSE_CAP + 1];
+            memcpy(body, g_compose, g_composeLen + 1);
+            char hex[33];
+            peerToHex32(g_msgRows[g_selPeer].peer, hex);
+            bool ok = g_announceMgr.setContactName(std::string(hex), std::string(body));
+            g_announceMgr.saveNode(std::string(hex));
+            g_announceMgr.saveNameCache();
+            Serial.printf("[NAME] save %s -> \"%s\" ok=%d\n", hex, body, (int)ok);
+            g_nameEditMode = false;
+            composeClear();
+            g_composeMode = false;
+            g_msgRowsLoaded = false;
+            show_screen(SCR_CONTACTS);
+            return true;
+        }
         if (g_composeLen > 0) {
             char body[COMPOSE_CAP + 1];
             memcpy(body, g_compose, g_composeLen + 1);
@@ -2016,9 +2148,21 @@ bool handleKeyEvent(const KeyEvent& ev) {
             doSendTest(body);
             return true;
         }
-        // Empty Enter on messaging screens: stay put (was jumping to Settings)
-        if (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS ||
-            g_screen == SCR_PEERS) {
+        // Empty Enter on Contacts: start name-edit for selected peer
+        if (g_screen == SCR_CONTACTS) {
+            if (g_msgRowCount > 0 && g_msgRows[g_selPeer].used) {
+                g_nameEditMode = true;
+                composeClear();
+                g_composeMode = true;
+                Serial.println("[NAME] edit mode — type name, Enter=save");
+                show_screen(SCR_CONTACTS);
+                return true;
+            }
+            Serial.println("[NAME] select a peer first");
+            return false;
+        }
+        // Empty Enter on messaging screens: stay put
+        if (g_screen == SCR_CHATS || g_screen == SCR_PEERS) {
             Serial.println("[KEY] Enter empty — type a message first");
             return false;
         }
@@ -2151,8 +2295,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.28");
-    Serial.println(" msg mode Back Up + names");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.29");
+    Serial.println(" Contacts trusted+recent names");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
