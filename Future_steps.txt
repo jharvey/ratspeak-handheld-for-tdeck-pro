@@ -1,0 +1,7 @@
+-- Theme toggle: white background vs black background
+-- simulation mode: so you can develope without having a pro on hand. 
+-- debug settings: menues to fill in the data behind the settings
+-- improve compile process: currently it builds everything all the time. 
+-- energy reduction: go into sleep to save battery
+-- voice mode: Allow walkie Talkie mode. 
+-- SD card / geo maps
