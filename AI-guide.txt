@@ -1,48 +1,35 @@
 ================================================================================
-AI-GUIDE — ratspeak-handheld-for-tdeck-pro
-Last updated: 2026-10-15 (Phase G1.30)
+AI-GUIDE — T-Deck Pro standalone (short-term)
+Last: G1.33
 ================================================================================
 
-NAMES + ID EVERYWHERE
----------------------
-Contacts, Peers, Msg Box list rows:
-  line1 = contact display name (or short id if unnamed)
-  line2 = ID: <hex>  (+ optional preview / RSSI)
+GOAL
+  Plus-like e-ink UI on T-Deck Pro without full LVGL app shell.
+  Exclude LvglApplication.cpp / ui/lvgl; include boards/tdeck_Pro.
 
-CONTACTS (G1.29+)
------------------
-TRUSTED + RECENT PEERS. Enter empty → name editor → setContactName+saveNode.
+WORKING NOW
+  Bidirectional LXMF, PSRAM mapped, announce, Msg Box thread, compose+Enter TX
+  Contacts name-edit (Enter empty → type → Enter), local name override
+  Settings hierarchy (touch + 1-9 + W/S scroll), lone Shift = Back
+  White theme: selected = thick border (not black fill)
+  Msg Box stats: [NN CONV] [NN NEW] [NN UNRD] boxes; no duplicate MSG BOX title
+  List rows: ">1 RADIO1" + full address line 2
 
-SETTINGS (G1.30) — Plus-like hierarchy
---------------------------------------
-Root categories (1-9 or touch, Enter opens):
-  1 Identity & Device   — dest hash, firmware label (live)
-  2 Screen & Input      — e-ink N/A; KB light via serial L
-  3 Battery             — volts + % (live)
-  4 LoRa                — ON/OFF intent, region, RSSI (Enter toggles)
-  5 Network             — WiFi/TCP stubs (future)
-  6 Time & Location     — GPS stubs (future)
-  7 Alerts & Audio      — Audio ON/OFF (Enter toggles, live)
-  8 Diagnostics         — paths, links, heap, PSRAM, uptime (live)
-  9 Storage & Maint.    — heap/PSRAM; Enter on Send Announce
+HOW TO NAME
+  Contacts → select peer → Enter → type RADIO1 → Enter
+  Or serial: n:RADIO1 with peer selected
 
-Back: keyboard Up (^) or touch header "< …" on sub-pages.
-Tab to Settings always opens root list.
+BACK
+  Lone left/right Shift tap = Up/Back
+  Touch top nav in message mode / Settings sub-page
 
-WORKING vs STUB
----------------
-Live: Battery, LoRa intent+RSSI, Audio toggle, Diagnostics, Announce, names
-Stub: WiFi/TCP, GPS, Theme/Dim, QR, Create Identity, Erase, Firmware check
+SETTINGS NAV
+  W/S move highlight; 1-9 open; Enter activate; touch row activates
+  Scroll when list longer than screen
 
-FUTURE
-------
-- Wire Create Identity / Erase Device carefully
-- WiFi client + TCP when cooperative stack allows
-- Key backlight GPIO if pin known
-- Partial e-ink refresh / sleep for energy
-- PSRAM already mapped (QSPI)
+LONG-TERM
+  See Future_steps.txt (do not strip from there)
 
-ONE-LINER
----------
-G1.30: name+ID on lists; Settings hierarchy matching Plus with live toggles.
+COMMIT STYLE
+  Prefer full files; keep cooperative green; one fullRefresh per screen change
 ================================================================================

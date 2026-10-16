@@ -693,31 +693,23 @@ std::string resolvePeerName(const uint8_t peer[16]) {
 }
 
 void formatPeerLine(char* out, size_t outLen, const uint8_t peer[16], uint32_t unread) {
-    // Title: contact name if known, else short id (Plus-style)
+    // Title: name only ("RADIO1"); list prefix draws ">1 "
+    (void)unread;
     std::string name = resolvePeerName(peer);
     if (!name.empty()) {
-        if (unread > 0)
-            snprintf(out, outLen, "%.14s *%u", name.c_str(), (unsigned)unread);
-        else
-            snprintf(out, outLen, "%.16s", name.c_str());
+        snprintf(out, outLen, "%.20s", name.c_str());
         return;
     }
-    if (unread > 0)
-        snprintf(out, outLen, "%02x%02x%02x%02x… *%u",
-                 peer[0], peer[1], peer[2], peer[3], (unsigned)unread);
-    else
-        snprintf(out, outLen, "%02x%02x%02x%02x…",
-                 peer[0], peer[1], peer[2], peer[3]);
+    snprintf(out, outLen, "%02x%02x%02x%02x%02x%02x",
+             peer[0], peer[1], peer[2], peer[3], peer[4], peer[5]);
 }
 
 void formatPeerSub(char* out, size_t outLen, const uint8_t peer[16], const char* preview) {
-    // Always show ID; optional preview after
+    // Full address only on line 2
+    (void)preview;
     char hex[33];
     peerToHex32(peer, hex);
-    if (preview && preview[0])
-        snprintf(out, outLen, "ID:%.10s %.10s", hex, preview);
-    else
-        snprintf(out, outLen, "ID: %.16s", hex);
+    snprintf(out, outLen, "%.28s", hex);
 }
 
 void notifyInbound() {
@@ -871,8 +863,11 @@ constexpr int BOT_CONTACT_W  = 80;
 constexpr int BOT_MSGBOX_W   = 96;
 constexpr int BOT_PEERS_W    = 64;   // 80+96+64=240
 constexpr int BOT_CHATS_W    = BOT_MSGBOX_W;  // SCR_CHATS = Msg Box
-constexpr int PEERS_TOP      = CONTENT_TOP + 28;  // after section header
-constexpr int ROW_H          = 42;
+constexpr int STATS_H        = 32;  // CONV / NEW / UNRD strip
+constexpr int PEERS_TOP      = CONTENT_TOP + STATS_H + 4;
+constexpr int ROW_H          = 44;
+constexpr int SET_ROW_H      = 44;
+int g_settingsScroll = 0;
 // Home grid — zero outer margin, 2px tile gap
 constexpr int TILE_GAP       = 2;
 constexpr int TILE_W         = (EPD_WIDTH - TILE_GAP * 2) / 3;  // 78
@@ -953,6 +948,23 @@ bool handleTouchAt(int16_t x, int16_t y) {
         g_showHistory = false;
         show_screen(want);
         return true;
+    }
+
+    // Settings list touch
+    if (g_screen == SCR_SETTINGS) {
+        const int listTop = CONTENT_TOP + 2;
+        const int maxVis = (CONTENT_BOTTOM - listTop - 4) / SET_ROW_H;
+        if (y >= listTop && y < CONTENT_BOTTOM) {
+            int row = (y - listTop) / SET_ROW_H;
+            if (row < 0) row = 0;
+            int idx = g_settingsScroll + row;
+            if (idx > 8) idx = 8;
+            g_settingsSel = idx;
+            Serial.printf("[SET] touch sel=%d\n", g_settingsSel);
+            settingsActivate();
+            return true;
+        }
+        return false;
     }
 
     // List row select
@@ -1642,33 +1654,65 @@ void draw_action_btn(int x, int y, int w, int h, const char* label) {
 
 // Plus-style settings/list row: title + subtitle + trailing ">"
 void draw_menu_row(int y, int h, const char* title, const char* sub, bool selected) {
-    // Box + labels parented to row so text stays inside bounds (no overlap).
+    // White theme: selected = thicker border only (no black fill)
     lv_obj_t* row = lv_obj_create(g_root);
     lv_obj_set_size(row, EPD_WIDTH - 4, h);
     lv_obj_set_pos(row, 2, y);
     lv_obj_set_style_radius(row, 0, 0);
     lv_obj_set_style_border_width(row, selected ? 3 : 1, 0);
     lv_obj_set_style_border_color(row, lv_color_black(), 0);
-    lv_obj_set_style_bg_color(row, selected ? lv_color_black() : lv_color_white(), 0);
+    lv_obj_set_style_bg_color(row, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_color_t ink = selected ? lv_color_white() : lv_color_black();
     const lv_font_t* font = &lv_font_montserrat_16;
-
+    const bool hasSub = sub && sub[0];
     lv_obj_t* t = lv_label_create(row);
     lv_label_set_text(t, title ? title : "");
     lv_obj_set_style_text_font(t, font, 0);
-    lv_obj_set_style_text_color(t, ink, 0);
-    lv_obj_set_pos(t, 6, (sub && sub[0]) ? 3 : (h - 14) / 2);
-
-    if (sub && sub[0]) {
+    lv_obj_set_style_text_color(t, lv_color_black(), 0);
+    lv_obj_set_pos(t, 6, hasSub ? 4 : (h - 16) / 2);
+    if (hasSub) {
         lv_obj_t* s = lv_label_create(row);
         lv_label_set_text(s, sub);
         lv_obj_set_style_text_font(s, font, 0);
-        lv_obj_set_style_text_color(s, ink, 0);
-        lv_obj_set_pos(s, 6, 20);
+        lv_obj_set_style_text_color(s, lv_color_black(), 0);
+        lv_obj_set_pos(s, 6, 22);
+    }
+}
+
+void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
+    const int gap = 2;
+    const int bw = (EPD_WIDTH - 4 - 2 * gap) / 3;
+    const int bh = STATS_H - 2;
+    char a[14], b[14], c[14];
+    snprintf(a, sizeof(a), "%02u CONV", conv);
+    snprintf(b, sizeof(b), "%02u NEW", neu);
+    snprintf(c, sizeof(c), "%02u UNRD", unread);
+    const char* labs[3] = { a, b, c };
+    for (int i = 0; i < 3; i++) {
+        int x = 2 + i * (bw + gap);
+        lv_obj_t* box = lv_obj_create(g_root);
+        lv_obj_set_size(box, bw, bh);
+        lv_obj_set_pos(box, x, y);
+        lv_obj_set_style_radius(box, 0, 0);
+        lv_obj_set_style_border_width(box, 1, 0);
+        lv_obj_set_style_border_color(box, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(box, lv_color_white(), 0);
+        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(box, 0, 0);
+        lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t* lab = lv_label_create(box);
+        lv_label_set_text(lab, labs[i]);
+        lv_obj_set_style_text_font(lab, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lab, lv_color_black(), 0);
+        lv_coord_t tw = lv_txt_get_width(labs[i], strlen(labs[i]),
+                                         &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
+        if (tw <= 0) tw = (lv_coord_t)(strlen(labs[i]) * 6);
+        int lx = (bw - (int)tw) / 2;
+        if (lx < 2) lx = 2;
+        lv_obj_set_pos(lab, lx, (bh - 12) / 2);
     }
 }
 
@@ -1819,37 +1863,42 @@ void build_home() {
     draw_compose_or_hint("");
 }
 
-void build_list_body(const char* section, const char* emptyNote) {
+void build_list_body(const char* /*section*/, const char* emptyNote,
+                     bool withStats, unsigned conv, unsigned neu, unsigned unread) {
     for (int i = 0; i < g_msgRowCount; i++) {
-        if (g_msgRows[i].used)
-            formatPeerLine(g_msgRows[i].line1, sizeof(g_msgRows[i].line1),
-                           g_msgRows[i].peer, g_msgRows[i].unread);
+        if (!g_msgRows[i].used) continue;
+        formatPeerLine(g_msgRows[i].line1, sizeof(g_msgRows[i].line1),
+                       g_msgRows[i].peer, g_msgRows[i].unread);
+        if (!g_msgRows[i].line2[0])
+            formatPeerSub(g_msgRows[i].line2, sizeof(g_msgRows[i].line2),
+                          g_msgRows[i].peer, nullptr);
     }
     clear_screen();
     int y = CONTENT_TOP;
-    if (section && section[0]) {
-        fat_label(g_root, section, 8, y);
-        y += 24;
+    if (withStats) {
+        draw_stat_boxes(y, conv, neu, unread);
+        y += STATS_H + 2;
     }
     if (g_msgRowCount == 0) {
-        fat_label(g_root, emptyNote && emptyNote[0] ? emptyNote : "(empty)", 8, y);
+        fat_label(g_root, emptyNote && emptyNote[0] ? emptyNote : "(empty)", 8, y + 4);
     } else {
         for (int i = 0; i < g_msgRowCount; i++) {
             char title[28], sub[28];
-            snprintf(title, sizeof(title), "%d%s %s",
-                     i + 1,
-                     (i == g_selPeer) ? ">" : " ",
-                     g_msgRows[i].line1);
+            if (i == g_selPeer)
+                snprintf(title, sizeof(title), ">%d %s", i + 1, g_msgRows[i].line1);
+            else
+                snprintf(title, sizeof(title), " %d %s", i + 1, g_msgRows[i].line1);
             if (g_msgRows[i].line2[0])
                 snprintf(sub, sizeof(sub), "%.26s", g_msgRows[i].line2);
             else
-                sub[0] = '\0';
-            draw_menu_row(y, sub[0] ? 44 : 30, title, sub, i == g_selPeer);
-            y += (sub[0] ? 48 : 34);
-            if (y > CONTENT_BOTTOM - 8) break;
+                sub[0] = 0;
+            draw_menu_row(y, ROW_H, title, sub, i == g_selPeer);
+            y += ROW_H;
+            if (y > CONTENT_BOTTOM - 4) break;
         }
     }
 }
+
 
 // Plus-style outline bubbles: left=in, right=out; BOTH white bg / black text
 static void draw_chat_bubble(int y, const char* text, bool incoming, const char* status) {
@@ -1926,9 +1975,13 @@ void build_chats() {
         return;
     }
     loadMessageRows(false);
-    char sec[36];
-    snprintf(sec, sizeof(sec), "MSG BOX %s %s", g_convStr, g_unreadStr);
-    build_list_body(sec, g_msgNote[0] ? g_msgNote : "(no chats)");
+    unsigned conv = 0, unread = 0;
+    if (g_storeReady) {
+        conv = (unsigned)g_msgStore.totalConversations();
+        unread = (unsigned)g_msgStore.totalUnreadCount();
+    }
+    build_list_body(nullptr, g_msgNote[0] ? g_msgNote : "(no chats)",
+                    true, conv, unread, unread);
     draw_compose_or_hint("tap=open  type+Enter=send");
 }
 
@@ -1964,9 +2017,9 @@ void loadContactsRows() {
         if (nm.empty()) nm = g_announceMgr.lookupName(hex);
         if (nm.empty() && !node.name.empty()) nm = node.name;
         if (!nm.empty())
-            snprintf(r.line1, sizeof(r.line1), "%.20s", nm.c_str());
-        else
-            snprintf(r.line1, sizeof(r.line1), "%.10s", hex);  // short id like Plus
+            setLocalName(r.peer, nm.c_str());
+        formatPeerLine(r.line1, sizeof(r.line1), r.peer, 0);
+        formatPeerSub(r.line2, sizeof(r.line2), r.peer, nullptr);
         // second line: full-ish id + age
         unsigned long ageMs = (node.lastSeen > 0 && millis() >= node.lastSeen)
                                   ? (millis() - node.lastSeen) : 0;
@@ -2047,8 +2100,10 @@ void build_contacts() {
         if (!g_msgRows[i].used || !g_msgRows[i].saved) continue;
         drewTrusted = true;
         char title[28];
-        snprintf(title, sizeof(title), "%d%s %s",
-                 i + 1, (i == g_selPeer) ? ">" : " ", g_msgRows[i].line1);
+        if (i == g_selPeer)
+            snprintf(title, sizeof(title), ">%d %s", i + 1, g_msgRows[i].line1);
+        else
+            snprintf(title, sizeof(title), " %d %s", i + 1, g_msgRows[i].line1);
         draw_menu_row(y, 40, title, g_msgRows[i].line2, i == g_selPeer);
         y += 40;
         if (y > CONTENT_BOTTOM - 60) break;
@@ -2068,8 +2123,10 @@ void build_contacts() {
         if (!g_msgRows[i].used || g_msgRows[i].saved) continue;
         drewRecent = true;
         char title[28];
-        snprintf(title, sizeof(title), "%d%s %s",
-                 i + 1, (i == g_selPeer) ? ">" : " ", g_msgRows[i].line1);
+        if (i == g_selPeer)
+            snprintf(title, sizeof(title), ">%d %s", i + 1, g_msgRows[i].line1);
+        else
+            snprintf(title, sizeof(title), " %d %s", i + 1, g_msgRows[i].line1);
         draw_menu_row(y, 40, title, g_msgRows[i].line2, i == g_selPeer);
         y += 40;
         if (y > CONTENT_BOTTOM - 8) break;
@@ -2106,9 +2163,10 @@ void build_peers() {
     } else {
         for (int i = 0; i < g_msgRowCount; i++) {
             char title[28], sub[36];
-            snprintf(title, sizeof(title), "%d%s %s",
-                     i + 1, (i == g_selPeer) ? ">" : " ",
-                     g_msgRows[i].line1);
+            if (i == g_selPeer)
+                snprintf(title, sizeof(title), ">%d %s", i + 1, g_msgRows[i].line1);
+            else
+                snprintf(title, sizeof(title), " %d %s", i + 1, g_msgRows[i].line1);
             if (g_msgRows[i].line2[0])
                 snprintf(sub, sizeof(sub), "%.28s", g_msgRows[i].line2);
             else {
@@ -2181,16 +2239,20 @@ void build_settings() {
     int y = CONTENT_TOP + 2;
     char a[36], b[36];
 
+    // Visible window of settings rows (scroll with W/S or touch)
+    const int listTop = y;
+    const int maxVis = (CONTENT_BOTTOM - listTop - 4) / SET_ROW_H;
     auto row = [&](const char* title, const char* sub, int idx) {
-        if (y > CONTENT_BOTTOM - 4) return;
-        // 34px row, no gap between boxes (avoids overlap + wasted space)
-        const int rh = 34;
-        draw_menu_row(y, rh, title, sub, idx == g_settingsSel);
-        y += rh;
+        // Only draw rows in the visible scroll window
+        if (idx < g_settingsScroll) return;
+        if (idx >= g_settingsScroll + maxVis) return;
+        int yy = listTop + (idx - g_settingsScroll) * SET_ROW_H;
+        if (yy + SET_ROW_H > CONTENT_BOTTOM - 2) return;
+        draw_menu_row(yy, SET_ROW_H, title, sub, idx == g_settingsSel);
     };
 
     if (g_settingsPage == SET_ROOT) {
-        fat_label(g_root, "SETTINGS", 4, y); y += 18;
+        // no "SETTINGS" title — top tab is enough; more room for rows
         snprintf(a, sizeof(a), "%.14s", g_destHex);
         row("Identity & Device", a, 0);
         row("Screen & Input", "e-ink / keys", 1);
@@ -2206,7 +2268,7 @@ void build_settings() {
         snprintf(a, sizeof(a), "P%s L%s", g_pathsStr, g_linksStr);
         row("Diagnostics", a, 7);
         row("Storage & Maint.", "heap/flash", 8);
-        draw_compose_or_hint("1-9 open  Enter  ^=back");
+        draw_compose_or_hint("W/S move 1-9 Enter");
         return;
     }
 
@@ -2222,7 +2284,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.32", 0);
+        row("Firmware", "Pro G1.33", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2519,15 +2581,35 @@ bool handleKeyEvent(const KeyEvent& ev) {
                  g_screen == SCR_PEERS);
 
             // 1-9: select peer (never type digit while compose empty on msg screens)
-            if (g_screen == SCR_SETTINGS && g_composeLen == 0 &&
-                ev.character >= '1' && ev.character <= '9') {
-                g_settingsSel = (int)(ev.character - '1');
-                Serial.printf("[SET] key sel=%d\n", g_settingsSel);
-                if (g_settingsPage == SET_ROOT)
-                    settingsActivate();
-                else
+            if (g_screen == SCR_SETTINGS && g_composeLen == 0) {
+                // W/S move highlight (scroll into view). Lone Shift = Back.
+                if (ev.character == 'w' || ev.character == 'W') {
+                    if (g_settingsSel > 0) g_settingsSel--;
+                    if (g_settingsSel < g_settingsScroll) g_settingsScroll = g_settingsSel;
+                    Serial.printf("[SET] up sel=%d scroll=%d\n", g_settingsSel, g_settingsScroll);
                     show_screen(SCR_SETTINGS);
-                return true;
+                    return true;
+                }
+                if (ev.character == 's' || ev.character == 'S') {
+                    if (g_settingsSel < 8) g_settingsSel++;
+                    const int maxVis = 5;
+                    if (g_settingsSel >= g_settingsScroll + maxVis)
+                        g_settingsScroll = g_settingsSel - maxVis + 1;
+                    if (g_settingsScroll < 0) g_settingsScroll = 0;
+                    Serial.printf("[SET] dn sel=%d scroll=%d\n", g_settingsSel, g_settingsScroll);
+                    show_screen(SCR_SETTINGS);
+                    return true;
+                }
+                if (ev.character >= '1' && ev.character <= '9') {
+                    g_settingsSel = (int)(ev.character - '1');
+                    if (g_settingsSel < g_settingsScroll) g_settingsScroll = g_settingsSel;
+                    Serial.printf("[SET] key sel=%d\n", g_settingsSel);
+                    if (g_settingsPage == SET_ROOT)
+                        settingsActivate();
+                    else
+                        show_screen(SCR_SETTINGS);
+                    return true;
+                }
             }
             if (onMsgScreens && ev.character >= '1' && ev.character <= '9') {
                 if (g_msgRowCount == 0) {
@@ -2632,7 +2714,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.32");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.33");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
