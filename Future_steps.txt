@@ -34,5 +34,6 @@ Energy target (rough)
 -- SD card / geo maps
 -- Apply MISRA C to help make code robust
 -- Apply entery checks on fuctions etc to prevent memory leak exploits. 
+-- Booting splash screen. Make it display this almost 1st thing it does, then when everything is booted then home.
 
 ================================================================================
