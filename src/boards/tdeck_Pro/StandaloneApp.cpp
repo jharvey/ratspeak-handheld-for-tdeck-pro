@@ -1717,24 +1717,16 @@ void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
 }
 
 void draw_compose_or_hint(const char* idleHint) {
+    // Keep footer above bottom nav (BOT_TOP); avoid overlapping Contact/MsgBox/Peers
     if (g_composeLen > 0 || g_composeMode) {
-        char foot[40];
-        snprintf(foot, sizeof(foot), ">%.26s", g_compose);
-        fat_label(g_root, foot, 8, BOT_TOP - 52);
-        // Large Back control — leave message mode
-        lv_obj_t* bk = lv_obj_create(g_root);
-        lv_obj_set_size(bk, EPD_WIDTH - 8, 28);
-        lv_obj_set_pos(bk, 4, BOT_TOP - 32);
-        lv_obj_set_style_radius(bk, 0, 0);
-        lv_obj_set_style_border_width(bk, 2, 0);
-        lv_obj_set_style_border_color(bk, lv_color_black(), 0);
-        lv_obj_set_style_bg_color(bk, lv_color_white(), 0);
-        lv_obj_set_style_bg_opa(bk, LV_OPA_COVER, 0);
-        lv_obj_set_style_pad_all(bk, 0, 0);
-        lv_obj_clear_flag(bk, LV_OBJ_FLAG_SCROLLABLE);
-        fat_label(g_root, "press ^ to go back", 16, BOT_TOP - 28);
+        char foot[44];
+        if (g_nameEditMode)
+            snprintf(foot, sizeof(foot), "Name>%.22s", g_compose);
+        else
+            snprintf(foot, sizeof(foot), ">%.28s", g_compose);
+        fat_label(g_root, foot, 4, BOT_TOP - 20);
     } else if (idleHint && idleHint[0]) {
-        fat_label(g_root, idleHint, 8, BOT_TOP - 18);
+        fat_label(g_root, idleHint, 4, BOT_TOP - 20);
     }
     draw_nav();
 }
@@ -2016,7 +2008,8 @@ void loadContactsRows() {
         if (const char* loc = getLocalName(r.peer)) nm = loc;
         if (nm.empty()) nm = g_announceMgr.lookupName(hex);
         if (nm.empty() && !node.name.empty()) nm = node.name;
-        if (!nm.empty())
+        // Only cache real names (not announce placeholders like "1")
+        if (!nm.empty() && !(nm.size() <= 2 && nm.find_first_not_of("0123456789") == std::string::npos))
             setLocalName(r.peer, nm.c_str());
         formatPeerLine(r.line1, sizeof(r.line1), r.peer, 0);
         formatPeerSub(r.line2, sizeof(r.line2), r.peer, nullptr);
@@ -2052,6 +2045,13 @@ void build_contacts() {
     g_showHistory = false;
     g_msgRowsLoaded = false;
     loadContactsRows();
+    for (int i = 0; i < g_msgRowCount; i++) {
+        if (!g_msgRows[i].used) continue;
+        formatPeerLine(g_msgRows[i].line1, sizeof(g_msgRows[i].line1),
+                       g_msgRows[i].peer, 0);
+        formatPeerSub(g_msgRows[i].line2, sizeof(g_msgRows[i].line2),
+                      g_msgRows[i].peer, nullptr);
+    }
 
     clear_screen();
     int y = CONTENT_TOP + 2;
@@ -2104,8 +2104,8 @@ void build_contacts() {
             snprintf(title, sizeof(title), ">%d %s", i + 1, g_msgRows[i].line1);
         else
             snprintf(title, sizeof(title), " %d %s", i + 1, g_msgRows[i].line1);
-        draw_menu_row(y, 40, title, g_msgRows[i].line2, i == g_selPeer);
-        y += 40;
+        draw_menu_row(y, ROW_H, title, g_msgRows[i].line2, i == g_selPeer);
+        y += ROW_H;
         if (y > CONTENT_BOTTOM - 60) break;
     }
     if (!drewTrusted) {
@@ -2127,8 +2127,8 @@ void build_contacts() {
             snprintf(title, sizeof(title), ">%d %s", i + 1, g_msgRows[i].line1);
         else
             snprintf(title, sizeof(title), " %d %s", i + 1, g_msgRows[i].line1);
-        draw_menu_row(y, 40, title, g_msgRows[i].line2, i == g_selPeer);
-        y += 40;
+        draw_menu_row(y, ROW_H, title, g_msgRows[i].line2, i == g_selPeer);
+        y += ROW_H;
         if (y > CONTENT_BOTTOM - 8) break;
     }
     if (!drewRecent) {
@@ -2162,6 +2162,10 @@ void build_peers() {
         fat_label(g_root, g_msgNote, 8, y);
     } else {
         for (int i = 0; i < g_msgRowCount; i++) {
+            formatPeerLine(g_msgRows[i].line1, sizeof(g_msgRows[i].line1),
+                           g_msgRows[i].peer, 0);
+            formatPeerSub(g_msgRows[i].line2, sizeof(g_msgRows[i].line2),
+                          g_msgRows[i].peer, nullptr);
             char title[28], sub[36];
             if (i == g_selPeer)
                 snprintf(title, sizeof(title), ">%d %s", i + 1, g_msgRows[i].line1);
@@ -2174,8 +2178,8 @@ void build_peers() {
                 peerToHex32(g_msgRows[i].peer, hex);
                 snprintf(sub, sizeof(sub), "%.12s…", hex);
             }
-            draw_menu_row(y, 40, title, sub, i == g_selPeer);
-            y += 40;
+            draw_menu_row(y, ROW_H, title, sub, i == g_selPeer);
+            y += ROW_H;
             if (y > CONTENT_BOTTOM - 8) break;
         }
     }
@@ -2284,7 +2288,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.33", 0);
+        row("Firmware", "Pro G1.34", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2527,6 +2531,36 @@ bool handleKeyEvent(const KeyEvent& ev) {
             show_screen(SCR_CONTACTS);
             return true;
         }
+        // Contacts: non-empty compose = contact name (never LXMF send)
+        if (g_composeLen > 0 && (g_screen == SCR_CONTACTS || g_nameEditMode)) {
+            if (g_msgRowCount <= 0 || !g_msgRows[g_selPeer].used) {
+                Serial.println("[NAME] select a peer first");
+                composeClear();
+                g_nameEditMode = false;
+                g_composeMode = false;
+                return true;
+            }
+            char body[COMPOSE_CAP + 1];
+            memcpy(body, g_compose, g_composeLen + 1);
+            char hex[33];
+            peerToHex32(g_msgRows[g_selPeer].peer, hex);
+            bool ok = g_announceMgr.setContactName(std::string(hex), std::string(body));
+            g_announceMgr.saveNode(std::string(hex));
+            g_announceMgr.saveNameCache();
+            setLocalName(g_msgRows[g_selPeer].peer, body);
+            snprintf(g_msgRows[g_selPeer].line1, sizeof(g_msgRows[g_selPeer].line1),
+                     "%.20s", body);
+            g_msgRows[g_selPeer].saved = true;
+            formatPeerSub(g_msgRows[g_selPeer].line2, sizeof(g_msgRows[g_selPeer].line2),
+                          g_msgRows[g_selPeer].peer, nullptr);
+            Serial.printf("[NAME] save %s -> \"%s\" ok=%d\n", hex, body, (int)ok);
+            g_nameEditMode = false;
+            composeClear();
+            g_composeMode = false;
+            g_msgRowsLoaded = false;
+            show_screen(SCR_CONTACTS);
+            return true;
+        }
         if (g_composeLen > 0) {
             char body[COMPOSE_CAP + 1];
             memcpy(body, g_compose, g_composeLen + 1);
@@ -2702,6 +2736,12 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 }
             }
         }
+        // Contacts: typing starts name-edit (Enter saves name, never TX)
+        if (g_screen == SCR_CONTACTS && !g_nameEditMode) {
+            g_nameEditMode = true;
+            g_composeMode = true;
+            Serial.println("[NAME] typing → name-edit mode");
+        }
         composeAppend(ev.character);
         return false;
     }
@@ -2714,7 +2754,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.33");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.34");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 

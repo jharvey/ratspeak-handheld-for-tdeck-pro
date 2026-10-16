@@ -1,39 +1,64 @@
 ================================================================================
 FUTURE STEPS — T-Deck Pro Ratspeak (long-term, update rarely)
+Last revised: 2026-10-16
+================================================================================
+Short-term work stays in AI-guide.txt. This file is the backlog / vision list.
 ================================================================================
 
 Hardware / platform
-- PSRAM fully leveraged for protocol + LVGL buffers (mapped QSPI — keep verifying)
+-------------------
+- PSRAM fully leveraged for protocol + LVGL buffers (QSPI mapped — keep verifying)
 - Keyboard backlight GPIO control beyond serial L
 - Partial e-ink refresh / ghosting control for lower energy
 - Deep sleep / light sleep between RX windows; wake on LoRa / key / touch
 - Battery model accuracy + charge UI
+- SD card support (storage expansion, logs, optional assets)
+
+Boot / first impression
+-----------------------
+- Boot splash screen: show almost immediately on power-up, then transition to
+  Home only after protocol / radio / UI are ready
 
 UI / UX
+-------
 - Theme toggle: white paper (default) vs black ink background
 - Settings full parity with Plus (WiFi client, TCP, GPS time, identity create/erase)
-- Contacts rename modal closer to Plus (context menu Save Contact)
-- Msg Box delivery status polish (queued/sent/delivered icons)
-- Scroll indicators on long lists
-- Optional LVGL screens later (still standalone-friendly)
+- Contacts rename closer to Plus (context menu: Save Contact / Message / Close)
+- Msg Box delivery status polish (queued / sent / delivered / fail)
+- Scroll indicators on long lists (Contacts, Peers, Settings)
+- Optional fuller LVGL screens later (keep standalone build rules)
+- Geo maps on SD (offline map tiles / position display when GPS enabled)
+
+Audio / modes
+-------------
+- Voice / walkie-talkie mode: push-to-talk style over LoRa (or related path),
+  separate from text LXMF and from simple beep/vibrate alerts
 
 Protocol / mesh
-- Multi-peer UX at scale (pagination)
-- Path/link live tiles already partial — expand diagnostics
-- Cooperative vs standalone feature matrix freeze
+---------------
+- Multi-peer UX at scale (pagination, search)
+- Path / link live tiles — expand diagnostics beyond partial N3
+- Cooperative vs standalone feature matrix freeze (what each env owns)
 
 Build / devex
+-------------
 - Host UI simulator (SDL) for layout without hardware
-- Faster incremental builds (ccache / unity careful)
-- COM port upload without editing platformio.ini (tasks/bats exist)
+- Faster incremental builds (ccache; avoid full recompile on COM-only change)
+- COM port upload without editing platformio.ini (tasks / bat helpers exist)
+
+Robustness / safety (code quality)
+----------------------------------
+- Apply MISRA C (or a practical subset) for more robust embedded C/C++
+- Entry checks on functions (null / bounds / state) to reduce memory-corruption
+  and leak-style failure modes on long uptime
 
 Energy target (rough)
-- Few messages/day + sleep: multi-day battery goal; measure after sleep work
+---------------------
+- Few messages per day + sleep: multi-day battery goal; measure after sleep work
 
--- voice mode: Allow walkie Talkie mode. 
--- SD card / geo maps
--- Apply MISRA C to help make code robust
--- Apply entery checks on fuctions etc to prevent memory leak exploits. 
--- Booting splash screen. Make it display this almost 1st thing it does, then when everything is booted then home.
-
+--------------------------------------------------------------------------------
+Integrated from operator notes (2026-10):
+  voice/walkie-talkie mode; SD card / geo maps; MISRA C; function entry checks;
+  early boot splash then Home when fully up.
+--------------------------------------------------------------------------------
 ================================================================================
