@@ -1,0 +1,47 @@
+T-Deck Pro PSRAM recovery (size=0 / OPI error / abort)
+======================================================
+
+What your Putty log means
+-------------------------
+  [PSRAM] found=1 size=0  → chip detected, but WRONG line mode (OPI instead of QSPI)
+  E (223) opi psram: PSRAM ID read error: 0x00000000
+  abort() after KEYBOARD/AUDIO → internal heap exhausted without SPIRAM
+
+When it was healthy (earlier session)
+-------------------------------------
+  [PSRAM] found=1 size=8386295 free=8386295
+  [PSRAM] OK mapped 8189 KB — protocol can use SPIRAM
+  [PROTO] try SPIRAM|8BIT
+
+Fix checklist (do in order)
+---------------------------
+1) boards/lilygo_t_deck_pro.json exists in the REPO root boards/ folder
+   and contains:
+     "memory_type": "qio_qspi"
+   NOT qio_opi.
+
+2) platformio.ini [tdeck_Pro_base] (and env:tdeck_pro_cooperative) has:
+     board = lilygo_t_deck_pro
+     board_build.arduino.memory_type = qio_qspi
+     board_build.psram_type = qspi
+     board_build.flash_mode = qio
+   and does NOT set memory_type = qio_opi anywhere for Pro.
+
+3) platformio.ini has:
+     boards_dir = boards
+
+4) Full clean rebuild (stale .pio often keeps old OPI link):
+     pio run -e tdeck_pro_cooperative -t clean
+     pio run -e tdeck_pro_cooperative -t upload --upload-port COM8
+
+5) Confirm boot line:
+     [PSRAM] OK mapped ... KB
+   If you still see size=0 or "opi psram", the binary is still OPI-linked.
+
+Why UI "did not change"
+-----------------------
+Crash loop after LVGL init means new StandaloneApp never stays up. Fix PSRAM
+first; then flash the latest StandaloneApp.cpp again.
+
+Do not use qio_opi for T-Deck Pro — that is for some other S3 boards with
+octal PSRAM. Pro is 8MB QSPI PSRAM.

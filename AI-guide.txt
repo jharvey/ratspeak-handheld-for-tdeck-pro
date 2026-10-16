@@ -1,35 +1,27 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.33
+Last: G1.34
 ================================================================================
 
-GOAL
-  Plus-like e-ink UI on T-Deck Pro without full LVGL app shell.
-  Exclude LvglApplication.cpp / ui/lvgl; include boards/tdeck_Pro.
+CONTACTS NAME (important)
+  Select peer (1-9 or touch) → type name (auto name-edit) → Enter = SAVE NAME
+  Does NOT send LXMF. Serial: n:RADIO1
+  TRUSTED count rises after save. Lists show ">1 RADIO1" + full id line 2.
 
-WORKING NOW
-  Bidirectional LXMF, PSRAM mapped, announce, Msg Box thread, compose+Enter TX
-  Contacts name-edit (Enter empty → type → Enter), local name override
-  Settings hierarchy (touch + 1-9 + W/S scroll), lone Shift = Back
-  White theme: selected = thick border (not black fill)
-  Msg Box stats: [NN CONV] [NN NEW] [NN UNRD] boxes; no duplicate MSG BOX title
-  List rows: ">1 RADIO1" + full address line 2
-
-HOW TO NAME
-  Contacts → select peer → Enter → type RADIO1 → Enter
-  Or serial: n:RADIO1 with peer selected
+MSG BOX / PEERS
+  Type + Enter = send message to selected peer
+  Stats boxes: NN CONV | NN NEW | NN UNRD
 
 BACK
-  Lone left/right Shift tap = Up/Back
-  Touch top nav in message mode / Settings sub-page
+  Lone Shift (either bottom up-key) = Back
+  Touch top nav in thread / Settings sub-page
 
-SETTINGS NAV
-  W/S move highlight; 1-9 open; Enter activate; touch row activates
-  Scroll when list longer than screen
+SETTINGS
+  Touch row / 1-9 / W-S scroll / Enter
 
-LONG-TERM
-  See Future_steps.txt (do not strip from there)
+UI
+  White theme, thick border select
+  Footer hint sits above bottom tabs (no overlap)
 
-COMMIT STYLE
-  Prefer full files; keep cooperative green; one fullRefresh per screen change
+LONG-TERM → Future_steps.txt
 ================================================================================
