@@ -54,6 +54,13 @@ static const LoraPreset kLoraPresets[] = {
 static constexpr int kLoraPresetCount = 4;
 int g_loraPreset = 0;
 
+static inline lv_color_t theme_fg() {
+    return g_darkTheme ? lv_color_white() : lv_color_black();
+}
+static inline lv_color_t theme_bg() {
+    return g_darkTheme ? lv_color_black() : lv_color_white();
+}
+
 // Settings hierarchy (Plus-like). SET_ROOT = top list; others = sub-pages.
 enum SettingsPage : uint8_t {
     SET_ROOT = 0,
@@ -1510,18 +1517,21 @@ void refreshLiveData() {
 
 void fat_label(lv_obj_t* parent, const char* txt, lv_coord_t x, lv_coord_t y) {
     lv_obj_t* o = lv_label_create(parent);
-    lv_label_set_text(o, txt);
+    lv_label_set_text(o, txt ? txt : "");
     lv_obj_set_style_text_font(o, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(o, lv_color_black(), 0);
+    lv_obj_set_style_text_color(o, theme_fg(), 0);
     lv_obj_set_pos(o, x, y);
 }
 
 void clear_screen() {
-    g_display.fillScreen(false);
-    if (g_root) lv_obj_clean(g_root);
-    else {
+    g_display.fillScreen(g_darkTheme);
+    if (g_root) {
+        lv_obj_clean(g_root);
+        lv_obj_set_style_bg_color(g_root, theme_bg(), 0);
+        lv_obj_set_style_bg_opa(g_root, LV_OPA_COVER, 0);
+    } else {
         g_root = lv_scr_act();
-        lv_obj_set_style_bg_color(g_root, lv_color_white(), 0);
+        lv_obj_set_style_bg_color(g_root, theme_bg(), 0);
         lv_obj_set_style_bg_opa(g_root, LV_OPA_COVER, 0);
         lv_obj_set_style_pad_all(g_root, 0, 0);
         lv_obj_clear_flag(g_root, LV_OBJ_FLAG_SCROLLABLE);
@@ -1541,7 +1551,7 @@ void draw_label_centered(int x, int y, int w, int h, const char* label, bool bol
         lv_obj_t* lab = lv_label_create(g_root);
         lv_label_set_text(lab, label);
         lv_obj_set_style_text_font(lab, font, 0);
-        lv_obj_set_style_text_color(lab, lv_color_black(), 0);
+        lv_obj_set_style_text_color(lab, theme_fg(), 0);
         lv_obj_set_pos(lab, lx + k, ly);
     }
 }
@@ -1552,8 +1562,8 @@ void draw_tile(int x, int y, int w, int h, const char* title, const char* value)
     lv_obj_set_pos(box, x, y);
     lv_obj_set_style_radius(box, 0, 0);
     lv_obj_set_style_border_width(box, 2, 0);
-    lv_obj_set_style_border_color(box, lv_color_black(), 0);
-    lv_obj_set_style_bg_color(box, lv_color_white(), 0);
+    lv_obj_set_style_border_color(box, theme_fg(), 0);
+    lv_obj_set_style_bg_color(box, theme_bg(), 0);
     lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(box, 0, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
@@ -1567,8 +1577,8 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, ch
     lv_obj_set_pos(box, x, y);
     lv_obj_set_style_radius(box, 0, 0);
     lv_obj_set_style_border_width(box, active ? 3 : 1, 0);
-    lv_obj_set_style_border_color(box, lv_color_black(), 0);
-    lv_obj_set_style_bg_color(box, lv_color_white(), 0);
+    lv_obj_set_style_border_color(box, theme_fg(), 0);
+    lv_obj_set_style_bg_color(box, theme_bg(), 0);
     lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(box, 0, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
@@ -1578,7 +1588,7 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, ch
         lv_obj_set_pos(under, x + 4, y + h - 5);
         lv_obj_set_style_radius(under, 0, 0);
         lv_obj_set_style_border_width(under, 0, 0);
-        lv_obj_set_style_bg_color(under, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(under, theme_fg(), 0);
         lv_obj_set_style_bg_opa(under, LV_OPA_COVER, 0);
         lv_obj_clear_flag(under, LV_OBJ_FLAG_SCROLLABLE);
     }
@@ -1619,14 +1629,14 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, ch
         lv_obj_t* lab = lv_label_create(g_root);
         lv_label_set_text(lab, before);
         lv_obj_set_style_text_font(lab, font, 0);
-        lv_obj_set_style_text_color(lab, lv_color_black(), 0);
+        lv_obj_set_style_text_color(lab, theme_fg(), 0);
         lv_obj_set_pos(lab, lx, ly);
     }
     for (int k = 0; k < 2; k++) {
         lv_obj_t* lab = lv_label_create(g_root);
         lv_label_set_text(lab, one);
         lv_obj_set_style_text_font(lab, font, 0);
-        lv_obj_set_style_text_color(lab, lv_color_black(), 0);
+        lv_obj_set_style_text_color(lab, theme_fg(), 0);
         lv_obj_set_pos(lab, lx + (int)bw + k, ly);
     }
     if (after && after[0]) {
@@ -1634,7 +1644,7 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, ch
             lv_obj_t* lab = lv_label_create(g_root);
             lv_label_set_text(lab, after);
             lv_obj_set_style_text_font(lab, font, 0);
-            lv_obj_set_style_text_color(lab, lv_color_black(), 0);
+            lv_obj_set_style_text_color(lab, theme_fg(), 0);
             lv_obj_set_pos(lab, lx + (int)bw + (int)cw + k, ly);
         }
     }
@@ -1644,7 +1654,7 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, ch
     lv_obj_set_pos(bar, lx + (int)bw, ly + 16);
     lv_obj_set_style_radius(bar, 0, 0);
     lv_obj_set_style_border_width(bar, 0, 0);
-    lv_obj_set_style_bg_color(bar, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(bar, theme_fg(), 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
 }
@@ -1671,8 +1681,8 @@ void draw_action_btn(int x, int y, int w, int h, const char* label) {
     lv_obj_set_pos(box, x, y);
     lv_obj_set_style_radius(box, 0, 0);
     lv_obj_set_style_border_width(box, 2, 0);
-    lv_obj_set_style_border_color(box, lv_color_black(), 0);
-    lv_obj_set_style_bg_color(box, lv_color_white(), 0);
+    lv_obj_set_style_border_color(box, theme_fg(), 0);
+    lv_obj_set_style_bg_color(box, theme_bg(), 0);
     lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(box, 0, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
@@ -1688,15 +1698,15 @@ void draw_menu_row(int y, int h, const char* title, const char* sub, bool select
     lv_obj_set_style_radius(row, 0, 0);
     const bool fillSel = selected && g_darkTheme;
     lv_obj_set_style_border_width(row, selected ? (fillSel ? 1 : 3) : 1, 0);
-    lv_obj_set_style_border_color(row, lv_color_black(), 0);
-    lv_obj_set_style_bg_color(row, fillSel ? lv_color_black() : lv_color_white(), 0);
+    lv_obj_set_style_border_color(row, theme_fg(), 0);
+    lv_obj_set_style_bg_color(row, fillSel ? lv_color_white() : theme_bg(), 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
     const lv_font_t* font = &lv_font_montserrat_16;
     const bool hasSub = sub && sub[0];
-    lv_color_t fg = fillSel ? lv_color_white() : lv_color_black();
+    lv_color_t fg = fillSel ? lv_color_black() : theme_fg();
     lv_obj_t* lab = lv_label_create(row);
     lv_label_set_text(lab, title ? title : "");
     lv_obj_set_style_text_font(lab, font, 0);
@@ -1727,15 +1737,15 @@ void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
         lv_obj_set_pos(box, x, y);
         lv_obj_set_style_radius(box, 0, 0);
         lv_obj_set_style_border_width(box, 1, 0);
-        lv_obj_set_style_border_color(box, lv_color_black(), 0);
-        lv_obj_set_style_bg_color(box, lv_color_white(), 0);
+        lv_obj_set_style_border_color(box, theme_fg(), 0);
+        lv_obj_set_style_bg_color(box, theme_bg(), 0);
         lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
         lv_obj_set_style_pad_all(box, 0, 0);
         lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_t* lab = lv_label_create(box);
         lv_label_set_text(lab, labs[i]);
         lv_obj_set_style_text_font(lab, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(lab, lv_color_black(), 0);
+        lv_obj_set_style_text_color(lab, theme_fg(), 0);
         lv_coord_t tw = lv_txt_get_width(labs[i], strlen(labs[i]),
                                          &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
         if (tw <= 0) tw = (lv_coord_t)(strlen(labs[i]) * 6);
@@ -1775,7 +1785,7 @@ void draw_battery_gauge(int x, int y, int w, int h, int pct) {
     lv_obj_set_pos(body, x, y);
     lv_obj_set_style_radius(body, 0, 0);
     lv_obj_set_style_border_width(body, 2, 0);
-    lv_obj_set_style_border_color(body, lv_color_black(), 0);
+    lv_obj_set_style_border_color(body, theme_fg(), 0);
     lv_obj_set_style_bg_color(body, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(body, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(body, 0, 0);
@@ -1786,8 +1796,8 @@ void draw_battery_gauge(int x, int y, int w, int h, int pct) {
     lv_obj_set_pos(tip, x + w, y + h / 4);
     lv_obj_set_style_radius(tip, 0, 0);
     lv_obj_set_style_border_width(tip, 1, 0);
-    lv_obj_set_style_border_color(tip, lv_color_black(), 0);
-    lv_obj_set_style_bg_color(tip, lv_color_black(), 0);
+    lv_obj_set_style_border_color(tip, theme_fg(), 0);
+    lv_obj_set_style_bg_color(tip, theme_fg(), 0);
     lv_obj_set_style_bg_opa(tip, LV_OPA_COVER, 0);
     lv_obj_clear_flag(tip, LV_OBJ_FLAG_SCROLLABLE);
     // Fill
@@ -1799,7 +1809,7 @@ void draw_battery_gauge(int x, int y, int w, int h, int pct) {
         lv_obj_set_pos(fill, x + 3, y + 3);
         lv_obj_set_style_radius(fill, 0, 0);
         lv_obj_set_style_border_width(fill, 0, 0);
-        lv_obj_set_style_bg_color(fill, lv_color_black(), 0);
+        lv_obj_set_style_bg_color(fill, theme_fg(), 0);
         lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
         lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
     }
@@ -1818,7 +1828,7 @@ void build_home() {
     lv_obj_set_pos(idBox, 0, y0);
     lv_obj_set_style_radius(idBox, 0, 0);
     lv_obj_set_style_border_width(idBox, 2, 0);
-    lv_obj_set_style_border_color(idBox, lv_color_black(), 0);
+    lv_obj_set_style_border_color(idBox, theme_fg(), 0);
     lv_obj_set_style_bg_color(idBox, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(idBox, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(idBox, 0, 0);
@@ -1925,7 +1935,7 @@ void build_list_body(const char* /*section*/, const char* emptyNote,
 static void draw_chat_bubble(int y, const char* text, bool incoming, const char* status) {
     const int margin = 4;
     const int maxW = EPD_WIDTH - 28;
-    int tlen = (int)strlen(text);
+    int tlen = (int)strlen(text ? text : "");
     int tw = tlen * 7 + 12;
     if (tw > maxW) tw = maxW;
     if (tw < 36) tw = 36;
@@ -1937,24 +1947,32 @@ static void draw_chat_bubble(int y, const char* text, bool incoming, const char*
     lv_obj_set_pos(box, x, y);
     lv_obj_set_style_radius(box, 4, 0);
     lv_obj_set_style_border_width(box, 2, 0);
-    lv_obj_set_style_border_color(box, lv_color_black(), 0);
-    lv_obj_set_style_bg_color(box, lv_color_white(), 0);
+    lv_obj_set_style_border_color(box, theme_fg(), 0);
+    // Bubble always opposite of page for contrast
+    lv_obj_set_style_bg_color(box, g_darkTheme ? theme_fg() : lv_color_white(), 0);
+    if (g_darkTheme) {
+        // dark page: bubble is slightly inset with white border already
+        lv_obj_set_style_bg_color(box, theme_fg(), 0);
+    } else {
+        lv_obj_set_style_bg_color(box, theme_bg(), 0);
+    }
     lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(box, 0, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* lab = lv_label_create(box);
-    lv_label_set_text(lab, text);
-    lv_obj_set_style_text_font(lab, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lab, lv_color_black(), 0);
-    lv_obj_align(lab, LV_ALIGN_LEFT_MID, 4, 0);
+    lv_label_set_text(lab, text ? text : "");
+    lv_obj_set_style_text_font(lab, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lab, theme_fg(), 0);
+    lv_obj_set_pos(lab, 6, 4);
 
-    if (!incoming && status && status[0]) {
+    if (status && status[0]) {
         int sx = x;
         if (sx + 40 > EPD_WIDTH - 4) sx = EPD_WIDTH - 44;
         fat_label(g_root, status, sx, y + h + 1);
     }
 }
+
 
 void build_chats() {
     // Plus-like thread: left = from peer, right = from us
@@ -1987,12 +2005,13 @@ void build_chats() {
                 else if (raw[0] == '<' || raw[0] == '>')
                     body = raw + 1;
                 bool incoming = g_histRows[i].incoming || raw[0] == '<';
+                if (y + 28 > BOT_TOP - 28) break;
                 draw_chat_bubble(y, body, incoming, incoming ? nullptr : g_histRows[i].st);
                 y += (incoming || !g_histRows[i].st[0]) ? 28 : 40;
                 if (y > CONTENT_BOTTOM - 30) break;
             }
         }
-        draw_compose_or_hint("type+Enter=send  ^=Back");
+        draw_compose_or_hint(g_composeLen > 0 ? "" : "Enter=send");
         return;
     }
     loadMessageRows(false);
@@ -2333,7 +2352,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.35", 0);
+        row("Firmware", "Pro G1.36", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2800,7 +2819,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.35");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.36");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
