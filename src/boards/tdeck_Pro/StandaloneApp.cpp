@@ -501,9 +501,7 @@ void doSendTest(const char* body) {
         peerToHex32(dest, hx);
         Serial.printf("[TX] peerIdx=%d name=\"%s\" dest=%.16s\n",
                       g_selPeer, g_msgRows[g_selPeer].line1, hx);
-        Serial.printf("[TX] peerIdx=%d name=\"%s\" dest=%.16s\n",
-                      g_selPeer, g_msgRows[g_selPeer].line1, hx);
-    }
+            }
     char hex[33];
     peerToHex32(dest, hex);
     size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -575,11 +573,11 @@ void doSendTest(const char* body) {
                       r, rejectionName(r),
                       (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
         if (r == 8 || r == 1) {
-            for (int attempt = 0; attempt < 5; attempt++) {
-                for (int i = 0; i < 40; i++) {
+            for (int attempt = 0; attempt < 12; attempt++) {
+                for (int i = 0; i < 60; i++) {
                     g_proto.loop();
                     if (g_storeReady) g_msgStore.poll();
-                    delay(15);
+                    delay(20);
                 }
                 sub = g_proto.lxmfSubmit(dest, nullptr, 0,
                                          (const uint8_t*)local, n, false);
@@ -1142,10 +1140,13 @@ void applySelectorOnly(const handheld::storage::ConversationSelector& s) {
 
 bool tryConversationPage(uint8_t limit) {
     using namespace handheld::storage;
-    auto sub = g_msgStore.requestConversationPage(
-        {}, false, ConversationOrder::Recent, ConversationDirection::After, limit);
+    auto sub = retryStoreOp([&]() {
+        return g_msgStore.requestConversationPage(
+            {}, false, ConversationOrder::Recent, ConversationDirection::After, limit);
+    });
     if (!sub.accepted()) {
-        Serial.printf("[MSG] page rejected rejection=%u limit=%u\n",
+        Serial.printf("[MSG] page rejected rejection=%u limit=%u
+",
                       (unsigned)sub.rejection, (unsigned)limit);
         return false;
     }
@@ -1239,11 +1240,14 @@ void loadHistoryRows() {
     }
 
     using namespace handheld::storage;
-    auto sub = g_msgStore.requestHistoryPage(
-        peerHex, HistoryEntry{}, (uint8_t)HIST_ROWS, HistoryDirection::Before);
+    auto sub = retryStoreOp([&]() {
+        return g_msgStore.requestHistoryPage(
+            peerHex, HistoryEntry{}, (uint8_t)HIST_ROWS, HistoryDirection::Before);
+    });
     if (!sub.accepted()) {
-        Serial.printf("[HIST] page rejected %u\n", (unsigned)sub.rejection);
-        snprintf(g_histNote, sizeof(g_histNote), "(hist rejected)");
+        Serial.printf("[HIST] page rejected %u
+", (unsigned)sub.rejection);
+        snprintf(g_histNote, sizeof(g_histNote), "(hist busy)");
         return;
     }
 
@@ -2418,7 +2422,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.39", 0);
+        row("Firmware", "Pro G1.40", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2883,7 +2887,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.39");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.40");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
