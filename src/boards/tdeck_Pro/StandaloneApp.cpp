@@ -42,6 +42,17 @@ bool g_featWifi  = false;
 bool g_featTcp   = false;
 bool g_featGps   = false;
 bool g_featLora  = true;   // display/radio intent (radio stays up for mesh)
+bool g_darkTheme = false;  // false=white paper, true=black-ink select
+
+struct LoraPreset { const char* name; uint8_t sf; float bw; uint8_t cr; };
+static const LoraPreset kLoraPresets[] = {
+    {"Long Fast",  11, 250000.f, 5},
+    {"Long Slow",  12, 125000.f, 8},
+    {"Medium",     10, 250000.f, 5},
+    {"Fast Short",  7, 500000.f, 5},
+};
+static constexpr int kLoraPresetCount = 4;
+int g_loraPreset = 0;
 
 // Settings hierarchy (Plus-like). SET_ROOT = top list; others = sub-pages.
 enum SettingsPage : uint8_t {
@@ -420,6 +431,22 @@ void doAnnounce() {
             strcpy(g_announceStr, "failed");
             Serial.println("[ANN] failed");
             break;
+    }
+}
+
+void applyLoraPreset(int idx) {
+    if (idx < 0) idx = 0;
+    if (idx >= kLoraPresetCount) idx = kLoraPresetCount - 1;
+    g_loraPreset = idx;
+    const LoraPreset& pr = kLoraPresets[g_loraPreset];
+    if (g_radio) {
+        g_radio->setSpreadingFactor(pr.sf);
+        g_radio->setSignalBandwidth(pr.bw);
+        g_radio->setCodingRate4(pr.cr);
+        Serial.printf("[LORA] preset=%s SF=%u BW=%.0f CR=%u\n",
+                      pr.name, (unsigned)pr.sf, pr.bw, (unsigned)pr.cr);
+    } else {
+        Serial.printf("[LORA] preset=%s (radio null)\n", pr.name);
     }
 }
 
@@ -1654,30 +1681,32 @@ void draw_action_btn(int x, int y, int w, int h, const char* label) {
 
 // Plus-style settings/list row: title + subtitle + trailing ">"
 void draw_menu_row(int y, int h, const char* title, const char* sub, bool selected) {
-    // White theme: selected = thicker border only (no black fill)
+    // White paper: thick border. Black-ink: filled select + inverted text.
     lv_obj_t* row = lv_obj_create(g_root);
     lv_obj_set_size(row, EPD_WIDTH - 4, h);
     lv_obj_set_pos(row, 2, y);
     lv_obj_set_style_radius(row, 0, 0);
-    lv_obj_set_style_border_width(row, selected ? 3 : 1, 0);
+    const bool fillSel = selected && g_darkTheme;
+    lv_obj_set_style_border_width(row, selected ? (fillSel ? 1 : 3) : 1, 0);
     lv_obj_set_style_border_color(row, lv_color_black(), 0);
-    lv_obj_set_style_bg_color(row, lv_color_white(), 0);
+    lv_obj_set_style_bg_color(row, fillSel ? lv_color_black() : lv_color_white(), 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
     const lv_font_t* font = &lv_font_montserrat_16;
     const bool hasSub = sub && sub[0];
-    lv_obj_t* t = lv_label_create(row);
-    lv_label_set_text(t, title ? title : "");
-    lv_obj_set_style_text_font(t, font, 0);
-    lv_obj_set_style_text_color(t, lv_color_black(), 0);
-    lv_obj_set_pos(t, 6, hasSub ? 4 : (h - 16) / 2);
+    lv_color_t fg = fillSel ? lv_color_white() : lv_color_black();
+    lv_obj_t* lab = lv_label_create(row);
+    lv_label_set_text(lab, title ? title : "");
+    lv_obj_set_style_text_font(lab, font, 0);
+    lv_obj_set_style_text_color(lab, fg, 0);
+    lv_obj_set_pos(lab, 6, hasSub ? 4 : (h - 16) / 2);
     if (hasSub) {
         lv_obj_t* s = lv_label_create(row);
         lv_label_set_text(s, sub);
         lv_obj_set_style_text_font(s, font, 0);
-        lv_obj_set_style_text_color(s, lv_color_black(), 0);
+        lv_obj_set_style_text_color(s, fg, 0);
         lv_obj_set_pos(s, 6, 22);
     }
 }
@@ -1717,16 +1746,16 @@ void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
 }
 
 void draw_compose_or_hint(const char* idleHint) {
-    // Keep footer above bottom nav (BOT_TOP); avoid overlapping Contact/MsgBox/Peers
+    // Single short line above bottom tabs — never draw into the nav band
     if (g_composeLen > 0 || g_composeMode) {
-        char foot[44];
+        char foot[36];
         if (g_nameEditMode)
-            snprintf(foot, sizeof(foot), "Name>%.22s", g_compose);
+            snprintf(foot, sizeof(foot), "Name>%.20s", g_compose);
         else
-            snprintf(foot, sizeof(foot), ">%.28s", g_compose);
-        fat_label(g_root, foot, 4, BOT_TOP - 20);
+            snprintf(foot, sizeof(foot), ">%.24s", g_compose);
+        fat_label(g_root, foot, 4, BOT_TOP - 22);
     } else if (idleHint && idleHint[0]) {
-        fat_label(g_root, idleHint, 4, BOT_TOP - 20);
+        fat_label(g_root, idleHint, 4, BOT_TOP - 22);
     }
     draw_nav();
 }
@@ -2219,10 +2248,21 @@ void settingsActivate() {
         }
         return;
     }
+    if (g_settingsPage == SET_SCREEN) {
+        if (g_settingsSel == 1) {
+            g_darkTheme = !g_darkTheme;
+            Serial.printf("[THEME] %s\n", g_darkTheme ? "black-ink" : "white-paper");
+            show_screen(SCR_SETTINGS);
+        }
+        return;
+    }
     if (g_settingsPage == SET_LORA) {
         if (g_settingsSel == 0) {
             g_featLora = !g_featLora;
             Serial.printf("[FEAT] LORA %s\n", g_featLora ? "ON" : "OFF");
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 2) {
+            applyLoraPreset((g_loraPreset + 1) % kLoraPresetCount);
             show_screen(SCR_SETTINGS);
         }
         return;
@@ -2245,7 +2285,7 @@ void build_settings() {
 
     // Visible window of settings rows (scroll with W/S or touch)
     const int listTop = y;
-    const int maxVis = (CONTENT_BOTTOM - listTop - 4) / SET_ROW_H;
+    const int maxVis = (CONTENT_BOTTOM - listTop - 24) / SET_ROW_H;
     auto row = [&](const char* title, const char* sub, int idx) {
         // Only draw rows in the visible scroll window
         if (idx < g_settingsScroll) return;
@@ -2258,21 +2298,26 @@ void build_settings() {
     if (g_settingsPage == SET_ROOT) {
         // no "SETTINGS" title — top tab is enough; more room for rows
         snprintf(a, sizeof(a), "%.14s", g_destHex);
-        row("Identity & Device", a, 0);
-        row("Screen & Input", "e-ink / keys", 1);
+        row("1 Identity & Device", a, 0);
+        row("2 Screen & Input", "e-ink / keys", 1);
         snprintf(a, sizeof(a), "%s %s", g_batStr, g_pctStr);
-        row("Battery", a, 2);
+        row("3 Battery", a, 2);
         snprintf(a, sizeof(a), "LF %.0fMHz %s", LORA_DEFAULT_FREQ / 1e6f,
                  g_featLora ? "ON" : "OFF");
-        row("LoRa", a, 3);
-        row("Network", "WiFi/TCP stub", 4);
-        row("Time & Location", "stub", 5);
+        row("4 LoRa", a, 3);
+        row("5 Network", "WiFi/TCP stub", 4);
+        row("6 Time & Location", "stub", 5);
         snprintf(a, sizeof(a), "Vol %s", g_featAudio ? "ON" : "OFF");
-        row("Alerts & Audio", a, 6);
+        row("7 Alerts & Audio", a, 6);
         snprintf(a, sizeof(a), "P%s L%s", g_pathsStr, g_linksStr);
-        row("Diagnostics", a, 7);
-        row("Storage & Maint.", "heap/flash", 8);
-        draw_compose_or_hint("W/S move 1-9 Enter");
+        row("8 Diagnostics", a, 7);
+        row("9 Storage & Maint.", "heap/flash", 8);
+        if (g_settingsScroll > 0)
+            fat_label(g_root, "^ more", EPD_WIDTH - 70, CONTENT_TOP + 2);
+        if (g_settingsScroll + maxVis < 9)
+            fat_label(g_root, "v more", EPD_WIDTH - 70, CONTENT_BOTTOM - 22);
+
+        draw_compose_or_hint("^/W up  V down  1-9 Enter");
         return;
     }
 
@@ -2288,7 +2333,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.34", 0);
+        row("Firmware", "Pro G1.35", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2296,12 +2341,12 @@ void build_settings() {
         row("Display Name", "(see announce)", 3);
         row("Identity Slot", "0 active", 4);
         row("Create Identity", "[reboot+erase]", 5);
-        draw_compose_or_hint("^=back to list");
+        draw_compose_or_hint("Enter=Theme  ^=back");
         return;
     }
     if (g_settingsPage == SET_SCREEN) {
         row("Screen Bright", "e-ink N/A", 0);
-        row("Theme", "BW e-ink", 1);
+        row("Theme", g_darkTheme ? "Black ink" : "White paper", 1);
         row("Dim After", "N/A", 2);
         row("Display Off", "N/A", 3);
         row("Key Backlight", "serial: L", 4);
@@ -2322,11 +2367,11 @@ void build_settings() {
         row("LoRa Radio", g_featLora ? "ON" : "OFF", 0);
         snprintf(a, sizeof(a), "Americas (%.0f)", LORA_DEFAULT_FREQ / 1e6f);
         row("Region Preset", a, 1);
-        row("Link Preset", "Long Fast", 2);
+        row("Link Preset", kLoraPresets[g_loraPreset].name, 2);
         snprintf(a, sizeof(a), "%s", g_rssiStr);
         row("Last RSSI", a, 3);
         row("Developer RF", "locked", 4);
-        draw_compose_or_hint("Enter toggles LoRa intent");
+        draw_compose_or_hint("0=radio 2=preset cycle  ^back");
         return;
     }
     if (g_settingsPage == SET_NETWORK) {
@@ -2624,7 +2669,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
                     show_screen(SCR_SETTINGS);
                     return true;
                 }
-                if (ev.character == 's' || ev.character == 'S') {
+                if (ev.character == 'v' || ev.character == 'V' ||
+                    ev.character == 's' || ev.character == 'S') {
                     if (g_settingsSel < 8) g_settingsSel++;
                     const int maxVis = 5;
                     if (g_settingsSel >= g_settingsScroll + maxVis)
@@ -2754,7 +2800,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.34");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.35");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 

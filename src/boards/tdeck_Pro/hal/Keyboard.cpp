@@ -345,6 +345,10 @@ void Keyboard::mapKey(uint8_t row, uint8_t col, bool pressed)
 
   if (key == K_SYM) {
     _symHeld = pressed;
+    if (pressed)
+      Serial.println("[KEY] SYM down");
+    else
+      Serial.println("[KEY] SYM up");
     return;
   }
 
@@ -413,6 +417,9 @@ void Keyboard::mapKey(uint8_t row, uint8_t col, bool pressed)
     _event.character = 0;
 
     _hasEvent = true;
+    // Prevent sticky SYM/ALT from poisoning next compose session
+    _symHeld = false;
+    _altHeld = false;
     return;
   }
 

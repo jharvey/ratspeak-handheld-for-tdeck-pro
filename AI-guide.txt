@@ -1,27 +1,26 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.34
+Last: G1.35
 ================================================================================
 
-CONTACTS NAME (important)
-  Select peer (1-9 or touch) → type name (auto name-edit) → Enter = SAVE NAME
-  Does NOT send LXMF. Serial: n:RADIO1
-  TRUSTED count rises after save. Lists show ">1 RADIO1" + full id line 2.
+KEYBOARD
+  If HELLO becomes :2""+ then SYM is stuck — release SYM (or Enter clears it).
+  Serial shows [KEY] SYM down/up.
 
-MSG BOX / PEERS
-  Type + Enter = send message to selected peer
-  Stats boxes: NN CONV | NN NEW | NN UNRD
-
-BACK
-  Lone Shift (either bottom up-key) = Back
-  Touch top nav in thread / Settings sub-page
+THREAD / COMPOSE
+  Type + Enter = send. Footer is one short line above bottom tabs.
+  Fail bubbles = prior TX status; naming uses Contacts (not Msg Box).
 
 SETTINGS
-  Touch row / 1-9 / W-S scroll / Enter
+  Rows numbered 1-9 on root. Enter opens sub-page.
+  Scroll: ^ (lone Shift) or W = up; V or S = down.
+  "^ more" / "v more" when list continues.
+  Screen > Theme: toggles white-paper vs black-ink select style.
+  LoRa > Link Preset (row 2): cycles Long Fast / Long Slow / Medium / Fast Short
+    and applies SF/BW/CR on radio.
 
-UI
-  White theme, thick border select
-  Footer hint sits above bottom tabs (no overlap)
+PSRAM
+  Must be qio_qspi — see PSRAM-RECOVERY.txt if size=0.
 
-LONG-TERM → Future_steps.txt
+Long-term → Future_steps.txt
 ================================================================================
