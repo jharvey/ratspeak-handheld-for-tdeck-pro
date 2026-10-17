@@ -2438,7 +2438,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.40", 0);
+        row("Firmware", "Pro G1.41", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2576,15 +2576,24 @@ void next_screen() {
 
 void maybeAutoRedrawMessages() {
     if (g_screen != SCR_CHATS || !g_storeReady) return;
+    if (g_composeLen > 0) return;  // don't clobber while typing
     g_msgStore.poll();
     const uint32_t rev = g_msgStore.revision();
     if (rev == g_lastUiRevision) return;
     if (millis() - g_lastMsgRedrawMs < MSG_REDRAW_MIN_MS) return;
     g_lastMsgRedrawMs = millis();
-    Serial.printf("[UI] auto Messages redraw rev %u -> %u\n",
-                  (unsigned)g_lastUiRevision, (unsigned)rev);
+    Serial.printf("[UI] auto Messages redraw rev %u -> %u hist=%d\n",
+                  (unsigned)g_lastUiRevision, (unsigned)rev, (int)g_showHistory);
+    // Must refresh data, not only paint: thread uses cached g_histRows
+    if (g_showHistory) {
+        loadHistoryRows();
+    } else {
+        g_msgRowsLoaded = false;
+        loadMessageRows(true);
+    }
     show_screen(SCR_CHATS);
 }
+
 
 // E21: after typing pauses, one fullRefresh so the footer shows the compose line.
 // Never refresh per keypress - only when idle and dirty.
@@ -2903,7 +2912,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.40");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.41");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
