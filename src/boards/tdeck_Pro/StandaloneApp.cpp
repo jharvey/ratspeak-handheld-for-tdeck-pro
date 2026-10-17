@@ -1345,7 +1345,6 @@ void loadHistoryRows() {
         Serial.printf("[HIST] loaded %d rows\n", g_histRowCount);
 }
 
-
 // E23: Top up Messages rows from recently announced peers so the user can
 // select one and send a keyboard reply even with no prior conversation.
 void appendAnnouncedPeers() {
@@ -1516,11 +1515,15 @@ void refreshLiveData() {
 }
 
 void fat_label(lv_obj_t* parent, const char* txt, lv_coord_t x, lv_coord_t y) {
-    lv_obj_t* o = lv_label_create(parent);
-    lv_label_set_text(o, txt ? txt : "");
-    lv_obj_set_style_text_font(o, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(o, theme_fg(), 0);
-    lv_obj_set_pos(o, x, y);
+    // Dark theme: double-draw +1px for a slightly bolder white glyph
+    const int passes = g_darkTheme ? 2 : 1;
+    for (int k = 0; k < passes; k++) {
+        lv_obj_t* o = lv_label_create(parent);
+        lv_label_set_text(o, txt ? txt : "");
+        lv_obj_set_style_text_font(o, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(o, theme_fg(), 0);
+        lv_obj_set_pos(o, x + k, y);
+    }
 }
 
 void clear_screen() {
@@ -1537,6 +1540,8 @@ void clear_screen() {
         lv_obj_clear_flag(g_root, LV_OBJ_FLAG_SCROLLABLE);
     }
 }
+
+
 
 // Centered label — use LVGL text width when possible for true center
 void draw_label_centered(int x, int y, int w, int h, const char* label, bool bold) {
@@ -1555,6 +1560,34 @@ void draw_label_centered(int x, int y, int w, int h, const char* label, bool bol
         lv_obj_set_pos(lab, lx + k, ly);
     }
 }
+
+void draw_splash() {
+    // Early boot screen — black paper, white text (readable on e-ink)
+    const bool saved = g_darkTheme;
+    g_darkTheme = true;
+    clear_screen();
+    // Simple "logo" block
+    lv_obj_t* logo = lv_obj_create(g_root);
+    lv_obj_set_size(logo, 120, 40);
+    lv_obj_set_pos(logo, (EPD_WIDTH - 120) / 2, 48);
+    lv_obj_set_style_radius(logo, 0, 0);
+    lv_obj_set_style_border_width(logo, 3, 0);
+    lv_obj_set_style_border_color(logo, theme_fg(), 0);
+    lv_obj_set_style_bg_color(logo, theme_bg(), 0);
+    lv_obj_set_style_bg_opa(logo, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(logo, 0, 0);
+    lv_obj_clear_flag(logo, LV_OBJ_FLAG_SCROLLABLE);
+    draw_label_centered((EPD_WIDTH - 120) / 2, 48, 120, 40, "RatSpeak", true);
+
+    fat_label(g_root, "T-Deck Pro  V1.1", 40, 110);
+    fat_label(g_root, "RatSpeak     V0.1", 40, 140);
+    fat_label(g_root, "BOOTING...", 70, 200);
+    LvglPort::updateAndRefresh();
+    g_display.fullRefresh();
+    Serial.println("[BOOT] splash drawn");
+    g_darkTheme = saved;
+}
+
 
 void draw_tile(int x, int y, int w, int h, const char* title, const char* value) {
     lv_obj_t* box = lv_obj_create(g_root);
@@ -1691,33 +1724,36 @@ void draw_action_btn(int x, int y, int w, int h, const char* label) {
 
 // Plus-style settings/list row: title + subtitle + trailing ">"
 void draw_menu_row(int y, int h, const char* title, const char* sub, bool selected) {
-    // White paper: thick border. Black-ink: filled select + inverted text.
+    // Selection = thick border only (same in both themes — no solid fill bar)
     lv_obj_t* row = lv_obj_create(g_root);
     lv_obj_set_size(row, EPD_WIDTH - 4, h);
     lv_obj_set_pos(row, 2, y);
     lv_obj_set_style_radius(row, 0, 0);
-    const bool fillSel = selected && g_darkTheme;
-    lv_obj_set_style_border_width(row, selected ? (fillSel ? 1 : 3) : 1, 0);
+    lv_obj_set_style_border_width(row, selected ? 3 : 1, 0);
     lv_obj_set_style_border_color(row, theme_fg(), 0);
-    lv_obj_set_style_bg_color(row, fillSel ? lv_color_white() : theme_bg(), 0);
+    lv_obj_set_style_bg_color(row, theme_bg(), 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
     const lv_font_t* font = &lv_font_montserrat_16;
     const bool hasSub = sub && sub[0];
-    lv_color_t fg = fillSel ? lv_color_black() : theme_fg();
-    lv_obj_t* lab = lv_label_create(row);
-    lv_label_set_text(lab, title ? title : "");
-    lv_obj_set_style_text_font(lab, font, 0);
-    lv_obj_set_style_text_color(lab, fg, 0);
-    lv_obj_set_pos(lab, 6, hasSub ? 4 : (h - 16) / 2);
+    const int passes = g_darkTheme ? 2 : 1;
+    for (int k = 0; k < passes; k++) {
+        lv_obj_t* lab = lv_label_create(row);
+        lv_label_set_text(lab, title ? title : "");
+        lv_obj_set_style_text_font(lab, font, 0);
+        lv_obj_set_style_text_color(lab, theme_fg(), 0);
+        lv_obj_set_pos(lab, 6 + k, hasSub ? 4 : (h - 16) / 2);
+    }
     if (hasSub) {
-        lv_obj_t* s = lv_label_create(row);
-        lv_label_set_text(s, sub);
-        lv_obj_set_style_text_font(s, font, 0);
-        lv_obj_set_style_text_color(s, fg, 0);
-        lv_obj_set_pos(s, 6, 22);
+        for (int k = 0; k < passes; k++) {
+            lv_obj_t* s = lv_label_create(row);
+            lv_label_set_text(s, sub);
+            lv_obj_set_style_text_font(s, font, 0);
+            lv_obj_set_style_text_color(s, theme_fg(), 0);
+            lv_obj_set_pos(s, 6 + k, 22);
+        }
     }
 }
 
@@ -1930,7 +1966,6 @@ void build_list_body(const char* /*section*/, const char* emptyNote,
     }
 }
 
-
 // Plus-style outline bubbles: left=in, right=out; BOTH white bg / black text
 static void draw_chat_bubble(int y, const char* text, bool incoming, const char* status) {
     const int margin = 4;
@@ -1948,23 +1983,20 @@ static void draw_chat_bubble(int y, const char* text, bool incoming, const char*
     lv_obj_set_style_radius(box, 4, 0);
     lv_obj_set_style_border_width(box, 2, 0);
     lv_obj_set_style_border_color(box, theme_fg(), 0);
-    // Bubble always opposite of page for contrast
-    lv_obj_set_style_bg_color(box, g_darkTheme ? theme_fg() : lv_color_white(), 0);
-    if (g_darkTheme) {
-        // dark page: bubble is slightly inset with white border already
-        lv_obj_set_style_bg_color(box, theme_fg(), 0);
-    } else {
-        lv_obj_set_style_bg_color(box, theme_bg(), 0);
-    }
+    // Always match page bg so text (theme_fg) stays readable
+    lv_obj_set_style_bg_color(box, theme_bg(), 0);
     lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(box, 0, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t* lab = lv_label_create(box);
-    lv_label_set_text(lab, text ? text : "");
-    lv_obj_set_style_text_font(lab, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(lab, theme_fg(), 0);
-    lv_obj_set_pos(lab, 6, 4);
+    const int passes = g_darkTheme ? 2 : 1;
+    for (int k = 0; k < passes; k++) {
+        lv_obj_t* lab = lv_label_create(box);
+        lv_label_set_text(lab, text ? text : "");
+        lv_obj_set_style_text_font(lab, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(lab, theme_fg(), 0);
+        lv_obj_set_pos(lab, 6 + k, 4);
+    }
 
     if (status && status[0]) {
         int sx = x;
@@ -1972,7 +2004,6 @@ static void draw_chat_bubble(int y, const char* text, bool incoming, const char*
         fat_label(g_root, status, sx, y + h + 1);
     }
 }
-
 
 void build_chats() {
     // Plus-like thread: left = from peer, right = from us
@@ -2352,7 +2383,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.36", 0);
+        row("Firmware", "Pro G1.37", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2457,7 +2488,6 @@ void build_settings() {
     draw_compose_or_hint("^=back");
 }
 
-
 void show_screen(ScreenId id) {
     if (id == SCR_SETTINGS && g_screen != SCR_SETTINGS) {
         // Entering Settings from another tab → root list
@@ -2520,7 +2550,6 @@ void maybeAutoRedrawPeers() {
     Serial.printf("[PEER] auto-refresh count=%u\n", (unsigned)n);
     show_screen(SCR_PEERS);
 }
-
 
 void maybeComposeRedraw() {
     if (!g_composeDirty) return;
@@ -2819,7 +2848,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.36");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.37");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
@@ -2884,6 +2913,7 @@ bool begin() {
         return false;
     }
     Serial.println("[BOOT] LVGL OK");
+    draw_splash();
 
     g_kbOk = g_kb.begin();
     if (g_kbOk) Serial.println("[KEYBOARD] TCA8418 keyboard ready");
