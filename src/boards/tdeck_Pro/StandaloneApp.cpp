@@ -2065,9 +2065,28 @@ void build_chats() {
         if (g_histRowCount == 0) {
             fat_label(g_root, g_histNote[0] ? g_histNote : "(no messages)", 4, y);
         } else {
-            for (int i = 0; i < g_histRowCount; i++) {
+            // Prefer NEWEST messages: older ones drop off the top when space is tight
+            // (previous loop drew oldest-first and clipped the latest inbound).
+            auto rowH = [](int i) -> int {
+                if (!g_histRows[i].used) return 0;
+                const bool inc = g_histRows[i].incoming ||
+                                 (g_histRows[i].line[0] == '<');
+                return (inc || !g_histRows[i].st[0]) ? 28 : 40;
+            };
+            const int yMax = BOT_TOP - 30;  // leave room for Enter=send footer
+            int start = 0;
+            {
+                int need = 0;
+                for (int i = g_histRowCount - 1; i >= 0; i--) {
+                    int h = rowH(i);
+                    if (h <= 0) continue;
+                    if (y + need + h > yMax) break;
+                    need += h;
+                    start = i;
+                }
+            }
+            for (int i = start; i < g_histRowCount; i++) {
                 if (!g_histRows[i].used) continue;
-                // Strip leading "< "/" > " from stored line for bubble text
                 const char* raw = g_histRows[i].line;
                 const char* body = raw;
                 if ((raw[0] == '<' || raw[0] == '>') && raw[1] == ' ')
@@ -2075,10 +2094,9 @@ void build_chats() {
                 else if (raw[0] == '<' || raw[0] == '>')
                     body = raw + 1;
                 bool incoming = g_histRows[i].incoming || raw[0] == '<';
-                if (y + 28 > BOT_TOP - 28) break;
+                if (y + 28 > yMax) break;
                 draw_chat_bubble(y, body, incoming, incoming ? nullptr : g_histRows[i].st);
-                y += (incoming || !g_histRows[i].st[0]) ? 28 : 40;
-                if (y > CONTENT_BOTTOM - 30) break;
+                y += rowH(i);
             }
         }
         draw_compose_or_hint(g_composeLen > 0 ? "" : "Enter=send");
@@ -2438,7 +2456,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.41", 0);
+        row("Firmware", "Pro G1.42", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2912,7 +2930,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.41");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.42");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
