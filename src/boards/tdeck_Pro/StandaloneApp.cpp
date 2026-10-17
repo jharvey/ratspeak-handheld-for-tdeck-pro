@@ -1140,13 +1140,21 @@ void applySelectorOnly(const handheld::storage::ConversationSelector& s) {
 
 bool tryConversationPage(uint8_t limit) {
     using namespace handheld::storage;
-    auto sub = retryStoreOp([&]() {
-        return g_msgStore.requestConversationPage(
+    auto sub = g_msgStore.requestConversationPage(
+        {}, false, ConversationOrder::Recent, ConversationDirection::After, limit);
+    for (int a = 0; a < 8 && !sub.accepted(); a++) {
+        unsigned r = (unsigned)sub.rejection;
+        if (r != 1 && r != 8) break;
+        for (int i = 0; i < 50; i++) {
+            if (g_protoReady) g_proto.loop();
+            if (g_storeReady) g_msgStore.poll();
+            delay(12);
+        }
+        sub = g_msgStore.requestConversationPage(
             {}, false, ConversationOrder::Recent, ConversationDirection::After, limit);
-    });
+    }
     if (!sub.accepted()) {
-        Serial.printf("[MSG] page rejected rejection=%u limit=%u
-",
+        Serial.printf("[MSG] page rejected rejection=%u limit=%u\n",
                       (unsigned)sub.rejection, (unsigned)limit);
         return false;
     }
@@ -1240,13 +1248,21 @@ void loadHistoryRows() {
     }
 
     using namespace handheld::storage;
-    auto sub = retryStoreOp([&]() {
-        return g_msgStore.requestHistoryPage(
+    auto sub = g_msgStore.requestHistoryPage(
+        peerHex, HistoryEntry{}, (uint8_t)HIST_ROWS, HistoryDirection::Before);
+    for (int a = 0; a < 8 && !sub.accepted(); a++) {
+        unsigned r = (unsigned)sub.rejection;
+        if (r != 1 && r != 8) break;
+        for (int i = 0; i < 50; i++) {
+            if (g_protoReady) g_proto.loop();
+            if (g_storeReady) g_msgStore.poll();
+            delay(12);
+        }
+        sub = g_msgStore.requestHistoryPage(
             peerHex, HistoryEntry{}, (uint8_t)HIST_ROWS, HistoryDirection::Before);
-    });
+    }
     if (!sub.accepted()) {
-        Serial.printf("[HIST] page rejected %u
-", (unsigned)sub.rejection);
+        Serial.printf("[HIST] page rejected %u\n", (unsigned)sub.rejection);
         snprintf(g_histNote, sizeof(g_histNote), "(hist busy)");
         return;
     }
