@@ -309,14 +309,14 @@ void logPsram() {
                   (int)found, (unsigned)sz, (unsigned)fr,
                   (unsigned)capSp, (unsigned)capIn);
     if (found && sz == 0) {
-        Serial.println("[PSRAM] WARN chip seen but size=0 — OPI not mapped");
+        Serial.println("[PSRAM] WARN chip seen but size=0 - OPI not mapped");
         Serial.println("[PSRAM] Fix: board=lilygo_t_deck_pro memory_type=qio_qspi");
         Serial.println("[PSRAM]      (Pro uses QSPI PSRAM, not OPI qio_opi)");
     } else if (found && sz > 0) {
-        Serial.printf("[PSRAM] OK mapped %u KB — protocol can use SPIRAM\n",
+        Serial.printf("[PSRAM] OK mapped %u KB - protocol can use SPIRAM\n",
                       (unsigned)(sz / 1024));
     } else {
-        Serial.println("[PSRAM] none — stuck on INTERNAL SMALL node");
+        Serial.println("[PSRAM] none - stuck on INTERNAL SMALL node");
     }
 }
 
@@ -330,7 +330,7 @@ bool tryProto(uint32_t caps, const char* label) {
 // When FlashStore::begin fails on corrupt media, format() is a no-op because
 // it requires _ready==true. Bypass: erase SPIFFS/littlefs partition, format, remount.
 bool recoverCorruptLittleFS() {
-    Serial.println("[FLASH] recoverCorruptLittleFS…");
+    Serial.println("[FLASH] recoverCorruptLittleFS...");
     const esp_partition_t* part =
         esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "littlefs");
     if (!part)
@@ -355,19 +355,19 @@ bool recoverCorruptLittleFS() {
         return false;
     }
     LittleFS.end();
-    Serial.println("[FLASH] partition erased + formatted — calling FlashStore::begin");
+    Serial.println("[FLASH] partition erased + formatted - calling FlashStore::begin");
     return g_flash.begin();
 }
 
 bool initStorageAndProto() {
     // Corrupted LittleFS → mount fails, FlashStore::format refuses (!_ready).
     if (!g_flash.begin()) {
-        Serial.println("[FLASH] begin failed — partition erase recovery");
+        Serial.println("[FLASH] begin failed - partition erase recovery");
         if (!recoverCorruptLittleFS()) {
-            Serial.println("[FLASH] recovery failed — no identity/announce");
+            Serial.println("[FLASH] recovery failed - no identity/announce");
             return false;
         }
-        Serial.println("[FLASH] recovery OK — fresh FS");
+        Serial.println("[FLASH] recovery OK - fresh FS");
     }
     g_idMgr.begin(&g_flash, nullptr);
     if (!g_msgStore.begin(&g_flash, nullptr, false)) return false;
@@ -405,7 +405,7 @@ bool initStorageAndProto() {
         Serial.printf("[PROTO] up dest=%s free_int=%u\n", g_destHex,
                       (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     } else {
-        Serial.println("[PROTO] off — store-only");
+        Serial.println("[PROTO] off - store-only");
         fillDestFromNvs();
     }
     return true;
@@ -452,12 +452,18 @@ void applyLoraPreset(int idx) {
         g_radio->setCodingRate4(pr.cr);
         Serial.printf("[LORA] preset=%s SF=%u BW=%.0f CR=%u\n",
                       pr.name, (unsigned)pr.sf, pr.bw, (unsigned)pr.cr);
+        if (g_loraPreset != 0)
+            Serial.println("[LORA] WARN non-default preset - peer may not decode (use Long Fast)");
     } else {
         Serial.printf("[LORA] preset=%s (radio null)\n", pr.name);
     }
 }
 
 void doSendTest(const char* body) {
+    if (g_screen == SCR_SETTINGS || g_screen == SCR_HOME) {
+        Serial.println("[TX] ignore - not on Msg Box/Peers/Contacts");
+        return;
+    }
     if (!g_protoReady) {
         strcpy(g_txStr, "proto off");
         Serial.println("[TX] proto off");
@@ -466,7 +472,7 @@ void doSendTest(const char* body) {
     clampSelPeer();
     if (g_msgRowCount == 0 || !g_msgRows[g_selPeer].used) {
         strcpy(g_txStr, "no peer");
-        Serial.println("[TX] no peer — open Peers/Msg Box, press 1-9 or tap a row first");
+        Serial.println("[TX] no peer - open Peers/Msg Box, press 1-9 or tap a row first");
         return;
     }
     static unsigned long lastTx = 0;
@@ -579,7 +585,7 @@ void doSendTest(const char* body) {
                               attempt + 1);
             }
             if (!sub.accepted()) {
-                Serial.println("[TX] give up — still Recovering/Busy");
+                Serial.println("[TX] give up - still Recovering/Busy");
                 return;
             }
         } else {
@@ -617,8 +623,8 @@ void doSendTest(const char* body) {
                 // N1/N2: refresh thread so new outbound appears with status
                 if (g_showHistory) loadHistoryRows();
             } else if (ir.error == handheld::storage::Error::Allocation) {
-                // Retry once after another clean — Allocation at ~12K is common
-                Serial.println("[TX] Allocation fail — clean+retry once");
+                // Retry once after another clean - Allocation at ~12K is common
+                Serial.println("[TX] Allocation fail - clean+retry once");
                 if (g_root) lv_obj_clean(g_root);
                 delay(50);
                 for (int i = 0; i < 20; i++) {
@@ -802,18 +808,18 @@ void goBackFromMessage() {
         composeClear();
         g_composeMode = false;
         changed = true;
-        Serial.println("[UI] Back — cancel name edit");
+        Serial.println("[UI] Back - cancel name edit");
     }
     if (g_composeLen > 0 || g_composeMode) {
         composeClear();
         g_composeMode = false;
         changed = true;
-        Serial.println("[UI] Back — cleared compose");
+        Serial.println("[UI] Back - cleared compose");
     }
     if (g_showHistory) {
         g_showHistory = false;
         changed = true;
-        Serial.println("[UI] Back — left thread");
+        Serial.println("[UI] Back - left thread");
     }
     if (changed) show_screen(g_screen);
 }
@@ -874,7 +880,7 @@ bool cst328Read(int16_t& x, int16_t& y) {
 }
 
 // ---------------------------------------------------------------------------
-// Layout (240x320 portrait) — two-row nav, boxed tabs, no page title
+// Layout (240x320 portrait) - two-row nav, boxed tabs, no page title
 //
 //   TOP_NAV  y=0 .. TOP_H-1     [ Home ] [ Settings ]   (2 boxes)
 //   Content  y=CONTENT_TOP .. CONTENT_BOTTOM
@@ -888,7 +894,7 @@ bool cst328Read(int16_t& x, int16_t& y) {
 constexpr int TOP_H          = 36;
 constexpr int BOT_H          = 40;
 constexpr int BOT_TOP        = EPD_HEIGHT - BOT_H;          // 280
-constexpr int CONTENT_TOP    = TOP_H;                      // 36 — no gap under nav
+constexpr int CONTENT_TOP    = TOP_H;                      // 36 - no gap under nav
 constexpr int CONTENT_BOTTOM = BOT_TOP;                    // flush to bot nav
 constexpr int TOP_TAB_W      = EPD_WIDTH / 2;               // 120
 // Bottom: Chats | Contact | Peers
@@ -902,7 +908,7 @@ constexpr int PEERS_TOP      = CONTENT_TOP + STATS_H + 4;
 constexpr int ROW_H          = 44;
 constexpr int SET_ROW_H      = 44;
 int g_settingsScroll = 0;
-// Home grid — zero outer margin, 2px tile gap
+// Home grid - zero outer margin, 2px tile gap
 constexpr int TILE_GAP       = 2;
 constexpr int TILE_W         = (EPD_WIDTH - TILE_GAP * 2) / 3;  // 78
 constexpr int TILE_H         = 42;
@@ -1026,7 +1032,7 @@ bool handleTouchAt(int16_t x, int16_t y) {
             show_screen(g_screen);  // only full refresh when selection changes
             return true;
         }
-        Serial.println("[PEER] selected — type message then Enter");
+        Serial.println("[PEER] selected - type message then Enter");
         return true;  // no fullRefresh (preserves heap for TX)
     }
 
@@ -1036,7 +1042,7 @@ bool handleTouchAt(int16_t x, int16_t y) {
         y >= BOT_TOP - 36 && y < BOT_TOP) {
         composeClear();
         g_composeMode = false;
-        Serial.println("[COMPOSE] back — leave message mode");
+        Serial.println("[COMPOSE] back - leave message mode");
         show_screen(g_screen);
         return true;
     }
@@ -1324,7 +1330,7 @@ void loadHistoryRows() {
         // N2: coarse status from stored LXMF status byte (outbound only)
         h.st[0] = '\0';
         if (!entries[i].incoming) {
-            // LXMFStatus-ish: 0 queued 1 sending 2 sent 3 delivered 4 failed …
+            // LXMFStatus-ish: 0 queued 1 sending 2 sent 3 delivered 4 failed ...
             switch (hdr.status) {
                 case 0: strcpy(h.st, "queued"); break;
                 case 1: strcpy(h.st, "send"); break;
@@ -1543,7 +1549,7 @@ void clear_screen() {
 
 
 
-// Centered label — use LVGL text width when possible for true center
+// Centered label - use LVGL text width when possible for true center
 void draw_label_centered(int x, int y, int w, int h, const char* label, bool bold) {
     const lv_font_t* font = &lv_font_montserrat_16;
     lv_coord_t tw = lv_txt_get_width(label, strlen(label), font, 0, LV_TEXT_FLAG_NONE);
@@ -1562,7 +1568,7 @@ void draw_label_centered(int x, int y, int w, int h, const char* label, bool bol
 }
 
 void draw_splash() {
-    // Early boot screen — black paper, white text (readable on e-ink)
+    // Early boot screen - black paper, white text (readable on e-ink)
     const bool saved = g_darkTheme;
     g_darkTheme = true;
     clear_screen();
@@ -1707,7 +1713,7 @@ void draw_nav() {
     draw_nav_box(x0, BOT_TOP, BOT_PEERS_W, BOT_H, "Peers", g_screen == SCR_PEERS, 'P');
 }
 
-// Full-width action button (Announce) — short label fits montserrat_16
+// Full-width action button (Announce) - short label fits montserrat_16
 void draw_action_btn(int x, int y, int w, int h, const char* label) {
     lv_obj_t* box = lv_obj_create(g_root);
     lv_obj_set_size(box, w, h);
@@ -1724,7 +1730,7 @@ void draw_action_btn(int x, int y, int w, int h, const char* label) {
 
 // Plus-style settings/list row: title + subtitle + trailing ">"
 void draw_menu_row(int y, int h, const char* title, const char* sub, bool selected) {
-    // Selection = thick border only (same in both themes — no solid fill bar)
+    // Selection = thick border only (same in both themes - no solid fill bar)
     lv_obj_t* row = lv_obj_create(g_root);
     lv_obj_set_size(row, EPD_WIDTH - 4, h);
     lv_obj_set_pos(row, 2, y);
@@ -1792,7 +1798,7 @@ void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
 }
 
 void draw_compose_or_hint(const char* idleHint) {
-    // Single short line above bottom tabs — never draw into the nav band
+    // Single short line above bottom tabs - never draw into the nav band
     if (g_composeLen > 0 || g_composeMode) {
         char foot[36];
         if (g_nameEditMode)
@@ -1858,14 +1864,14 @@ void build_home() {
     clear_screen();
     const int y0 = CONTENT_TOP;  // flush under top nav
 
-    // Identity — full width, no side gap, flush under Settings|Home
+    // Identity - full width, no side gap, flush under Settings|Home
     lv_obj_t* idBox = lv_obj_create(g_root);
     lv_obj_set_size(idBox, EPD_WIDTH, HOME_ID_H);
     lv_obj_set_pos(idBox, 0, y0);
     lv_obj_set_style_radius(idBox, 0, 0);
     lv_obj_set_style_border_width(idBox, 2, 0);
     lv_obj_set_style_border_color(idBox, theme_fg(), 0);
-    lv_obj_set_style_bg_color(idBox, lv_color_white(), 0);
+    lv_obj_set_style_bg_color(idBox, theme_bg(), 0);
     lv_obj_set_style_bg_opa(idBox, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(idBox, 0, 0);
     lv_obj_clear_flag(idBox, LV_OBJ_FLAG_SCROLLABLE);
@@ -1885,7 +1891,7 @@ void build_home() {
     snprintf(lxmfLine, sizeof(lxmfLine), "LXMF %.10s", g_destHex);
     fat_label(g_root, lxmfLine, 6, y0 + 38);
 
-    // 3x2 tiles — flush, 2px gaps only
+    // 3x2 tiles - flush, 2px gaps only
     const int gx = 0;
     const int gy = HOME_GRID_Y;
     const int tw = TILE_W;
@@ -1894,7 +1900,7 @@ void build_home() {
     // N3: live path/link/RSSI (refreshLiveData already called from show_screen)
     char loraV[14], peerV[14], pathV[14];
     if (g_featLora && g_loraIf && g_loraIf->isOnline()) {
-        // RSSI is negative dBm — still a valid reading (was wrongly treated as missing)
+        // RSSI is negative dBm - still a valid reading (was wrongly treated as missing)
         if (g_rssiStr[0] && !(g_rssiStr[0] == '-' && g_rssiStr[1] == '\0'))
             snprintf(loraV, sizeof(loraV), "%s", g_rssiStr);
         else
@@ -1919,7 +1925,7 @@ void build_home() {
     draw_tile(gx + tw + gap,     gy + th + gap, tw, th, "AUDIO", g_featAudio ? "ON" : "OFF");
     draw_tile(gx + 2*(tw + gap), gy + th + gap, tw, th, "LXMFQ", g_lxmfqStr);
 
-    // Status + full-width Announce — packed under tiles
+    // Status + full-width Announce - packed under tiles
     int sy = gy + 2 * (th + gap) + 2;
     fat_label(g_root, "Listening for peers", 4, sy);
     char annAgo[28];
@@ -1970,10 +1976,11 @@ void build_list_body(const char* /*section*/, const char* emptyNote,
 static void draw_chat_bubble(int y, const char* text, bool incoming, const char* status) {
     const int margin = 4;
     const int maxW = EPD_WIDTH - 28;
-    int tlen = (int)strlen(text ? text : "");
-    int tw = tlen * 7 + 12;
+    const char* bodyTxt = text ? text : "";
+    lv_coord_t tw = lv_txt_get_width(bodyTxt, strlen(bodyTxt),
+                                     &lv_font_montserrat_16, 0, LV_TEXT_FLAG_NONE) + 16;
     if (tw > maxW) tw = maxW;
-    if (tw < 36) tw = 36;
+    if (tw < 40) tw = 40;
     const int h = 24;
     int x = incoming ? margin : (EPD_WIDTH - margin - tw);
 
@@ -2110,7 +2117,7 @@ void loadContactsRows() {
         if (node.saved) addNode(node, true);
     }
     // Also: name-cache entries that might not be in nodes yet
-    // (skip — nodes carry saved flag after saveNode)
+    // (skip - nodes carry saved flag after saveNode)
 
     // Pass 2: recent peers not saved
     for (const auto& node : nodes) {
@@ -2124,6 +2131,20 @@ void build_contacts() {
     g_showHistory = false;
     g_msgRowsLoaded = false;
     loadContactsRows();
+    // Also fold in message-store peers so lists match Msg Box
+    {
+        const int before = g_msgRowCount;
+        // Temporarily stash contacts then reload messages and re-mark saved
+        loadMessageRows(true);
+        appendAnnouncedPeers();
+        // loadMessageRows resets rows - reload contacts saved flags via name cache
+        for (int i = 0; i < g_msgRowCount; i++) {
+            if (!g_msgRows[i].used) continue;
+            if (getLocalName(g_msgRows[i].peer))
+                g_msgRows[i].saved = true;
+        }
+        (void)before;
+    }
     for (int i = 0; i < g_msgRowCount; i++) {
         if (!g_msgRows[i].used) continue;
         formatPeerLine(g_msgRows[i].line1, sizeof(g_msgRows[i].line1),
@@ -2188,7 +2209,7 @@ void build_contacts() {
         if (y > CONTENT_BOTTOM - 60) break;
     }
     if (!drewTrusted) {
-        fat_label(g_root, "(none — save a peer)", 8, y);
+        fat_label(g_root, "(none - save a peer)", 8, y);
         y += 20;
     }
 
@@ -2211,7 +2232,7 @@ void build_contacts() {
         if (y > CONTENT_BOTTOM - 8) break;
     }
     if (!drewRecent) {
-        fat_label(g_root, "(none — Announce)", 8, y);
+        fat_label(g_root, "(none - Announce)", 8, y);
     }
 
     draw_compose_or_hint("1-9  Enter=name/msg");
@@ -2222,13 +2243,10 @@ void build_peers() {
     g_peerDirty = false;
     // Plus Peers: RECENT PEERS section
     g_showHistory = false;
-    g_msgRowsLoaded = false;
-    g_msgRowCount = 0;
-    g_msgNote[0] = '\0';
-    for (int i = 0; i < MSG_ROWS; i++) { g_msgRows[i].used = false; g_msgRows[i].saved = false; }
+    loadMessageRows(true);
     appendAnnouncedPeers();
     if (g_msgRowCount == 0)
-        snprintf(g_msgNote, sizeof(g_msgNote), "(none — Announce on Home)");
+        snprintf(g_msgNote, sizeof(g_msgNote), "(none - Announce on Home)");
     clampSelPeer();
 
     clear_screen();
@@ -2255,7 +2273,7 @@ void build_peers() {
             else {
                 char hex[33];
                 peerToHex32(g_msgRows[i].peer, hex);
-                snprintf(sub, sizeof(sub), "%.12s…", hex);
+                snprintf(sub, sizeof(sub), "%.12s...", hex);
             }
             draw_menu_row(y, ROW_H, title, sub, i == g_selPeer);
             y += ROW_H;
@@ -2328,7 +2346,7 @@ void settingsActivate() {
 }
 
 void build_settings() {
-    // Plus Settings hierarchy — live data where available; stubs otherwise
+    // Plus Settings hierarchy - live data where available; stubs otherwise
     clear_screen();
     int y = CONTENT_TOP + 2;
     char a[36], b[36];
@@ -2346,7 +2364,7 @@ void build_settings() {
     };
 
     if (g_settingsPage == SET_ROOT) {
-        // no "SETTINGS" title — top tab is enough; more room for rows
+        // no "SETTINGS" title - top tab is enough; more room for rows
         snprintf(a, sizeof(a), "%.14s", g_destHex);
         row("1 Identity & Device", a, 0);
         row("2 Screen & Input", "e-ink / keys", 1);
@@ -2383,7 +2401,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.37", 0);
+        row("Firmware", "Pro G1.38", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2532,7 +2550,7 @@ void maybeAutoRedrawMessages() {
 }
 
 // E21: after typing pauses, one fullRefresh so the footer shows the compose line.
-// Never refresh per keypress — only when idle and dirty.
+// Never refresh per keypress - only when idle and dirty.
 // Peers screen: refresh when announce set grows; throttle full refresh to 30s
 void maybeAutoRedrawPeers() {
     if (g_screen != SCR_PEERS || g_composeLen > 0) return;
@@ -2556,10 +2574,10 @@ void maybeComposeRedraw() {
     if (g_lastComposeMs == 0) return;
     if ((millis() - g_lastComposeMs) < COMPOSE_IDLE_MS) return;
     if (millis() - g_lastMsgRedrawMs < MSG_REDRAW_MIN_MS) return;
-    // Avoid full e-ink rebuild when heap is tight — Enter needs room for lxmfSubmit
+    // Avoid full e-ink rebuild when heap is tight - Enter needs room for lxmfSubmit
     size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     if (freeInt < 16000) {
-        // One log per 30s max; defer recheck 15s — avoids serial flood / apparent crash
+        // One log per 30s max; defer recheck 15s - avoids serial flood / apparent crash
         static uint32_t s_lastSkipLog = 0;
         uint32_t now = millis();
         if (s_lastSkipLog == 0 || (now - s_lastSkipLog) > 30000u) {
@@ -2569,7 +2587,7 @@ void maybeComposeRedraw() {
         g_lastMsgRedrawMs = now + 12000;  // next try ~15s later (check uses now-last)
         // Actually lastMsgRedrawMs should be in the past for millis()-last < MIN
         // Set so millis()-last is small: last = now works with MIN=2500 → 2.5s
-        // Force longer: temporarily clear dirty? No — user needs footer eventually.
+        // Force longer: temporarily clear dirty? No - user needs footer eventually.
         g_lastMsgRedrawMs = now;
         g_lastComposeMs = now;  // reset idle timer so we wait COMPOSE_IDLE again
         return;
@@ -2593,7 +2611,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
         // Contacts name-edit: save typed name as trusted contact
         if (g_nameEditMode) {
             if (g_composeLen == 0) {
-                Serial.println("[NAME] empty — type a name or ^=cancel");
+                Serial.println("[NAME] empty - type a name or ^=cancel");
                 return false;
             }
             if (g_msgRowCount <= 0 || !g_msgRows[g_selPeer].used) {
@@ -2670,7 +2688,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 g_nameEditMode = true;
                 composeClear();
                 g_composeMode = true;
-                Serial.println("[NAME] edit mode — type name, Enter=save");
+                Serial.println("[NAME] edit mode - type name, Enter=save");
                 show_screen(SCR_CONTACTS);
                 return true;
             }
@@ -2679,10 +2697,10 @@ bool handleKeyEvent(const KeyEvent& ev) {
         }
         // Empty Enter on messaging screens: stay put
         if (g_screen == SCR_CHATS || g_screen == SCR_PEERS) {
-            Serial.println("[KEY] Enter empty — type a message first");
+            Serial.println("[KEY] Enter empty - type a message first");
             return false;
         }
-        Serial.println("[KEY] Enter empty — next screen");
+        Serial.println("[KEY] Enter empty - next screen");
         next_screen();
         return false;
     }
@@ -2754,7 +2772,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
                     peerToHex32(g_msgRows[idx].peer, hex);
                     Serial.printf("[PEER] key %c -> sel=%d %s\n",
                                   ev.character, g_selPeer, hex);
-                    Serial.println("[PEER] selected — type message then Enter");
+                    Serial.println("[PEER] selected - type message then Enter");
                     // No fullRefresh on re-select; heap must stay free for TX
                     return false;
                 }
@@ -2848,7 +2866,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.37");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.38");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
@@ -2894,7 +2912,7 @@ bool begin() {
             delay(10);
         }
         // Probe: tiny submit attempt to self is invalid; instead try preferred
-        // no-op by watching path — just log heap after drain.
+        // no-op by watching path - just log heap after drain.
         Serial.printf("[BOOT] recovery drain done free_int=%u\n",
                       (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     }
@@ -3026,7 +3044,7 @@ void loop() {
                 if (g_screen == SCR_SETTINGS || g_screen == SCR_CHATS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS)
                     show_screen(g_screen);
             } else if ((p[0] == 'n' || p[0] == 'N') && p[1] == ':') {
-                // n:DisplayName — name the selected peer (Msg Box/Peers/Contact)
+                // n:DisplayName - name the selected peer (Msg Box/Peers/Contact)
                 const char* nm = p + 2;
                 while (*nm == ' ') nm++;
                 if (!*nm) {
@@ -3060,10 +3078,10 @@ void loop() {
                 else g_kb.backlightOff();
                 Serial.printf("[KB] backlight %s\n", s_lit ? "ON" : "OFF");
             } else if (p[0] == 'F') {
-                // Serial F — erase+format LittleFS (works even when !_ready)
+                // Serial F - erase+format LittleFS (works even when !_ready)
                 Serial.println("[FLASH] serial F recovery");
                 if (recoverCorruptLittleFS()) {
-                    Serial.println("[FLASH] OK — reboot now for clean identity");
+                    Serial.println("[FLASH] OK - reboot now for clean identity");
                     strcpy(g_announceStr, "fmt ok");
                 } else {
                     Serial.println("[FLASH] recovery failed");
