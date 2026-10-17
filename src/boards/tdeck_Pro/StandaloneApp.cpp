@@ -472,7 +472,12 @@ void doSendTest(const char* body) {
     clampSelPeer();
     if (g_msgRowCount == 0 || !g_msgRows[g_selPeer].used) {
         strcpy(g_txStr, "no peer");
-        Serial.println("[TX] no peer - open Peers/Msg Box, press 1-9 or tap a row first");
+        Serial.println("[TX] no peer - open Peers/Msg Box, press 0-9 or tap a row first");
+        return;
+    }
+    if (isLocalPeer(g_msgRows[g_selPeer].peer)) {
+        strcpy(g_txStr, "pick remote");
+        Serial.println("[TX] cannot message THIS radio - select 1-9 remote");
         return;
     }
     static unsigned long lastTx = 0;
@@ -1904,7 +1909,8 @@ void build_home() {
     lv_obj_set_style_pad_all(idBox, 0, 0);
     lv_obj_clear_flag(idBox, LV_OBJ_FLAG_SCROLLABLE);
 
-    fat_label(g_root, "IDENTITY", 6, y0 + 2);
+    loadSelfName();
+    fat_label(g_root, g_selfName[0] ? g_selfName : "IDENTITY", 6, y0 + 2);
     const char* on = (g_loraIf && g_loraIf->isOnline()) ? "ONLINE" : "OFFLINE";
     // ~30px left of prior 118; gauge ~15px left of prior far-right
     fat_label(g_root, on, 88, y0 + 2);
@@ -2456,7 +2462,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.42", 0);
+        row("Firmware", "Pro G1.43", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2688,15 +2694,25 @@ bool handleKeyEvent(const KeyEvent& ev) {
             memcpy(body, g_compose, g_composeLen + 1);
             char hex[33];
             peerToHex32(g_msgRows[g_selPeer].peer, hex);
-            bool ok = g_announceMgr.setContactName(std::string(hex), std::string(body));
-            g_announceMgr.saveNode(std::string(hex));
-            g_announceMgr.saveNameCache();
-            setLocalName(g_msgRows[g_selPeer].peer, body);
+            bool ok = true;
+            if (isLocalPeer(g_msgRows[g_selPeer].peer)) {
+                saveSelfName(body);
+            } else {
+                ok = g_announceMgr.setContactName(std::string(hex), std::string(body));
+                g_announceMgr.saveNode(std::string(hex));
+                g_announceMgr.saveNameCache();
+                setLocalName(g_msgRows[g_selPeer].peer, body);
+            }
             snprintf(g_msgRows[g_selPeer].line1, sizeof(g_msgRows[g_selPeer].line1),
                      "%.20s", body);
             g_msgRows[g_selPeer].saved = true;
-            formatPeerSub(g_msgRows[g_selPeer].line2, sizeof(g_msgRows[g_selPeer].line2),
-                          g_msgRows[g_selPeer].peer, nullptr);
+            if (isLocalPeer(g_msgRows[g_selPeer].peer)) {
+                snprintf(g_msgRows[g_selPeer].line2, sizeof(g_msgRows[g_selPeer].line2),
+                         "local %.16s", hex);
+            } else {
+                formatPeerSub(g_msgRows[g_selPeer].line2, sizeof(g_msgRows[g_selPeer].line2),
+                              g_msgRows[g_selPeer].peer, nullptr);
+            }
             Serial.printf("[NAME] save %s -> \"%s\" ok=%d line1=\"%s\"\n",
                           hex, body, (int)ok, g_msgRows[g_selPeer].line1);
             g_nameEditMode = false;
@@ -2719,10 +2735,15 @@ bool handleKeyEvent(const KeyEvent& ev) {
             memcpy(body, g_compose, g_composeLen + 1);
             char hex[33];
             peerToHex32(g_msgRows[g_selPeer].peer, hex);
-            bool ok = g_announceMgr.setContactName(std::string(hex), std::string(body));
-            g_announceMgr.saveNode(std::string(hex));
-            g_announceMgr.saveNameCache();
-            setLocalName(g_msgRows[g_selPeer].peer, body);
+            bool ok = true;
+            if (isLocalPeer(g_msgRows[g_selPeer].peer)) {
+                saveSelfName(body);
+            } else {
+                ok = g_announceMgr.setContactName(std::string(hex), std::string(body));
+                g_announceMgr.saveNode(std::string(hex));
+                g_announceMgr.saveNameCache();
+                setLocalName(g_msgRows[g_selPeer].peer, body);
+            }
             snprintf(g_msgRows[g_selPeer].line1, sizeof(g_msgRows[g_selPeer].line1),
                      "%.20s", body);
             g_msgRows[g_selPeer].saved = true;
@@ -2821,15 +2842,17 @@ bool handleKeyEvent(const KeyEvent& ev) {
                     return true;
                 }
             }
-            if (onMsgScreens && ev.character >= '1' && ev.character <= '9') {
+            if (onMsgScreens && ev.character >= '0' && ev.character <= '9') {
                 if (g_msgRowCount == 0) {
                     if (g_screen == SCR_PEERS) {
                         appendAnnouncedPeers();
+                    } else if (g_screen == SCR_CONTACTS) {
+                        show_screen(SCR_CONTACTS);
                     } else {
                         loadMessageRows(true);
                     }
                 }
-                int idx = ev.character - '1';
+                int idx = ev.character - '0';
                 if (idx < g_msgRowCount && g_msgRows[idx].used) {
                     g_selPeer = idx;
                     char hex[33];
@@ -2930,7 +2953,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.42");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.43");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
@@ -2995,6 +3018,7 @@ bool begin() {
         return false;
     }
     Serial.println("[BOOT] LVGL OK");
+    loadSelfName();
     draw_splash();
 
     g_kbOk = g_kb.begin();
