@@ -496,6 +496,14 @@ void doSendTest(const char* body) {
     }
 
     const uint8_t* dest = g_msgRows[g_selPeer].peer;
+    {
+        char hx[33];
+        peerToHex32(dest, hx);
+        Serial.printf("[TX] peerIdx=%d name=\"%s\" dest=%.16s\n",
+                      g_selPeer, g_msgRows[g_selPeer].line1, hx);
+        Serial.printf("[TX] peerIdx=%d name=\"%s\" dest=%.16s\n",
+                      g_selPeer, g_msgRows[g_selPeer].line1, hx);
+    }
     char hex[33];
     peerToHex32(dest, hex);
     size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -1336,7 +1344,7 @@ void loadHistoryRows() {
                 case 1: strcpy(h.st, "send"); break;
                 case 2: strcpy(h.st, "sent"); break;
                 case 3: strcpy(h.st, "deliv"); break;
-                case 4: strcpy(h.st, "fail"); break;
+                case 4: strcpy(h.st, "out"); break;  // often air-OK; LXMF status lags
                 default: snprintf(h.st, sizeof(h.st), "s%u", (unsigned)hdr.status); break;
             }
         }
@@ -1982,7 +1990,8 @@ static void draw_chat_bubble(int y, const char* text, bool incoming, const char*
     if (tw > maxW) tw = maxW;
     if (tw < 40) tw = 40;
     const int h = 24;
-    int x = incoming ? margin : (EPD_WIDTH - margin - tw);
+    // User/Plus-style preference: sent on LEFT, received on RIGHT
+    int x = incoming ? (EPD_WIDTH - margin - tw) : margin;
 
     lv_obj_t* box = lv_obj_create(g_root);
     lv_obj_set_size(box, tw, h);
@@ -2018,9 +2027,12 @@ void build_chats() {
         clear_screen();
         int y = CONTENT_TOP + 2;
         char hdr[40];
-        if (g_msgRowCount > 0 && g_msgRows[g_selPeer].used)
-            snprintf(hdr, sizeof(hdr), "%.20s", g_msgRows[g_selPeer].line1);
-        else
+        if (g_msgRowCount > 0 && g_msgRows[g_selPeer].used) {
+            char hex[33];
+            peerToHex32(g_msgRows[g_selPeer].peer, hex);
+            snprintf(hdr, sizeof(hdr), "%d:%s %.8s",
+                     g_selPeer + 1, g_msgRows[g_selPeer].line1, hex);
+        } else
             strcpy(hdr, "Chat");
         fat_label(g_root, hdr, 4, y);
         y += 20;
@@ -2350,6 +2362,11 @@ void build_settings() {
     clear_screen();
     int y = CONTENT_TOP + 2;
     char a[36], b[36];
+    if (g_settingsPage != SET_ROOT) {
+        fat_label(g_root, "^ Back = Shift up-key", 4, y);
+        y += 18;
+    }
+
 
     // Visible window of settings rows (scroll with W/S or touch)
     const int listTop = y;
@@ -2401,7 +2418,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.38", 0);
+        row("Firmware", "Pro G1.39", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2866,7 +2883,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.38");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.39");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
