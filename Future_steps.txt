@@ -5,6 +5,24 @@ Last revised: 2026-10-16
 Short-term work stays in AI-guide.txt. This file is the backlog / vision list.
 ================================================================================
 
+Initial porting steps
+-------------------
+- DONE - PlatformIO.ini configured and folder structure setup. Program compiles for "tdeck_pro_cooperative"
+- DONE - generic IO, get a keyboard LED blinking at a 1 second interval / hellow world, libs and etc made in HAL
+- DONE - Serial messages functional / diagnositcs / remote serial control
+- DONE - beeper functional, libs and etc made in HAL
+- DONE - microphone basic function test, libs and etc made in HAL
+- DONE - PSRAM functional, libs and etc made in HAL
+- DONE - LORA funtional, libs and etc made in HAL
+- DONE - Battery monitor, libs and etc made in HAL
+- DONE - GPS, libs and etc made in HAL
+- DONE - WiFi basic test functional, libs and etc made in HAL
+- DONE - tdeck_pro_cooperative works as a node mode device. 
+- DONE - EINK static display, libs and etc made in EINK folder.
+- DONE - Touch screen functional, libs and etc made in HAL
+- DONE - tdeck_pro_standalone version made and initial files created. 
+
+
 Hardware / platform
 -------------------
 - PSRAM fully leveraged for protocol + LVGL buffers (QSPI mapped — keep verifying)
