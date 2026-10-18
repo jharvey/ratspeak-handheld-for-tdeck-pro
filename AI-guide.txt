@@ -1,34 +1,37 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.52  (2026-10-18)
+Last: G1.53  (2026-10-18)
 ================================================================================
-Standalone excludes LvglApplication.cpp / full Plus UI; boards/tdeck_Pro shell.
-
 Status: [DONE]  [IN-PROGRESS]  [TODO]
 
 --------------------------------------------------------------------------------
-G1.52
+PSRAM
 --------------------------------------------------------------------------------
-[DONE] Compose/thread layout: reserved COMPOSE_STRIP above BACK nav so
-       "> message" / Enter=send no longer overlaps bubbles or BACK bar.
-       Bubbles clip at THREAD_Y_MAX.
-[DONE] Msg Box stats: CONV = conversations; NEW = #conversations with
-       unread>0; UNRD = total unread messages (was wrongly UNRD copied into NEW).
-[DONE] Opening a thread calls markConversationRead (sync) and zeros the row
-       unread so UNRD drops when returning to the list.
-[DONE] Contacts rename sub-screen (G1.51); dark triple-stroke text (G1.51).
-[IN-PROGRESS] Splash PNG logo; partial refresh feel on all screen changes.
-[TODO] Sleep / full Plus settings / KB backlight.
+[DONE] QSPI mapped ~8MB (found=1 size≈8388608). Protocol SMALL node on SPIRAM.
+      Log: "[PSRAM] OK mapped 8189 KB". No further PSRAM bring-up needed unless
+      size=0 (then PSRAM-RECOVERY.txt / lilygo_t_deck_pro.json).
 
 --------------------------------------------------------------------------------
-THREAD LAYOUT
+G1.53
 --------------------------------------------------------------------------------
-  CONTENT_TOP .. THREAD_Y_MAX   history bubbles
-  COMPOSE_STRIP_Y .. BOT_TOP-1  "> compose" or "Enter=send"
-  BOT_TOP .. EPD_HEIGHT-1       BACK / Contact|Msg Box|Peers
+[DONE] Thread compose = 3-line band above BACK:
+         line1–2 draft preview, line3 Enter-key icon + "Enter=send".
+         Bubbles clip at THREAD_Y_MAX (above strip). Partial refresh uses full strip.
+[DONE] Enter-key glyph drawn left of "Enter=send" (rounded key + return arrow).
+[DONE] Home: GPS time/date under Announce (UART1 NMEA RMC; "no fix" until lock).
+[DONE] markRead uses async requestMarkRead (sync API returns deferred-only).
+[IN-PROGRESS] Splash logo contrast; unread NEW/UNRD after markRead settle.
+[TODO] Full GPS location tile; sleep; Plus settings parity.
+
+--------------------------------------------------------------------------------
+THREAD LAYOUT (240x320)
+--------------------------------------------------------------------------------
+  CONTENT_TOP .. THREAD_Y_MAX     history bubbles
+  COMPOSE_STRIP_Y .. BOT_TOP-1    3-line compose / Enter=send
+  BOT_TOP .. height-1             BACK or Contact|Msg Box|Peers
 
 --------------------------------------------------------------------------------
 BUILD
 --------------------------------------------------------------------------------
-  env: tdeck_pro_cooperative | tdeck_pro_standalone
+  tdeck_pro_cooperative | tdeck_pro_standalone
 ================================================================================

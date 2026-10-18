@@ -117,6 +117,10 @@ char g_convStr[24]   = "0 conv";
 char g_unreadStr[16] = "0 unread";
 char g_announceStr[20] = "never";
 char g_txStr[24]     = "-";
+char g_gpsTimeStr[20] = "--:--";
+char g_gpsDateStr[16] = "--/--/--";
+bool g_gpsHasFix = false;
+HardwareSerial* g_gpsSerial = nullptr;
 
 constexpr int MSG_ROWS = 6;
 struct MsgRow {
@@ -946,9 +950,11 @@ constexpr int BOT_TOP        = EPD_HEIGHT - BOT_H;          // 280
 constexpr int CONTENT_TOP    = TOP_H;                      // 36 - no gap under nav
 constexpr int CONTENT_BOTTOM = BOT_TOP;                    // flush to bot nav
 // Reserved band above bottom nav for compose / Enter=send (must not overlap BACK)
-constexpr int COMPOSE_STRIP_H = 26;                        // text line height band
-constexpr int COMPOSE_STRIP_Y = BOT_TOP - COMPOSE_STRIP_H; // 254 when BOT_TOP=280
-constexpr int THREAD_Y_MAX    = COMPOSE_STRIP_Y - 4;       // bubbles stop above strip
+// 3-line compose band: 2 lines draft preview + 1 line [Enter] Enter=send
+constexpr int COMPOSE_LINE_H  = 18;
+constexpr int COMPOSE_STRIP_H = COMPOSE_LINE_H * 3;        // 54
+constexpr int COMPOSE_STRIP_Y = BOT_TOP - COMPOSE_STRIP_H; // 226 when BOT_TOP=280
+constexpr int THREAD_Y_MAX    = COMPOSE_STRIP_Y - 2;       // bubbles stop above strip
 constexpr int TOP_TAB_W      = EPD_WIDTH / 2;               // 120
 // Bottom: Chats | Contact | Peers
 // Bottom order: Contact | Msg Box | Peers
@@ -1314,12 +1320,21 @@ void loadHistoryRows() {
     Serial.printf("[HIST] load peer=%s free_int=%u\n", hex,
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
-    // Mark conversation read when opening thread (sync + zero local row).
+    // Mark conversation read (async ticket path — sync API is deferred-only).
     {
-        bool ok = g_msgStore.markConversationRead(peerHex);
-        g_msgStore.poll();
-        g_msgRows[g_selPeer].unread = 0;
-        Serial.printf("[HIST] markRead sync=%d peer=%s\n", (int)ok, hex);
+        auto mr = g_msgStore.requestMarkRead(peerHex);
+        if (mr.accepted()) {
+            MessageStore::Result mres;
+            if (waitResult(mr.ticket, mres, 400)) {
+                Serial.printf("[HIST] markRead outcome=%u err=%u\n",
+                              (unsigned)mres.outcome, (unsigned)mres.error);
+            }
+            g_msgStore.releaseResult(mr.ticket);
+            g_msgStore.poll();
+        } else {
+            Serial.printf("[HIST] markRead rejected %u\n", (unsigned)mr.rejection);
+        }
+        g_msgRows[g_selPeer].unread = 0;  // UI immediately
     }
 
     using namespace handheld::storage;
@@ -1941,20 +1956,92 @@ void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
     }
 }
 
+// Small Enter-key glyph (matches physical key: rounded square + return arrow)
+static void draw_enter_key_icon(int x, int y) {
+    // Outer key body 20x16
+    lv_obj_t* key = lv_obj_create(g_root);
+    lv_obj_set_size(key, 20, 16);
+    lv_obj_set_pos(key, x, y);
+    lv_obj_set_style_radius(key, 3, 0);
+    lv_obj_set_style_border_width(key, 2, 0);
+    lv_obj_set_style_border_color(key, theme_fg(), 0);
+    lv_obj_set_style_bg_color(key, theme_bg(), 0);
+    lv_obj_set_style_bg_opa(key, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(key, 0, 0);
+    lv_obj_clear_flag(key, LV_OBJ_FLAG_SCROLLABLE);
+    // Vertical stem of return arrow
+    lv_obj_t* stem = lv_obj_create(g_root);
+    lv_obj_set_size(stem, 2, 8);
+    lv_obj_set_pos(stem, x + 13, y + 3);
+    lv_obj_set_style_radius(stem, 0, 0);
+    lv_obj_set_style_border_width(stem, 0, 0);
+    lv_obj_set_style_bg_color(stem, theme_fg(), 0);
+    lv_obj_set_style_bg_opa(stem, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(stem, LV_OBJ_FLAG_SCROLLABLE);
+    // Horizontal bar
+    lv_obj_t* bar = lv_obj_create(g_root);
+    lv_obj_set_size(bar, 9, 2);
+    lv_obj_set_pos(bar, x + 5, y + 9);
+    lv_obj_set_style_radius(bar, 0, 0);
+    lv_obj_set_style_border_width(bar, 0, 0);
+    lv_obj_set_style_bg_color(bar, theme_fg(), 0);
+    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    // Arrow head (left-pointing block)
+    lv_obj_t* head = lv_obj_create(g_root);
+    lv_obj_set_size(head, 4, 6);
+    lv_obj_set_pos(head, x + 4, y + 7);
+    lv_obj_set_style_radius(head, 0, 0);
+    lv_obj_set_style_border_width(head, 0, 0);
+    lv_obj_set_style_bg_color(head, theme_fg(), 0);
+    lv_obj_set_style_bg_opa(head, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE);
+}
+
 void draw_compose_or_hint(const char* idleHint) {
-    // Single short line above bottom tabs - never draw into the nav band
-    if (g_composeLen > 0 || g_composeMode) {
-        char foot[36];
-        if (g_nameEditMode)
-            snprintf(foot, sizeof(foot), "Name>%.20s", g_compose);
-        else
-            snprintf(foot, sizeof(foot), ">%.24s", g_compose);
-        fat_label(g_root, foot, 4, COMPOSE_STRIP_Y + 4);
+    // 3-line band above bottom nav — never draw into BACK / tab row
+    const int y0 = COMPOSE_STRIP_Y;
+    const bool typing = (g_composeLen > 0 || g_composeMode);
+
+    if (typing) {
+        // Split draft across up to 2 lines (~26 chars each on 240px)
+        char line1[28] = {0};
+        char line2[28] = {0};
+        const char* srcTxt = g_compose;
+        if (g_nameEditMode) {
+            // Name-edit: prefix on first line
+            snprintf(line1, sizeof(line1), "Name>%.20s", g_compose);
+        } else {
+            size_t n = g_composeLen;
+            size_t take1 = n > 26 ? 26 : n;
+            memcpy(line1, srcTxt, take1);
+            line1[take1] = 0;
+            if (n > 26) {
+                size_t take2 = n - 26;
+                if (take2 > 26) take2 = 26;
+                memcpy(line2, srcTxt + 26, take2);
+                line2[take2] = 0;
+            }
+        }
+        fat_label(g_root, line1, 4, y0);
+        if (line2[0])
+            fat_label(g_root, line2, 4, y0 + COMPOSE_LINE_H);
+        // Third line: Enter icon + label
+        draw_enter_key_icon(4, y0 + 2 * COMPOSE_LINE_H + 1);
+        fat_label(g_root, g_nameEditMode ? "Enter=save" : "Enter=send",
+                  28, y0 + 2 * COMPOSE_LINE_H);
     } else if (idleHint && idleHint[0]) {
-        fat_label(g_root, idleHint, 4, COMPOSE_STRIP_Y + 4);
+        // Prefer Enter icon when hint is the send prompt
+        if (strstr(idleHint, "Enter=send") || strstr(idleHint, "Enter = send")) {
+            draw_enter_key_icon(4, y0 + COMPOSE_LINE_H + 1);
+            fat_label(g_root, "Enter=send", 28, y0 + COMPOSE_LINE_H);
+        } else {
+            fat_label(g_root, idleHint, 4, y0 + COMPOSE_LINE_H);
+        }
     }
     draw_nav();
 }
+
 
 void add_row(int& y, const char* left, const char* right) {
     fat_label(g_root, left, 8, y);
@@ -2002,6 +2089,68 @@ void draw_battery_gauge(int x, int y, int w, int h, int pct) {
     char ps[8];
     snprintf(ps, sizeof(ps), "%d%%", pct);
     fat_label(g_root, ps, x + w + 10, y);
+}
+
+
+void gpsBegin() {
+#if defined(HAS_GPS) && HAS_GPS
+    pinMode(GPS_EN, OUTPUT);
+    digitalWrite(GPS_EN, HIGH);
+    delay(30);
+    // UART1 on GPS_RX / GPS_TX (BoardConfig)
+    static HardwareSerial gpsPort(1);
+    gpsPort.begin(GPS_BAUD, SERIAL_8N1, GPS_RX, GPS_TX);
+    g_gpsSerial = &gpsPort;
+    Serial.printf("[GPS] UART1 RX=%d TX=%d baud=%d EN=%d\\n",
+                  GPS_RX, GPS_TX, GPS_BAUD, GPS_EN);
+#else
+    (void)0;
+#endif
+}
+
+// Minimal RMC parser: $GPRMC,hhmmss.sss,A,....,ddmmyy,...
+void gpsPoll() {
+    if (!g_gpsSerial) return;
+    static char line[96];
+    static size_t len = 0;
+    while (g_gpsSerial->available()) {
+        char c = (char)g_gpsSerial->read();
+        if (c == '\\r') continue;
+        if (c == '\\n') {
+            line[len] = 0;
+            if (len > 20 && (strncmp(line, "$GPRMC", 6) == 0 || strncmp(line, "$GNRMC", 6) == 0)) {
+                // fields: 0=id 1=time 2=status 9=date
+                char* p = line;
+                char* fld[12] = {};
+                int n = 0;
+                fld[n++] = p;
+                for (; *p && n < 12; p++) {
+                    if (*p == ',') { *p = 0; fld[n++] = p + 1; }
+                }
+                if (n > 9 && fld[1] && fld[2] && fld[9] && fld[2][0] == 'A') {
+                    // hhmmss
+                    const char* t = fld[1];
+                    if (strlen(t) >= 6) {
+                        snprintf(g_gpsTimeStr, sizeof(g_gpsTimeStr), "%c%c:%c%c:%c%c",
+                                 t[0], t[1], t[2], t[3], t[4], t[5]);
+                    }
+                    const char* d = fld[9];
+                    if (strlen(d) >= 6) {
+                        snprintf(g_gpsDateStr, sizeof(g_gpsDateStr), "%c%c/%c%c/20%c%c",
+                                 d[0], d[1], d[2], d[3], d[4], d[5]);
+                    }
+                    g_gpsHasFix = true;
+                } else if (n > 2 && fld[2] && fld[2][0] != 'A') {
+                    g_gpsHasFix = false;
+                }
+            }
+            len = 0;
+        } else if (len + 1 < sizeof(line)) {
+            line[len++] = c;
+        } else {
+            len = 0;
+        }
+    }
 }
 
 void build_home() {
@@ -2077,6 +2226,14 @@ void build_home() {
     snprintf(annAgo, sizeof(annAgo), "Announced: %s", g_announceStr);
     fat_label(g_root, annAgo, 4, sy + 16);
     draw_action_btn(0, sy + 34, EPD_WIDTH, HOME_ANN_H, "Announce");
+
+    // GPS time / date under Announce
+    char gpsLine[36];
+    if (g_gpsHasFix)
+        snprintf(gpsLine, sizeof(gpsLine), "GPS %s  %s", g_gpsTimeStr, g_gpsDateStr);
+    else
+        snprintf(gpsLine, sizeof(gpsLine), "GPS %s  (no fix)", g_gpsTimeStr);
+    fat_label(g_root, gpsLine, 4, sy + 34 + HOME_ANN_H + 4);
 
     draw_compose_or_hint("");
 }
@@ -2780,12 +2937,12 @@ void maybeComposeRedraw() {
     if (g_lastComposeMs == 0) return;
     if ((millis() - g_lastComposeMs) < COMPOSE_IDLE_MS) return;
 
-    // Name-edit sub-screen: body shows "Name: …" — need full rebuild, not footer strip
-    if (g_nameEditMode) {
+    // Name-edit or thread with long draft: rebuild so 2-line preview + Enter stay clear of bubbles
+    if (g_nameEditMode || (g_showHistory && g_composeLen > 26)) {
         if (millis() - g_lastMsgRedrawMs < COMPOSE_PARTIAL_MIN_MS) return;
         g_lastMsgRedrawMs = millis();
         g_composeDirty = false;
-        show_screen(SCR_CONTACTS);
+        show_screen(g_screen);
         return;
     }
 
@@ -2794,7 +2951,7 @@ void maybeComposeRedraw() {
 
     // Compose footer geometry (matches draw_compose_or_hint: BOT_TOP-22)
     constexpr int COMPOSE_Y = COMPOSE_STRIP_Y;
-    constexpr int COMPOSE_H = COMPOSE_STRIP_H;
+    constexpr int COMPOSE_H = COMPOSE_STRIP_H;  // full 3-line band
 
     size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     if (freeInt < 12000) {
@@ -3209,8 +3366,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.52");
-    Serial.println(" compose strip layout + NEW/UNRD fix");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.53");
+    Serial.println(" 3-line compose+Enter icon, GPS time, markRead");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
@@ -3277,6 +3434,7 @@ bool begin() {
     draw_splash();
 
     g_kbOk = g_kb.begin();
+    gpsBegin();
     if (g_kbOk) Serial.println("[KEYBOARD] TCA8418 keyboard ready");
 
     g_audio.begin();
