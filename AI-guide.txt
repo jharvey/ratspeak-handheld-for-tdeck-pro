@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.50  (2026-10-18)
+Last: G1.51  (2026-10-18)
 ================================================================================
 Long-term backlog → Future_steps.txt (do not strip future items from there).
 Standalone excludes LvglApplication.cpp / full Plus UI; uses boards/tdeck_Pro
@@ -10,94 +10,55 @@ Status tags: [DONE] solid on hardware   [IN-PROGRESS] partial / next polish
              [TODO] not started
 
 --------------------------------------------------------------------------------
-CURRENT PHASE (G1.50)
+CURRENT PHASE (G1.51)
 --------------------------------------------------------------------------------
-[DONE] PSRAM: QSPI mapped (qio_qspi). size≈8MB → protocol uses SPIRAM.
-[DONE] LXMF: announce, send, receive when engine not Busy/Recovering.
-[DONE] Contacts: flat list 0> local + 1..N remotes; touch/digit select; hash keep.
-[DONE] Msg Box list: open chat only — NO compose/send on list page.
-[DONE] Thread: type + Enter = send. Bottom BACK bar (thumb).
-[DONE] Theme: Settings > Display > Theme → white-paper vs black-ink invert.
-[DONE] Splash text: RatSpeak / T-Deck Pro V1.1 / BOOTING.
-[IN-PROGRESS] Splash logo: PNG 96×96 PROGMEM (RatSpeakLogo.h); stamp AFTER
-              lv_refr so FB is not wiped. Verify on device (was blank before).
-[DONE] Compose: partial strip refresh (~120 ms idle), no full flash per pause.
-[IN-PROGRESS] UI refresh policy: refreshIfDirty prefers full-window partial
-              (no flash); forces full every 5 partials (ghosting). Screen
-              changes no longer always use full waveform.
-[DONE] Thread BACK label: "^ BACK UP TO MSG BOX" with ^ underlined (hotkey).
+[DONE] PSRAM QSPI; LXMF announce/send/receive when quiet.
+[DONE] Contacts flat list 0> local + remotes; hash-stable selection.
+[DONE] Msg Box list open-only; thread type+Enter send; bottom BACK bar.
+[DONE] Theme invert (white-paper / black-ink).
+[DONE] Compose partial strip; UI prefers partial full-window (full every 5).
+[DONE] Thread BACK: "^ BACK UP TO MSG BOX" with underlined ^.
+[DONE] Contacts rename: NO type-on-list. Select row → Enter (or tap) opens
+      rename sub-screen; type name; Enter saves; ^=BACK cancels.
+[DONE] Dark theme text: triple-stroke fat_label / bold labels (more readable).
+[IN-PROGRESS] Splash PNG logo visible on device (stamp after lv_refr).
+[TODO] Sleep / energy; full Plus settings; keyboard backlight UI.
+
+--------------------------------------------------------------------------------
+CONTACTS RENAME (G1.51)
+--------------------------------------------------------------------------------
+List page:
+  - Digits / touch = select only
+  - Enter or tap row = open rename sub-screen
+  - Letters do NOT start rename (was colliding with H/S/M/C/P nav)
+
+Rename sub-screen (g_nameEditMode):
+  - Shows contact title + ID
+  - Type name; Enter = saveSelfName / setContactName
+  - Bottom: ^ BACK UP TO MSG BOX (or ^=BACK footer)
+  - Compose idle redraw rebuilds full sub-screen (Name: line updates)
 
 --------------------------------------------------------------------------------
 NAVIGATION
 --------------------------------------------------------------------------------
-Top:    Settings | Home
-Bottom: Contact | Msg Box | Peers   (list screens only)
-
-Thread / name-edit:
-  Bottom full-width:  ^ BACK UP TO MSG BOX   (^ underlined; Up/Shift/B also Back)
-
-Hotkeys (list / Home / Settings — not while typing in thread):
-  H Home   S Settings   M Msg Box   C Contacts   P Peers
-  A Announce
-  0–9 select row
-  Enter on Msg Box list → open selected chat
-  Keyboard Up / lone Shift → Back
-  B while in thread → Back
+Top: Settings | Home
+Bottom: Contact | Msg Box | Peers  (list screens)
+Thread / name-edit: full-width "^ BACK UP TO MSG BOX"
 
 --------------------------------------------------------------------------------
-MESSAGING
+E-INK
 --------------------------------------------------------------------------------
-[DONE] Msg Box list = conversations only; open thread to type.
-[DONE] Thread: Enter sends LXMF when quiet.
-[DONE] Contacts typing = rename (Enter saves), never TX.
-[TODO] Compose on Msg Box list intentionally disabled (keep disabled).
+- Prefer partial (no flash); full every 5 partials or splash/theme.
+- Dark theme: triple-draw white glyphs for contrast on black paper.
 
 --------------------------------------------------------------------------------
-GUI FEATURE MATRIX
---------------------------------------------------------------------------------
-[DONE] Home identity + battery + Announce + status tiles
-[DONE] Contacts flat numbered list + rename 0> and remotes
-[DONE] Msg Box list + thread bubbles (in/out) + send/receive when quiet
-[DONE] Peers list + select
-[DONE] Settings hierarchy + theme + LoRa preset
-[DONE] Touch tabs, digit select, Back from thread
-[DONE] Auto redraw Msg Box on store rev change
-[DONE] Compose partial e-ink strip
-[IN-PROGRESS] Partial (non-flash) refresh for screen changes
-[IN-PROGRESS] Splash PNG logo visible on device
-[TODO] Sleep / energy modes
-[TODO] Keyboard backlight UI
-[TODO] Full Plus settings tree population
-
---------------------------------------------------------------------------------
-E-INK POLICY (G1.50)
---------------------------------------------------------------------------------
-- Compose footer: partialRefresh(strip) only.
-- Screen change / general UI: refreshIfDirty → partial full-window unless
-  partialCount >= 5 → fullRefresh (ghosting clear).
-- Splash / theme invert: fullRefresh OK.
-- Goal: almost no full-screen flash during normal use.
-
---------------------------------------------------------------------------------
-BUILD / FLASH
+BUILD
 --------------------------------------------------------------------------------
   env: tdeck_pro_cooperative | tdeck_pro_standalone
-  PSRAM: board_build.arduino.memory_type = qio_qspi
-  Keep cooperative green; don’t pull LvglApplication into standalone.
-
---------------------------------------------------------------------------------
-FILES (G1.50)
---------------------------------------------------------------------------------
-  Eink/DisplayEink.h|.cpp   — partial-preferring refreshIfDirty
-  Eink/LvglPort.h|.cpp      — updateAndPartial
-  Eink/RatSpeakLogo.h       — 96×96 from RatSpeak_Logo.png (must be present)
-  StandaloneApp.cpp         — BACK label, logo-after-flush, G1.50
-  AI-guide.txt              — this file
+  Keep cooperative green.
 
 --------------------------------------------------------------------------------
 WHEN ADDING FEATURES
 --------------------------------------------------------------------------------
-  Prefer small compile-ready full files.
-  Mark items [DONE] / [IN-PROGRESS] / [TODO] here; do not delete backlog lines.
-  Multi-week items → Future_steps.txt only.
+  Full files preferred. Tag [DONE]/[IN-PROGRESS]/[TODO]; do not delete lines.
 ================================================================================

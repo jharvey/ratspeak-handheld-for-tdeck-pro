@@ -1094,12 +1094,31 @@ bool handleTouchAt(int16_t x, int16_t y) {
             Serial.println("[PEER] Msg Box → thread");
             return true;
         }
+        if (g_screen == SCR_CONTACTS) {
+            // Open rename sub-screen for this contact (no type-on-list)
+            g_nameEditMode = true;
+            g_composeMode = true;
+            composeClear();
+            const char* cur = g_msgRows[g_selPeer].line1;
+            if (cur && cur[0] && strcmp(cur, "THIS RADIO") != 0) {
+                for (size_t i = 0; cur[i] && g_composeLen < COMPOSE_CAP; i++) {
+                    char c = cur[i];
+                    if (c >= 32 && c <= 126) {
+                        g_compose[g_composeLen++] = c;
+                        g_compose[g_composeLen] = '\0';
+                    }
+                }
+            }
+            show_screen(SCR_CONTACTS);
+            Serial.println("[PEER] Contacts → rename");
+            return true;
+        }
         if (g_selPeer != was) {
-            show_screen(g_screen);  // only full refresh when selection changes
+            show_screen(g_screen);
             return true;
         }
         Serial.println("[PEER] selected - type message then Enter");
-        return true;  // no fullRefresh (preserves heap for TX)
+        return true;
     }
 
     // Home: Announce button
@@ -1609,14 +1628,16 @@ void refreshLiveData() {
 }
 
 void fat_label(lv_obj_t* parent, const char* txt, lv_coord_t x, lv_coord_t y) {
-    // Dark theme: double-draw +1px for a slightly bolder white glyph
-    const int passes = g_darkTheme ? 2 : 1;
+    // Dark theme: triple-draw (+0,+1x,+1y) so white glyphs stay readable on e-ink
+    const int passes = g_darkTheme ? 3 : 1;
+    static const int8_t ox[] = {0, 1, 0};
+    static const int8_t oy[] = {0, 0, 1};
     for (int k = 0; k < passes; k++) {
         lv_obj_t* o = lv_label_create(parent);
         lv_label_set_text(o, txt ? txt : "");
         lv_obj_set_style_text_font(o, &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(o, theme_fg(), 0);
-        lv_obj_set_pos(o, x + k, y);
+        lv_obj_set_pos(o, x + ox[k], y + oy[k]);
     }
 }
 
@@ -1646,12 +1667,15 @@ void draw_label_centered(int x, int y, int w, int h, const char* label, bool bol
     if (lx < x) lx = x;
     int ly = y + (h - 16) / 2;
     if (ly < y) ly = y;
-    for (int k = 0; k < (bold ? 2 : 1); k++) {
+    const int passes = bold ? (g_darkTheme ? 3 : 2) : 1;
+    static const int8_t ox[] = {0, 1, 0};
+    static const int8_t oy[] = {0, 0, 1};
+    for (int k = 0; k < passes; k++) {
         lv_obj_t* lab = lv_label_create(g_root);
         lv_label_set_text(lab, label);
         lv_obj_set_style_text_font(lab, font, 0);
         lv_obj_set_style_text_color(lab, theme_fg(), 0);
-        lv_obj_set_pos(lab, lx + k, ly);
+        lv_obj_set_pos(lab, lx + ox[k], ly + oy[k]);
     }
 }
 
@@ -2122,7 +2146,7 @@ static void draw_chat_bubble(int y, const char* text, bool incoming, const char*
     lv_obj_set_style_pad_all(box, 0, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 
-    const int passes = g_darkTheme ? 2 : 1;
+    const int passes = g_darkTheme ? 3 : 1;
     for (int k = 0; k < passes; k++) {
         lv_obj_t* lab = lv_label_create(box);
         lv_label_set_text(lab, text ? text : "");
@@ -2366,11 +2390,11 @@ void build_contacts() {
         } else {
             fat_label(g_root, "Name: _", 4, y);
         }
-        draw_compose_or_hint("Enter=save  ^=cancel");
+        draw_compose_or_hint("Enter=save  ^=BACK");
         return;
     }
 
-    fat_label(g_root, "0=this  1-9=peer  Enter=name", 4, y);
+    fat_label(g_root, "0=this 1-9=peer  Enter=rename", 4, y);
     y += 20;  // listTop for touch = CONTENT_TOP+2+20
     for (int i = 0; i < g_msgRowCount; i++) {
         if (!g_msgRows[i].used) continue;
@@ -2385,7 +2409,7 @@ void build_contacts() {
     }
     if (g_msgRowCount == 0)
         fat_label(g_root, "(no peers - Announce)", 8, y);
-    draw_compose_or_hint("tap/0-9  Enter=name");
+    draw_compose_or_hint("tap/0-9 select  Enter=rename");
 }
 
 void build_peers() {
@@ -2739,6 +2763,15 @@ void maybeComposeRedraw() {
     if (g_lastComposeMs == 0) return;
     if ((millis() - g_lastComposeMs) < COMPOSE_IDLE_MS) return;
 
+    // Name-edit sub-screen: body shows "Name: …" — need full rebuild, not footer strip
+    if (g_nameEditMode) {
+        if (millis() - g_lastMsgRedrawMs < COMPOSE_PARTIAL_MIN_MS) return;
+        g_lastMsgRedrawMs = millis();
+        g_composeDirty = false;
+        show_screen(SCR_CONTACTS);
+        return;
+    }
+
     static uint32_t s_lastPartialMs = 0;
     if (millis() - s_lastPartialMs < COMPOSE_PARTIAL_MIN_MS) return;
 
@@ -2807,6 +2840,30 @@ bool handleKeyEvent(const KeyEvent& ev) {
 
     // Enter: send compose if non-empty, else next screen.
     if (ev.enter) {
+        // Contacts list: Enter opens rename sub-screen (do not save yet)
+        if (g_screen == SCR_CONTACTS && !g_nameEditMode) {
+            if (g_msgRowCount <= 0 || !g_msgRows[g_selPeer].used) {
+                Serial.println("[NAME] no contact selected");
+                return false;
+            }
+            g_nameEditMode = true;
+            g_composeMode = true;
+            composeClear();
+            // Prefill with current display name when not THIS RADIO / hex-only
+            const char* cur = g_msgRows[g_selPeer].line1;
+            if (cur && cur[0] && strcmp(cur, "THIS RADIO") != 0) {
+                for (size_t i = 0; cur[i] && g_composeLen < COMPOSE_CAP; i++) {
+                    char c = cur[i];
+                    if (c >= 32 && c <= 126) {
+                        g_compose[g_composeLen++] = c;
+                        g_compose[g_composeLen] = '\0';
+                    }
+                }
+            }
+            Serial.printf("[NAME] open rename sel=%d\n", g_selPeer);
+            show_screen(SCR_CONTACTS);
+            return false;  // already drew
+        }
         // Contacts name-edit: save typed name as trusted contact
         if (g_nameEditMode) {
             if (g_composeLen == 0) {
@@ -3116,12 +3173,13 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 }
             }
         }
-        // Contacts: typing starts name-edit (Enter saves name, never TX)
+        // Contacts list: never type-to-rename (nav letters collided).
+        // Rename only inside name-edit sub-screen (Enter on a row opens it).
         if (g_screen == SCR_CONTACTS && !g_nameEditMode) {
-            g_nameEditMode = true;
-            g_composeMode = true;
-            Serial.println("[NAME] typing → name-edit mode");
+            Serial.println("[NAME] select row, Enter to rename");
+            return false;
         }
+        // Name-edit sub-screen or message thread: append to compose
         composeAppend(ev.character);
         return false;
     }
@@ -3134,8 +3192,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.50");
-    Serial.println(" partial UI refresh + BACK label + logo fix");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.51");
+    Serial.println(" contacts rename sub-screen + bolder dark text");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
