@@ -2830,8 +2830,7 @@ void settingsActivate() {
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 6) {
             g_tzIndex = (g_tzIndex + 1) % 5;
-            Serial.printf("[TZ] %s UTC%+d
-", tzName(), tzOffsetHours());
+            Serial.printf("[TZ] %s UTC%+d\n", tzName(), tzOffsetHours());
             show_screen(SCR_SETTINGS);
         }
         return;
@@ -3003,18 +3002,6 @@ void build_settings() {
         draw_compose_or_hint("^=back");
         return;
     }
-    if (g_settingsPage == SET_TIME) {
-        if (g_settingsSel == 0) {
-            gpsSetEnabled(!g_gpsEnabled);
-            show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 6) {
-            g_tzIndex = (g_tzIndex + 1) % 5;
-            Serial.printf("[TZ] %s UTC%+d
-", tzName(), tzOffsetHours());
-            show_screen(SCR_SETTINGS);
-        }
-        return;
-    }
     if (g_settingsPage == SET_STORAGE) {
         size_t hi = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
         size_t ps = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
@@ -3142,8 +3129,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
         if (g_screen == SCR_SETTINGS && g_settingsPage == SET_ROOT && g_settingsSel > 0) {
             g_settingsSel--;
             if (g_settingsSel < g_settingsScroll) g_settingsScroll = g_settingsSel;
-            Serial.printf("[SET] shift-up sel=%d
-", g_settingsSel);
+            Serial.printf("[SET] shift-up sel=%d\n", g_settingsSel);
             show_screen(SCR_SETTINGS);
             return true;
         }
@@ -3305,8 +3291,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
         }
         // Settings: Enter activates highlighted row (same as touch)
         if (g_screen == SCR_SETTINGS) {
-            Serial.printf("[SET] Enter activate sel=%d page=%d
-",
+            Serial.printf("[SET] Enter activate sel=%d page=%d\n",
                           g_settingsSel, (int)g_settingsPage);
             settingsActivate();
             return true;
