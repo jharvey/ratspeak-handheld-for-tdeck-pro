@@ -2757,7 +2757,7 @@ void maybeComposeRedraw() {
             g_display.setPixel((uint16_t)x, (uint16_t)y, false);
     }
 
-    // Rebuild compose line via temporary label → flush into FB
+    // Rebuild compose line via temporary label -> flush into FB
     char foot[36];
     if (g_composeLen > 0 || g_composeMode) {
         if (g_nameEditMode)
@@ -2765,7 +2765,7 @@ void maybeComposeRedraw() {
         else
             snprintf(foot, sizeof(foot), ">%.24s", g_compose);
     } else {
-        foot[0] = ' ';
+        foot[0] = 0;
     }
 
     if (!g_root) {
