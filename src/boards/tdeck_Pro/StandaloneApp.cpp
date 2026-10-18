@@ -2744,8 +2744,7 @@ void maybeComposeRedraw() {
         uint32_t now = millis();
         if (s_lastSkipLog == 0 || (now - s_lastSkipLog) > 30000u) {
             s_lastSkipLog = now;
-            Serial.printf("[UI] skip compose partial low heap %u
-", (unsigned)freeInt);
+            Serial.printf("[UI] skip compose partial low heap %u\n", (unsigned)freeInt);
         }
         g_lastComposeMs = now;
         return;
@@ -2786,8 +2785,7 @@ void maybeComposeRedraw() {
 
     g_composeDirty = false;
     s_lastPartialMs = millis();
-    Serial.printf("[UI] compose partial len=%u
-", (unsigned)g_composeLen);
+    Serial.printf("[UI] compose partial len=%u\n", (unsigned)g_composeLen);
 }
 
 // Handle one keyboard event. Returns true if a full screen redraw is needed.
