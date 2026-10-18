@@ -35,6 +35,7 @@ Audio / modes
 -------------
 - Voice / walkie-talkie mode: push-to-talk style over LoRa (or related path),
   separate from text LXMF and from simple beep/vibrate alerts
+- in settings, add volum controls for the beeps. 
 
 Protocol / mesh
 ---------------

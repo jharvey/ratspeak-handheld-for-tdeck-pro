@@ -149,5 +149,12 @@ void DisplayEink::partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 }
 
 void DisplayEink::refreshIfDirty() {
-    if (dirty_) fullRefresh();
+    if (!dirty_) return;
+    // Prefer non-flashing partial of the full panel for UI updates.
+    // After kMaxPartialsBeforeFull consecutive partials, fullRefresh clears ghosting.
+    if (partialCount_ >= kMaxPartialsBeforeFull) {
+        fullRefresh();
+    } else {
+        partialRefresh(0, 0, EPD_WIDTH, EPD_HEIGHT);
+    }
 }

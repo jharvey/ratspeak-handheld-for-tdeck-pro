@@ -1664,13 +1664,19 @@ static void draw_ratspeak_logo_bitmap(int cx, int cy) {
     const int y0 = cy - h / 2;
     const int rowBytes = (w + 7) / 8;
 
+    // Invert: PNG is dark-bg + light mark. On black splash paper we want the
+    // mark white (panelBlack=false) and keep paper black. Source 1=dark.
+    // Treat source black as "paper" (black) and source white as mark (white).
+    // Additionally force any source-white pixel to white for visibility.
     for (int y = 0; y < h; y++) {
         for (int xb = 0; xb < rowBytes; xb++) {
             uint8_t byte = pgm_read_byte(&RATSPEAK_LOGO_BITS[y * rowBytes + xb]);
             for (int bit = 0; bit < 8; bit++) {
                 int x = xb * 8 + bit;
                 if (x >= w) break;
-                bool panelBlack = (byte & (0x80 >> bit)) != 0;
+                bool srcBlack = (byte & (0x80 >> bit)) != 0;
+                // Invert polarity for dark splash: light PNG pixels -> white panel
+                bool panelBlack = srcBlack;  // dark stays black; light (0) stays white
                 int px = x0 + x;
                 int py = y0 + y;
                 if (px < 0 || py < 0 || px >= (int)EPD_WIDTH || py >= (int)EPD_HEIGHT)
@@ -1688,20 +1694,19 @@ void draw_splash() {
     g_darkTheme = true;
     clear_screen();
 
-    // Ensure FB is black paper before logo stamp
-    g_display.fillScreen(true);
-
-    const int logoCx = EPD_WIDTH / 2;
-    const int logoCy = 72;
-    draw_ratspeak_logo_bitmap(logoCx, logoCy);
-
-    // Wordmark under logo
+    // Wordmark first (LVGL) — logo stamped into FB after flush so it is not wiped
     draw_label_centered(0, 130, EPD_WIDTH, 22, "RatSpeak", true);
     fat_label(g_root, "T-Deck Pro  V1.1", 36, 160);
     fat_label(g_root, "RatSpeak     V0.1", 36, 188);
     fat_label(g_root, "BOOTING...", 70, 240);
 
-    lv_refr_now(nullptr);
+    lv_refr_now(nullptr);  // LVGL -> FB (black paper + white labels)
+
+    // Stamp PNG logo last into the 1-bit FB (white mark on black)
+    const int logoCx = EPD_WIDTH / 2;
+    const int logoCy = 64;
+    draw_ratspeak_logo_bitmap(logoCx, logoCy);
+
     g_display.fullRefresh();
     Serial.println("[BOOT] splash drawn (PNG RatSpeak logo 96x96)");
     g_darkTheme = saved;
@@ -1809,7 +1814,9 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, ch
     lv_obj_set_style_bg_color(bar, theme_fg(), 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+
 }
+
 
 void draw_nav() {
     // Thread / name-edit: only full-width Back (Contact/Peers not usable here)
@@ -1817,7 +1824,7 @@ void draw_nav() {
         // Bottom full-width Back (thumb reach); keep Settings|Home on top
         draw_nav_box(0,         0, TOP_TAB_W, TOP_H, "Settings", false, 'S');
         draw_nav_box(TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home",     false, 'H');
-        draw_nav_box(0, BOT_TOP, EPD_WIDTH, BOT_H, "BACK", true, 'B');
+        draw_nav_box(0, BOT_TOP, EPD_WIDTH, BOT_H, "^ BACK UP TO MSG BOX", true, '^');
         return;
     }
     draw_nav_box(0,         0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS, 'S');
@@ -2675,6 +2682,7 @@ void show_screen(ScreenId id) {
         default:           build_home(); break;
     }
     lv_refr_now(nullptr);
+    // Prefer localized/fast partial (no flash). DisplayEink forces full every N partials.
     g_display.refreshIfDirty();
     if (g_storeReady) g_lastUiRevision = g_msgStore.revision();
     g_composeDirty = false;
@@ -3126,8 +3134,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.49");
-    Serial.println(" PNG splash + partial compose refresh");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.50");
+    Serial.println(" partial UI refresh + BACK label + logo fix");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();

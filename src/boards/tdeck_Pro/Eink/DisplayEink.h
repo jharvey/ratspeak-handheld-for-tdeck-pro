@@ -24,7 +24,7 @@ public:
     // refresh is forced to clear ghosting (LilyGO / panel guidance).
     void partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 
-    // Call after a batch of LVGL draws to refresh at most once (full)
+    // After LVGL batch: partial full-window (no flash); forces full every N partials
     void refreshIfDirty();
     void markDirty() { dirty_ = true; }
 
