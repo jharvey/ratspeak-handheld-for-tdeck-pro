@@ -1,21 +1,17 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.54  (2026-10-18)
+Last: G1.55  (2026-10-18)
 ================================================================================
-[DONE] PSRAM ~8MB SPIRAM protocol node.
-[DONE] Compose 3-line band: draft lines 1–2, Enter icon+label on line 3.
-       Typing redraw uses full show_screen (no strip overlay cutting Enter).
-[DONE] Thread header: "N: to NAME" (e.g. "1: to PLUS").
-[DONE] Settings scroll maxVis matches visible rows (~4); 5th down scrolls list.
-[DONE] Settings > Time & Location: GPS power toggle, status, sats, UTC time/date.
-[DONE] Home GPS line under Announce (off / acquiring / fix + sats).
+[DONE] Thread compose: full-width 3-line box always (idle + typing).
+       Lines 1–2 draft, line 3 Enter icon + Enter=send (stable layout).
+[DONE] Outbound status: queued / sending / sent / delivered (not deliv/out).
+[DONE] Header "N: to NAME"; GPS diag; settings scroll maxVis.
 
-GPS lock tips:
-  - Settings > 6 Time & Location > GPS Power = ON (default).
-  - Outdoor / clear sky; first fix can take 30–120s cold start.
-  - Status shows acquiring → fix; sats count from GGA.
-  - EN pin 39, UART1 RX=44 TX=43 @ 38400.
+Messaging after flash erase:
+  - New identity is created; paths/ratchets reset.
+  - Both sides should Announce; open thread after peer appears in Peers/Contacts.
+  - Logs showed PRO TX HHH + III with delivered — if Plus did not show III,
+    re-announce both and retry (not a compose UI issue).
 
-[IN-PROGRESS] Splash logo; unread settle after markRead.
-[TODO] Sleep; Plus settings parity.
+GPS: Settings > Time & Location > GPS Power ON; outdoor for fix.
 ================================================================================

@@ -214,7 +214,7 @@ void saveSelfName(const char* name) {
 constexpr int HIST_ROWS = 6;
 struct HistRow {
     char line[36];   // "> HELLO" or "< hi"
-    char st[8];      // out: sent/queued/deliv; in: ""
+    char st[12];     // out: sent/queued/delivered; in: ""
     bool incoming;
     bool used;
 };
@@ -1454,10 +1454,10 @@ void loadHistoryRows() {
             // LXMFStatus-ish: 0 queued 1 sending 2 sent 3 delivered 4 failed ...
             switch (hdr.status) {
                 case 0: strcpy(h.st, "queued"); break;
-                case 1: strcpy(h.st, "send"); break;
+                case 1: strcpy(h.st, "sending"); break;
                 case 2: strcpy(h.st, "sent"); break;
-                case 3: strcpy(h.st, "deliv"); break;
-                case 4: strcpy(h.st, "out"); break;  // often air-OK; LXMF status lags
+                case 3: strcpy(h.st, "delivered"); break;
+                case 4: strcpy(h.st, "sent"); break;  // air-OK; treat as sent
                 default: snprintf(h.st, sizeof(h.st), "s%u", (unsigned)hdr.status); break;
             }
         }
@@ -2002,48 +2002,67 @@ static void draw_enter_key_icon(int x, int y) {
 }
 
 void draw_compose_or_hint(const char* idleHint) {
-    // 3-line band above bottom nav — never draw into BACK / tab row
+    // Full-width 3-line box above bottom nav (draft x2 + Enter line always present
+    // for thread; other screens keep simple one-line hints without the box).
     const int y0 = COMPOSE_STRIP_Y;
+    const int boxH = COMPOSE_STRIP_H;
     const bool typing = (g_composeLen > 0 || g_composeMode);
+    const bool threadSend = idleHint && (strstr(idleHint, "Enter=send") || strstr(idleHint, "Enter = send"));
+    const bool showComposeBox = typing || threadSend || g_nameEditMode ||
+                                (idleHint && idleHint[0] == '\0' && g_showHistory);
 
-    if (typing) {
-        // Split draft across up to 2 lines (~26 chars each on 240px)
+    if (showComposeBox) {
+        // Full-width outline so idle vs typing does not jump layout
+        lv_obj_t* box = lv_obj_create(g_root);
+        lv_obj_set_size(box, EPD_WIDTH - 4, boxH - 2);
+        lv_obj_set_pos(box, 2, y0);
+        lv_obj_set_style_radius(box, 0, 0);
+        lv_obj_set_style_border_width(box, 2, 0);
+        lv_obj_set_style_border_color(box, theme_fg(), 0);
+        lv_obj_set_style_bg_color(box, theme_bg(), 0);
+        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(box, 0, 0);
+        lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
         char line1[28] = {0};
         char line2[28] = {0};
-        const char* srcTxt = g_compose;
-        if (g_nameEditMode) {
-            // Name-edit: prefix on first line
-            snprintf(line1, sizeof(line1), "Name>%.20s", g_compose);
-        } else {
-            size_t n = g_composeLen;
-            size_t take1 = n > 26 ? 26 : n;
-            memcpy(line1, srcTxt, take1);
-            line1[take1] = 0;
-            if (n > 26) {
-                size_t take2 = n - 26;
-                if (take2 > 26) take2 = 26;
-                memcpy(line2, srcTxt + 26, take2);
-                line2[take2] = 0;
+        if (typing) {
+            if (g_nameEditMode) {
+                snprintf(line1, sizeof(line1), "Name>%.20s", g_compose);
+            } else {
+                size_t n = g_composeLen;
+                size_t take1 = n > 26 ? 26 : n;
+                memcpy(line1, g_compose, take1);
+                line1[take1] = 0;
+                if (n > 26) {
+                    size_t take2 = n - 26;
+                    if (take2 > 26) take2 = 26;
+                    memcpy(line2, g_compose + 26, take2);
+                    line2[take2] = 0;
+                }
             }
+        } else if (g_nameEditMode) {
+            strcpy(line1, "Name: _");
         }
-        fat_label(g_root, line1, 4, y0);
+        // else leave blank draft lines when idle in thread
+
+        if (line1[0])
+            fat_label(g_root, line1, 6, y0 + 1);
         if (line2[0])
-            fat_label(g_root, line2, 4, y0 + COMPOSE_LINE_H);
-        // Third line: Enter icon + label
-        draw_enter_key_icon(4, y0 + 2 * COMPOSE_LINE_H + 1);
-        fat_label(g_root, g_nameEditMode ? "Enter=save" : "Enter=send",
-                  28, y0 + 2 * COMPOSE_LINE_H);
+            fat_label(g_root, line2, 6, y0 + COMPOSE_LINE_H);
+
+        // Line 3 always: Enter icon + action (stable position)
+        const int y3 = y0 + 2 * COMPOSE_LINE_H;
+        draw_enter_key_icon(6, y3 + 1);
+        fat_label(g_root,
+                  g_nameEditMode ? "Enter=save" : "Enter=send",
+                  30, y3);
     } else if (idleHint && idleHint[0]) {
-        // Prefer Enter icon when hint is the send prompt
-        if (strstr(idleHint, "Enter=send") || strstr(idleHint, "Enter = send")) {
-            draw_enter_key_icon(4, y0 + COMPOSE_LINE_H + 1);
-            fat_label(g_root, "Enter=send", 28, y0 + COMPOSE_LINE_H);
-        } else {
-            fat_label(g_root, idleHint, 4, y0 + COMPOSE_LINE_H);
-        }
+        fat_label(g_root, idleHint, 4, y0 + COMPOSE_LINE_H);
     }
     draw_nav();
 }
+
 
 
 void add_row(int& y, const char* left, const char* right) {
@@ -2425,7 +2444,7 @@ void build_chats() {
                 y += rowH(i);
             }
         }
-        draw_compose_or_hint(g_composeLen > 0 ? "" : "Enter=send");
+        draw_compose_or_hint("Enter=send");  // always 3-line box in thread
         return;
     }
     loadMessageRows(true);  // refresh unread per row after markRead
@@ -3395,8 +3414,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.54");
-    Serial.println(" compose no-cut Enter, settings scroll, GPS diag");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.55");
+    Serial.println(" compose full-width box; delivered status");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
