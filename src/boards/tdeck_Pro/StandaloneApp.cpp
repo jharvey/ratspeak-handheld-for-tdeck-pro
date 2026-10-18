@@ -945,6 +945,10 @@ constexpr int BOT_H          = 40;
 constexpr int BOT_TOP        = EPD_HEIGHT - BOT_H;          // 280
 constexpr int CONTENT_TOP    = TOP_H;                      // 36 - no gap under nav
 constexpr int CONTENT_BOTTOM = BOT_TOP;                    // flush to bot nav
+// Reserved band above bottom nav for compose / Enter=send (must not overlap BACK)
+constexpr int COMPOSE_STRIP_H = 26;                        // text line height band
+constexpr int COMPOSE_STRIP_Y = BOT_TOP - COMPOSE_STRIP_H; // 254 when BOT_TOP=280
+constexpr int THREAD_Y_MAX    = COMPOSE_STRIP_Y - 4;       // bubbles stop above strip
 constexpr int TOP_TAB_W      = EPD_WIDTH / 2;               // 120
 // Bottom: Chats | Contact | Peers
 // Bottom order: Contact | Msg Box | Peers
@@ -1310,20 +1314,12 @@ void loadHistoryRows() {
     Serial.printf("[HIST] load peer=%s free_int=%u\n", hex,
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
-    // E20: mark conversation read when opening History for selected peer.
+    // Mark conversation read when opening thread (sync + zero local row).
     {
-        auto mr = g_msgStore.requestMarkRead(std::string(hex));
-        if (mr.accepted()) {
-            MessageStore::Result mres;
-            if (waitResult(mr.ticket, mres, 200)) {
-                Serial.printf("[HIST] markRead outcome=%u err=%u\n",
-                              (unsigned)mres.outcome, (unsigned)mres.error);
-            }
-            g_msgStore.releaseResult(mr.ticket);
-            g_msgStore.poll();
-        } else {
-            Serial.printf("[HIST] markRead rejected %u\n", (unsigned)mr.rejection);
-        }
+        bool ok = g_msgStore.markConversationRead(peerHex);
+        g_msgStore.poll();
+        g_msgRows[g_selPeer].unread = 0;
+        Serial.printf("[HIST] markRead sync=%d peer=%s\n", (int)ok, hex);
     }
 
     using namespace handheld::storage;
@@ -1953,9 +1949,9 @@ void draw_compose_or_hint(const char* idleHint) {
             snprintf(foot, sizeof(foot), "Name>%.20s", g_compose);
         else
             snprintf(foot, sizeof(foot), ">%.24s", g_compose);
-        fat_label(g_root, foot, 4, BOT_TOP - 22);
+        fat_label(g_root, foot, 4, COMPOSE_STRIP_Y + 4);
     } else if (idleHint && idleHint[0]) {
-        fat_label(g_root, idleHint, 4, BOT_TOP - 22);
+        fat_label(g_root, idleHint, 4, COMPOSE_STRIP_Y + 4);
     }
     draw_nav();
 }
@@ -2194,7 +2190,9 @@ void build_chats() {
                                  (g_histRows[i].line[0] == '<');
                 return (inc || !g_histRows[i].st[0]) ? 28 : 40;
             };
-            const int yMax = BOT_TOP - 30;  // leave room for Enter=send footer
+            const int yMax = (g_composeLen > 0 || g_composeMode)
+                ? (THREAD_Y_MAX - 4)   // extra room while typing
+                : THREAD_Y_MAX;        // leave compose strip clear
             int start = 0;
             {
                 int need = 0;
@@ -2223,14 +2221,33 @@ void build_chats() {
         draw_compose_or_hint(g_composeLen > 0 ? "" : "Enter=send");
         return;
     }
-    loadMessageRows(false);
-    unsigned conv = 0, unread = 0;
+    loadMessageRows(true);  // refresh unread per row after markRead
+    unsigned conv = 0, neu = 0, unread = 0;
     if (g_storeReady) {
         conv = (unsigned)g_msgStore.totalConversations();
         unread = (unsigned)g_msgStore.totalUnreadCount();
     }
+    // Prefer live row counts so UI matches what the user just read
+    unsigned rowUnread = 0, rowNew = 0;
+    for (int i = 0; i < g_msgRowCount; i++) {
+        if (!g_msgRows[i].used) continue;
+        if (g_msgRows[i].unread > 0) {
+            rowNew++;
+            rowUnread += g_msgRows[i].unread;
+        }
+    }
+    // NEW = conversations with unread; UNRD = message unread total
+    neu = rowNew;
+    // If store total lags behind rows (or vice versa), show the more conservative
+    // non-inflated value so we don't claim unread after the user opened a chat.
+    if (rowUnread > 0 || unread == 0)
+        unread = rowUnread;
+    else if (rowUnread == 0 && g_msgRowCount > 0)
+        unread = 0;  // rows say all read
+    if (conv == 0 && g_msgRowCount > 0)
+        conv = (unsigned)g_msgRowCount;
     build_list_body(nullptr, g_msgNote[0] ? g_msgNote : "(no chats)",
-                    true, conv, unread, unread);
+                    true, conv, neu, unread);
     draw_compose_or_hint("tap/1-9 open chat  Enter=open");
 }
 
@@ -2776,8 +2793,8 @@ void maybeComposeRedraw() {
     if (millis() - s_lastPartialMs < COMPOSE_PARTIAL_MIN_MS) return;
 
     // Compose footer geometry (matches draw_compose_or_hint: BOT_TOP-22)
-    constexpr int COMPOSE_Y = 258;
-    constexpr int COMPOSE_H = 24;
+    constexpr int COMPOSE_Y = COMPOSE_STRIP_Y;
+    constexpr int COMPOSE_H = COMPOSE_STRIP_H;
 
     size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     if (freeInt < 12000) {
@@ -3192,8 +3209,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.51");
-    Serial.println(" contacts rename sub-screen + bolder dark text");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.52");
+    Serial.println(" compose strip layout + NEW/UNRD fix");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
