@@ -9,27 +9,32 @@ Hardware / platform
 -------------------
 - PSRAM fully leveraged for protocol + LVGL buffers (QSPI mapped — keep verifying)
 - Keyboard backlight GPIO control beyond serial L
-- Partial e-ink refresh / ghosting control for lower energy
+- IN PROGRESS - Partial e-ink refresh / ghosting control for lower energy
 - Deep sleep / light sleep between RX windows; wake on LoRa / key / touch
 - Battery model accuracy + charge UI
 - SD card support (storage expansion, logs, optional assets)
 
 Boot / first impression
 -----------------------
-- Boot splash screen: show almost immediately on power-up, then transition to
+- DONE - Add Ratspeak Logo
+- DONE - Add TDeck Pro Version number 1.1
+- DONE - Add This firmware version number
+- DONE - Boot splash screen: show almost immediately on power-up, then transition to
   Home only after protocol / radio / UI are ready
+- if it's in black background mode, splash screen should be in black mode. 
 
 UI / UX
 -------
-- Theme toggle: white paper (default) vs black ink background
+- DONE - Theme toggle: white paper (default) vs black ink background
 - Settings full parity with Plus (WiFi client, TCP, GPS time, identity create/erase)
-- Contacts rename closer to Plus (context menu: Save Contact / Message / Close)
+- IN PROGRESS / testing - Contacts rename closer to Plus (context menu: Save Contact / Message / Close)
 - Msg Box delivery status polish (queued / sent / delivered / fail)
 - Scroll indicators on long lists (Contacts, Peers, Settings)
 - Optional fuller LVGL screens later (keep standalone build rules)
 - Geo maps on SD (offline map tiles / position display when GPS enabled)
 - add a idle screen options, after like 1 min you need password to gain access to device, screen is blank when idle. 
 - add manual refresh button, for ghosting issues. Do full screen refresh. 
+- add GPS clock displayed on idle screen / header. 
 
 Audio / modes
 -------------
@@ -59,9 +64,4 @@ Energy target (rough)
 ---------------------
 - Few messages per day + sleep: multi-day battery goal; measure after sleep work
 
---------------------------------------------------------------------------------
-Integrated from operator notes (2026-10):
-  voice/walkie-talkie mode; SD card / geo maps; MISRA C; function entry checks;
-  early boot splash then Home when fully up.
---------------------------------------------------------------------------------
 ================================================================================
