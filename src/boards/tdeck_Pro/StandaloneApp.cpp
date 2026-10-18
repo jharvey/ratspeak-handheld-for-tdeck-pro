@@ -77,6 +77,8 @@ enum SettingsPage : uint8_t {
 };
 SettingsPage g_settingsPage = SET_ROOT;
 int g_settingsSel = 0;  // highlighted row on current page
+int g_settingsRootSel = 0;  // remembered root row when entering a sub-page
+int g_tzIndex = 0;  // 0=EST default, 1=CST, 2=MST, 3=PST, 4=UTC
 uint32_t g_lastPeerAutoMs = 0;
 size_t   g_lastPeerCount  = 0;
 bool     g_peerDirty      = false;
@@ -2014,7 +2016,9 @@ void draw_compose_or_hint(const char* idleHint) {
     if (showComposeBox) {
         // Full-width outline so idle vs typing does not jump layout
         lv_obj_t* box = lv_obj_create(g_root);
-        lv_obj_set_size(box, EPD_WIDTH - 4, boxH - 2);
+        // Lower edge flush with BACK bar (BOT_TOP); text lines stay at y0+
+        const int boxBottom = BOT_TOP;
+        lv_obj_set_size(box, EPD_WIDTH - 4, boxBottom - y0);
         lv_obj_set_pos(box, 2, y0);
         lv_obj_set_style_radius(box, 0, 0);
         lv_obj_set_style_border_width(box, 2, 0);
@@ -2114,6 +2118,43 @@ void draw_battery_gauge(int x, int y, int w, int h, int pct) {
 }
 
 
+
+static const char* tzName() {
+    static const char* k[] = { "EST", "CST", "MST", "PST", "UTC" };
+    int i = g_tzIndex;
+    if (i < 0 || i > 4) i = 0;
+    return k[i];
+}
+static int tzOffsetHours() {
+    // Fixed standard offsets (no DST table for now)
+    static const int8_t k[] = { -5, -6, -7, -8, 0 };
+    int i = g_tzIndex;
+    if (i < 0 || i > 4) i = 0;
+    return k[i];
+}
+static void formatLocalTime(char* out, size_t n) {
+    time_t now = time(nullptr);
+    if (now < 100000) { // not synced yet
+        snprintf(out, n, "--:--");
+        return;
+    }
+    now += (time_t)tzOffsetHours() * 3600;
+    struct tm t;
+    gmtime_r(&now, &t);
+    snprintf(out, n, "%02d:%02d", t.tm_hour, t.tm_min);
+}
+static void formatLocalDate(char* out, size_t n) {
+    time_t now = time(nullptr);
+    if (now < 100000) {
+        snprintf(out, n, "--/--/--");
+        return;
+    }
+    now += (time_t)tzOffsetHours() * 3600;
+    struct tm t;
+    gmtime_r(&now, &t);
+    snprintf(out, n, "%02d/%02d/%02d", t.tm_mon + 1, t.tm_mday, (t.tm_year + 1900) % 100);
+}
+
 void gpsBegin() {
 #if defined(HAS_GPS) && HAS_GPS
     pinMode(GPS_EN, OUTPUT);
@@ -2188,6 +2229,25 @@ void gpsPoll() {
                     if (fld[2] && fld[2][0] == 'A') {
                         g_gpsHasFix = true;
                         snprintf(g_gpsStatus, sizeof(g_gpsStatus), "fix");
+                        // Sync ESP32 system clock from GPS UTC (RTC soft clock)
+                        if (fld[1] && strlen(fld[1]) >= 6 && fld[9] && strlen(fld[9]) >= 6) {
+                            const char* t = fld[1];
+                            const char* d = fld[9];
+                            struct tm tm = {};
+                            tm.tm_hour = (t[0]-'0')*10 + (t[1]-'0');
+                            tm.tm_min  = (t[2]-'0')*10 + (t[3]-'0');
+                            tm.tm_sec  = (t[4]-'0')*10 + (t[5]-'0');
+                            tm.tm_mday = (d[0]-'0')*10 + (d[1]-'0');
+                            tm.tm_mon  = (d[2]-'0')*10 + (d[3]-'0') - 1;
+                            int yy = (d[4]-'0')*10 + (d[5]-'0');
+                            tm.tm_year = (yy >= 70 ? 1900 + yy : 2000 + yy) - 1900;
+                            setenv("TZ", "UTC0", 1); tzset();
+                            time_t epoch = mktime(&tm);
+                            if (epoch > 0) {
+                                struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+                                settimeofday(&tv, nullptr);
+                            }
+                        }
                     } else {
                         g_gpsHasFix = false;
                         if (g_gpsEnabled)
@@ -2703,7 +2763,17 @@ void build_peers() {
 void settingsGoBack() {
     if (g_settingsPage != SET_ROOT) {
         g_settingsPage = SET_ROOT;
-        g_settingsSel = 0;
+        g_settingsSel = g_settingsRootSel;
+        // Keep scroll so the remembered row stays visible
+        const int listTop = CONTENT_TOP + 2;
+        const int maxVis = (CONTENT_BOTTOM - listTop - 24) / SET_ROW_H;
+        if (maxVis > 0) {
+            if (g_settingsSel < g_settingsScroll)
+                g_settingsScroll = g_settingsSel;
+            if (g_settingsSel >= g_settingsScroll + maxVis)
+                g_settingsScroll = g_settingsSel - maxVis + 1;
+            if (g_settingsScroll < 0) g_settingsScroll = 0;
+        }
         show_screen(SCR_SETTINGS);
     }
 }
@@ -2716,8 +2786,10 @@ void settingsActivate() {
             SET_NETWORK, SET_TIME, SET_AUDIO, SET_DIAG, SET_STORAGE
         };
         if (g_settingsSel >= 0 && g_settingsSel < 9) {
+            g_settingsRootSel = g_settingsSel;  // remember for Back
             g_settingsPage = kMap[g_settingsSel];
             g_settingsSel = 0;
+            g_settingsScroll = 0;
             show_screen(SCR_SETTINGS);
         }
         return;
@@ -2755,6 +2827,11 @@ void settingsActivate() {
     if (g_settingsPage == SET_TIME) {
         if (g_settingsSel == 0) {
             gpsSetEnabled(!g_gpsEnabled);
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 6) {
+            g_tzIndex = (g_tzIndex + 1) % 5;
+            Serial.printf("[TZ] %s UTC%+d
+", tzName(), tzOffsetHours());
             show_screen(SCR_SETTINGS);
         }
         return;
@@ -2814,7 +2891,7 @@ void build_settings() {
         if (g_settingsScroll + maxVis < 9)
             fat_label(g_root, "v more", EPD_WIDTH - 70, CONTENT_BOTTOM - 22);
 
-        draw_compose_or_hint("^/W up  V down  1-9 Enter");
+        draw_compose_or_hint("G/W up  V down  Enter=open");
         return;
     }
 
@@ -2882,18 +2959,22 @@ void build_settings() {
         return;
     }
     if (g_settingsPage == SET_TIME) {
-        char st[28], sats[20];
+        char st[28], sats[20], loc[20];
         snprintf(st, sizeof(st), "%s", g_gpsStatus);
         snprintf(sats, sizeof(sats), "%u sats", (unsigned)g_gpsSats);
-        row("GPS Power", g_gpsEnabled ? "ON" : "OFF", 0);
+        // Toggle button style: clear ON/OFF
+        row("[ GPS ]", g_gpsEnabled ? "ENABLED" : "DISABLED", 0);
         row("Status", st, 1);
         row("Satellites", sats, 2);
         snprintf(st, sizeof(st), "%s", g_gpsHasFix ? g_gpsTimeStr : "--:--");
         row("UTC Time", st, 3);
-        snprintf(st, sizeof(st), "%s", g_gpsHasFix ? g_gpsDateStr : "--/--/--");
-        row("Date", st, 4);
-        row("Timezone", "UTC display", 5);
-        draw_compose_or_hint("Enter toggles GPS power");
+        formatLocalTime(loc, sizeof(loc));
+        row("Local Time", loc, 4);
+        formatLocalDate(st, sizeof(st));
+        row("Local Date", st, 5);
+        snprintf(st, sizeof(st), "%s (UTC%+d)", tzName(), tzOffsetHours());
+        row("Timezone", st, 6);
+        draw_compose_or_hint("Enter: GPS toggle / TZ cycle");
         return;
     }
     if (g_settingsPage == SET_AUDIO) {
@@ -2925,6 +3006,11 @@ void build_settings() {
     if (g_settingsPage == SET_TIME) {
         if (g_settingsSel == 0) {
             gpsSetEnabled(!g_gpsEnabled);
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 6) {
+            g_tzIndex = (g_tzIndex + 1) % 5;
+            Serial.printf("[TZ] %s UTC%+d
+", tzName(), tzOffsetHours());
             show_screen(SCR_SETTINGS);
         }
         return;
@@ -3051,8 +3137,16 @@ void maybeComposeRedraw() {
 
 // Handle one keyboard event. Returns true if a full screen redraw is needed.
 bool handleKeyEvent(const KeyEvent& ev) {
-    // Keyboard Up = Back (lone Shift on Pro keyboard; also ev.up if set)
+    // Keyboard Up / lone Shift: in Settings list move selection up; else Back
     if (ev.up) {
+        if (g_screen == SCR_SETTINGS && g_settingsPage == SET_ROOT && g_settingsSel > 0) {
+            g_settingsSel--;
+            if (g_settingsSel < g_settingsScroll) g_settingsScroll = g_settingsSel;
+            Serial.printf("[SET] shift-up sel=%d
+", g_settingsSel);
+            show_screen(SCR_SETTINGS);
+            return true;
+        }
         Serial.println("[KEY] Up/Back");
         if (doBackAction()) return true;
         return false;
@@ -3209,6 +3303,14 @@ bool handleKeyEvent(const KeyEvent& ev) {
             Serial.println("[KEY] Enter empty - use Msg Box to chat");
             return false;
         }
+        // Settings: Enter activates highlighted row (same as touch)
+        if (g_screen == SCR_SETTINGS) {
+            Serial.printf("[SET] Enter activate sel=%d page=%d
+",
+                          g_settingsSel, (int)g_settingsPage);
+            settingsActivate();
+            return true;
+        }
         Serial.println("[KEY] Enter empty - next screen");
         next_screen();
         return false;
@@ -3237,7 +3339,9 @@ bool handleKeyEvent(const KeyEvent& ev) {
             // 1-9: select peer (never type digit while compose empty on msg screens)
             if (g_screen == SCR_SETTINGS && g_composeLen == 0) {
                 // W/S move highlight (scroll into view). Lone Shift = Back.
-                if (ev.character == 'w' || ev.character == 'W') {
+                // G = up (above V), W also up; V/S = down
+                if (ev.character == 'g' || ev.character == 'G' ||
+                    ev.character == 'w' || ev.character == 'W') {
                     if (g_settingsSel > 0) g_settingsSel--;
                     if (g_settingsSel < g_settingsScroll) g_settingsScroll = g_settingsSel;
                     Serial.printf("[SET] up sel=%d scroll=%d\n", g_settingsSel, g_settingsScroll);
@@ -3414,8 +3518,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.55");
-    Serial.println(" compose full-width box; delivered status");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.56");
+    Serial.println(" settings Enter/nav/sel memory; TZ; compose flush");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();
