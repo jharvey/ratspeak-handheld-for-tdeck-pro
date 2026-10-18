@@ -1054,10 +1054,17 @@ bool handleTouchAt(int16_t x, int16_t y) {
         return false;
     }
 
-    // List row select
+    // List row select — y origin matches each screen's drawn list
     if ((g_screen == SCR_CHATS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS) &&
-        g_msgRowCount > 0 && y >= PEERS_TOP && y < CONTENT_BOTTOM) {
-        int row = (y - PEERS_TOP) / ROW_H;
+        g_msgRowCount > 0 && y >= CONTENT_TOP + 2 && y < CONTENT_BOTTOM) {
+        int listTop = CONTENT_TOP + 2;
+        if (g_screen == SCR_CHATS && !g_showHistory)
+            listTop = PEERS_TOP;           // Msg Box list under stats strip
+        else if (g_screen == SCR_CONTACTS)
+            listTop = CONTENT_TOP + 2 + 20; // under "0=this  1-9=peer..." hint
+        else if (g_screen == SCR_PEERS)
+            listTop = CONTENT_TOP + 24;    // under RECENT PEERS header
+        int row = (y - listTop) / ROW_H;
         if (row < 0) row = 0;
         if (row >= g_msgRowCount) row = g_msgRowCount - 1;
         const int was = g_selPeer;
@@ -1768,21 +1775,23 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, ch
 }
 
 void draw_nav() {
+    // Thread / name-edit: only full-width Back (Contact/Peers not usable here)
+    if (g_showHistory || g_nameEditMode) {
+        draw_nav_box(0, 0, EPD_WIDTH, TOP_H, "^ Back", true, 0);
+        draw_nav_box(0, BOT_TOP, EPD_WIDTH, BOT_H, "BACK UP TO MSG BOX", true, 'B');
+        return;
+    }
     draw_nav_box(0,         0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS, 'S');
     draw_nav_box(TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home",     g_screen == SCR_HOME, 'H');
     int x0 = 0;
-    // Hotkey letter underlined in draw_nav_box via hotkey char
     draw_nav_box(x0, BOT_TOP, BOT_CONTACT_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, 'C');
     x0 += BOT_CONTACT_W;
-    if (g_screen == SCR_CHATS && g_showHistory)
-        draw_nav_box(x0, BOT_TOP, BOT_MSGBOX_W, BOT_H, "Back", true, 'B');
-    else
-        draw_nav_box(x0, BOT_TOP, BOT_MSGBOX_W, BOT_H, "Msg Box", g_screen == SCR_CHATS, 'M');
+    draw_nav_box(x0, BOT_TOP, BOT_MSGBOX_W, BOT_H, "Msg Box", g_screen == SCR_CHATS, 'M');
     x0 += BOT_MSGBOX_W;
     draw_nav_box(x0, BOT_TOP, BOT_PEERS_W, BOT_H, "Peers", g_screen == SCR_PEERS, 'P');
 }
 
-// Full-width action button (Announce) - short label fits montserrat_16
+
 void draw_action_btn(int x, int y, int w, int h, const char* label) {
     lv_obj_t* box = lv_obj_create(g_root);
     lv_obj_set_size(box, w, h);
@@ -2219,45 +2228,68 @@ void loadContactsRows() {
 }
 
 void build_contacts() {
-    // Plus Contacts: TRUSTED CONTACTS + RECENT PEERS with names
+    // Flat numbered list: 0 = THIS radio, 1+ = remotes (touch/keys match rows)
     g_showHistory = false;
     g_msgRowsLoaded = false;
-    loadContactsRows();
-    // Also fold in message-store peers so lists match Msg Box
-    {
-        const int before = g_msgRowCount;
-        // Temporarily stash contacts then reload messages and re-mark saved
-        loadMessageRows(true);
-        appendAnnouncedPeers();
-        // loadMessageRows resets rows - reload contacts saved flags via name cache
-        for (int i = 0; i < g_msgRowCount; i++) {
-            if (!g_msgRows[i].used) continue;
-            if (getLocalName(g_msgRows[i].peer))
-                g_msgRows[i].saved = true;
+    loadSelfName();
+    loadMessageRows(true);
+    appendAnnouncedPeers();
+
+    const uint8_t* loc = g_protoReady ? g_proto.localDestHash() : nullptr;
+    if (loc) {
+        // Drop accidental self from store rows
+        for (int i = 0; i < g_msgRowCount; ) {
+            if (g_msgRows[i].used && memcmp(g_msgRows[i].peer, loc, 16) == 0) {
+                for (int j = i; j < g_msgRowCount - 1; j++)
+                    g_msgRows[j] = g_msgRows[j + 1];
+                g_msgRowCount--;
+                continue;
+            }
+            i++;
         }
-        (void)before;
+        if (g_msgRowCount < MSG_ROWS) {
+            for (int i = g_msgRowCount; i > 0; i--)
+                g_msgRows[i] = g_msgRows[i - 1];
+            g_msgRowCount++;
+            MsgRow& r = g_msgRows[0];
+            r.used = true;
+            r.saved = true;
+            r.unread = 0;
+            memcpy(r.peer, loc, 16);
+            if (g_selfName[0])
+                snprintf(r.line1, sizeof(r.line1), "%.20s", g_selfName);
+            else
+                strcpy(r.line1, "THIS RADIO");
+            char hex[33];
+            peerToHex32(loc, hex);
+            snprintf(r.line2, sizeof(r.line2), "local %.16s", hex);
+        }
     }
-    for (int i = 0; i < g_msgRowCount; i++) {
+    for (int i = 1; i < g_msgRowCount; i++) {
         if (!g_msgRows[i].used) continue;
         formatPeerLine(g_msgRows[i].line1, sizeof(g_msgRows[i].line1),
                        g_msgRows[i].peer, 0);
         formatPeerSub(g_msgRows[i].line2, sizeof(g_msgRows[i].line2),
                       g_msgRows[i].peer, nullptr);
+        if (getLocalName(g_msgRows[i].peer))
+            g_msgRows[i].saved = true;
     }
+    clampSelPeer();
 
     clear_screen();
     int y = CONTENT_TOP + 2;
 
     if (g_nameEditMode) {
-        fat_label(g_root, "Set contact name", 4, y);
+        const bool self = (g_msgRowCount > 0 && g_msgRows[g_selPeer].used &&
+                           isLocalPeer(g_msgRows[g_selPeer].peer));
+        fat_label(g_root, self ? "Set THIS radio name" : "Set contact name", 4, y);
         y += 20;
         if (g_msgRowCount > 0 && g_msgRows[g_selPeer].used) {
             char hex[33];
             peerToHex32(g_msgRows[g_selPeer].peer, hex);
-            char sub[40];
-            snprintf(sub, sizeof(sub), "%.20s", g_msgRows[g_selPeer].line1);
-            fat_label(g_root, sub, 4, y);
+            fat_label(g_root, g_msgRows[g_selPeer].line1, 4, y);
             y += 18;
+            char sub[40];
             snprintf(sub, sizeof(sub), "ID: %.16s", hex);
             fat_label(g_root, sub, 4, y);
             y += 22;
@@ -2275,59 +2307,22 @@ void build_contacts() {
         return;
     }
 
-    int trusted = 0, recent = 0;
+    fat_label(g_root, "0=this  1-9=peer  Enter=name", 4, y);
+    y += 20;  // listTop for touch = CONTENT_TOP+2+20
     for (int i = 0; i < g_msgRowCount; i++) {
         if (!g_msgRows[i].used) continue;
-        if (g_msgRows[i].saved) trusted++;
-        else recent++;
-    }
-
-    char hdr[28];
-    snprintf(hdr, sizeof(hdr), "TRUSTED (%d)", trusted);
-    fat_label(g_root, hdr, 4, y);
-    y += 18;
-
-    bool drewTrusted = false;
-    for (int i = 0; i < g_msgRowCount; i++) {
-        if (!g_msgRows[i].used || !g_msgRows[i].saved) continue;
-        drewTrusted = true;
         char title[28];
         if (i == g_selPeer)
-            snprintf(title, sizeof(title), ">%d %s", i + 1, g_msgRows[i].line1);
+            snprintf(title, sizeof(title), ">%d %s", i, g_msgRows[i].line1);
         else
-            snprintf(title, sizeof(title), " %d %s", i + 1, g_msgRows[i].line1);
-        draw_menu_row(y, ROW_H, title, g_msgRows[i].line2, i == g_selPeer);
-        y += ROW_H;
-        if (y > CONTENT_BOTTOM - 60) break;
-    }
-    if (!drewTrusted) {
-        fat_label(g_root, "(none - save a peer)", 8, y);
-        y += 20;
-    }
-
-    y += 4;
-    snprintf(hdr, sizeof(hdr), "RECENT PEERS (%d)", recent);
-    fat_label(g_root, hdr, 4, y);
-    y += 18;
-
-    bool drewRecent = false;
-    for (int i = 0; i < g_msgRowCount; i++) {
-        if (!g_msgRows[i].used || g_msgRows[i].saved) continue;
-        drewRecent = true;
-        char title[28];
-        if (i == g_selPeer)
-            snprintf(title, sizeof(title), ">%d %s", i + 1, g_msgRows[i].line1);
-        else
-            snprintf(title, sizeof(title), " %d %s", i + 1, g_msgRows[i].line1);
+            snprintf(title, sizeof(title), " %d %s", i, g_msgRows[i].line1);
         draw_menu_row(y, ROW_H, title, g_msgRows[i].line2, i == g_selPeer);
         y += ROW_H;
         if (y > CONTENT_BOTTOM - 8) break;
     }
-    if (!drewRecent) {
-        fat_label(g_root, "(none - Announce)", 8, y);
-    }
-
-    draw_compose_or_hint("1-9  Enter=name/msg");
+    if (g_msgRowCount == 0)
+        fat_label(g_root, "(no peers - Announce)", 8, y);
+    draw_compose_or_hint("tap/0-9  Enter=name");
 }
 
 void build_peers() {
@@ -2498,7 +2493,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.43", 0);
+        row("Firmware", "Pro G1.44", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2989,7 +2984,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.43");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.44");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
