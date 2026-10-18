@@ -167,6 +167,42 @@ const char* getLocalName(const uint8_t peer[16]) {
     return nullptr;
 }
 
+char g_selfName[24] = "";
+bool g_selfNameLoaded = false;
+
+bool isLocalPeer(const uint8_t peer[16]) {
+    if (!peer || !g_protoReady) return false;
+    const uint8_t* loc = g_proto.localDestHash();
+    return loc && memcmp(peer, loc, 16) == 0;
+}
+
+void loadSelfName() {
+    if (g_selfNameLoaded) return;
+    g_selfNameLoaded = true;
+    Preferences prefs;
+    if (prefs.begin("rs_self", true)) {
+        String s = prefs.getString("name", "");
+        if (s.length() > 0)
+            snprintf(g_selfName, sizeof(g_selfName), "%.23s", s.c_str());
+        prefs.end();
+    }
+}
+
+void saveSelfName(const char* name) {
+    if (!name) name = "";
+    snprintf(g_selfName, sizeof(g_selfName), "%.23s", name);
+    Preferences prefs;
+    if (prefs.begin("rs_self", false)) {
+        prefs.putString("name", g_selfName);
+        prefs.end();
+    }
+    if (g_protoReady) {
+        const uint8_t* loc = g_proto.localDestHash();
+        if (loc) setLocalName(loc, g_selfName);
+    }
+    Serial.printf("[NAME] self -> \"%s\"\n", g_selfName);
+}
+
 constexpr int HIST_ROWS = 6;
 struct HistRow {
     char line[36];   // "> HELLO" or "< hi"
@@ -3018,7 +3054,6 @@ bool begin() {
         return false;
     }
     Serial.println("[BOOT] LVGL OK");
-    loadSelfName();
     draw_splash();
 
     g_kbOk = g_kb.begin();
