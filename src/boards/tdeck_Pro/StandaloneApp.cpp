@@ -79,6 +79,8 @@ SettingsPage g_settingsPage = SET_ROOT;
 int g_settingsSel = 0;  // highlighted row on current page
 int g_settingsRootSel = 0;  // remembered root row when entering a sub-page
 int g_tzIndex = 0;  // 0=EST default, 1=CST, 2=MST, 3=PST, 4=UTC
+int g_manualHour = 12;
+int g_manualMin  = 0;
 uint32_t g_lastPeerAutoMs = 0;
 size_t   g_lastPeerCount  = 0;
 bool     g_peerDirty      = false;
@@ -277,20 +279,58 @@ void spiBusIdle() {
 #endif
 }
 
+// LiPo voltage → rough SoC (fallback / sanity check for gauge)
+static int lipoPctFromVolts(float v) {
+    // Piecewise linear for single-cell LiPo under light load
+    static const float vp[] = {3.30f, 3.50f, 3.60f, 3.70f, 3.80f, 3.90f, 4.00f, 4.10f, 4.20f};
+    static const int   pp[] = {0, 5, 15, 30, 50, 65, 80, 92, 100};
+    if (v <= vp[0]) return 0;
+    if (v >= vp[8]) return 100;
+    for (int i = 0; i < 8; i++) {
+        if (v <= vp[i + 1]) {
+            float t = (v - vp[i]) / (vp[i + 1] - vp[i]);
+            return pp[i] + (int)(t * (pp[i + 1] - pp[i]) + 0.5f);
+        }
+    }
+    return 50;
+}
+
+static bool bqReadU16(uint8_t reg, uint16_t& out) {
+    Wire.beginTransmission(BQ27220_I2C_ADDR);
+    Wire.write(reg);
+    if (Wire.endTransmission(false) != 0) return false;
+    if (Wire.requestFrom((int)BQ27220_I2C_ADDR, 2) != 2) return false;
+    out = (uint16_t)(Wire.read() | (Wire.read() << 8));
+    return true;
+}
+
 bool readBattery(float& volts, int& pct) {
-    Wire.beginTransmission(BQ27220_I2C_ADDR);
-    Wire.write(0x08);
-    if (Wire.endTransmission(false) != 0) return false;
-    if (Wire.requestFrom((int)BQ27220_I2C_ADDR, 2) != 2) return false;
-    uint16_t mv = Wire.read() | (Wire.read() << 8);
-    volts = mv / 1000.0f;
-    Wire.beginTransmission(BQ27220_I2C_ADDR);
-    Wire.write(0x2C);
-    if (Wire.endTransmission(false) != 0) return false;
-    if (Wire.requestFrom((int)BQ27220_I2C_ADDR, 2) != 2) return false;
-    pct = Wire.read() | (Wire.read() << 8);
+    // Average several Voltage (0x08) and RelativeStateOfCharge (0x2C) samples
+    uint32_t mvSum = 0, socSum = 0;
+    int nOk = 0;
+    for (int i = 0; i < 4; i++) {
+        uint16_t mv = 0, soc = 0;
+        if (!bqReadU16(0x08, mv)) continue;
+        if (!bqReadU16(0x2C, soc)) continue;
+        if (mv < 2500 || mv > 4500) continue;  // reject nonsense
+        mvSum += mv;
+        socSum += (soc > 100) ? 100 : soc;
+        nOk++;
+        delay(2);
+    }
+    if (nOk == 0) return false;
+    volts = (mvSum / (float)nOk) / 1000.0f;
+    int gaugePct = (int)(socSum / nOk);
+    int curvePct = lipoPctFromVolts(volts);
+    // If gauge and voltage curve disagree a lot, blend toward curve (more stable on e-ink)
+    if (abs(gaugePct - curvePct) > 25) {
+        pct = (gaugePct + curvePct * 2) / 3;
+    } else {
+        pct = gaugePct;
+    }
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
+    // Flags (0x0A): bit 0 often CHG — optional future charging icon
     return true;
 }
 
@@ -2143,6 +2183,61 @@ static void formatLocalTime(char* out, size_t n) {
     gmtime_r(&now, &t);
     snprintf(out, n, "%02d:%02d", t.tm_hour, t.tm_min);
 }
+static bool syncGpsToRtc() {
+    if (!g_gpsHasFix || strlen(g_gpsTimeStr) < 8 || strlen(g_gpsDateStr) < 8)
+        return false;
+    // g_gpsTimeStr "HH:MM:SS", g_gpsDateStr "DD/MM/20YY"
+    int hh=0, mm=0, ss=0, dd=0, mo=0, yy=0;
+    if (sscanf(g_gpsTimeStr, "%d:%d:%d", &hh, &mm, &ss) != 3) return false;
+    if (sscanf(g_gpsDateStr, "%d/%d/%d", &dd, &mo, &yy) != 3) return false;
+    if (yy >= 100) yy %= 100;
+    struct tm tm = {};
+    tm.tm_hour = hh; tm.tm_min = mm; tm.tm_sec = ss;
+    tm.tm_mday = dd; tm.tm_mon = mo - 1;
+    tm.tm_year = (yy >= 70 ? 1900 + yy : 2000 + yy) - 1900;
+    setenv("TZ", "UTC0", 1); tzset();
+    time_t epoch = mktime(&tm);
+    if (epoch <= 0) return false;
+    struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+    settimeofday(&tv, nullptr);
+    Serial.printf("[RTC] synced from GPS %s %s\\n", g_gpsDateStr, g_gpsTimeStr);
+    return true;
+}
+
+static void applyManualLocalTime() {
+    // Interpret g_manualHour/Min as local wall time → store UTC in system clock
+    time_t now = time(nullptr);
+    struct tm t;
+    if (now > 100000) {
+        now += (time_t)tzOffsetHours() * 3600;
+        gmtime_r(&now, &t);
+    } else {
+        memset(&t, 0, sizeof(t));
+        t.tm_mday = 1; t.tm_mon = 0; t.tm_year = 2026 - 1900;
+    }
+    t.tm_hour = g_manualHour;
+    t.tm_min  = g_manualMin;
+    t.tm_sec  = 0;
+    // local → UTC
+    setenv("TZ", "UTC0", 1); tzset();
+    time_t localAsUtc = mktime(&t);
+    if (localAsUtc <= 0) return;
+    time_t utc = localAsUtc - (time_t)tzOffsetHours() * 3600;
+    struct timeval tv = { .tv_sec = utc, .tv_usec = 0 };
+    settimeofday(&tv, nullptr);
+    Serial.printf("[RTC] manual set %02d:%02d %s\\n", g_manualHour, g_manualMin, tzName());
+}
+
+static void loadManualFromClock() {
+    time_t now = time(nullptr);
+    if (now < 100000) return;
+    now += (time_t)tzOffsetHours() * 3600;
+    struct tm t;
+    gmtime_r(&now, &t);
+    g_manualHour = t.tm_hour;
+    g_manualMin  = t.tm_min;
+}
+
 static void formatLocalDate(char* out, size_t n) {
     time_t now = time(nullptr);
     if (now < 100000) {
@@ -2352,17 +2447,21 @@ void build_home() {
     fat_label(g_root, annAgo, 4, sy + 16);
     draw_action_btn(0, sy + 34, EPD_WIDTH, HOME_ANN_H, "Announce");
 
-    // GPS time / date under Announce
-    char gpsLine[36];
+    // RTC + GPS under Announce
+    char rtcLine[36], gpsLine[36];
+    char lt[12], ld[12];
+    formatLocalTime(lt, sizeof(lt));
+    formatLocalDate(ld, sizeof(ld));
+    snprintf(rtcLine, sizeof(rtcLine), "RTC %s %s %s", lt, ld, tzName());
+    fat_label(g_root, rtcLine, 4, sy + 34 + HOME_ANN_H + 2);
     if (!g_gpsEnabled)
         snprintf(gpsLine, sizeof(gpsLine), "GPS off");
     else if (g_gpsHasFix)
-        snprintf(gpsLine, sizeof(gpsLine), "GPS %s %s %us",
-                 g_gpsTimeStr, g_gpsDateStr, (unsigned)g_gpsSats);
+        snprintf(gpsLine, sizeof(gpsLine), "GPS %s %us", g_gpsTimeStr, (unsigned)g_gpsSats);
     else
         snprintf(gpsLine, sizeof(gpsLine), "GPS %s (%u sats)",
                  g_gpsStatus, (unsigned)g_gpsSats);
-    fat_label(g_root, gpsLine, 4, sy + 34 + HOME_ANN_H + 4);
+    fat_label(g_root, gpsLine, 4, sy + 34 + HOME_ANN_H + 18);
 
     draw_compose_or_hint("");
 }
@@ -2790,6 +2889,8 @@ void settingsActivate() {
             g_settingsPage = kMap[g_settingsSel];
             g_settingsSel = 0;
             g_settingsScroll = 0;
+            if (g_settingsPage == SET_TIME)
+                loadManualFromClock();
             show_screen(SCR_SETTINGS);
         }
         return;
@@ -2831,6 +2932,19 @@ void settingsActivate() {
         } else if (g_settingsSel == 6) {
             g_tzIndex = (g_tzIndex + 1) % 5;
             Serial.printf("[TZ] %s UTC%+d\n", tzName(), tzOffsetHours());
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 7) {
+            bool ok = syncGpsToRtc();
+            Serial.printf("[RTC] GPS sync %s\n", ok ? "OK" : "FAIL");
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 8) {
+            g_manualHour = (g_manualHour + 1) % 24;
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 9) {
+            g_manualMin = (g_manualMin + 1) % 60;
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 10) {
+            applyManualLocalTime();
             show_screen(SCR_SETTINGS);
         }
         return;
@@ -2961,19 +3075,24 @@ void build_settings() {
         char st[28], sats[20], loc[20];
         snprintf(st, sizeof(st), "%s", g_gpsStatus);
         snprintf(sats, sizeof(sats), "%u sats", (unsigned)g_gpsSats);
-        // Toggle button style: clear ON/OFF
         row("[ GPS ]", g_gpsEnabled ? "ENABLED" : "DISABLED", 0);
         row("Status", st, 1);
         row("Satellites", sats, 2);
         snprintf(st, sizeof(st), "%s", g_gpsHasFix ? g_gpsTimeStr : "--:--");
-        row("UTC Time", st, 3);
+        row("UTC (GPS)", st, 3);
         formatLocalTime(loc, sizeof(loc));
-        row("Local Time", loc, 4);
+        row("Local RTC", loc, 4);
         formatLocalDate(st, sizeof(st));
         row("Local Date", st, 5);
         snprintf(st, sizeof(st), "%s (UTC%+d)", tzName(), tzOffsetHours());
         row("Timezone", st, 6);
-        draw_compose_or_hint("Enter: GPS toggle / TZ cycle");
+        row("Sync GPS→RTC", g_gpsHasFix ? "Enter=sync" : "need fix", 7);
+        snprintf(st, sizeof(st), "%02d", g_manualHour);
+        row("Set Hour", st, 8);
+        snprintf(st, sizeof(st), "%02d", g_manualMin);
+        row("Set Minute", st, 9);
+        row("Apply Manual", "Enter=set RTC", 10);
+        draw_compose_or_hint("Enter act  G/V adj hour/min");
         return;
     }
     if (g_settingsPage == SET_AUDIO) {
@@ -3503,8 +3622,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.56");
-    Serial.println(" settings Enter/nav/sel memory; TZ; compose flush");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.57");
+    Serial.println(" home RTC; GPS sync; manual time; better battery");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();

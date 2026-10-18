@@ -1,17 +1,14 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.55  (2026-10-18)
+Last: G1.57  (2026-10-18)
 ================================================================================
-[DONE] Thread compose: full-width 3-line box always (idle + typing).
-       Lines 1–2 draft, line 3 Enter icon + Enter=send (stable layout).
-[DONE] Outbound status: queued / sending / sent / delivered (not deliv/out).
-[DONE] Header "N: to NAME"; GPS diag; settings scroll maxVis.
-
-Messaging after flash erase:
-  - New identity is created; paths/ratchets reset.
-  - Both sides should Announce; open thread after peer appears in Peers/Contacts.
-  - Logs showed PRO TX HHH + III with delivered — if Plus did not show III,
-    re-announce both and retry (not a compose UI issue).
-
-GPS: Settings > Time & Location > GPS Power ON; outdoor for fix.
+[DONE] Home shows RTC line (local time/date + TZ) under Announce + GPS line.
+[DONE] Settings > Time & Location:
+         [ GPS ] ENABLED/DISABLED
+         Sync GPS→RTC (Enter when fix available)
+         Set Hour / Set Minute (Enter +1, or G/V when row selected)
+         Apply Manual → writes soft RTC
+         Timezone cycle EST default
+[DONE] Battery: BQ27220 multi-sample + LiPo curve blend when gauge disagrees.
+RTC: ESP32 software clock only; GPS or manual set keeps it accurate.
 ================================================================================
