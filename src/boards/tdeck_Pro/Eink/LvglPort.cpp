@@ -11,7 +11,6 @@ static lv_color_t* allocDrawBuf(size_t pixels, size_t* outBytes) {
     const size_t bytes = pixels * sizeof(lv_color_t);
     *outBytes = bytes;
 
-    // PSRAM reports found=1 size=0 on this board — do not use ps_malloc.
     lv_color_t* p = nullptr;
     if (psramFound() && ESP.getPsramSize() > 0) {
         p = (lv_color_t*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -27,7 +26,6 @@ static lv_color_t* allocDrawBuf(size_t pixels, size_t* outBytes) {
         return p;
     }
 
-    // Last resort: plain malloc (may still fail if fragmented)
     p = (lv_color_t*)malloc(bytes);
     if (p) Serial.printf("[LVGL] draw buf malloc %u bytes\n", (unsigned)bytes);
     return p;
@@ -38,8 +36,6 @@ bool LvglPort::begin(DisplayEink& display) {
 
     lv_init();
 
-    // Prefer 20 lines (~9600 B). On fragmented internal heap after the 200 KB
-    // protocol node, fall back to 10 then 5 so bring-up still works.
     static const size_t kLineTries[] = {20, 10, 5};
     size_t lines = 0;
     size_t bytes = 0;
@@ -79,7 +75,7 @@ bool LvglPort::begin(DisplayEink& display) {
     disp_drv_.draw_buf = &draw_buf_;
     lv_disp_drv_register(&disp_drv_);
 
-    Serial.println("[LVGL] port ready (batched refresh)");
+    Serial.println("[LVGL] port ready (batched + partial refresh)");
     return true;
 }
 
@@ -95,4 +91,9 @@ void LvglPort::tick() {
 void LvglPort::updateAndRefresh() {
     lv_timer_handler();
     if (display_) display_->refreshIfDirty();
+}
+
+void LvglPort::updateAndPartial(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    lv_timer_handler();
+    if (display_) display_->partialRefresh(x, y, w, h);
 }

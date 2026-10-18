@@ -14,6 +14,7 @@
 #include "config/BoardConfig.h"
 #include "Eink/DisplayEink.h"
 #include "Eink/LvglPort.h"
+#include "Eink/RatSpeakLogo.h"
 #include "audio/AudioNotify.h"
 #include "hal/Keyboard.h"
 #include "radio/SX1262.h"
@@ -221,7 +222,8 @@ char g_compose[COMPOSE_CAP + 1] = "";
 size_t g_composeLen = 0;
 bool g_composeDirty = false;
 uint32_t g_lastComposeMs = 0;
-constexpr uint32_t COMPOSE_IDLE_MS = 1600;  // E21: redraw glass after typing pauses
+constexpr uint32_t COMPOSE_IDLE_MS = 120;   // G1.49: fast partial compose strip
+constexpr uint32_t COMPOSE_PARTIAL_MIN_MS = 80;
 
 bool g_bootAnnDone = false;
 uint32_t g_bootAnnAt = 0;
@@ -1653,59 +1655,31 @@ void draw_label_centered(int x, int y, int w, int h, const char* label, bool bol
     }
 }
 
-// Draw Ratspeak-style speech-bubble mark (site navbar logo simplified for 1-bit e-ink).
-// Website: rounded chat-head / bubble with tail; here: thick bubble + tail + eye.
-static void draw_ratspeak_logo(int cx, int cy, int scale) {
-    // scale 1 ≈ 56x56 mark
-    const int bw = 48 * scale;   // bubble width
-    const int bh = 36 * scale;   // bubble height
-    const int bx = cx - bw / 2;
-    const int by = cy - bh / 2 - 4 * scale;
+// G1.49: stamp 1-bit PROGMEM logo from RatSpeak_Logo.png into DisplayEink FB.
+// PNG is dark-bg + light mark; packed with 1=black. Dark splash = black paper.
+static void draw_ratspeak_logo_bitmap(int cx, int cy) {
+    const int w = RATSPEAK_LOGO_W;
+    const int h = RATSPEAK_LOGO_H;
+    const int x0 = cx - w / 2;
+    const int y0 = cy - h / 2;
+    const int rowBytes = (w + 7) / 8;
 
-    auto solid = [](int x, int y, int w, int h, int radius) {
-        lv_obj_t* o = lv_obj_create(g_root);
-        lv_obj_set_size(o, w, h);
-        lv_obj_set_pos(o, x, y);
-        lv_obj_set_style_radius(o, radius, 0);
-        lv_obj_set_style_border_width(o, 0, 0);
-        lv_obj_set_style_bg_color(o, theme_fg(), 0);
-        lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
-        lv_obj_set_style_pad_all(o, 0, 0);
-        lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
-        return o;
-    };
-    auto hole = [](int x, int y, int w, int h, int radius) {
-        lv_obj_t* o = lv_obj_create(g_root);
-        lv_obj_set_size(o, w, h);
-        lv_obj_set_pos(o, x, y);
-        lv_obj_set_style_radius(o, radius, 0);
-        lv_obj_set_style_border_width(o, 0, 0);
-        lv_obj_set_style_bg_color(o, theme_bg(), 0);
-        lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
-        lv_obj_set_style_pad_all(o, 0, 0);
-        lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
-        return o;
-    };
-
-    // Outer bubble (filled)
-    solid(bx, by, bw, bh, 8 * scale);
-    // Inner cutout → thick border look
-    const int pad = 3 * scale;
-    hole(bx + pad, by + pad, bw - 2 * pad, bh - 2 * pad, 6 * scale);
-
-    // Tail (bottom-left point of speech bubble)
-    const int tw = 10 * scale;
-    const int th = 12 * scale;
-    solid(bx + 6 * scale, by + bh - 2 * scale, tw, th, 0);
-    // Carve tail to a point-ish shape
-    hole(bx + 6 * scale + tw / 2, by + bh - 2 * scale, tw / 2 + 2, th, 0);
-    hole(bx + 4 * scale, by + bh + th - 4 * scale, tw + 4, 4 * scale, 0);
-
-    // Inner "face" cue from site logo (small eye + smile arc as bars)
-    const int ex = bx + bw / 2 + 4 * scale;
-    const int ey = by + bh / 2 - 4 * scale;
-    solid(ex, ey, 5 * scale, 5 * scale, 3 * scale);           // eye
-    solid(ex - 2 * scale, ey + 8 * scale, 12 * scale, 3 * scale, 2 * scale); // smile
+    for (int y = 0; y < h; y++) {
+        for (int xb = 0; xb < rowBytes; xb++) {
+            uint8_t byte = pgm_read_byte(&RATSPEAK_LOGO_BITS[y * rowBytes + xb]);
+            for (int bit = 0; bit < 8; bit++) {
+                int x = xb * 8 + bit;
+                if (x >= w) break;
+                bool panelBlack = (byte & (0x80 >> bit)) != 0;
+                int px = x0 + x;
+                int py = y0 + y;
+                if (px < 0 || py < 0 || px >= (int)EPD_WIDTH || py >= (int)EPD_HEIGHT)
+                    continue;
+                g_display.setPixel((uint16_t)px, (uint16_t)py, panelBlack);
+            }
+        }
+    }
+    g_display.markDirty();
 }
 
 void draw_splash() {
@@ -1714,20 +1688,22 @@ void draw_splash() {
     g_darkTheme = true;
     clear_screen();
 
-    // Logo centered upper third — inspired by https://ratspeak.org navbar mark
+    // Ensure FB is black paper before logo stamp
+    g_display.fillScreen(true);
+
     const int logoCx = EPD_WIDTH / 2;
-    const int logoCy = 70;
-    draw_ratspeak_logo(logoCx, logoCy, 2);
+    const int logoCy = 72;
+    draw_ratspeak_logo_bitmap(logoCx, logoCy);
 
     // Wordmark under logo
-    draw_label_centered(0, 118, EPD_WIDTH, 22, "RatSpeak", true);
-    fat_label(g_root, "T-Deck Pro  V1.1", 36, 150);
-    fat_label(g_root, "RatSpeak     V0.1", 36, 178);
-    fat_label(g_root, "BOOTING...", 70, 230);
+    draw_label_centered(0, 130, EPD_WIDTH, 22, "RatSpeak", true);
+    fat_label(g_root, "T-Deck Pro  V1.1", 36, 160);
+    fat_label(g_root, "RatSpeak     V0.1", 36, 188);
+    fat_label(g_root, "BOOTING...", 70, 240);
 
-    LvglPort::updateAndRefresh();
+    lv_refr_now(nullptr);
     g_display.fullRefresh();
-    Serial.println("[BOOT] splash drawn (Ratspeak bubble logo)");
+    Serial.println("[BOOT] splash drawn (PNG RatSpeak logo 96x96)");
     g_darkTheme = saved;
 }
 
@@ -2754,28 +2730,64 @@ void maybeComposeRedraw() {
     if (!g_composeDirty) return;
     if (g_lastComposeMs == 0) return;
     if ((millis() - g_lastComposeMs) < COMPOSE_IDLE_MS) return;
-    if (millis() - g_lastMsgRedrawMs < MSG_REDRAW_MIN_MS) return;
-    // Avoid full e-ink rebuild when heap is tight - Enter needs room for lxmfSubmit
+
+    static uint32_t s_lastPartialMs = 0;
+    if (millis() - s_lastPartialMs < COMPOSE_PARTIAL_MIN_MS) return;
+
+    // Compose footer geometry (matches draw_compose_or_hint: BOT_TOP-22)
+    constexpr int COMPOSE_Y = 258;
+    constexpr int COMPOSE_H = 24;
+
     size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    if (freeInt < 16000) {
-        // One log per 30s max; defer recheck 15s - avoids serial flood / apparent crash
+    if (freeInt < 12000) {
         static uint32_t s_lastSkipLog = 0;
         uint32_t now = millis();
         if (s_lastSkipLog == 0 || (now - s_lastSkipLog) > 30000u) {
             s_lastSkipLog = now;
-            Serial.printf("[UI] skip compose redraw low heap %u\n", (unsigned)freeInt);
+            Serial.printf("[UI] skip compose partial low heap %u
+", (unsigned)freeInt);
         }
-        g_lastMsgRedrawMs = now + 12000;  // next try ~15s later (check uses now-last)
-        // Actually lastMsgRedrawMs should be in the past for millis()-last < MIN
-        // Set so millis()-last is small: last = now works with MIN=2500 → 2.5s
-        // Force longer: temporarily clear dirty? No - user needs footer eventually.
-        g_lastMsgRedrawMs = now;
-        g_lastComposeMs = now;  // reset idle timer so we wait COMPOSE_IDLE again
+        g_lastComposeMs = now;
         return;
     }
-    g_lastMsgRedrawMs = millis();
-    Serial.printf("[UI] compose idle redraw len=%u\n", (unsigned)g_composeLen);
-    show_screen(g_screen);
+
+    // Clear strip in 1-bit FB (white)
+    for (int y = COMPOSE_Y; y < COMPOSE_Y + COMPOSE_H && y < (int)EPD_HEIGHT; y++) {
+        for (int x = 0; x < (int)EPD_WIDTH; x++)
+            g_display.setPixel((uint16_t)x, (uint16_t)y, false);
+    }
+
+    // Rebuild compose line via temporary label → flush into FB
+    char foot[36];
+    if (g_composeLen > 0 || g_composeMode) {
+        if (g_nameEditMode)
+            snprintf(foot, sizeof(foot), "Name>%.20s", g_compose);
+        else
+            snprintf(foot, sizeof(foot), ">%.24s", g_compose);
+    } else {
+        foot[0] = ' ';
+    }
+
+    if (!g_root) {
+        g_composeDirty = false;
+        return;
+    }
+
+    lv_obj_t* lab = lv_label_create(g_root);
+    lv_label_set_text(lab, foot);
+    lv_obj_set_style_text_color(lab, theme_fg(), 0);
+    lv_obj_set_pos(lab, 4, COMPOSE_Y);
+    lv_obj_update_layout(lab);
+
+    lv_refr_now(nullptr);
+    LvglPort::updateAndPartial(0, COMPOSE_Y, EPD_WIDTH, COMPOSE_H);
+
+    lv_obj_del(lab);
+
+    g_composeDirty = false;
+    s_lastPartialMs = millis();
+    Serial.printf("[UI] compose partial len=%u
+", (unsigned)g_composeLen);
 }
 
 // Handle one keyboard event. Returns true if a full screen redraw is needed.
@@ -3116,8 +3128,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.48");
-    Serial.println(" Settings hierarchy + name/ID");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.49");
+    Serial.println(" PNG splash + partial compose refresh");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();

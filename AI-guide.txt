@@ -1,13 +1,13 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.48  (2026-10-18)
+Last: G1.49  (2026-10-18)
 ================================================================================
 Long-term backlog → Future_steps.txt (do not strip future items from there).
 Standalone excludes LvglApplication.cpp / full Plus UI; uses boards/tdeck_Pro
 (DisplayEink, LvglPort, LvglStubs, StandaloneApp).
 
 --------------------------------------------------------------------------------
-CURRENT PHASE (G1.48)
+CURRENT PHASE (G1.49)
 --------------------------------------------------------------------------------
 - PSRAM: QSPI mapped (qio_qspi). size≈8MB → protocol uses SPIRAM. If size=0
   see PSRAM-RECOVERY.txt / lilygo_t_deck_pro.json.
@@ -17,7 +17,10 @@ CURRENT PHASE (G1.48)
 - Msg Box list: open chat only — NO compose/send on list page.
 - Thread (open chat): type + Enter = send. BACK full-width at bottom (thumb).
 - Theme: Settings > Display > Theme → white-paper vs black-ink invert.
-- Splash: Ratspeak speech-bubble logo (site-style, 1-bit) + RatSpeak / T-Deck Pro V1.1 / BOOTING.
+- Splash: bitmap Ratspeak logo from RatSpeak_Logo.png (96×96 1-bit PROGMEM)
+  + RatSpeak / T-Deck Pro V1.1 / BOOTING. (Replaces geometric bubble sketch.)
+- E-ink: fullRefresh on screen change; partialRefresh for compose footer
+  (COMPOSE_IDLE_MS ≈120 ms). After 5 partials → forced full (ghosting).
 
 --------------------------------------------------------------------------------
 NAVIGATION
@@ -83,29 +86,41 @@ Works:
   Settings hierarchy + theme + LoRa preset
   Touch tabs, digit select, Back from thread
   Auto redraw Msg Box on store rev change (reload history in thread)
+  Splash: PNG-derived 1-bit logo (RatSpeakLogo.h)
+  Compose: partial e-ink strip refresh (fast, localized)
 
 Does not / partial:
   Compose on Msg Box list (intentionally disabled G1.47)
   Bottom Contact|Peers while in thread (removed — BACK only)
   Full Plus settings tree population
-  Partial e-ink refresh (still fullRefresh per screen change)
   Sleep / energy modes
   Keyboard backlight UI
   Reliable multi-peer name edit when list rebuilds mid-type (use hash keep)
 
 --------------------------------------------------------------------------------
+E-INK
+--------------------------------------------------------------------------------
+  Screen change → single fullRefresh (batched via dirty flag).
+  Compose footer → partialRefresh(0, COMPOSE_Y, WIDTH, COMPOSE_H).
+  After 5 consecutive partials → forced fullRefresh (ghosting clear).
+  White paper default; black-ink theme inverts fg/bg.
+
+--------------------------------------------------------------------------------
 BUILD / FLASH
 --------------------------------------------------------------------------------
-  env: tdeck_pro_cooperative
+  env: tdeck_pro_cooperative | tdeck_pro_standalone
   PSRAM: board_build.arduino.memory_type = qio_qspi  (-DBOARD_HAS_PSRAM)
   Upload COM without full rebuild: use upload-com.bat / tasks.json COM arg
   Do not duplicate [env:tdeck_pro_cooperative] in platformio.ini
 
 --------------------------------------------------------------------------------
-E-INK
+FILES (G1.49 touch)
 --------------------------------------------------------------------------------
-  Single fullRefresh per screen change (batched). Keep that pattern.
-  White paper default; black-ink theme inverts fg/bg for readability.
+  src/boards/tdeck_Pro/Eink/DisplayEink.h|.cpp   — partialRefresh API
+  src/boards/tdeck_Pro/Eink/LvglPort.h|.cpp      — updateAndPartial
+  src/boards/tdeck_Pro/Eink/RatSpeakLogo.h       — 96×96 PROGMEM from PNG
+  src/boards/tdeck_Pro/StandaloneApp.cpp         — splash uses bitmap logo;
+                                                   maybeComposeRedraw → partial
 
 --------------------------------------------------------------------------------
 WHEN ADDING FEATURES

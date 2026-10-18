@@ -8,8 +8,11 @@ public:
     static void tick();
     static DisplayEink* display() { return display_; }
 
-    // Run LVGL handlers then push panel if FB dirty
+    // Run LVGL handlers then push panel if FB dirty (full refresh)
     static void updateAndRefresh();
+
+    // Run LVGL handlers then partial-refresh only the given rectangle.
+    static void updateAndPartial(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 
 private:
     static void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_map);

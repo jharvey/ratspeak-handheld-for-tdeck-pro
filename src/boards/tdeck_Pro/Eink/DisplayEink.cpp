@@ -10,11 +10,16 @@ static GxEPD2_BW<GxEPD2_310_GDEQ031T10, 16>
     g_epd(GxEPD2_310_GDEQ031T10(EPD_CS, EPD_DC, EPD_RST, EPD_BUSY));
 
 DisplayEink::DisplayEink()
-    : framebuffer_(nullptr), ready_(false), dirty_(false) {}
+    : framebuffer_(nullptr), ready_(false), dirty_(false), partialCount_(0) {}
+
+void DisplayEink::parkSpiCs() {
+    digitalWrite(LORA_CS, HIGH);
+#ifdef SD_CS
+    digitalWrite(SD_CS, HIGH);
+#endif
+}
 
 bool DisplayEink::begin() {
-    // Power + SPI already brought up by main (radio path).
-    // Only park CS lines so the panel owns the bus for init/refresh.
     pinMode(EPD_CS, OUTPUT);
     digitalWrite(EPD_CS, HIGH);
     pinMode(LORA_CS, OUTPUT);
@@ -44,11 +49,11 @@ bool DisplayEink::begin() {
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
     Serial.println("[EINK] init GxEPD2...");
-    // quiet init, 2 ms reset pulse
     g_epd.init(0, true, 2, false);
     g_epd.setRotation(0);
     ready_ = true;
     dirty_ = false;
+    partialCount_ = 0;
     Serial.printf("[EINK] DisplayEink ready free_int=%u\n",
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     return true;
@@ -79,8 +84,6 @@ void DisplayEink::flush(const lv_area_t* area, lv_color_t* color_map) {
     for (int32_t y = 0; y < h; y++) {
         for (int32_t x = 0; x < w; x++) {
             lv_color_t c = color_map[y * w + x];
-            // Anything not pure white → black. Catches AA font edges under
-            // LV_COLOR_16_SWAP; pure black (0) still works.
             bool black = (c.full != white.full);
             setPixel((uint16_t)(area->x1 + x),
                      (uint16_t)(area->y1 + y), black);
@@ -92,12 +95,8 @@ void DisplayEink::flush(const lv_area_t* area, lv_color_t* color_map) {
 void DisplayEink::fullRefresh() {
     if (!ready_ || !framebuffer_) return;
 
-    digitalWrite(LORA_CS, HIGH);
-#ifdef SD_CS
-    digitalWrite(SD_CS, HIGH);
-#endif
+    parkSpiCs();
 
-    // Diagnostic: how many black bits did LVGL paint?
     const size_t fb_bytes = (size_t)EPD_WIDTH * EPD_HEIGHT / 8;
     size_t bits = 0;
     for (size_t i = 0; i < fb_bytes; i++) {
@@ -106,7 +105,6 @@ void DisplayEink::fullRefresh() {
     Serial.printf("[EINK] fullRefresh bits_set=%u/%u\n",
                   (unsigned)bits, (unsigned)(fb_bytes * 8));
 
-    // Phase D path: firstPage + drawBitmap (1 = black). Works with page_height 16.
     g_epd.setFullWindow();
     g_epd.firstPage();
     do {
@@ -115,7 +113,39 @@ void DisplayEink::fullRefresh() {
     } while (g_epd.nextPage());
 
     dirty_ = false;
+    partialCount_ = 0;
     Serial.println("[EINK] fullRefresh done");
+}
+
+void DisplayEink::partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h) {
+    if (!ready_ || !framebuffer_) return;
+    if (w == 0 || h == 0) return;
+
+    if (x >= EPD_WIDTH || y >= EPD_HEIGHT) return;
+    if (x + w > EPD_WIDTH)  w = EPD_WIDTH  - x;
+    if (y + h > EPD_HEIGHT) h = EPD_HEIGHT - y;
+
+    if (partialCount_ >= kMaxPartialsBeforeFull) {
+        Serial.printf("[EINK] partial count %u → forced full\n",
+                      (unsigned)partialCount_);
+        fullRefresh();
+        return;
+    }
+
+    parkSpiCs();
+
+    g_epd.setPartialWindow(x, y, w, h);
+    g_epd.firstPage();
+    do {
+        g_epd.fillScreen(GxEPD_WHITE);
+        g_epd.drawBitmap(0, 0, framebuffer_, EPD_WIDTH, EPD_HEIGHT, GxEPD_BLACK);
+    } while (g_epd.nextPage());
+
+    partialCount_++;
+    dirty_ = false;
+    Serial.printf("[EINK] partialRefresh x=%u y=%u w=%u h=%u count=%u\n",
+                  (unsigned)x, (unsigned)y, (unsigned)w, (unsigned)h,
+                  (unsigned)partialCount_);
 }
 
 void DisplayEink::refreshIfDirty() {
