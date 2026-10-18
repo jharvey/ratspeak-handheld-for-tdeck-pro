@@ -1,26 +1,117 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.35
+Last: G1.47  (2026-10-18)
 ================================================================================
+Long-term backlog → Future_steps.txt (do not strip future items from there).
+Standalone excludes LvglApplication.cpp / full Plus UI; uses boards/tdeck_Pro
+(DisplayEink, LvglPort, LvglStubs, StandaloneApp).
 
-KEYBOARD
-  If HELLO becomes :2""+ then SYM is stuck — release SYM (or Enter clears it).
-  Serial shows [KEY] SYM down/up.
+--------------------------------------------------------------------------------
+CURRENT PHASE (G1.47)
+--------------------------------------------------------------------------------
+- PSRAM: QSPI mapped (qio_qspi). size≈8MB → protocol uses SPIRAM. If size=0
+  see PSRAM-RECOVERY.txt / lilygo_t_deck_pro.json.
+- LXMF: announce, send, receive work when engine not Busy/Recovering.
+- Contacts: flat list 0> local radio + 1..N remotes. Select by touch or digit.
+  Selection kept by peer hash across rebuild (local inject at 0).
+- Msg Box list: open chat only — NO compose/send on list page.
+- Thread (open chat): type + Enter = send. BACK full-width at bottom (thumb).
+- Theme: Settings > Display > Theme → white-paper vs black-ink invert.
+- Splash: RatSpeak / T-Deck Pro V1.1 / BOOTING on cold start.
 
-THREAD / COMPOSE
-  Type + Enter = send. Footer is one short line above bottom tabs.
-  Fail bubbles = prior TX status; naming uses Contacts (not Msg Box).
+--------------------------------------------------------------------------------
+NAVIGATION
+--------------------------------------------------------------------------------
+Top:    Settings | Home
+Bottom: Contact | Msg Box | Peers   (list screens only)
 
-SETTINGS
-  Rows numbered 1-9 on root. Enter opens sub-page.
-  Scroll: ^ (lone Shift) or W = up; V or S = down.
-  "^ more" / "v more" when list continues.
-  Screen > Theme: toggles white-paper vs black-ink select style.
-  LoRa > Link Preset (row 2): cycles Long Fast / Long Slow / Medium / Fast Short
-    and applies SF/BW/CR on radio.
+Hotkeys (list / Home / Settings — not while typing in thread):
+  H Home   S Settings   M Msg Box   C Contacts   P Peers
+  A Announce
+  0–9 select row (Contacts / Msg Box / Peers)
+  Enter on Msg Box list → open selected chat
+  Enter empty on Contacts → name-edit mode
+  Keyboard Up / lone Shift → Back (leave thread or settings sub-page)
+  B while in thread → Back
 
-PSRAM
-  Must be qio_qspi — see PSRAM-RECOVERY.txt if size=0.
+Thread / name-edit only:
+  Bottom full-width BACK (top still Settings|Home)
+  Type message → Enter send
+  Leave: BACK bar, keyboard Up, or B
 
-Long-term → Future_steps.txt
+--------------------------------------------------------------------------------
+MESSAGING (important)
+--------------------------------------------------------------------------------
+1. Msg Box list shows conversations (1> NAME / preview). Selecting does NOT
+   enable typing.
+2. Tap peer (or digit + Enter) → opens THREAD (history bubbles).
+3. Only in THREAD: keyboard composes; Enter sends LXMF.
+4. Compose on Contacts list = rename contact (Enter saves name), not send.
+5. Peers list: select / view; send from Msg Box thread after selecting peer.
+
+If [TX] rejected Busy/Recovering: wait for radio quiet, retry; reboot frees
+stuck engine. Prefer announce both ways before first message.
+
+--------------------------------------------------------------------------------
+CONTACTS / NAMES
+--------------------------------------------------------------------------------
+- 0> = this radio (local). Type name + Enter → saveSelfName (NVS).
+- 1>… = remotes. Type name + Enter → setContactName + name cache.
+- Announce moves peers trusted; names show on Msg Box / Peers / Contacts.
+- If 2> won’t stick after touch: rebuild used to clamp sel — G1.46+ keeps
+  selection by destination hash.
+
+--------------------------------------------------------------------------------
+SETTINGS (partial)
+--------------------------------------------------------------------------------
+Root rows 1–9; Enter opens sub-page. Scroll: Up/W = up, V = down.
+  "^ more" / "v more" when more rows off-screen.
+Working now:
+  Theme invert (whole UI fg/bg)
+  LoRa Link Preset cycle (Long Fast / Long Slow / Medium / Fast Short)
+  Audio on/off, LoRa feature toggles (where wired)
+Stub / later: full Plus parity (WiFi, TCP, identity create, GPS time).
+
+--------------------------------------------------------------------------------
+GUI FEATURE MATRIX (short)
+--------------------------------------------------------------------------------
+Works:
+  Home identity + battery gauge + Announce + status tiles
+  Contacts flat numbered list + rename 0> and remotes
+  Msg Box list + thread bubbles (in/out) + send/receive when quiet
+  Peers list + select
+  Settings hierarchy + theme + LoRa preset
+  Touch tabs, digit select, Back from thread
+  Auto redraw Msg Box on store rev change (reload history in thread)
+
+Does not / partial:
+  Compose on Msg Box list (intentionally disabled G1.47)
+  Bottom Contact|Peers while in thread (removed — BACK only)
+  Full Plus settings tree population
+  Partial e-ink refresh (still fullRefresh per screen change)
+  Sleep / energy modes
+  Keyboard backlight UI
+  Reliable multi-peer name edit when list rebuilds mid-type (use hash keep)
+
+--------------------------------------------------------------------------------
+BUILD / FLASH
+--------------------------------------------------------------------------------
+  env: tdeck_pro_cooperative
+  PSRAM: board_build.arduino.memory_type = qio_qspi  (-DBOARD_HAS_PSRAM)
+  Upload COM without full rebuild: use upload-com.bat / tasks.json COM arg
+  Do not duplicate [env:tdeck_pro_cooperative] in platformio.ini
+
+--------------------------------------------------------------------------------
+E-INK
+--------------------------------------------------------------------------------
+  Single fullRefresh per screen change (batched). Keep that pattern.
+  White paper default; black-ink theme inverts fg/bg for readability.
+
+--------------------------------------------------------------------------------
+WHEN ADDING FEATURES
+--------------------------------------------------------------------------------
+  Prefer small compile-ready full files over huge diffs.
+  Keep cooperative green; don’t pull LvglApplication into standalone.
+  Update this guide for short-term behavior; put multi-week items in
+  Future_steps.txt only.
 ================================================================================
