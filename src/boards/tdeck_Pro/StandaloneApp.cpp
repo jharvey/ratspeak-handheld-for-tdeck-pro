@@ -1061,9 +1061,9 @@ bool handleTouchAt(int16_t x, int16_t y) {
         if (g_screen == SCR_CHATS && !g_showHistory)
             listTop = PEERS_TOP;           // Msg Box list under stats strip
         else if (g_screen == SCR_CONTACTS)
-            listTop = CONTENT_TOP + 2 + 20; // under "0=this  1-9=peer..." hint
+            listTop = CONTENT_TOP + 2 + 20; // under hint line
         else if (g_screen == SCR_PEERS)
-            listTop = CONTENT_TOP + 24;    // under RECENT PEERS header
+            listTop = CONTENT_TOP + 24;     // under RECENT PEERS header
         int row = (y - listTop) / ROW_H;
         if (row < 0) row = 0;
         if (row >= g_msgRowCount) row = g_msgRowCount - 1;
@@ -1777,8 +1777,8 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, ch
 void draw_nav() {
     // Thread / name-edit: only full-width Back (Contact/Peers not usable here)
     if (g_showHistory || g_nameEditMode) {
+        // Top banner only — no bottom Back (user request)
         draw_nav_box(0, 0, EPD_WIDTH, TOP_H, "^ Back", true, 0);
-        draw_nav_box(0, BOT_TOP, EPD_WIDTH, BOT_H, "BACK UP TO MSG BOX", true, 'B');
         return;
     }
     draw_nav_box(0,         0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS, 'S');
@@ -2493,7 +2493,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.44", 0);
+        row("Firmware", "Pro G1.45", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2885,14 +2885,19 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 }
                 int idx = ev.character - '0';
                 if (idx < g_msgRowCount && g_msgRows[idx].used) {
+                    const int was = g_selPeer;
                     g_selPeer = idx;
                     char hex[33];
                     peerToHex32(g_msgRows[idx].peer, hex);
-                    Serial.printf("[PEER] key %c -> sel=%d %s\n",
-                                  ev.character, g_selPeer, hex);
-                    Serial.println("[PEER] selected - type message then Enter");
-                    // No fullRefresh on re-select; heap must stay free for TX
-                    return false;
+                    Serial.printf("[PEER] key %c -> sel=%d/%d %s\n",
+                                  ev.character, g_selPeer, g_msgRowCount, hex);
+                    if (g_screen == SCR_CONTACTS) {
+                        Serial.println("[PEER] selected - Enter to name, or type name");
+                        return true;  // redraw highlight for 0/1/2/...
+                    }
+                    if (g_selPeer != was)
+                        Serial.println("[PEER] selected - type message then Enter");
+                    return (g_selPeer != was);
                 }
                 Serial.printf("[PEER] key %c ignored (rows=%d)\n",
                               ev.character, g_msgRowCount);
@@ -2984,7 +2989,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.44");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.45");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
