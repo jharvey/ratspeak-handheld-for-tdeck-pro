@@ -1,13 +1,13 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.47  (2026-10-18)
+Last: G1.48  (2026-10-18)
 ================================================================================
 Long-term backlog → Future_steps.txt (do not strip future items from there).
 Standalone excludes LvglApplication.cpp / full Plus UI; uses boards/tdeck_Pro
 (DisplayEink, LvglPort, LvglStubs, StandaloneApp).
 
 --------------------------------------------------------------------------------
-CURRENT PHASE (G1.47)
+CURRENT PHASE (G1.48)
 --------------------------------------------------------------------------------
 - PSRAM: QSPI mapped (qio_qspi). size≈8MB → protocol uses SPIRAM. If size=0
   see PSRAM-RECOVERY.txt / lilygo_t_deck_pro.json.
@@ -17,7 +17,7 @@ CURRENT PHASE (G1.47)
 - Msg Box list: open chat only — NO compose/send on list page.
 - Thread (open chat): type + Enter = send. BACK full-width at bottom (thumb).
 - Theme: Settings > Display > Theme → white-paper vs black-ink invert.
-- Splash: RatSpeak / T-Deck Pro V1.1 / BOOTING on cold start.
+- Splash: Ratspeak speech-bubble logo (site-style, 1-bit) + RatSpeak / T-Deck Pro V1.1 / BOOTING.
 
 --------------------------------------------------------------------------------
 NAVIGATION

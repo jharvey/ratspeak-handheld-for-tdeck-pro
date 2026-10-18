@@ -1653,30 +1653,81 @@ void draw_label_centered(int x, int y, int w, int h, const char* label, bool bol
     }
 }
 
+// Draw Ratspeak-style speech-bubble mark (site navbar logo simplified for 1-bit e-ink).
+// Website: rounded chat-head / bubble with tail; here: thick bubble + tail + eye.
+static void draw_ratspeak_logo(int cx, int cy, int scale) {
+    // scale 1 ≈ 56x56 mark
+    const int bw = 48 * scale;   // bubble width
+    const int bh = 36 * scale;   // bubble height
+    const int bx = cx - bw / 2;
+    const int by = cy - bh / 2 - 4 * scale;
+
+    auto solid = [](int x, int y, int w, int h, int radius) {
+        lv_obj_t* o = lv_obj_create(g_root);
+        lv_obj_set_size(o, w, h);
+        lv_obj_set_pos(o, x, y);
+        lv_obj_set_style_radius(o, radius, 0);
+        lv_obj_set_style_border_width(o, 0, 0);
+        lv_obj_set_style_bg_color(o, theme_fg(), 0);
+        lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(o, 0, 0);
+        lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+        return o;
+    };
+    auto hole = [](int x, int y, int w, int h, int radius) {
+        lv_obj_t* o = lv_obj_create(g_root);
+        lv_obj_set_size(o, w, h);
+        lv_obj_set_pos(o, x, y);
+        lv_obj_set_style_radius(o, radius, 0);
+        lv_obj_set_style_border_width(o, 0, 0);
+        lv_obj_set_style_bg_color(o, theme_bg(), 0);
+        lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(o, 0, 0);
+        lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+        return o;
+    };
+
+    // Outer bubble (filled)
+    solid(bx, by, bw, bh, 8 * scale);
+    // Inner cutout → thick border look
+    const int pad = 3 * scale;
+    hole(bx + pad, by + pad, bw - 2 * pad, bh - 2 * pad, 6 * scale);
+
+    // Tail (bottom-left point of speech bubble)
+    const int tw = 10 * scale;
+    const int th = 12 * scale;
+    solid(bx + 6 * scale, by + bh - 2 * scale, tw, th, 0);
+    // Carve tail to a point-ish shape
+    hole(bx + 6 * scale + tw / 2, by + bh - 2 * scale, tw / 2 + 2, th, 0);
+    hole(bx + 4 * scale, by + bh + th - 4 * scale, tw + 4, 4 * scale, 0);
+
+    // Inner "face" cue from site logo (small eye + smile arc as bars)
+    const int ex = bx + bw / 2 + 4 * scale;
+    const int ey = by + bh / 2 - 4 * scale;
+    solid(ex, ey, 5 * scale, 5 * scale, 3 * scale);           // eye
+    solid(ex - 2 * scale, ey + 8 * scale, 12 * scale, 3 * scale, 2 * scale); // smile
+}
+
 void draw_splash() {
-    // Early boot screen - black paper, white text (readable on e-ink)
+    // Early boot: black paper, white ink (matches dark theme readability on e-ink)
     const bool saved = g_darkTheme;
     g_darkTheme = true;
     clear_screen();
-    // Simple "logo" block
-    lv_obj_t* logo = lv_obj_create(g_root);
-    lv_obj_set_size(logo, 120, 40);
-    lv_obj_set_pos(logo, (EPD_WIDTH - 120) / 2, 48);
-    lv_obj_set_style_radius(logo, 0, 0);
-    lv_obj_set_style_border_width(logo, 3, 0);
-    lv_obj_set_style_border_color(logo, theme_fg(), 0);
-    lv_obj_set_style_bg_color(logo, theme_bg(), 0);
-    lv_obj_set_style_bg_opa(logo, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(logo, 0, 0);
-    lv_obj_clear_flag(logo, LV_OBJ_FLAG_SCROLLABLE);
-    draw_label_centered((EPD_WIDTH - 120) / 2, 48, 120, 40, "RatSpeak", true);
 
-    fat_label(g_root, "T-Deck Pro  V1.1", 40, 110);
-    fat_label(g_root, "RatSpeak     V0.1", 40, 140);
-    fat_label(g_root, "BOOTING...", 70, 200);
+    // Logo centered upper third — inspired by https://ratspeak.org navbar mark
+    const int logoCx = EPD_WIDTH / 2;
+    const int logoCy = 70;
+    draw_ratspeak_logo(logoCx, logoCy, 2);
+
+    // Wordmark under logo
+    draw_label_centered(0, 118, EPD_WIDTH, 22, "RatSpeak", true);
+    fat_label(g_root, "T-Deck Pro  V1.1", 36, 150);
+    fat_label(g_root, "RatSpeak     V0.1", 36, 178);
+    fat_label(g_root, "BOOTING...", 70, 230);
+
     LvglPort::updateAndRefresh();
     g_display.fullRefresh();
-    Serial.println("[BOOT] splash drawn");
+    Serial.println("[BOOT] splash drawn (Ratspeak bubble logo)");
     g_darkTheme = saved;
 }
 
@@ -2522,7 +2573,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.47", 0);
+        row("Firmware", "Pro G1.48", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -3065,7 +3116,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.47");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.48");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
