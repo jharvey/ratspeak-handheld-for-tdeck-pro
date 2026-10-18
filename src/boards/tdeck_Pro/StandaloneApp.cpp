@@ -2229,6 +2229,13 @@ void loadContactsRows() {
 
 void build_contacts() {
     // Flat numbered list: 0 = THIS radio, 1+ = remotes (touch/keys match rows)
+    // Preserve selection by peer hash — reload+inject shifts indices and was
+    // wiping sel=2 back to 1 every redraw (touch/key looked broken).
+    uint8_t keepPeer[16];
+    bool keep = (g_msgRowCount > 0 && g_selPeer >= 0 && g_selPeer < g_msgRowCount &&
+                 g_msgRows[g_selPeer].used);
+    if (keep) memcpy(keepPeer, g_msgRows[g_selPeer].peer, 16);
+
     g_showHistory = false;
     g_msgRowsLoaded = false;
     loadSelfName();
@@ -2273,6 +2280,16 @@ void build_contacts() {
                       g_msgRows[i].peer, nullptr);
         if (getLocalName(g_msgRows[i].peer))
             g_msgRows[i].saved = true;
+    }
+    // Re-find selected peer after inject/shift
+    if (keep) {
+        g_selPeer = 0;
+        for (int i = 0; i < g_msgRowCount; i++) {
+            if (g_msgRows[i].used && memcmp(g_msgRows[i].peer, keepPeer, 16) == 0) {
+                g_selPeer = i;
+                break;
+            }
+        }
     }
     clampSelPeer();
 
@@ -2493,7 +2510,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.45", 0);
+        row("Firmware", "Pro G1.46", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2989,7 +3006,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.45");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.46");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
