@@ -994,14 +994,24 @@ ScreenId botTabScreen(int i) {
 bool handleTouchAt(int16_t x, int16_t y) {
     Serial.printf("[TOUCH] xy=%d,%d screen=%u\n", (int)x, (int)y, (unsigned)g_screen);
 
-    // Message mode: only Back Up bars (top or bottom full width)
+    // Thread / name-edit: Back is bottom bar only (thumb)
     if (inMessageUi()) {
-        if (y < TOP_H || y >= BOT_TOP) {
-            Serial.println("[TAB] Back Up (message mode)");
+        if (y >= BOT_TOP) {
+            Serial.println("[TAB] Back (message mode)");
             goBackFromMessage();
             return true;
         }
-        // Content area: keep thread open (do not dismiss on body tap)
+        // Top Settings|Home still work
+        if (y < TOP_H) {
+            int i = (x < TOP_TAB_W) ? 0 : 1;
+            ScreenId want = topTabScreen(i);
+            g_showHistory = false;
+            g_nameEditMode = false;
+            composeClear();
+            g_composeMode = false;
+            show_screen(want);
+            return true;
+        }
         return false;
     }
 
@@ -1777,8 +1787,10 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, ch
 void draw_nav() {
     // Thread / name-edit: only full-width Back (Contact/Peers not usable here)
     if (g_showHistory || g_nameEditMode) {
-        // Top banner only — no bottom Back (user request)
-        draw_nav_box(0, 0, EPD_WIDTH, TOP_H, "^ Back", true, 0);
+        // Bottom full-width Back (thumb reach); keep Settings|Home on top
+        draw_nav_box(0,         0, TOP_TAB_W, TOP_H, "Settings", false, 'S');
+        draw_nav_box(TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home",     false, 'H');
+        draw_nav_box(0, BOT_TOP, EPD_WIDTH, BOT_H, "BACK", true, 'B');
         return;
     }
     draw_nav_box(0,         0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS, 'S');
@@ -2161,7 +2173,7 @@ void build_chats() {
     }
     build_list_body(nullptr, g_msgNote[0] ? g_msgNote : "(no chats)",
                     true, conv, unread, unread);
-    draw_compose_or_hint("tap=open  type+Enter=send");
+    draw_compose_or_hint("tap/1-9 open chat  Enter=open");
 }
 
 void loadContactsRows() {
@@ -2510,7 +2522,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.46", 0);
+        row("Firmware", "Pro G1.47", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -2806,6 +2818,13 @@ bool handleKeyEvent(const KeyEvent& ev) {
             return true;
         }
         if (g_composeLen > 0) {
+            // Send only from open thread, never from Msg Box/Peers list
+            if (!g_showHistory) {
+                Serial.println("[TX] open a chat first (tap peer) to send");
+                composeClear();
+                g_composeMode = false;
+                return true;
+            }
             char body[COMPOSE_CAP + 1];
             memcpy(body, g_compose, g_composeLen + 1);
             Serial.printf("[TX] Enter compose len=%u body=\"%s\"\n",
@@ -2828,9 +2847,20 @@ bool handleKeyEvent(const KeyEvent& ev) {
             Serial.println("[NAME] select a peer first");
             return false;
         }
-        // Empty Enter on messaging screens: stay put
-        if (g_screen == SCR_CHATS || g_screen == SCR_PEERS) {
-            Serial.println("[KEY] Enter empty - type a message first");
+        // Empty Enter on Msg Box list: open selected chat
+        if (g_screen == SCR_CHATS && !g_showHistory) {
+            if (g_msgRowCount > 0 && g_msgRows[g_selPeer].used) {
+                g_showHistory = true;
+                loadHistoryRows();
+                show_screen(SCR_CHATS);
+                Serial.println("[KEY] Enter → open thread");
+                return true;
+            }
+            Serial.println("[KEY] select a peer first");
+            return false;
+        }
+        if (g_screen == SCR_PEERS) {
+            Serial.println("[KEY] Enter empty - use Msg Box to chat");
             return false;
         }
         Serial.println("[KEY] Enter empty - next screen");
@@ -2921,22 +2951,22 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 return false;  // do not append digit into compose
             }
 
-            // On Msg Box / Contact / Peers: letters always type (fix HELLO→Home)
-            // Only V=thread N=next T=test remain as shortcuts there.
+            // Msg Box list / Peers list: navigation only (no compose/send).
+            // Type+send only inside thread (g_showHistory). Contacts = name edit.
             if (onMsgScreens) {
                 if (ev.character == 'b' || ev.character == 'B') {
-                    if (g_showHistory) {
-                        g_showHistory = false;
-                        show_screen(SCR_CHATS);
-                        Serial.println("[KEY] Back → Msg Box list");
-                        return false;
+                    if (g_showHistory || g_nameEditMode) {
+                        goBackFromMessage();
+                        return true;
                     }
                 }
                 if (ev.character == 'v' || ev.character == 'V') {
-                    g_showHistory = !g_showHistory;
-                    if (g_showHistory) loadHistoryRows();
-                    show_screen(SCR_CHATS);
-                    return false;
+                    if (g_screen == SCR_CHATS) {
+                        g_showHistory = !g_showHistory;
+                        if (g_showHistory) loadHistoryRows();
+                        show_screen(SCR_CHATS);
+                        return true;
+                    }
                 }
                 if (ev.character == 'n' || ev.character == 'N') {
                     if (cycleSelPeer()) {
@@ -2945,11 +2975,40 @@ bool handleKeyEvent(const KeyEvent& ev) {
                     }
                     return false;
                 }
-                if (ev.character == 't' || ev.character == 'T') {
-                    doSendTest(nullptr);
-                    return true;
+                // Compose only in thread, or Contacts name-edit
+                if (g_showHistory) {
+                    // fall through to composeAppend
+                } else if (g_screen == SCR_CONTACTS) {
+                    // fall through — name edit starts below
+                } else {
+                    // Msg Box list / Peers: nav letters
+                    if (ev.character == 'a' || ev.character == 'A') {
+                        doAnnounce();
+                        return true;
+                    }
+                    if (ev.character == 's' || ev.character == 'S') {
+                        show_screen(SCR_SETTINGS);
+                        return true;
+                    }
+                    if (ev.character == 'h' || ev.character == 'H') {
+                        show_screen(SCR_HOME);
+                        return true;
+                    }
+                    if (ev.character == 'm' || ev.character == 'M') {
+                        show_screen(SCR_CHATS);
+                        return true;
+                    }
+                    if (ev.character == 'c' || ev.character == 'C') {
+                        show_screen(SCR_CONTACTS);
+                        return true;
+                    }
+                    if (ev.character == 'p' || ev.character == 'P') {
+                        show_screen(SCR_PEERS);
+                        return true;
+                    }
+                    Serial.println("[KEY] open a chat (tap row) to type a message");
+                    return false;
                 }
-                // fall through to composeAppend
             } else {
                 // Home / Settings: full nav shortcuts
                 if (ev.character == 'a' || ev.character == 'A') {
@@ -3006,7 +3065,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.46");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.47");
     Serial.println(" Settings hierarchy + name/ID");
     Serial.println("========================================");
 
