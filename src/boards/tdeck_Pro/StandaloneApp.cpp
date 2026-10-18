@@ -120,6 +120,9 @@ char g_txStr[24]     = "-";
 char g_gpsTimeStr[20] = "--:--";
 char g_gpsDateStr[16] = "--/--/--";
 bool g_gpsHasFix = false;
+bool g_gpsEnabled = true;
+uint8_t g_gpsSats = 0;
+char g_gpsStatus[20] = "off";
 HardwareSerial* g_gpsSerial = nullptr;
 
 constexpr int MSG_ROWS = 6;
@@ -2095,18 +2098,43 @@ void draw_battery_gauge(int x, int y, int w, int h, int pct) {
 void gpsBegin() {
 #if defined(HAS_GPS) && HAS_GPS
     pinMode(GPS_EN, OUTPUT);
+    if (!g_gpsEnabled) {
+        digitalWrite(GPS_EN, LOW);
+        g_gpsSerial = nullptr;
+        snprintf(g_gpsStatus, sizeof(g_gpsStatus), "disabled");
+        Serial.println("[GPS] disabled");
+        return;
+    }
     digitalWrite(GPS_EN, HIGH);
     delay(30);
-    // UART1 on GPS_RX / GPS_TX (BoardConfig)
     static HardwareSerial gpsPort(1);
     gpsPort.begin(GPS_BAUD, SERIAL_8N1, GPS_RX, GPS_TX);
     g_gpsSerial = &gpsPort;
-    Serial.printf("[GPS] UART1 RX=%d TX=%d baud=%d EN=%d\\n",
+    snprintf(g_gpsStatus, sizeof(g_gpsStatus), "acquiring");
+    Serial.printf("[GPS] UART1 RX=%d TX=%d baud=%d EN=%d\n",
                   GPS_RX, GPS_TX, GPS_BAUD, GPS_EN);
 #else
-    (void)0;
+    snprintf(g_gpsStatus, sizeof(g_gpsStatus), "n/a");
 #endif
 }
+
+void gpsSetEnabled(bool on) {
+    g_gpsEnabled = on;
+    g_gpsHasFix = false;
+    g_gpsSats = 0;
+    if (!on) {
+#if defined(HAS_GPS) && HAS_GPS
+        digitalWrite(GPS_EN, LOW);
+#endif
+        g_gpsSerial = nullptr;
+        snprintf(g_gpsStatus, sizeof(g_gpsStatus), "disabled");
+        snprintf(g_gpsTimeStr, sizeof(g_gpsTimeStr), "--:--");
+        snprintf(g_gpsDateStr, sizeof(g_gpsDateStr), "--/--/--");
+    } else {
+        gpsBegin();
+    }
+}
+
 
 // Minimal RMC parser: $GPRMC,hhmmss.sss,A,....,ddmmyy,...
 void gpsPoll() {
@@ -2115,33 +2143,51 @@ void gpsPoll() {
     static size_t len = 0;
     while (g_gpsSerial->available()) {
         char c = (char)g_gpsSerial->read();
-        if (c == '\\r') continue;
-        if (c == '\\n') {
+        if (c == '\r') continue;
+        if (c == '\n') {
             line[len] = 0;
-            if (len > 20 && (strncmp(line, "$GPRMC", 6) == 0 || strncmp(line, "$GNRMC", 6) == 0)) {
-                // fields: 0=id 1=time 2=status 9=date
+            if (len > 12 && line[0] == '$') {
                 char* p = line;
-                char* fld[12] = {};
+                char* fld[16] = {};
                 int n = 0;
                 fld[n++] = p;
-                for (; *p && n < 12; p++) {
+                for (; *p && n < 16; p++) {
                     if (*p == ',') { *p = 0; fld[n++] = p + 1; }
                 }
-                if (n > 9 && fld[1] && fld[2] && fld[9] && fld[2][0] == 'A') {
-                    // hhmmss
-                    const char* t = fld[1];
-                    if (strlen(t) >= 6) {
+                // RMC: time + date + fix A/V
+                if (n > 9 && (strncmp(fld[0], "$GPRMC", 6) == 0 || strncmp(fld[0], "$GNRMC", 6) == 0)) {
+                    if (fld[1] && strlen(fld[1]) >= 6) {
+                        const char* t = fld[1];
                         snprintf(g_gpsTimeStr, sizeof(g_gpsTimeStr), "%c%c:%c%c:%c%c",
                                  t[0], t[1], t[2], t[3], t[4], t[5]);
                     }
-                    const char* d = fld[9];
-                    if (strlen(d) >= 6) {
+                    if (fld[9] && strlen(fld[9]) >= 6) {
+                        const char* d = fld[9];
                         snprintf(g_gpsDateStr, sizeof(g_gpsDateStr), "%c%c/%c%c/20%c%c",
                                  d[0], d[1], d[2], d[3], d[4], d[5]);
                     }
-                    g_gpsHasFix = true;
-                } else if (n > 2 && fld[2] && fld[2][0] != 'A') {
-                    g_gpsHasFix = false;
+                    if (fld[2] && fld[2][0] == 'A') {
+                        g_gpsHasFix = true;
+                        snprintf(g_gpsStatus, sizeof(g_gpsStatus), "fix");
+                    } else {
+                        g_gpsHasFix = false;
+                        if (g_gpsEnabled)
+                            snprintf(g_gpsStatus, sizeof(g_gpsStatus), "acquiring");
+                    }
+                }
+                // GGA: satellites in use (field 7)
+                if (n > 7 && (strncmp(fld[0], "$GPGGA", 6) == 0 || strncmp(fld[0], "$GNGGA", 6) == 0)) {
+                    if (fld[7] && fld[7][0])
+                        g_gpsSats = (uint8_t)atoi(fld[7]);
+                    // quality field 6: 0=invalid 1=GPS 2=DGPS
+                    if (fld[6] && fld[6][0] == '0') {
+                        g_gpsHasFix = false;
+                        if (g_gpsEnabled)
+                            snprintf(g_gpsStatus, sizeof(g_gpsStatus), "acquiring");
+                    } else if (fld[6] && fld[6][0] > '0') {
+                        g_gpsHasFix = true;
+                        snprintf(g_gpsStatus, sizeof(g_gpsStatus), "fix");
+                    }
                 }
             }
             len = 0;
@@ -2229,10 +2275,14 @@ void build_home() {
 
     // GPS time / date under Announce
     char gpsLine[36];
-    if (g_gpsHasFix)
-        snprintf(gpsLine, sizeof(gpsLine), "GPS %s  %s", g_gpsTimeStr, g_gpsDateStr);
+    if (!g_gpsEnabled)
+        snprintf(gpsLine, sizeof(gpsLine), "GPS off");
+    else if (g_gpsHasFix)
+        snprintf(gpsLine, sizeof(gpsLine), "GPS %s %s %us",
+                 g_gpsTimeStr, g_gpsDateStr, (unsigned)g_gpsSats);
     else
-        snprintf(gpsLine, sizeof(gpsLine), "GPS %s  (no fix)", g_gpsTimeStr);
+        snprintf(gpsLine, sizeof(gpsLine), "GPS %s (%u sats)",
+                 g_gpsStatus, (unsigned)g_gpsSats);
     fat_label(g_root, gpsLine, 4, sy + 34 + HOME_ANN_H + 4);
 
     draw_compose_or_hint("");
@@ -2324,8 +2374,8 @@ void build_chats() {
         if (g_msgRowCount > 0 && g_msgRows[g_selPeer].used) {
             char hex[33];
             peerToHex32(g_msgRows[g_selPeer].peer, hex);
-            snprintf(hdr, sizeof(hdr), "%d:%s %.8s",
-                     g_selPeer + 1, g_msgRows[g_selPeer].line1, hex);
+            snprintf(hdr, sizeof(hdr), "%d: to %s",
+                     g_selPeer + 1, g_msgRows[g_selPeer].line1);
         } else
             strcpy(hdr, "Chat");
         fat_label(g_root, hdr, 4, y);
@@ -2683,6 +2733,13 @@ void settingsActivate() {
         }
         return;
     }
+    if (g_settingsPage == SET_TIME) {
+        if (g_settingsSel == 0) {
+            gpsSetEnabled(!g_gpsEnabled);
+            show_screen(SCR_SETTINGS);
+        }
+        return;
+    }
     if (g_settingsPage == SET_STORAGE) {
         if (g_settingsSel == 5) {  // Send Announce
             doAnnounce();
@@ -2727,7 +2784,7 @@ void build_settings() {
                  g_featLora ? "ON" : "OFF");
         row("4 LoRa", a, 3);
         row("5 Network", "WiFi/TCP stub", 4);
-        row("6 Time & Location", "stub", 5);
+        row("6 Time & Location", g_gpsEnabled ? g_gpsStatus : "OFF", 5);
         snprintf(a, sizeof(a), "Vol %s", g_featAudio ? "ON" : "OFF");
         row("7 Alerts & Audio", a, 6);
         snprintf(a, sizeof(a), "P%s L%s", g_pathsStr, g_linksStr);
@@ -2806,11 +2863,18 @@ void build_settings() {
         return;
     }
     if (g_settingsPage == SET_TIME) {
-        row("GPS Time Sync", "OFF", 0);
-        row("GPS Location", "OFF", 1);
-        row("Timezone", "local", 2);
-        row("24-Hour Clock", "OFF", 3);
-        draw_compose_or_hint("GPS future");
+        char st[28], sats[20];
+        snprintf(st, sizeof(st), "%s", g_gpsStatus);
+        snprintf(sats, sizeof(sats), "%u sats", (unsigned)g_gpsSats);
+        row("GPS Power", g_gpsEnabled ? "ON" : "OFF", 0);
+        row("Status", st, 1);
+        row("Satellites", sats, 2);
+        snprintf(st, sizeof(st), "%s", g_gpsHasFix ? g_gpsTimeStr : "--:--");
+        row("UTC Time", st, 3);
+        snprintf(st, sizeof(st), "%s", g_gpsHasFix ? g_gpsDateStr : "--/--/--");
+        row("Date", st, 4);
+        row("Timezone", "UTC display", 5);
+        draw_compose_or_hint("Enter toggles GPS power");
         return;
     }
     if (g_settingsPage == SET_AUDIO) {
@@ -2837,6 +2901,13 @@ void build_settings() {
         snprintf(a, sizeof(a), "%lu s", (unsigned long)(millis() / 1000UL));
         row("Uptime", a, 6);
         draw_compose_or_hint("^=back");
+        return;
+    }
+    if (g_settingsPage == SET_TIME) {
+        if (g_settingsSel == 0) {
+            gpsSetEnabled(!g_gpsEnabled);
+            show_screen(SCR_SETTINGS);
+        }
         return;
     }
     if (g_settingsPage == SET_STORAGE) {
@@ -2937,71 +3008,27 @@ void maybeComposeRedraw() {
     if (g_lastComposeMs == 0) return;
     if ((millis() - g_lastComposeMs) < COMPOSE_IDLE_MS) return;
 
-    // Name-edit or thread with long draft: rebuild so 2-line preview + Enter stay clear of bubbles
-    if (g_nameEditMode || (g_showHistory && g_composeLen > 26)) {
-        if (millis() - g_lastMsgRedrawMs < COMPOSE_PARTIAL_MIN_MS) return;
-        g_lastMsgRedrawMs = millis();
-        g_composeDirty = false;
-        show_screen(g_screen);
-        return;
-    }
-
-    static uint32_t s_lastPartialMs = 0;
-    if (millis() - s_lastPartialMs < COMPOSE_PARTIAL_MIN_MS) return;
-
-    // Compose footer geometry (matches draw_compose_or_hint: BOT_TOP-22)
-    constexpr int COMPOSE_Y = COMPOSE_STRIP_Y;
-    constexpr int COMPOSE_H = COMPOSE_STRIP_H;  // full 3-line band
-
+    // Always rebuild the screen so the 3-line compose band (2 draft lines +
+    // Enter icon/label) stays intact. A strip-only partial was painting a
+    // single ">text" label that covered/cut the Enter line.
+    if (millis() - g_lastMsgRedrawMs < COMPOSE_PARTIAL_MIN_MS) return;
     size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     if (freeInt < 12000) {
         static uint32_t s_lastSkipLog = 0;
         uint32_t now = millis();
         if (s_lastSkipLog == 0 || (now - s_lastSkipLog) > 30000u) {
             s_lastSkipLog = now;
-            Serial.printf("[UI] skip compose partial low heap %u\n", (unsigned)freeInt);
+            Serial.printf("[UI] skip compose redraw low heap %u\n", (unsigned)freeInt);
         }
         g_lastComposeMs = now;
         return;
     }
-
-    // Clear strip in 1-bit FB (white)
-    for (int y = COMPOSE_Y; y < COMPOSE_Y + COMPOSE_H && y < (int)EPD_HEIGHT; y++) {
-        for (int x = 0; x < (int)EPD_WIDTH; x++)
-            g_display.setPixel((uint16_t)x, (uint16_t)y, false);
-    }
-
-    // Rebuild compose line via temporary label -> flush into FB
-    char foot[36];
-    if (g_composeLen > 0 || g_composeMode) {
-        if (g_nameEditMode)
-            snprintf(foot, sizeof(foot), "Name>%.20s", g_compose);
-        else
-            snprintf(foot, sizeof(foot), ">%.24s", g_compose);
-    } else {
-        foot[0] = 0;
-    }
-
-    if (!g_root) {
-        g_composeDirty = false;
-        return;
-    }
-
-    lv_obj_t* lab = lv_label_create(g_root);
-    lv_label_set_text(lab, foot);
-    lv_obj_set_style_text_color(lab, theme_fg(), 0);
-    lv_obj_set_pos(lab, 4, COMPOSE_Y);
-    lv_obj_update_layout(lab);
-
-    lv_refr_now(nullptr);
-    LvglPort::updateAndPartial(0, COMPOSE_Y, EPD_WIDTH, COMPOSE_H);
-
-    lv_obj_del(lab);
-
+    g_lastMsgRedrawMs = millis();
     g_composeDirty = false;
-    s_lastPartialMs = millis();
-    Serial.printf("[UI] compose partial len=%u\n", (unsigned)g_composeLen);
+    Serial.printf("[UI] compose redraw len=%u\n", (unsigned)g_composeLen);
+    show_screen(g_screen);
 }
+
 
 // Handle one keyboard event. Returns true if a full screen redraw is needed.
 bool handleKeyEvent(const KeyEvent& ev) {
@@ -3201,8 +3228,10 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 if (ev.character == 'v' || ev.character == 'V' ||
                     ev.character == 's' || ev.character == 'S') {
                     if (g_settingsSel < 8) g_settingsSel++;
-                    const int maxVis = 5;
-                    if (g_settingsSel >= g_settingsScroll + maxVis)
+                    // Match build_settings visible window (~4 rows)
+                    const int listTop = CONTENT_TOP + 2;
+                    const int maxVis = (CONTENT_BOTTOM - listTop - 24) / SET_ROW_H;
+                    if (maxVis > 0 && g_settingsSel >= g_settingsScroll + maxVis)
                         g_settingsScroll = g_settingsSel - maxVis + 1;
                     if (g_settingsScroll < 0) g_settingsScroll = 0;
                     Serial.printf("[SET] dn sel=%d scroll=%d\n", g_settingsSel, g_settingsScroll);
@@ -3366,8 +3395,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.53");
-    Serial.println(" 3-line compose+Enter icon, GPS time, markRead");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.54");
+    Serial.println(" compose no-cut Enter, settings scroll, GPS diag");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();

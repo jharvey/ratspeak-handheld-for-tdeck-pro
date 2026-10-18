@@ -1,37 +1,21 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.53  (2026-10-18)
+Last: G1.54  (2026-10-18)
 ================================================================================
-Status: [DONE]  [IN-PROGRESS]  [TODO]
+[DONE] PSRAM ~8MB SPIRAM protocol node.
+[DONE] Compose 3-line band: draft lines 1–2, Enter icon+label on line 3.
+       Typing redraw uses full show_screen (no strip overlay cutting Enter).
+[DONE] Thread header: "N: to NAME" (e.g. "1: to PLUS").
+[DONE] Settings scroll maxVis matches visible rows (~4); 5th down scrolls list.
+[DONE] Settings > Time & Location: GPS power toggle, status, sats, UTC time/date.
+[DONE] Home GPS line under Announce (off / acquiring / fix + sats).
 
---------------------------------------------------------------------------------
-PSRAM
---------------------------------------------------------------------------------
-[DONE] QSPI mapped ~8MB (found=1 size≈8388608). Protocol SMALL node on SPIRAM.
-      Log: "[PSRAM] OK mapped 8189 KB". No further PSRAM bring-up needed unless
-      size=0 (then PSRAM-RECOVERY.txt / lilygo_t_deck_pro.json).
+GPS lock tips:
+  - Settings > 6 Time & Location > GPS Power = ON (default).
+  - Outdoor / clear sky; first fix can take 30–120s cold start.
+  - Status shows acquiring → fix; sats count from GGA.
+  - EN pin 39, UART1 RX=44 TX=43 @ 38400.
 
---------------------------------------------------------------------------------
-G1.53
---------------------------------------------------------------------------------
-[DONE] Thread compose = 3-line band above BACK:
-         line1–2 draft preview, line3 Enter-key icon + "Enter=send".
-         Bubbles clip at THREAD_Y_MAX (above strip). Partial refresh uses full strip.
-[DONE] Enter-key glyph drawn left of "Enter=send" (rounded key + return arrow).
-[DONE] Home: GPS time/date under Announce (UART1 NMEA RMC; "no fix" until lock).
-[DONE] markRead uses async requestMarkRead (sync API returns deferred-only).
-[IN-PROGRESS] Splash logo contrast; unread NEW/UNRD after markRead settle.
-[TODO] Full GPS location tile; sleep; Plus settings parity.
-
---------------------------------------------------------------------------------
-THREAD LAYOUT (240x320)
---------------------------------------------------------------------------------
-  CONTENT_TOP .. THREAD_Y_MAX     history bubbles
-  COMPOSE_STRIP_Y .. BOT_TOP-1    3-line compose / Enter=send
-  BOT_TOP .. height-1             BACK or Contact|Msg Box|Peers
-
---------------------------------------------------------------------------------
-BUILD
---------------------------------------------------------------------------------
-  tdeck_pro_cooperative | tdeck_pro_standalone
+[IN-PROGRESS] Splash logo; unread settle after markRead.
+[TODO] Sleep; Plus settings parity.
 ================================================================================
