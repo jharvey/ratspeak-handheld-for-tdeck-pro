@@ -81,6 +81,7 @@ int g_settingsRootSel = 0;  // remembered root row when entering a sub-page
 int g_tzIndex = 0;  // 0=EST default, 1=CST, 2=MST, 3=PST, 4=UTC
 int g_manualHour = 12;
 int g_manualMin  = 0;
+bool g_timeEditMode = false;  // type HHMM for RTC
 uint32_t g_lastPeerAutoMs = 0;
 size_t   g_lastPeerCount  = 0;
 bool     g_peerDirty      = false;
@@ -901,6 +902,13 @@ bool inMessageUi() {
 
 void goBackFromMessage() {
     bool changed = false;
+    if (g_timeEditMode) {
+        g_timeEditMode = false;
+        composeClear();
+        g_composeMode = false;
+        show_screen(SCR_SETTINGS);
+        return true;
+    }
     if (g_nameEditMode) {
         g_nameEditMode = false;
         composeClear();
@@ -2228,6 +2236,33 @@ static void applyManualLocalTime() {
     Serial.printf("[RTC] manual set %02d:%02d %s\\n", g_manualHour, g_manualMin, tzName());
 }
 
+static bool parseComposeToManualTime() {
+    // Accept HHMM, H:MM, HH:MM
+    char buf[16];
+    size_t n = 0;
+    for (size_t i = 0; i < g_composeLen && n + 1 < sizeof(buf); i++) {
+        char c = g_compose[i];
+        if (c >= '0' && c <= '9') buf[n++] = c;
+    }
+    buf[n] = 0;
+    if (n == 3) {
+        // HMM → 0H MM
+        int h = buf[0] - '0';
+        int m = (buf[1] - '0') * 10 + (buf[2] - '0');
+        if (h > 23 || m > 59) return false;
+        g_manualHour = h; g_manualMin = m;
+        return true;
+    }
+    if (n == 4) {
+        int h = (buf[0] - '0') * 10 + (buf[1] - '0');
+        int m = (buf[2] - '0') * 10 + (buf[3] - '0');
+        if (h > 23 || m > 59) return false;
+        g_manualHour = h; g_manualMin = m;
+        return true;
+    }
+    return false;
+}
+
 static void loadManualFromClock() {
     time_t now = time(nullptr);
     if (now < 100000) return;
@@ -2447,21 +2482,13 @@ void build_home() {
     fat_label(g_root, annAgo, 4, sy + 16);
     draw_action_btn(0, sy + 34, EPD_WIDTH, HOME_ANN_H, "Announce");
 
-    // RTC + GPS under Announce
-    char rtcLine[36], gpsLine[36];
+    // RTC only under Announce (GPS lives in Settings > Time)
+    char rtcLine[40];
     char lt[12], ld[12];
     formatLocalTime(lt, sizeof(lt));
     formatLocalDate(ld, sizeof(ld));
     snprintf(rtcLine, sizeof(rtcLine), "RTC %s %s %s", lt, ld, tzName());
-    fat_label(g_root, rtcLine, 4, sy + 34 + HOME_ANN_H + 2);
-    if (!g_gpsEnabled)
-        snprintf(gpsLine, sizeof(gpsLine), "GPS off");
-    else if (g_gpsHasFix)
-        snprintf(gpsLine, sizeof(gpsLine), "GPS %s %us", g_gpsTimeStr, (unsigned)g_gpsSats);
-    else
-        snprintf(gpsLine, sizeof(gpsLine), "GPS %s (%u sats)",
-                 g_gpsStatus, (unsigned)g_gpsSats);
-    fat_label(g_root, gpsLine, 4, sy + 34 + HOME_ANN_H + 18);
+    fat_label(g_root, rtcLine, 4, sy + 34 + HOME_ANN_H + 4);
 
     draw_compose_or_hint("");
 }
@@ -2861,6 +2888,9 @@ void build_peers() {
 
 void settingsGoBack() {
     if (g_settingsPage != SET_ROOT) {
+        g_timeEditMode = false;
+        composeClear();
+        g_composeMode = false;
         g_settingsPage = SET_ROOT;
         g_settingsSel = g_settingsRootSel;
         // Keep scroll so the remembered row stays visible
@@ -2881,8 +2911,8 @@ void settingsActivate() {
     // Activate highlighted row on current settings page
     if (g_settingsPage == SET_ROOT) {
         static const SettingsPage kMap[] = {
-            SET_IDENTITY, SET_SCREEN, SET_BATTERY, SET_LORA,
-            SET_NETWORK, SET_TIME, SET_AUDIO, SET_DIAG, SET_STORAGE
+            SET_TIME, SET_IDENTITY, SET_SCREEN, SET_BATTERY, SET_LORA,
+            SET_NETWORK, SET_AUDIO, SET_DIAG, SET_STORAGE
         };
         if (g_settingsSel >= 0 && g_settingsSel < 9) {
             g_settingsRootSel = g_settingsSel;  // remember for Back
@@ -2926,25 +2956,40 @@ void settingsActivate() {
         return;
     }
     if (g_settingsPage == SET_TIME) {
-        if (g_settingsSel == 0) {
-            gpsSetEnabled(!g_gpsEnabled);
+        if (g_settingsSel == 2) {
+            // Start typing HHMM
+            g_timeEditMode = true;
+            g_composeMode = true;
+            composeClear();
+            Serial.println("[RTC] type HHMM then Enter");
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 3) {
+            if (g_timeEditMode && g_composeLen > 0) {
+                if (parseComposeToManualTime())
+                    applyManualLocalTime();
+            } else {
+                applyManualLocalTime();
+            }
+            g_timeEditMode = false;
+            composeClear();
+            g_composeMode = false;
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 4) {
+            g_manualHour = (g_manualHour + 1) % 24;
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 5) {
+            g_manualMin = (g_manualMin + 1) % 60;
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 6) {
             g_tzIndex = (g_tzIndex + 1) % 5;
             Serial.printf("[TZ] %s UTC%+d\n", tzName(), tzOffsetHours());
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 7) {
-            bool ok = syncGpsToRtc();
-            Serial.printf("[RTC] GPS sync %s\n", ok ? "OK" : "FAIL");
-            show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 8) {
-            g_manualHour = (g_manualHour + 1) % 24;
-            show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 9) {
-            g_manualMin = (g_manualMin + 1) % 60;
+            gpsSetEnabled(!g_gpsEnabled);
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 10) {
-            applyManualLocalTime();
+            bool ok = syncGpsToRtc();
+            Serial.printf("[RTC] GPS sync %s\n", ok ? "OK" : "FAIL");
             show_screen(SCR_SETTINGS);
         }
         return;
@@ -2984,16 +3029,19 @@ void build_settings() {
 
     if (g_settingsPage == SET_ROOT) {
         // no "SETTINGS" title - top tab is enough; more room for rows
+        char lt[12];
+        formatLocalTime(lt, sizeof(lt));
+        snprintf(a, sizeof(a), "%s %s", lt, tzName());
+        row("1 Time & Location", a, 0);
         snprintf(a, sizeof(a), "%.14s", g_destHex);
-        row("1 Identity & Device", a, 0);
-        row("2 Screen & Input", "e-ink / keys", 1);
+        row("2 Identity & Device", a, 1);
+        row("3 Screen & Input", "e-ink / keys", 2);
         snprintf(a, sizeof(a), "%s %s", g_batStr, g_pctStr);
-        row("3 Battery", a, 2);
+        row("4 Battery", a, 3);
         snprintf(a, sizeof(a), "LF %.0fMHz %s", LORA_DEFAULT_FREQ / 1e6f,
                  g_featLora ? "ON" : "OFF");
-        row("4 LoRa", a, 3);
-        row("5 Network", "WiFi/TCP stub", 4);
-        row("6 Time & Location", g_gpsEnabled ? g_gpsStatus : "OFF", 5);
+        row("5 LoRa", a, 4);
+        row("6 Network", "WiFi/TCP stub", 5);
         snprintf(a, sizeof(a), "Vol %s", g_featAudio ? "ON" : "OFF");
         row("7 Alerts & Audio", a, 6);
         snprintf(a, sizeof(a), "P%s L%s", g_pathsStr, g_linksStr);
@@ -3073,26 +3121,33 @@ void build_settings() {
     }
     if (g_settingsPage == SET_TIME) {
         char st[28], sats[20], loc[20];
-        snprintf(st, sizeof(st), "%s", g_gpsStatus);
-        snprintf(sats, sizeof(sats), "%u sats", (unsigned)g_gpsSats);
-        row("[ GPS ]", g_gpsEnabled ? "ENABLED" : "DISABLED", 0);
-        row("Status", st, 1);
-        row("Satellites", sats, 2);
-        snprintf(st, sizeof(st), "%s", g_gpsHasFix ? g_gpsTimeStr : "--:--");
-        row("UTC (GPS)", st, 3);
         formatLocalTime(loc, sizeof(loc));
-        row("Local RTC", loc, 4);
         formatLocalDate(st, sizeof(st));
-        row("Local Date", st, 5);
+        // RTC controls first
+        row("Local RTC", loc, 0);
+        row("Local Date", st, 1);
+        if (g_timeEditMode) {
+            snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "HHMM");
+            row("Type time", st, 2);
+        } else {
+            row("Type time", "Enter then HHMM", 2);
+        }
+        snprintf(st, sizeof(st), "%02d:%02d", g_manualHour, g_manualMin);
+        row("Apply HH:MM", st, 3);
+        snprintf(st, sizeof(st), "%02d", g_manualHour);
+        row("Hour +/-", st, 4);
+        snprintf(st, sizeof(st), "%02d", g_manualMin);
+        row("Minute +/-", st, 5);
         snprintf(st, sizeof(st), "%s (UTC%+d)", tzName(), tzOffsetHours());
         row("Timezone", st, 6);
-        row("Sync GPS→RTC", g_gpsHasFix ? "Enter=sync" : "need fix", 7);
-        snprintf(st, sizeof(st), "%02d", g_manualHour);
-        row("Set Hour", st, 8);
-        snprintf(st, sizeof(st), "%02d", g_manualMin);
-        row("Set Minute", st, 9);
-        row("Apply Manual", "Enter=set RTC", 10);
-        draw_compose_or_hint("Enter act  G/V adj hour/min");
+        // GPS below
+        row("[ GPS ]", g_gpsEnabled ? "ENABLED" : "DISABLED", 7);
+        snprintf(st, sizeof(st), "%s", g_gpsStatus);
+        row("GPS Status", st, 8);
+        snprintf(sats, sizeof(sats), "%u sats", (unsigned)g_gpsSats);
+        row("Satellites", sats, 9);
+        row("Sync GPS→RTC", g_gpsHasFix ? "Enter=sync" : "need fix", 10);
+        draw_compose_or_hint(g_timeEditMode ? "Type HHMM Enter=apply" : "Enter act  G/V hour/min");
         return;
     }
     if (g_settingsPage == SET_AUDIO) {
@@ -3259,6 +3314,20 @@ bool handleKeyEvent(const KeyEvent& ev) {
 
     // Enter: send compose if non-empty, else next screen.
     if (ev.enter) {
+        // RTC type-time mode: parse HHMM and apply
+        if (g_timeEditMode && g_screen == SCR_SETTINGS) {
+            if (g_composeLen > 0 && parseComposeToManualTime()) {
+                applyManualLocalTime();
+                Serial.println("[RTC] typed time applied");
+            } else {
+                Serial.println("[RTC] type HHMM (e.g. 1430)");
+            }
+            g_timeEditMode = false;
+            composeClear();
+            g_composeMode = false;
+            show_screen(SCR_SETTINGS);
+            return true;
+        }
         // Contacts list: Enter opens rename sub-screen (do not save yet)
         if (g_screen == SCR_CONTACTS && !g_nameEditMode) {
             if (g_msgRowCount <= 0 || !g_msgRows[g_selPeer].used) {
@@ -3622,8 +3691,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.57");
-    Serial.println(" home RTC; GPS sync; manual time; better battery");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.58");
+    Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
     handheld::bindDeviceOwner();

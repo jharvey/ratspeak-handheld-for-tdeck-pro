@@ -1,14 +1,12 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.57  (2026-10-18)
+Last: G1.58
 ================================================================================
-[DONE] Home shows RTC line (local time/date + TZ) under Announce + GPS line.
-[DONE] Settings > Time & Location:
-         [ GPS ] ENABLED/DISABLED
-         Sync GPS→RTC (Enter when fix available)
-         Set Hour / Set Minute (Enter +1, or G/V when row selected)
-         Apply Manual → writes soft RTC
-         Timezone cycle EST default
-[DONE] Battery: BQ27220 multi-sample + LiPo curve blend when gauge disagrees.
-RTC: ESP32 software clock only; GPS or manual set keeps it accurate.
+Settings root: 1 Time & Location first (shows local RTC + TZ).
+Time submenu (RTC on top):
+  Local RTC / Date
+  Type time — Enter, type HHMM (e.g. 1430), Enter applies
+  Apply HH:MM / Hour+/- / Minute+/- / Timezone
+  GPS toggle, status, sats, Sync GPS→RTC
+Home: RTC line only under Announce (GPS line removed — was under nav).
 ================================================================================
