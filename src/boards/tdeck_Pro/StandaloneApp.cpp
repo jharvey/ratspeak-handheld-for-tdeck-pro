@@ -910,7 +910,7 @@ void goBackFromMessage() {
         composeClear();
         g_composeMode = false;
         show_screen(SCR_SETTINGS);
-        return true;
+        return;
     }
     if (g_nameEditMode) {
         g_nameEditMode = false;
