@@ -1,12 +1,22 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.58
+Last: G1.59  (2026-10-20)
 ================================================================================
-Settings root: 1 Time & Location first (shows local RTC + TZ).
-Time submenu (RTC on top):
-  Local RTC / Date
-  Type time — Enter, type HHMM (e.g. 1430), Enter applies
-  Apply HH:MM / Hour+/- / Minute+/- / Timezone
-  GPS toggle, status, sats, Sync GPS→RTC
-Home: RTC line only under Announce (GPS line removed — was under nav).
+E-INK
+[DONE] No automatic fullRefresh. All UI uses partial only.
+[DONE] Microphone key = manual fullRefresh (Keyboard emits ev.fn).
+[DONE] MIC+SYM still types 0.
+
+TIME / TZ
+[DONE] POSIX TZ (EST5 default): localtime_r applies offset correctly.
+[DONE] Settings > Time & Location menu:
+  1 Set time zone (EST/CST/MST/PST/UTC)
+  2 GPS diag (status + sats)
+  3 Sync time with GPS
+  4 Auto GPS sync ON/OFF (boot once + daily)
+  5 Local RTC  6 Local Date
+  7 Type time (HHMM)  8 Apply manual
+  9 Hour +/-  10 Minute +/-  11 GPS power
+
+FILES: StandaloneApp.cpp, DisplayEink.cpp/.h, Keyboard.cpp
 ================================================================================

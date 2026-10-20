@@ -19,12 +19,10 @@ public:
     // Push entire buffer to panel (full refresh — clears ghosting)
     void fullRefresh();
 
-    // Fast localized update of a rectangle from the current framebuffer.
-    // Uses GxEPD2 partial window. After ~5 consecutive partials a full
-    // refresh is forced to clear ghosting (LilyGO / panel guidance).
+    // Fast localized update (GxEPD2 partial window). Never auto-escalates to full.
     void partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
 
-    // After LVGL batch: partial full-window (no flash); forces full every N partials
+    // After LVGL batch: always partial full-window. Full only via fullRefresh().
     void refreshIfDirty();
     void markDirty() { dirty_ = true; }
 

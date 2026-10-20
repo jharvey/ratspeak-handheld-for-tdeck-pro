@@ -361,17 +361,21 @@ void Keyboard::mapKey(uint8_t row, uint8_t col, bool pressed)
   // ---------------------------------------------------------------------------
 
   if (key == K_MIC) {
-    if (pressed && _symHeld) {
+    if (!pressed) return;
+    if (_symHeld) {
+      // MIC+SYM still produces 0
+      _event = {};
       _event.character = '0';
-      _event.shift = false;
-      _event.alt = _altHeld;
       _event.opt = true;
-      _event.del = false;
-      _event.enter = false;
-      _event.space = false;
+      _event.alt = _altHeld;
       _hasEvent = true;
+    } else {
+      // MIC alone = manual e-ink full refresh (fn flag)
+      _event = {};
+      _event.fn = true;
+      _hasEvent = true;
+      Serial.println("[KEY] MIC → manual full refresh");
     }
-
     return;
   }
 

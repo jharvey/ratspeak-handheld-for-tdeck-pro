@@ -125,13 +125,7 @@ void DisplayEink::partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
     if (x + w > EPD_WIDTH)  w = EPD_WIDTH  - x;
     if (y + h > EPD_HEIGHT) h = EPD_HEIGHT - y;
 
-    if (partialCount_ >= kMaxPartialsBeforeFull) {
-        Serial.printf("[EINK] partial count %u → forced full\n",
-                      (unsigned)partialCount_);
-        fullRefresh();
-        return;
-    }
-
+    // No auto fullRefresh — mic button only
     parkSpiCs();
 
     g_epd.setPartialWindow(x, y, w, h);
@@ -150,11 +144,6 @@ void DisplayEink::partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 
 void DisplayEink::refreshIfDirty() {
     if (!dirty_) return;
-    // Prefer non-flashing partial of the full panel for UI updates.
-    // After kMaxPartialsBeforeFull consecutive partials, fullRefresh clears ghosting.
-    if (partialCount_ >= kMaxPartialsBeforeFull) {
-        fullRefresh();
-    } else {
-        partialRefresh(0, 0, EPD_WIDTH, EPD_HEIGHT);
-    }
+    // Always partial (no flash). Full refresh only via fullRefresh() = mic button.
+    partialRefresh(0, 0, EPD_WIDTH, EPD_HEIGHT);
 }

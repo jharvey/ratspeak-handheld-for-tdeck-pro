@@ -82,6 +82,9 @@ int g_tzIndex = 0;  // 0=EST default, 1=CST, 2=MST, 3=PST, 4=UTC
 int g_manualHour = 12;
 int g_manualMin  = 0;
 bool g_timeEditMode = false;  // type HHMM for RTC
+bool g_autoGpsSync = true;    // sync RTC from GPS after boot / daily
+bool g_autoGpsSyncedBoot = false;
+uint32_t g_lastGpsSyncMs = 0;
 uint32_t g_lastPeerAutoMs = 0;
 size_t   g_lastPeerCount  = 0;
 bool     g_peerDirty      = false;
@@ -1795,7 +1798,7 @@ void draw_splash() {
     const int logoCy = 64;
     draw_ratspeak_logo_bitmap(logoCx, logoCy);
 
-    g_display.fullRefresh();
+    g_display.refreshIfDirty();  // partial only; mic = full when needed
     Serial.println("[BOOT] splash drawn (PNG RatSpeak logo 96x96)");
     g_darkTheme = saved;
 }
@@ -2173,22 +2176,32 @@ static const char* tzName() {
     if (i < 0 || i > 4) i = 0;
     return k[i];
 }
+// POSIX TZ strings: EST5 means local = UTC-5
+static const char* tzEnvString() {
+    static const char* k[] = { "EST5", "CST6", "MST7", "PST8", "UTC0" };
+    int i = g_tzIndex;
+    if (i < 0 || i > 4) i = 0;
+    return k[i];
+}
 static int tzOffsetHours() {
-    // Fixed standard offsets (no DST table for now)
     static const int8_t k[] = { -5, -6, -7, -8, 0 };
     int i = g_tzIndex;
     if (i < 0 || i > 4) i = 0;
     return k[i];
 }
+static void applyTimezoneEnv() {
+    setenv("TZ", tzEnvString(), 1);
+    tzset();
+}
 static void formatLocalTime(char* out, size_t n) {
     time_t now = time(nullptr);
-    if (now < 100000) { // not synced yet
+    if (now < 100000) {
         snprintf(out, n, "--:--");
         return;
     }
-    now += (time_t)tzOffsetHours() * 3600;
+    applyTimezoneEnv();
     struct tm t;
-    gmtime_r(&now, &t);
+    localtime_r(&now, &t);
     snprintf(out, n, "%02d:%02d", t.tm_hour, t.tm_min);
 }
 static bool syncGpsToRtc() {
@@ -2212,28 +2225,42 @@ static bool syncGpsToRtc() {
     return true;
 }
 
+static void maybeAutoGpsSync() {
+    if (!g_autoGpsSync || !g_gpsHasFix) return;
+    uint32_t now = millis();
+    const uint32_t dayMs = 24UL * 60UL * 60UL * 1000UL;
+    bool need = !g_autoGpsSyncedBoot;
+    if (g_lastGpsSyncMs != 0 && (now - g_lastGpsSyncMs) >= dayMs)
+        need = true;
+    if (!need) return;
+    if (syncGpsToRtc()) {
+        g_autoGpsSyncedBoot = true;
+        g_lastGpsSyncMs = now ? now : 1;
+        Serial.println("[RTC] auto GPS sync done");
+    }
+}
+
+
 static void applyManualLocalTime() {
-    // Interpret g_manualHour/Min as local wall time → store UTC in system clock
+    // Interpret hour/min as local wall clock under current TZ
+    applyTimezoneEnv();
     time_t now = time(nullptr);
     struct tm t;
     if (now > 100000) {
-        now += (time_t)tzOffsetHours() * 3600;
-        gmtime_r(&now, &t);
+        localtime_r(&now, &t);
     } else {
         memset(&t, 0, sizeof(t));
-        t.tm_mday = 1; t.tm_mon = 0; t.tm_year = 2026 - 1900;
+        t.tm_mday = 1; t.tm_mon = 9; t.tm_year = 2026 - 1900;  // Oct 2026 fallback
     }
     t.tm_hour = g_manualHour;
     t.tm_min  = g_manualMin;
     t.tm_sec  = 0;
-    // local → UTC
-    setenv("TZ", "UTC0", 1); tzset();
-    time_t localAsUtc = mktime(&t);
-    if (localAsUtc <= 0) return;
-    time_t utc = localAsUtc - (time_t)tzOffsetHours() * 3600;
-    struct timeval tv = { .tv_sec = utc, .tv_usec = 0 };
+    time_t epoch = mktime(&t);  // TZ already set → converts local→UTC
+    if (epoch <= 0) return;
+    struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
     settimeofday(&tv, nullptr);
-    Serial.printf("[RTC] manual set %02d:%02d %s\\n", g_manualHour, g_manualMin, tzName());
+    Serial.printf("[RTC] manual set %02d:%02d %s (UTC%+d)\n",
+                  g_manualHour, g_manualMin, tzName(), tzOffsetHours());
 }
 
 static bool parseComposeToManualTime() {
@@ -2266,9 +2293,9 @@ static bool parseComposeToManualTime() {
 static void loadManualFromClock() {
     time_t now = time(nullptr);
     if (now < 100000) return;
-    now += (time_t)tzOffsetHours() * 3600;
+    applyTimezoneEnv();
     struct tm t;
-    gmtime_r(&now, &t);
+    localtime_r(&now, &t);
     g_manualHour = t.tm_hour;
     g_manualMin  = t.tm_min;
 }
@@ -2279,9 +2306,9 @@ static void formatLocalDate(char* out, size_t n) {
         snprintf(out, n, "--/--/--");
         return;
     }
-    now += (time_t)tzOffsetHours() * 3600;
+    applyTimezoneEnv();
     struct tm t;
-    gmtime_r(&now, &t);
+    localtime_r(&now, &t);
     snprintf(out, n, "%02d/%02d/%02d", t.tm_mon + 1, t.tm_mday, (t.tm_year + 1900) % 100);
 }
 
@@ -2321,7 +2348,8 @@ void gpsSetEnabled(bool on) {
         snprintf(g_gpsTimeStr, sizeof(g_gpsTimeStr), "--:--");
         snprintf(g_gpsDateStr, sizeof(g_gpsDateStr), "--/--/--");
     } else {
-        gpsBegin();
+        applyTimezoneEnv();
+    gpsBegin();
     }
 }
 
@@ -2359,7 +2387,8 @@ void gpsPoll() {
                     if (fld[2] && fld[2][0] == 'A') {
                         g_gpsHasFix = true;
                         snprintf(g_gpsStatus, sizeof(g_gpsStatus), "fix");
-                        // Sync ESP32 system clock from GPS UTC (RTC soft clock)
+                        maybeAutoGpsSync();
+                        // Optional: also stamp system clock on every RMC (auto path)
                         if (fld[1] && strlen(fld[1]) >= 6 && fld[9] && strlen(fld[9]) >= 6) {
                             const char* t = fld[1];
                             const char* d = fld[9];
@@ -2956,40 +2985,44 @@ void settingsActivate() {
         return;
     }
     if (g_settingsPage == SET_TIME) {
-        if (g_settingsSel == 2) {
-            // Start typing HHMM
+        if (g_settingsSel == 0) {
+            g_tzIndex = (g_tzIndex + 1) % 5;
+            applyTimezoneEnv();
+            Serial.printf("[TZ] %s %s\n", tzName(), tzEnvString());
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 1) {
+            // GPS diag — refresh display only
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 2) {
+            bool ok = syncGpsToRtc();
+            if (ok) { g_autoGpsSyncedBoot = true; g_lastGpsSyncMs = millis() ? millis() : 1; }
+            Serial.printf("[RTC] GPS sync %s\n", ok ? "OK" : "FAIL");
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 3) {
+            g_autoGpsSync = !g_autoGpsSync;
+            Serial.printf("[RTC] auto GPS sync %s\n", g_autoGpsSync ? "ON" : "OFF");
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 6) {
             g_timeEditMode = true;
             g_composeMode = true;
             composeClear();
-            Serial.println("[RTC] type HHMM then Enter");
             show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 3) {
-            if (g_timeEditMode && g_composeLen > 0) {
-                if (parseComposeToManualTime())
-                    applyManualLocalTime();
-            } else {
-                applyManualLocalTime();
-            }
+        } else if (g_settingsSel == 7) {
+            if (g_timeEditMode && g_composeLen > 0)
+                parseComposeToManualTime();
+            applyManualLocalTime();
             g_timeEditMode = false;
             composeClear();
             g_composeMode = false;
             show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 4) {
+        } else if (g_settingsSel == 8) {
             g_manualHour = (g_manualHour + 1) % 24;
             show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 5) {
+        } else if (g_settingsSel == 9) {
             g_manualMin = (g_manualMin + 1) % 60;
             show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 6) {
-            g_tzIndex = (g_tzIndex + 1) % 5;
-            Serial.printf("[TZ] %s UTC%+d\n", tzName(), tzOffsetHours());
-            show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 7) {
-            gpsSetEnabled(!g_gpsEnabled);
-            show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 10) {
-            bool ok = syncGpsToRtc();
-            Serial.printf("[RTC] GPS sync %s\n", ok ? "OK" : "FAIL");
+            gpsSetEnabled(!g_gpsEnabled);
             show_screen(SCR_SETTINGS);
         }
         return;
@@ -3120,34 +3153,35 @@ void build_settings() {
         return;
     }
     if (g_settingsPage == SET_TIME) {
-        char st[28], sats[20], loc[20];
+        char st[32], sats[20], loc[16];
         formatLocalTime(loc, sizeof(loc));
-        formatLocalDate(st, sizeof(st));
-        // RTC controls first
-        row("Local RTC", loc, 0);
-        row("Local Date", st, 1);
-        if (g_timeEditMode) {
-            snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "HHMM");
-            row("Type time", st, 2);
-        } else {
-            row("Type time", "Enter then HHMM", 2);
-        }
-        snprintf(st, sizeof(st), "%02d:%02d", g_manualHour, g_manualMin);
-        row("Apply HH:MM", st, 3);
-        snprintf(st, sizeof(st), "%02d", g_manualHour);
-        row("Hour +/-", st, 4);
-        snprintf(st, sizeof(st), "%02d", g_manualMin);
-        row("Minute +/-", st, 5);
+        // 1 Set timezone (default EST)
         snprintf(st, sizeof(st), "%s (UTC%+d)", tzName(), tzOffsetHours());
-        row("Timezone", st, 6);
-        // GPS below
-        row("[ GPS ]", g_gpsEnabled ? "ENABLED" : "DISABLED", 7);
-        snprintf(st, sizeof(st), "%s", g_gpsStatus);
-        row("GPS Status", st, 8);
-        snprintf(sats, sizeof(sats), "%u sats", (unsigned)g_gpsSats);
-        row("Satellites", sats, 9);
-        row("Sync GPS→RTC", g_gpsHasFix ? "Enter=sync" : "need fix", 10);
-        draw_compose_or_hint(g_timeEditMode ? "Type HHMM Enter=apply" : "Enter act  G/V hour/min");
+        row("1 Set time zone", st, 0);
+        // 2 GPS diagnostics
+        snprintf(st, sizeof(st), "%s %us", g_gpsStatus, (unsigned)g_gpsSats);
+        row("2 GPS diag", st, 1);
+        // 3 Sync now
+        row("3 Sync time with GPS", g_gpsHasFix ? "Enter=sync" : "need fix", 2);
+        // 4 Auto sync toggle
+        row("4 Auto GPS sync", g_autoGpsSync ? "ON" : "OFF", 3);
+        // 5+ RTC manual
+        formatLocalDate(st, sizeof(st));
+        row("5 Local RTC", loc, 4);
+        row("6 Local Date", st, 5);
+        if (g_timeEditMode)
+            snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "HHMM");
+        else
+            strcpy(st, "Enter then HHMM");
+        row("7 Type time", st, 6);
+        snprintf(st, sizeof(st), "%02d:%02d Apply", g_manualHour, g_manualMin);
+        row("8 Apply manual", st, 7);
+        snprintf(st, sizeof(st), "%02d", g_manualHour);
+        row("9 Hour +/-", st, 8);
+        snprintf(st, sizeof(st), "%02d", g_manualMin);
+        row("10 Minute +/-", st, 9);
+        row("11 GPS power", g_gpsEnabled ? "ENABLED" : "DISABLED", 10);
+        draw_compose_or_hint(g_timeEditMode ? "Type HHMM Enter=apply" : "Enter=act G/V adj");
         return;
     }
     if (g_settingsPage == SET_AUDIO) {
@@ -3298,6 +3332,12 @@ void maybeComposeRedraw() {
 
 // Handle one keyboard event. Returns true if a full screen redraw is needed.
 bool handleKeyEvent(const KeyEvent& ev) {
+    // Microphone = manual full e-ink refresh only
+    if (ev.fn) {
+        Serial.println("[UI] manual fullRefresh (mic)");
+        g_display.fullRefresh();
+        return false;
+    }
     // Keyboard Up / lone Shift: in Settings list move selection up; else Back
     if (ev.up) {
         if (g_screen == SCR_SETTINGS && g_settingsPage == SET_ROOT && g_settingsSel > 0) {
@@ -3691,7 +3731,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.58");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.59");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
@@ -3759,6 +3799,7 @@ bool begin() {
     draw_splash();
 
     g_kbOk = g_kb.begin();
+    applyTimezoneEnv();
     gpsBegin();
     if (g_kbOk) Serial.println("[KEYBOARD] TCA8418 keyboard ready");
 
