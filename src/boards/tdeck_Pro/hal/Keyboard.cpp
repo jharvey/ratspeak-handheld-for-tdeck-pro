@@ -186,13 +186,10 @@ uint8_t Keyboard::tcaRead(uint8_t reg)
 
 void Keyboard::applyLedPwm(uint8_t duty)
 {
-  // Keep the existing board-specific LED/backlight behavior.
-  // The actual LEDC setup is retained here so keyboard functionality
-  // remains independent of the keyboard matrix.
   if (!_ledcReady) {
     return;
   }
-
+  // Channel 0, 8-bit duty (0–255). Pin is BOARD_KEYBOARD_LED (42 on Pro).
   ledcWrite(0, duty);
 }
 
@@ -261,6 +258,23 @@ bool Keyboard::begin()
 
   // Flush any stale keyboard FIFO events.
   discardPending();
+
+  
+  // Keyboard backlight (GPIO BOARD_KEYBOARD_LED / 42) via LEDC PWM
+#if defined(BOARD_KEYBOARD_LED) && (BOARD_KEYBOARD_LED >= 0)
+  pinMode(BOARD_KEYBOARD_LED, OUTPUT);
+  digitalWrite(BOARD_KEYBOARD_LED, LOW);
+  // Arduino-ESP32 2.x API: channel, freq, resolution
+  ledcSetup(0, 5000, 8);
+  ledcAttachPin(BOARD_KEYBOARD_LED, 0);
+  _ledcReady = true;
+  _backlightDuty = 255;  // full brightness when enabled
+  applyLedPwm(0);
+  Serial.printf("[KEYBOARD] backlight LEDC ch0 pin=%d ready\n", BOARD_KEYBOARD_LED);
+#else
+  _ledcReady = false;
+  Serial.println("[KEYBOARD] no BOARD_KEYBOARD_LED — backlight disabled");
+#endif
 
   Serial.println("[KEYBOARD] TCA8418 keyboard ready");
 

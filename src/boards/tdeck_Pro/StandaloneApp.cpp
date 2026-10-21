@@ -1888,7 +1888,8 @@ void draw_idle_screen() {
 void maybeEnterIdle() {
     if (g_idleMode == 0) return;           // disabled
     if (g_idleActive) return;
-    if (g_composeLen > 0 || g_composeMode || g_timeEditMode || g_nameEditMode)
+    if (g_composeLen > 0 || g_composeMode || g_timeEditMode || g_nameEditMode ||
+        g_dateEditMode || g_idleSecsEditMode)
         return;
     if (g_lastInputMs == 0) {
         g_lastInputMs = millis() ? millis() : 1;
@@ -2596,6 +2597,7 @@ void gpsSetEnabled(bool on) {
         snprintf(g_gpsDateStr, sizeof(g_gpsDateStr), "--/--/--");
     } else {
         applyTimezoneEnv();
+    g_lastInputMs = millis() ? millis() : 1;
     gpsBegin();
     }
 }
@@ -3478,7 +3480,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.61", 0);
+        row("Firmware", "Pro G1.62", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -4179,7 +4181,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.61");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.62");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
@@ -4248,6 +4250,7 @@ bool begin() {
 
     g_kbOk = g_kb.begin();
     applyTimezoneEnv();
+    g_lastInputMs = millis() ? millis() : 1;
     gpsBegin();
     if (g_kbOk) Serial.println("[KEYBOARD] TCA8418 keyboard ready");
 
@@ -4305,6 +4308,7 @@ void loop() {
     maybeAutoRedrawMessages();
     maybeAutoRedrawPeers();
     maybeComposeRedraw();
+    maybeEnterIdle();
 
     if (g_kbOk) {
         g_kb.update();
