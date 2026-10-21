@@ -74,17 +74,23 @@ enum SettingsPage : uint8_t {
     SET_AUDIO,
     SET_DIAG,
     SET_STORAGE,
+    SET_TZ,
+    SET_IDLE_MODE,
 };
 SettingsPage g_settingsPage = SET_ROOT;
 int g_settingsSel = 0;  // highlighted row on current page
 int g_settingsRootSel = 0;  // remembered root row when entering a sub-page
-int g_tzIndex = 0;  // 0=EST default, 1=CST, 2=MST, 3=PST, 4=UTC
+int g_tzIndex = 0;  // 0=EST default; see kTzNames
 int g_manualHour = 12;
 int g_manualMin  = 0;
 bool g_timeEditMode = false;  // type HHMM for RTC
 bool g_autoGpsSync = true;    // sync RTC from GPS after boot / daily
 bool g_autoGpsSyncedBoot = false;
 uint32_t g_lastGpsSyncMs = 0;
+uint8_t  g_idleMode = 1;  // 0=off 1=no-pass default 2=password TBD
+bool     g_idleActive = false;
+uint32_t g_lastInputMs = 0;
+static constexpr uint32_t IDLE_TIMEOUT_MS = 60000UL;
 uint32_t g_lastPeerAutoMs = 0;
 size_t   g_lastPeerCount  = 0;
 bool     g_peerDirty      = false;
@@ -1001,6 +1007,7 @@ bool cst328Read(int16_t& x, int16_t& y) {
 // Touch hit-test must stay in sync with draw_nav().
 // ---------------------------------------------------------------------------
 constexpr int TOP_H          = 36;
+constexpr int TOP_REFRESH_W  = 32;  // refresh icon left of Settings
 constexpr int BOT_H          = 40;
 constexpr int BOT_TOP        = EPD_HEIGHT - BOT_H;          // 280
 constexpr int CONTENT_TOP    = TOP_H;                      // 36 - no gap under nav
@@ -1011,7 +1018,7 @@ constexpr int COMPOSE_LINE_H  = 18;
 constexpr int COMPOSE_STRIP_H = COMPOSE_LINE_H * 3;        // 54
 constexpr int COMPOSE_STRIP_Y = BOT_TOP - COMPOSE_STRIP_H; // 226 when BOT_TOP=280
 constexpr int THREAD_Y_MAX    = COMPOSE_STRIP_Y - 2;       // bubbles stop above strip
-constexpr int TOP_TAB_W      = EPD_WIDTH / 2;               // 120
+constexpr int TOP_TAB_W     = (EPD_WIDTH - TOP_REFRESH_W) / 2;               // 120
 // Bottom: Chats | Contact | Peers
 // Bottom order: Contact | Msg Box | Peers
 constexpr int BOT_CONTACT_W  = 80;
@@ -1049,6 +1056,7 @@ bool isTopTab(ScreenId id) {
 // Map top-row index 0..1 -> screen
 ScreenId topTabScreen(int i) {
     // Left = Settings, Right = Home (right-thumb Home)
+    // x already relative or absolute — refresh strip is not a tab
     return (i == 0) ? SCR_SETTINGS : SCR_HOME;
 }
 
@@ -1060,6 +1068,8 @@ ScreenId botTabScreen(int i) {
 }
 
 bool handleTouchAt(int16_t x, int16_t y) {
+    if (g_idleActive) { noteUserInput(); return true; }
+    noteUserInput();
     Serial.printf("[TOUCH] xy=%d,%d screen=%u\n", (int)x, (int)y, (unsigned)g_screen);
 
     // Thread / name-edit: Back is bottom bar only (thumb)
@@ -1071,7 +1081,12 @@ bool handleTouchAt(int16_t x, int16_t y) {
         }
         // Top Settings|Home still work
         if (y < TOP_H) {
-            int i = (x < TOP_TAB_W) ? 0 : 1;
+            if (x < TOP_REFRESH_W) {
+                g_display.fullRefresh();
+                return true;
+            }
+            int adj = x - TOP_REFRESH_W;
+            int i = (adj < TOP_TAB_W) ? 0 : 1;
             ScreenId want = topTabScreen(i);
             g_showHistory = false;
             g_nameEditMode = false;
@@ -1085,12 +1100,19 @@ bool handleTouchAt(int16_t x, int16_t y) {
 
     // Top nav: Settings | Home  (on Settings sub-page, left half = Back)
     if (y < TOP_H) {
+        // Refresh icon (left of Settings)
+        if (x < TOP_REFRESH_W) {
+            Serial.println("[UI] touch fullRefresh");
+            g_display.fullRefresh();
+            return true;
+        }
         if (g_screen == SCR_SETTINGS && g_settingsPage != SET_ROOT) {
             Serial.println("[TAB] Settings Back");
             settingsGoBack();
             return true;
         }
-        int i = (x < TOP_TAB_W) ? 0 : 1;
+        int adj = x - TOP_REFRESH_W;
+        int i = (adj < TOP_TAB_W) ? 0 : 1;
         ScreenId want = topTabScreen(i);
         Serial.printf("[TAB] top -> %s\n", tabLabel(want));
         if (want == g_screen) return true;
@@ -1123,7 +1145,11 @@ bool handleTouchAt(int16_t x, int16_t y) {
             int row = (y - listTop) / SET_ROW_H;
             if (row < 0) row = 0;
             int idx = g_settingsScroll + row;
-            if (idx > 8) idx = 8;
+            int maxIdx = 8;
+            if (g_settingsPage == SET_TZ) maxIdx = kTzCount - 1;
+            else if (g_settingsPage == SET_TIME) maxIdx = 10;
+            else if (g_settingsPage == SET_IDLE_MODE) maxIdx = 2;
+            if (idx > maxIdx) idx = maxIdx;
             g_settingsSel = idx;
             Serial.printf("[SET] touch sel=%d\n", g_settingsSel);
             settingsActivate();
@@ -1779,6 +1805,59 @@ static void draw_ratspeak_logo_bitmap(int cx, int cy) {
     g_display.markDirty();
 }
 
+
+void noteUserInput() {
+    g_lastInputMs = millis() ? millis() : 1;
+    if (g_idleActive) {
+        g_idleActive = false;
+        Serial.println("[IDLE] wake");
+        show_screen(g_screen);
+    }
+}
+
+void draw_idle_screen() {
+    const bool saved = g_darkTheme;
+    g_darkTheme = true;
+    clear_screen();
+    draw_label_centered(0, 110, EPD_WIDTH, 22, "RatSpeak", true);
+    // Clock HH:MM only
+    char lt[12], ld[12];
+    formatLocalTime(lt, sizeof(lt));
+    formatLocalDate(ld, sizeof(ld));
+    char clockLine[40];
+    snprintf(clockLine, sizeof(clockLine), "%s  %s  %s", lt, ld, tzName());
+    draw_label_centered(0, 130, EPD_WIDTH, 22, clockLine, true);
+    // Battery
+    int pct = -1;
+    if (g_pctStr[0] && g_pctStr[0] != '-')
+        pct = atoi(g_pctStr);
+    draw_battery_gauge(EPD_WIDTH / 2 - 20, 165, 36, 16, pct);
+    char bp[12];
+    snprintf(bp, sizeof(bp), "%s", g_pctStr);
+    draw_label_centered(0, 188, EPD_WIDTH, 18, bp, false);
+    // Wake hint
+    draw_label_centered(0, 250, EPD_WIDTH, 20, "press SPACE to wake", false);
+    lv_refr_now(nullptr);
+    draw_ratspeak_logo_bitmap(EPD_WIDTH / 2, 48);
+    g_display.refreshIfDirty();
+    g_darkTheme = saved;
+}
+
+void maybeEnterIdle() {
+    if (g_idleMode == 0) return;           // disabled
+    if (g_idleActive) return;
+    if (g_composeLen > 0 || g_composeMode || g_timeEditMode || g_nameEditMode)
+        return;
+    if (g_lastInputMs == 0) {
+        g_lastInputMs = millis() ? millis() : 1;
+        return;
+    }
+    if ((millis() - g_lastInputMs) < IDLE_TIMEOUT_MS) return;
+    g_idleActive = true;
+    Serial.println("[IDLE] enter splash");
+    draw_idle_screen();
+}
+
 void draw_splash() {
     // Early boot: black paper, white ink (matches dark theme readability on e-ink)
     const bool saved = g_darkTheme;
@@ -1909,17 +1988,62 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, ch
 }
 
 
+static void draw_refresh_btn(int x, int y, int w, int h) {
+    // Box
+    lv_obj_t* box = lv_obj_create(g_root);
+    lv_obj_set_size(box, w, h);
+    lv_obj_set_pos(box, x, y);
+    lv_obj_set_style_radius(box, 0, 0);
+    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_set_style_border_color(box, theme_fg(), 0);
+    lv_obj_set_style_bg_color(box, theme_bg(), 0);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(box, 0, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    // Two curved arrows in a circle (simple 1-bit glyph via lines/arcs as rects)
+    const int cx = x + w / 2;
+    const int cy = y + h / 2;
+    // Outer ring (approx with border square inset)
+    lv_obj_t* ring = lv_obj_create(g_root);
+    lv_obj_set_size(ring, 16, 16);
+    lv_obj_set_pos(ring, cx - 8, cy - 8);
+    lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(ring, 2, 0);
+    lv_obj_set_style_border_color(ring, theme_fg(), 0);
+    lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(ring, 0, 0);
+    lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE);
+    // Arrow tips (small filled triangles as rects)
+    lv_obj_t* a1 = lv_obj_create(g_root);
+    lv_obj_set_size(a1, 5, 3);
+    lv_obj_set_pos(a1, cx + 3, cy - 7);
+    lv_obj_set_style_radius(a1, 0, 0);
+    lv_obj_set_style_border_width(a1, 0, 0);
+    lv_obj_set_style_bg_color(a1, theme_fg(), 0);
+    lv_obj_set_style_bg_opa(a1, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(a1, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* a2 = lv_obj_create(g_root);
+    lv_obj_set_size(a2, 5, 3);
+    lv_obj_set_pos(a2, cx - 8, cy + 4);
+    lv_obj_set_style_radius(a2, 0, 0);
+    lv_obj_set_style_border_width(a2, 0, 0);
+    lv_obj_set_style_bg_color(a2, theme_fg(), 0);
+    lv_obj_set_style_bg_opa(a2, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(a2, LV_OBJ_FLAG_SCROLLABLE);
+}
+
 void draw_nav() {
     // Thread / name-edit: only full-width Back (Contact/Peers not usable here)
     if (g_showHistory || g_nameEditMode) {
-        // Bottom full-width Back (thumb reach); keep Settings|Home on top
-        draw_nav_box(0,         0, TOP_TAB_W, TOP_H, "Settings", false, 'S');
-        draw_nav_box(TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home",     false, 'H');
+        draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
+        draw_nav_box(TOP_REFRESH_W, 0, TOP_TAB_W, TOP_H, "Settings", false, 'S');
+        draw_nav_box(TOP_REFRESH_W + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home", false, 'H');
         draw_nav_box(0, BOT_TOP, EPD_WIDTH, BOT_H, "^ BACK UP TO MSG BOX", true, '^');
         return;
     }
-    draw_nav_box(0,         0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS, 'S');
-    draw_nav_box(TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home",     g_screen == SCR_HOME, 'H');
+    draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
+    draw_nav_box(TOP_REFRESH_W, 0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS, 'S');
+    draw_nav_box(TOP_REFRESH_W + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home", g_screen == SCR_HOME, 'H');
     int x0 = 0;
     draw_nav_box(x0, BOT_TOP, BOT_CONTACT_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, 'C');
     x0 += BOT_CONTACT_W;
@@ -2170,24 +2294,38 @@ void draw_battery_gauge(int x, int y, int w, int h, int pct) {
 
 
 
+// Zone list; index 0 = EST (default)
+static constexpr int kTzCount = 18;
+static const char* const kTzNames[] = {
+    "EST", "EDT", "CST", "CDT", "MST", "MDT", "PST", "PDT",
+    "AKST", "HST", "UTC", "UTC+1", "UTC+2", "UTC+5:30", "UTC+8", "UTC+9",
+    "UTC-3", "UTC-10"
+};
+static const char* const kTzEnv[] = {
+    "EST5", "EST4", "CST6", "CST5", "MST7", "MST6", "PST8", "PST7",
+    "AKST9", "HST10", "UTC0", "UTC-1", "UTC-2", "UTC-5:30", "UTC-8", "UTC-9",
+    "UTC3", "UTC10"
+};
+static const int8_t kTzHours[] = {
+    -5, -4, -6, -5, -7, -6, -8, -7,
+    -9, -10, 0, 1, 2, 5, 8, 9,
+    -3, -10
+};
+
 static const char* tzName() {
-    static const char* k[] = { "EST", "CST", "MST", "PST", "UTC" };
     int i = g_tzIndex;
-    if (i < 0 || i > 4) i = 0;
-    return k[i];
+    if (i < 0 || i >= kTzCount) i = 0;
+    return kTzNames[i];
 }
-// POSIX TZ strings: EST5 means local = UTC-5
 static const char* tzEnvString() {
-    static const char* k[] = { "EST5", "CST6", "MST7", "PST8", "UTC0" };
     int i = g_tzIndex;
-    if (i < 0 || i > 4) i = 0;
-    return k[i];
+    if (i < 0 || i >= kTzCount) i = 0;
+    return kTzEnv[i];
 }
 static int tzOffsetHours() {
-    static const int8_t k[] = { -5, -6, -7, -8, 0 };
     int i = g_tzIndex;
-    if (i < 0 || i > 4) i = 0;
-    return k[i];
+    if (i < 0 || i >= kTzCount) i = 0;
+    return (int)kTzHours[i];
 }
 static void applyTimezoneEnv() {
     setenv("TZ", tzEnvString(), 1);
@@ -2920,6 +3058,20 @@ void settingsGoBack() {
         g_timeEditMode = false;
         composeClear();
         g_composeMode = false;
+        if (g_settingsPage == SET_TZ) {
+            g_settingsPage = SET_TIME;
+            g_settingsSel = 0;
+            g_settingsScroll = 0;
+            show_screen(SCR_SETTINGS);
+            return;
+        }
+        if (g_settingsPage == SET_IDLE_MODE) {
+            g_settingsPage = SET_SCREEN;
+            g_settingsSel = 2;
+            g_settingsScroll = 0;
+            show_screen(SCR_SETTINGS);
+            return;
+        }
         g_settingsPage = SET_ROOT;
         g_settingsSel = g_settingsRootSel;
         // Keep scroll so the remembered row stays visible
@@ -2970,7 +3122,43 @@ void settingsActivate() {
             g_darkTheme = !g_darkTheme;
             Serial.printf("[THEME] %s\n", g_darkTheme ? "black-ink" : "white-paper");
             show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 2) {
+            g_settingsPage = SET_IDLE_MODE;
+            g_settingsSel = (int)g_idleMode;
+            g_settingsScroll = 0;
+            show_screen(SCR_SETTINGS);
         }
+        return;
+    }
+    if (g_settingsPage == SET_TZ) {
+        if (g_settingsSel >= 0 && g_settingsSel < kTzCount) {
+            g_tzIndex = g_settingsSel;
+            applyTimezoneEnv();
+            Serial.printf("[TZ] %s %s\n", tzName(), tzEnvString());
+        }
+        g_settingsPage = SET_TIME;
+        g_settingsSel = 0;
+        g_settingsScroll = 0;
+        show_screen(SCR_SETTINGS);
+        return;
+    }
+    if (g_settingsPage == SET_IDLE_MODE) {
+        if (g_settingsSel == 0) {
+            g_idleMode = 0;
+            Serial.println("[IDLE] mode=off");
+        } else if (g_settingsSel == 1) {
+            g_idleMode = 1;
+            Serial.println("[IDLE] mode=no-password");
+        } else if (g_settingsSel == 2) {
+            // Password TBD — do nothing
+            Serial.println("[IDLE] password TBD");
+            show_screen(SCR_SETTINGS);
+            return;
+        }
+        g_settingsPage = SET_SCREEN;
+        g_settingsSel = 2;
+        g_settingsScroll = 0;
+        show_screen(SCR_SETTINGS);
         return;
     }
     if (g_settingsPage == SET_LORA) {
@@ -2986,9 +3174,9 @@ void settingsActivate() {
     }
     if (g_settingsPage == SET_TIME) {
         if (g_settingsSel == 0) {
-            g_tzIndex = (g_tzIndex + 1) % 5;
-            applyTimezoneEnv();
-            Serial.printf("[TZ] %s %s\n", tzName(), tzEnvString());
+            g_settingsPage = SET_TZ;
+            g_settingsSel = g_tzIndex;
+            g_settingsScroll = 0;
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 1) {
             // GPS diag — refresh display only
@@ -3101,7 +3289,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.48", 0);
+        row("Firmware", "Pro G1.60", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -3115,11 +3303,29 @@ void build_settings() {
     if (g_settingsPage == SET_SCREEN) {
         row("Screen Bright", "e-ink N/A", 0);
         row("Theme", g_darkTheme ? "Black ink" : "White paper", 1);
-        row("Dim After", "N/A", 2);
-        row("Display Off", "N/A", 3);
-        row("Key Backlight", "serial: L", 4);
-        row("Keys Wake", "stub", 5);
-        draw_compose_or_hint("L serial toggle KB light");
+        const char* idleLab = (g_idleMode == 0) ? "Off" :
+                              (g_idleMode == 1) ? "No password" : "Password TBD";
+        row("Idle splash", idleLab, 2);
+        row("Key Backlight", "serial: L", 3);
+        draw_compose_or_hint("Enter=select  ^=back");
+        return;
+    }
+    if (g_settingsPage == SET_IDLE_MODE) {
+        row("No idle screen", g_idleMode == 0 ? "*" : "", 0);
+        row("Idle no password", g_idleMode == 1 ? "*" : "", 1);
+        row("Idle + password TBD", "", 2);
+        draw_compose_or_hint("Enter=select  ^=back");
+        return;
+    }
+    if (g_settingsPage == SET_TZ) {
+        for (int i = 0; i < kTzCount; i++) {
+            char sub[20];
+            snprintf(sub, sizeof(sub), "UTC%+d", (int)kTzHours[i]);
+            char title[28];
+            snprintf(title, sizeof(title), "%s%s", kTzNames[i], (i == g_tzIndex) ? " *" : "");
+            row(title, sub, i);
+        }
+        draw_compose_or_hint("G/V scroll  Enter=pick");
         return;
     }
     if (g_settingsPage == SET_BATTERY) {
@@ -3157,7 +3363,7 @@ void build_settings() {
         formatLocalTime(loc, sizeof(loc));
         // 1 Set timezone (default EST)
         snprintf(st, sizeof(st), "%s (UTC%+d)", tzName(), tzOffsetHours());
-        row("1 Set time zone", st, 0);
+        row("1 Set time zone >", st, 0);
         // 2 GPS diagnostics
         snprintf(st, sizeof(st), "%s %us", g_gpsStatus, (unsigned)g_gpsSats);
         row("2 GPS diag", st, 1);
@@ -3731,7 +3937,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.59");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.60");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
