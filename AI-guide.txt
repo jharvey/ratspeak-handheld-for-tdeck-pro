@@ -1,21 +1,20 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.60  (2026-10-21)
+Last: G1.61  (2026-10-21)
 ================================================================================
-HEADER
-[DONE] Refresh button (circular arrows) left of Settings — full e-ink refresh
-       (same as mic). Touch left strip or mic key.
+RTC
+[DONE] Local RTC > opens submenu: type HHMM, Enter applies
+[DONE] Local Date > opens submenu: type MMDDYY, Enter applies
 
-TIME ZONE
-[DONE] Settings > Time > "1 Set time zone >" opens scrollable zone list
-       (EST default, EDT/CST/.../UTC offsets). Enter selects; Back returns.
+BATTERY
+[DONE] BQ27220: use AvgCurrent to detect charge; high terminal voltage
+       forces 99–100%. High-V leans toward voltage curve (gauge often
+       under-reads until learned). Residual low % while USB-charged is
+       often unlearned gauge capacity, not a dead cell.
 
-IDLE SPLASH
-[DONE] After 60s idle (no compose): logo + HH:MM clock + battery + 
-       "press SPACE to wake". Space/any key/touch wakes.
-[DONE] Settings > Screen & Input > Idle splash submenu:
-         No idle screen | Idle no password (default) | Idle + password TBD
-       Password option is inert (TBD).
+SCREEN
+[DONE] 4> Key backlight toggles keyboard LED
 
-E-INK: partial-only UI; full only via refresh button or mic.
+IDLE
+[DONE] 4> Idle timeout > type 1–99999 seconds (default 30)
 ================================================================================

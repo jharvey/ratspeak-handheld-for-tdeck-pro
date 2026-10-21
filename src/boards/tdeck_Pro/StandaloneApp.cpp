@@ -76,6 +76,9 @@ enum SettingsPage : uint8_t {
     SET_STORAGE,
     SET_TZ,
     SET_IDLE_MODE,
+    SET_MANUAL_TIME,
+    SET_MANUAL_DATE,
+    SET_IDLE_SECS,
 };
 SettingsPage g_settingsPage = SET_ROOT;
 int g_settingsSel = 0;  // highlighted row on current page
@@ -90,7 +93,12 @@ uint32_t g_lastGpsSyncMs = 0;
 uint8_t  g_idleMode = 1;  // 0=off 1=no-pass default 2=password TBD
 bool     g_idleActive = false;
 uint32_t g_lastInputMs = 0;
-static constexpr uint32_t IDLE_TIMEOUT_MS = 60000UL;
+uint32_t g_idleTimeoutSec = 30;  // 1..99999, default 30s
+int      g_manualMon = 1;
+int      g_manualDay = 1;
+int      g_manualYear = 2026;
+bool     g_dateEditMode = false;
+bool     g_idleSecsEditMode = false;
 uint32_t g_lastPeerAutoMs = 0;
 size_t   g_lastPeerCount  = 0;
 bool     g_peerDirty      = false;
@@ -300,11 +308,11 @@ void spiBusIdle() {
 // LiPo voltage → rough SoC (fallback / sanity check for gauge)
 static int lipoPctFromVolts(float v) {
     // Piecewise linear for single-cell LiPo under light load
-    static const float vp[] = {3.30f, 3.50f, 3.60f, 3.70f, 3.80f, 3.90f, 4.00f, 4.10f, 4.20f};
-    static const int   pp[] = {0, 5, 15, 30, 50, 65, 80, 92, 100};
+    static const float vp[] = {3.30f, 3.50f, 3.60f, 3.70f, 3.80f, 3.90f, 4.00f, 4.10f, 4.15f, 4.20f};
+    static const int   pp[] = {0, 5, 15, 30, 50, 65, 80, 90, 96, 100};
     if (v <= vp[0]) return 0;
-    if (v >= vp[8]) return 100;
-    for (int i = 0; i < 8; i++) {
+    if (v >= vp[9]) return 100;
+    for (int i = 0; i < 9; i++) {
         if (v <= vp[i + 1]) {
             float t = (v - vp[i]) / (vp[i + 1] - vp[i]);
             return pp[i] + (int)(t * (pp[i + 1] - pp[i]) + 0.5f);
@@ -323,32 +331,56 @@ static bool bqReadU16(uint8_t reg, uint16_t& out) {
 }
 
 bool readBattery(float& volts, int& pct) {
-    // Average several Voltage (0x08) and RelativeStateOfCharge (0x2C) samples
+    // BQ27220: Voltage 0x08, RelativeSOC 0x2C, AvgCurrent 0x14 (signed mA), Flags 0x0A
+    // Gauge SoC is often pessimistic until learned; when charging / high V trust voltage more.
     uint32_t mvSum = 0, socSum = 0;
     int nOk = 0;
-    for (int i = 0; i < 4; i++) {
-        uint16_t mv = 0, soc = 0;
+    int32_t curSum = 0;
+    int nCur = 0;
+    for (int i = 0; i < 5; i++) {
+        uint16_t mv = 0, soc = 0, curRaw = 0;
         if (!bqReadU16(0x08, mv)) continue;
         if (!bqReadU16(0x2C, soc)) continue;
-        if (mv < 2500 || mv > 4500) continue;  // reject nonsense
+        if (mv < 2500 || mv > 4500) continue;
         mvSum += mv;
         socSum += (soc > 100) ? 100 : soc;
         nOk++;
-        delay(2);
+        if (bqReadU16(0x14, curRaw)) {
+            curSum += (int16_t)curRaw;  // signed mA
+            nCur++;
+        }
+        delay(3);
     }
     if (nOk == 0) return false;
     volts = (mvSum / (float)nOk) / 1000.0f;
     int gaugePct = (int)(socSum / nOk);
     int curvePct = lipoPctFromVolts(volts);
-    // If gauge and voltage curve disagree a lot, blend toward curve (more stable on e-ink)
-    if (abs(gaugePct - curvePct) > 25) {
-        pct = (gaugePct + curvePct * 2) / 3;
+    int16_t avgMa = (nCur > 0) ? (int16_t)(curSum / nCur) : 0;
+    bool charging = (avgMa > 15);  // charging into cell
+
+    // Full / near-full by terminal voltage (USB float ~4.15–4.22V)
+    if (volts >= 4.18f) {
+        pct = 100;
+    } else if (volts >= 4.12f && charging) {
+        pct = 99;
+    } else if (charging) {
+        // While charging, never report below the better of gauge/curve
+        pct = gaugePct > curvePct ? gaugePct : curvePct;
+        if (volts >= 4.05f && pct < 85) pct = 85;
+        if (volts >= 3.95f && pct < 70) pct = 70;
     } else {
-        pct = gaugePct;
+        // Discharging: prefer gauge when close to curve; otherwise blend
+        if (abs(gaugePct - curvePct) <= 15) {
+            pct = gaugePct;
+        } else if (volts >= 4.00f) {
+            // High voltage: lean toward curve (gauge often under-reads)
+            pct = (gaugePct + curvePct * 2) / 3;
+        } else {
+            pct = (gaugePct * 2 + curvePct) / 3;
+        }
     }
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
-    // Flags (0x0A): bit 0 often CHG — optional future charging icon
     return true;
 }
 
@@ -1155,8 +1187,10 @@ bool handleTouchAt(int16_t x, int16_t y) {
             int idx = g_settingsScroll + row;
             int maxIdx = 8;
             if (g_settingsPage == SET_TZ) maxIdx = kTzCount - 1;
-            else if (g_settingsPage == SET_TIME) maxIdx = 10;
-            else if (g_settingsPage == SET_IDLE_MODE) maxIdx = 2;
+            else if (g_settingsPage == SET_TIME) maxIdx = 6;
+            else if (g_settingsPage == SET_IDLE_MODE) maxIdx = 3;
+            else if (g_settingsPage == SET_SCREEN) maxIdx = 3;
+            else if (g_settingsPage == SET_MANUAL_TIME || g_settingsPage == SET_MANUAL_DATE) maxIdx = 2;
             if (idx > maxIdx) idx = maxIdx;
             g_settingsSel = idx;
             Serial.printf("[SET] touch sel=%d\n", g_settingsSel);
@@ -1860,7 +1894,9 @@ void maybeEnterIdle() {
         g_lastInputMs = millis() ? millis() : 1;
         return;
     }
-    if ((millis() - g_lastInputMs) < IDLE_TIMEOUT_MS) return;
+    uint32_t idleMs = g_idleTimeoutSec * 1000UL;
+    if (idleMs < 1000UL) idleMs = 1000UL;
+    if ((millis() - g_lastInputMs) < idleMs) return;
     g_idleActive = true;
     Serial.println("[IDLE] enter splash");
     draw_idle_screen();
@@ -2433,6 +2469,72 @@ static bool parseComposeToManualTime() {
         return true;
     }
     return false;
+}
+
+static void loadManualDateFromClock() {
+    time_t now = time(nullptr);
+    if (now < 100000) return;
+    applyTimezoneEnv();
+    struct tm t;
+    localtime_r(&now, &t);
+    g_manualMon = t.tm_mon + 1;
+    g_manualDay = t.tm_mday;
+    g_manualYear = t.tm_year + 1900;
+}
+
+static void applyManualLocalDate() {
+    applyTimezoneEnv();
+    time_t now = time(nullptr);
+    struct tm t;
+    if (now > 100000)
+        localtime_r(&now, &t);
+    else
+        memset(&t, 0, sizeof(t));
+    t.tm_mon = g_manualMon - 1;
+    t.tm_mday = g_manualDay;
+    t.tm_year = g_manualYear - 1900;
+    if (t.tm_hour < 0 || t.tm_hour > 23) t.tm_hour = 12;
+    t.tm_sec = 0;
+    time_t epoch = mktime(&t);
+    if (epoch <= 0) return;
+    struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+    settimeofday(&tv, nullptr);
+    Serial.printf("[RTC] manual date %04d-%02d-%02d\n", g_manualYear, g_manualMon, g_manualDay);
+}
+
+static bool parseComposeToManualDate() {
+    // Accept MMDDYY, MMDDYYYY, YYYYMMDD, or MM/DD/YY
+    char buf[16];
+    size_t n = 0;
+    for (size_t i = 0; i < g_composeLen && n + 1 < sizeof(buf); i++) {
+        char c = g_compose[i];
+        if (c >= '0' && c <= '9') buf[n++] = c;
+    }
+    buf[n] = 0;
+    int mon = 0, day = 0, year = 0;
+    if (n == 6) {
+        mon = (buf[0]-'0')*10 + (buf[1]-'0');
+        day = (buf[2]-'0')*10 + (buf[3]-'0');
+        year = 2000 + (buf[4]-'0')*10 + (buf[5]-'0');
+    } else if (n == 8) {
+        // YYYYMMDD if first pair looks like year
+        int a = (buf[0]-'0')*10 + (buf[1]-'0');
+        if (a >= 20) {
+            year = (buf[0]-'0')*1000 + (buf[1]-'0')*100 + (buf[2]-'0')*10 + (buf[3]-'0');
+            mon = (buf[4]-'0')*10 + (buf[5]-'0');
+            day = (buf[6]-'0')*10 + (buf[7]-'0');
+        } else {
+            mon = (buf[0]-'0')*10 + (buf[1]-'0');
+            day = (buf[2]-'0')*10 + (buf[3]-'0');
+            year = (buf[4]-'0')*1000 + (buf[5]-'0')*100 + (buf[6]-'0')*10 + (buf[7]-'0');
+        }
+    } else {
+        return false;
+    }
+    if (mon < 1 || mon > 12 || day < 1 || day > 31 || year < 2000 || year > 2099)
+        return false;
+    g_manualMon = mon; g_manualDay = day; g_manualYear = year;
+    return true;
 }
 
 static void loadManualFromClock() {
@@ -3079,6 +3181,27 @@ void settingsGoBack() {
             show_screen(SCR_SETTINGS);
             return;
         }
+        if (g_settingsPage == SET_MANUAL_TIME || g_settingsPage == SET_MANUAL_DATE) {
+            g_timeEditMode = false;
+            g_dateEditMode = false;
+            composeClear();
+            g_composeMode = false;
+            g_settingsPage = SET_TIME;
+            g_settingsSel = (g_settingsPage == SET_MANUAL_DATE) ? 5 : 4;
+            // fix: already cleared page - use wasDate
+            g_settingsSel = 4;
+            show_screen(SCR_SETTINGS);
+            return;
+        }
+        if (g_settingsPage == SET_IDLE_SECS) {
+            g_idleSecsEditMode = false;
+            composeClear();
+            g_composeMode = false;
+            g_settingsPage = SET_IDLE_MODE;
+            g_settingsSel = 3;
+            show_screen(SCR_SETTINGS);
+            return;
+        }
         g_settingsPage = SET_ROOT;
         g_settingsSel = g_settingsRootSel;
         // Keep scroll so the remembered row stays visible
@@ -3134,6 +3257,13 @@ void settingsActivate() {
             g_settingsSel = (int)g_idleMode;
             g_settingsScroll = 0;
             show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 3) {
+            static bool s_lit = false;
+            s_lit = !s_lit;
+            if (s_lit) g_kb.backlightOn();
+            else g_kb.backlightOff();
+            Serial.printf("[KB] backlight %s\n", s_lit ? "ON" : "OFF");
+            show_screen(SCR_SETTINGS);
         }
         return;
     }
@@ -3186,8 +3316,7 @@ void settingsActivate() {
             g_settingsScroll = 0;
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 1) {
-            // GPS diag — refresh display only
-            show_screen(SCR_SETTINGS);
+            show_screen(SCR_SETTINGS);  // GPS diag refresh
         } else if (g_settingsSel == 2) {
             bool ok = syncGpsToRtc();
             if (ok) { g_autoGpsSyncedBoot = true; g_lastGpsSyncMs = millis() ? millis() : 1; }
@@ -3197,31 +3326,84 @@ void settingsActivate() {
             g_autoGpsSync = !g_autoGpsSync;
             Serial.printf("[RTC] auto GPS sync %s\n", g_autoGpsSync ? "ON" : "OFF");
             show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 6) {
+        } else if (g_settingsSel == 4) {
+            loadManualFromClock();
+            g_settingsPage = SET_MANUAL_TIME;
+            g_settingsSel = 0;
             g_timeEditMode = true;
             g_composeMode = true;
             composeClear();
             show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 7) {
-            if (g_timeEditMode && g_composeLen > 0)
-                parseComposeToManualTime();
-            applyManualLocalTime();
-            g_timeEditMode = false;
+        } else if (g_settingsSel == 5) {
+            loadManualDateFromClock();
+            g_settingsPage = SET_MANUAL_DATE;
+            g_settingsSel = 0;
+            g_dateEditMode = true;
+            g_composeMode = true;
             composeClear();
-            g_composeMode = false;
             show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 8) {
-            g_manualHour = (g_manualHour + 1) % 24;
-            show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 9) {
-            g_manualMin = (g_manualMin + 1) % 60;
-            show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 10) {
+        } else if (g_settingsSel == 7) {
             gpsSetEnabled(!g_gpsEnabled);
             show_screen(SCR_SETTINGS);
         }
         return;
     }
+    if (g_settingsPage == SET_MANUAL_TIME) {
+        if (g_settingsSel == 0 || g_settingsSel == 1) {
+            g_timeEditMode = true;
+            g_composeMode = true;
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 2) {
+            if (g_composeLen > 0) parseComposeToManualTime();
+            applyManualLocalTime();
+            g_timeEditMode = false;
+            composeClear();
+            g_composeMode = false;
+            g_settingsPage = SET_TIME;
+            g_settingsSel = 4;
+            show_screen(SCR_SETTINGS);
+        }
+        return;
+    }
+    if (g_settingsPage == SET_MANUAL_DATE) {
+        if (g_settingsSel == 0 || g_settingsSel == 1) {
+            g_dateEditMode = true;
+            g_composeMode = true;
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 2) {
+            if (g_composeLen > 0) parseComposeToManualDate();
+            applyManualLocalDate();
+            g_dateEditMode = false;
+            composeClear();
+            g_composeMode = false;
+            g_settingsPage = SET_TIME;
+            g_settingsSel = 5;
+            show_screen(SCR_SETTINGS);
+        }
+        return;
+    }
+    if (g_settingsPage == SET_IDLE_SECS) {
+        // Apply typed seconds or keep
+        if (g_composeLen > 0) {
+            uint32_t v = 0;
+            for (size_t i = 0; i < g_composeLen; i++) {
+                if (g_compose[i] >= '0' && g_compose[i] <= '9')
+                    v = v * 10 + (uint32_t)(g_compose[i] - '0');
+            }
+            if (v < 1) v = 1;
+            if (v > 99999) v = 99999;
+            g_idleTimeoutSec = v;
+            Serial.printf("[IDLE] timeout %u s\n", (unsigned)g_idleTimeoutSec);
+        }
+        g_idleSecsEditMode = false;
+        composeClear();
+        g_composeMode = false;
+        g_settingsPage = SET_IDLE_MODE;
+        g_settingsSel = 3;
+        show_screen(SCR_SETTINGS);
+        return;
+    }
+
     if (g_settingsPage == SET_STORAGE) {
         if (g_settingsSel == 5) {  // Send Announce
             doAnnounce();
@@ -3296,7 +3478,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.60", 0);
+        row("Firmware", "Pro G1.61", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -3308,20 +3490,57 @@ void build_settings() {
         return;
     }
     if (g_settingsPage == SET_SCREEN) {
-        row("Screen Bright", "e-ink N/A", 0);
-        row("Theme", g_darkTheme ? "Black ink" : "White paper", 1);
+        row("1 Screen Bright", "e-ink N/A", 0);
+        row("2 Theme", g_darkTheme ? "Black ink" : "White paper", 1);
         const char* idleLab = (g_idleMode == 0) ? "Off" :
                               (g_idleMode == 1) ? "No password" : "Password TBD";
-        row("Idle splash", idleLab, 2);
-        row("Key Backlight", "serial: L", 3);
+        row("3 Idle splash >", idleLab, 2);
+        row("4 Key backlight", g_kb.backlightIsLit() ? "ON" : "OFF", 3);
         draw_compose_or_hint("Enter=select  ^=back");
         return;
     }
     if (g_settingsPage == SET_IDLE_MODE) {
-        row("No idle screen", g_idleMode == 0 ? "*" : "", 0);
-        row("Idle no password", g_idleMode == 1 ? "*" : "", 1);
-        row("Idle + password TBD", "", 2);
+        row("1 No idle screen", g_idleMode == 0 ? "*" : "", 0);
+        row("2 Idle no password", g_idleMode == 1 ? "*" : "", 1);
+        row("3 Idle + password TBD", "", 2);
+        char is[16];
+        snprintf(is, sizeof(is), "%u s", (unsigned)g_idleTimeoutSec);
+        row("4 Idle timeout >", is, 3);
         draw_compose_or_hint("Enter=select  ^=back");
+        return;
+    }
+    if (g_settingsPage == SET_IDLE_SECS) {
+        char st[24];
+        snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "30");
+        row("Seconds (1-99999)", st, 0);
+        row("Enter=save", "^=cancel", 1);
+        draw_compose_or_hint("Type seconds  Enter=save");
+        return;
+    }
+    if (g_settingsPage == SET_MANUAL_TIME) {
+        char st[28];
+        snprintf(st, sizeof(st), "%02d:%02d", g_manualHour, g_manualMin);
+        row("Current", st, 0);
+        if (g_timeEditMode)
+            snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "HHMM");
+        else
+            strcpy(st, "type HHMM");
+        row("Enter time", st, 1);
+        row("Apply", "Enter=set", 2);
+        draw_compose_or_hint("Type HHMM e.g. 1430");
+        return;
+    }
+    if (g_settingsPage == SET_MANUAL_DATE) {
+        char st[28];
+        snprintf(st, sizeof(st), "%02d/%02d/%02d", g_manualMon, g_manualDay, g_manualYear % 100);
+        row("Current", st, 0);
+        if (g_dateEditMode)
+            snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "MMDDYY");
+        else
+            strcpy(st, "type MMDDYY");
+        row("Enter date", st, 1);
+        row("Apply", "Enter=set", 2);
+        draw_compose_or_hint("Type MMDDYY e.g. 102126");
         return;
     }
     if (g_settingsPage == SET_TZ) {
@@ -3380,21 +3599,10 @@ void build_settings() {
         row("4 Auto GPS sync", g_autoGpsSync ? "ON" : "OFF", 3);
         // 5+ RTC manual
         formatLocalDate(st, sizeof(st));
-        row("5 Local RTC", loc, 4);
-        row("6 Local Date", st, 5);
-        if (g_timeEditMode)
-            snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "HHMM");
-        else
-            strcpy(st, "Enter then HHMM");
-        row("7 Type time", st, 6);
-        snprintf(st, sizeof(st), "%02d:%02d Apply", g_manualHour, g_manualMin);
-        row("8 Apply manual", st, 7);
-        snprintf(st, sizeof(st), "%02d", g_manualHour);
-        row("9 Hour +/-", st, 8);
-        snprintf(st, sizeof(st), "%02d", g_manualMin);
-        row("10 Minute +/-", st, 9);
-        row("11 GPS power", g_gpsEnabled ? "ENABLED" : "DISABLED", 10);
-        draw_compose_or_hint(g_timeEditMode ? "Type HHMM Enter=apply" : "Enter=act G/V adj");
+        row("5 Local RTC >", loc, 4);
+        row("6 Local Date >", st, 5);
+        row("7 GPS power", g_gpsEnabled ? "ENABLED" : "DISABLED", 6);
+        draw_compose_or_hint("Enter opens item");
         return;
     }
     if (g_settingsPage == SET_AUDIO) {
@@ -3567,13 +3775,40 @@ bool handleKeyEvent(const KeyEvent& ev) {
 
     // Enter: send compose if non-empty, else next screen.
     if (ev.enter) {
-        // RTC type-time mode: parse HHMM and apply
-        if (g_timeEditMode && g_screen == SCR_SETTINGS) {
+        // RTC type-time / date / idle-secs
+        if (g_screen == SCR_SETTINGS && g_settingsPage == SET_MANUAL_TIME) {
             if (g_composeLen > 0 && parseComposeToManualTime()) {
                 applyManualLocalTime();
                 Serial.println("[RTC] typed time applied");
-            } else {
-                Serial.println("[RTC] type HHMM (e.g. 1430)");
+            }
+            g_timeEditMode = false;
+            composeClear();
+            g_composeMode = false;
+            g_settingsPage = SET_TIME;
+            g_settingsSel = 4;
+            show_screen(SCR_SETTINGS);
+            return true;
+        }
+        if (g_screen == SCR_SETTINGS && g_settingsPage == SET_MANUAL_DATE) {
+            if (g_composeLen > 0 && parseComposeToManualDate()) {
+                applyManualLocalDate();
+                Serial.println("[RTC] typed date applied");
+            }
+            g_dateEditMode = false;
+            composeClear();
+            g_composeMode = false;
+            g_settingsPage = SET_TIME;
+            g_settingsSel = 5;
+            show_screen(SCR_SETTINGS);
+            return true;
+        }
+        if (g_screen == SCR_SETTINGS && g_settingsPage == SET_IDLE_SECS) {
+            settingsActivate();  // applies seconds
+            return true;
+        }
+        if (g_timeEditMode && g_screen == SCR_SETTINGS) {
+            if (g_composeLen > 0 && parseComposeToManualTime()) {
+                applyManualLocalTime();
             }
             g_timeEditMode = false;
             composeClear();
@@ -3944,7 +4179,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.60");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.61");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
