@@ -280,6 +280,14 @@ void settingsGoBack();
 void settingsActivate();
 bool inMessageUi();
 void goBackFromMessage();
+void noteUserInput();
+void draw_idle_screen();
+void maybeEnterIdle();
+void draw_battery_gauge(int x, int y, int w, int h, int pct);
+static const char* tzName();
+static void formatLocalTime(char* out, size_t n);
+static void formatLocalDate(char* out, size_t n);
+static constexpr int kTzCount = 18;
 
 void spiBusIdle() {
     pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
@@ -2294,8 +2302,7 @@ void draw_battery_gauge(int x, int y, int w, int h, int pct) {
 
 
 
-// Zone list; index 0 = EST (default)
-static constexpr int kTzCount = 18;
+// Zone list; index 0 = EST (default) — kTzCount declared above
 static const char* const kTzNames[] = {
     "EST", "EDT", "CST", "CDT", "MST", "MDT", "PST", "PDT",
     "AKST", "HST", "UTC", "UTC+1", "UTC+2", "UTC+5:30", "UTC+8", "UTC+9",
