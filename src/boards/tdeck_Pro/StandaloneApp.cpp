@@ -93,7 +93,7 @@ uint32_t g_lastGpsSyncMs = 0;
 uint8_t  g_idleMode = 1;  // 0=off 1=no-pass default 2=password TBD
 bool     g_idleActive = false;
 uint32_t g_lastInputMs = 0;
-uint32_t g_idleTimeoutSec = 30;  // 1..99999, default 30s
+uint32_t g_idleTimeoutSec = 30;  // 10..99999, default 30s
 int      g_manualMon = 1;
 int      g_manualDay = 1;
 int      g_manualYear = 2026;
@@ -1209,7 +1209,8 @@ bool handleTouchAt(int16_t x, int16_t y) {
             else if (g_settingsPage == SET_TIME) maxIdx = 6;
             else if (g_settingsPage == SET_IDLE_MODE) maxIdx = 3;
             else if (g_settingsPage == SET_SCREEN) maxIdx = 3;
-            else if (g_settingsPage == SET_MANUAL_TIME || g_settingsPage == SET_MANUAL_DATE) maxIdx = 2;
+            else if (g_settingsPage == SET_MANUAL_TIME) maxIdx = 4;
+            else if (g_settingsPage == SET_MANUAL_DATE) maxIdx = 5;
             if (idx > maxIdx) idx = maxIdx;
             g_settingsSel = idx;
             Serial.printf("[SET] touch sel=%d\n", g_settingsSel);
@@ -1913,7 +1914,7 @@ void maybeEnterIdle() {
         g_lastInputMs = millis() ? millis() : 1;
         return;
     }
-    if (g_idleTimeoutSec == 0) return;  // 0 = never auto-idle
+    if (g_idleTimeoutSec < 10) g_idleTimeoutSec = 10;  // min 10s
     uint32_t idleMs = g_idleTimeoutSec * 1000UL;
     uint32_t elapsed = millis() - g_lastInputMs;
     if (elapsed < idleMs) return;
@@ -3370,17 +3371,17 @@ void settingsActivate() {
         } else if (g_settingsSel == 4) {
             loadManualFromClock();
             g_settingsPage = SET_MANUAL_TIME;
-            g_settingsSel = 0;
-            g_timeEditMode = true;
-            g_composeMode = true;
+            g_settingsSel = 1;  // land on Hour
+            g_timeEditMode = false;
+            g_composeMode = false;
             composeClear();
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 5) {
             loadManualDateFromClock();
             g_settingsPage = SET_MANUAL_DATE;
-            g_settingsSel = 0;
-            g_dateEditMode = true;
-            g_composeMode = true;
+            g_settingsSel = 1;  // land on Month
+            g_dateEditMode = false;
+            g_composeMode = false;
             composeClear();
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 6) {
@@ -3390,11 +3391,19 @@ void settingsActivate() {
         return;
     }
     if (g_settingsPage == SET_MANUAL_TIME) {
-        if (g_settingsSel == 0 || g_settingsSel == 1) {
-            g_timeEditMode = true;
-            g_composeMode = true;
+        // 0 Current (noop)  1 Hour+/-  2 Min+/-  3 Type HHMM  4 Apply
+        if (g_settingsSel == 1) {
+            g_manualHour = (g_manualHour + 1) % 24;
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 2) {
+            g_manualMin = (g_manualMin + 1) % 60;
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 3) {
+            g_timeEditMode = true;
+            g_composeMode = true;
+            composeClear();
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 4) {
             if (g_composeLen > 0) parseComposeToManualTime();
             applyManualLocalTime();
             g_timeEditMode = false;
@@ -3407,11 +3416,23 @@ void settingsActivate() {
         return;
     }
     if (g_settingsPage == SET_MANUAL_DATE) {
-        if (g_settingsSel == 0 || g_settingsSel == 1) {
-            g_dateEditMode = true;
-            g_composeMode = true;
+        // 0 Current  1 Month+/-  2 Day+/-  3 Year+/-  4 Type MMDDYY  5 Apply
+        if (g_settingsSel == 1) {
+            g_manualMon = g_manualMon >= 12 ? 1 : g_manualMon + 1;
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 2) {
+            g_manualDay = g_manualDay >= 31 ? 1 : g_manualDay + 1;
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 3) {
+            g_manualYear = (g_manualYear < 2000 || g_manualYear >= 2099)
+                               ? 2026 : g_manualYear + 1;
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 4) {
+            g_dateEditMode = true;
+            g_composeMode = true;
+            composeClear();
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 5) {
             if (g_composeLen > 0) parseComposeToManualDate();
             applyManualLocalDate();
             g_dateEditMode = false;
@@ -3431,9 +3452,11 @@ void settingsActivate() {
                 if (g_compose[i] >= '0' && g_compose[i] <= '9')
                     v = v * 10 + (uint32_t)(g_compose[i] - '0');
             }
+            if (v < 10UL) v = 10UL;
             if (v > 99999UL) v = 99999UL;
             g_idleTimeoutSec = v;
         }
+        if (g_idleTimeoutSec < 10UL) g_idleTimeoutSec = 10UL;
         g_idleSecsEditMode = false;
         composeClear();
         g_composeMode = false;
@@ -3519,7 +3542,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.64", 0);
+        row("Firmware", "Pro G1.65", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -3553,35 +3576,45 @@ void build_settings() {
     if (g_settingsPage == SET_IDLE_SECS) {
         char st[24];
         snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "30");
-        row("Seconds (0-99999)", st, 0);
+        row("Seconds (10-99999)", st, 0);
         row("Enter=save", "^=cancel", 1);
-        draw_compose_or_hint("Type 0-99999  Enter=save");
+        draw_compose_or_hint("Type 10-99999  Enter=save");
         return;
     }
     if (g_settingsPage == SET_MANUAL_TIME) {
         char st[28];
-        snprintf(st, sizeof(st), "%02d:%02d", g_manualHour, g_manualMin);
-        row("Current", st, 0);
+        snprintf(st, sizeof(st), "%02d:%02d %s", g_manualHour, g_manualMin, tzName());
+        row("1 Current", st, 0);
+        snprintf(st, sizeof(st), "%02d  Enter=+", g_manualHour);
+        row("2 Hour", st, 1);
+        snprintf(st, sizeof(st), "%02d  Enter=+", g_manualMin);
+        row("3 Minute", st, 2);
         if (g_timeEditMode)
             snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "HHMM");
         else
-            strcpy(st, "type HHMM");
-        row("Enter time", st, 1);
-        row("Apply", "Enter=set", 2);
-        draw_compose_or_hint("Type HHMM e.g. 1430");
+            strcpy(st, "Enter then type");
+        row("4 Type HHMM", st, 3);
+        row("5 Apply time", "Enter=set RTC", 4);
+        draw_compose_or_hint(g_timeEditMode ? "Type HHMM Enter=Apply" : "G/V move  Enter=+");
         return;
     }
     if (g_settingsPage == SET_MANUAL_DATE) {
         char st[28];
-        snprintf(st, sizeof(st), "%02d/%02d/%02d", g_manualMon, g_manualDay, g_manualYear % 100);
-        row("Current", st, 0);
+        snprintf(st, sizeof(st), "%02d/%02d/%04d", g_manualMon, g_manualDay, g_manualYear);
+        row("1 Current", st, 0);
+        snprintf(st, sizeof(st), "%02d  Enter=+", g_manualMon);
+        row("2 Month", st, 1);
+        snprintf(st, sizeof(st), "%02d  Enter=+", g_manualDay);
+        row("3 Day", st, 2);
+        snprintf(st, sizeof(st), "%04d Enter=+", g_manualYear);
+        row("4 Year", st, 3);
         if (g_dateEditMode)
             snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "MMDDYY");
         else
-            strcpy(st, "type MMDDYY");
-        row("Enter date", st, 1);
-        row("Apply", "Enter=set", 2);
-        draw_compose_or_hint("Type MMDDYY e.g. 102126");
+            strcpy(st, "Enter then type");
+        row("5 Type MMDDYY", st, 4);
+        row("6 Apply date", "Enter=set RTC", 5);
+        draw_compose_or_hint(g_dateEditMode ? "Type MMDDYY Enter=Apply" : "G/V move  Enter=+");
         return;
     }
     if (g_settingsPage == SET_TZ) {
@@ -3831,29 +3864,43 @@ bool handleKeyEvent(const KeyEvent& ev) {
     if (ev.enter) {
         // RTC type-time / date / idle-secs
         if (g_screen == SCR_SETTINGS && g_settingsPage == SET_MANUAL_TIME) {
-            if (g_composeLen > 0 && parseComposeToManualTime()) {
-                applyManualLocalTime();
-                Serial.println("[RTC] typed time applied");
+            if (g_timeEditMode || g_composeLen > 0) {
+                if (g_composeLen > 0 && parseComposeToManualTime()) {
+                    applyManualLocalTime();
+                    Serial.println("[RTC] typed time applied");
+                } else if (g_composeLen == 0) {
+                    applyManualLocalTime();  // apply hour/min from +/- rows
+                    Serial.println("[RTC] time applied from fields");
+                }
+                g_timeEditMode = false;
+                composeClear();
+                g_composeMode = false;
+                g_settingsPage = SET_TIME;
+                g_settingsSel = 4;
+                show_screen(SCR_SETTINGS);
+                return true;
             }
-            g_timeEditMode = false;
-            composeClear();
-            g_composeMode = false;
-            g_settingsPage = SET_TIME;
-            g_settingsSel = 4;
-            show_screen(SCR_SETTINGS);
+            settingsActivate();
             return true;
         }
         if (g_screen == SCR_SETTINGS && g_settingsPage == SET_MANUAL_DATE) {
-            if (g_composeLen > 0 && parseComposeToManualDate()) {
-                applyManualLocalDate();
-                Serial.println("[RTC] typed date applied");
+            if (g_dateEditMode || g_composeLen > 0) {
+                if (g_composeLen > 0 && parseComposeToManualDate()) {
+                    applyManualLocalDate();
+                    Serial.println("[RTC] typed date applied");
+                } else if (g_composeLen == 0) {
+                    applyManualLocalDate();
+                    Serial.println("[RTC] date applied from fields");
+                }
+                g_dateEditMode = false;
+                composeClear();
+                g_composeMode = false;
+                g_settingsPage = SET_TIME;
+                g_settingsSel = 5;
+                show_screen(SCR_SETTINGS);
+                return true;
             }
-            g_dateEditMode = false;
-            composeClear();
-            g_composeMode = false;
-            g_settingsPage = SET_TIME;
-            g_settingsSel = 5;
-            show_screen(SCR_SETTINGS);
+            settingsActivate();
             return true;
         }
         if (g_screen == SCR_SETTINGS && g_settingsPage == SET_IDLE_SECS) {
@@ -4082,7 +4129,12 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 }
                 if (ev.character == 'v' || ev.character == 'V' ||
                     ev.character == 's' || ev.character == 'S') {
-                    if (g_settingsSel < 8) g_settingsSel++;
+                    int maxNav = 8;
+                    if (g_settingsPage == SET_MANUAL_TIME) maxNav = 4;
+                    else if (g_settingsPage == SET_MANUAL_DATE) maxNav = 5;
+                    else if (g_settingsPage == SET_IDLE_MODE) maxNav = 3;
+                    else if (g_settingsPage == SET_TIME) maxNav = 6;
+                    if (g_settingsSel < maxNav) g_settingsSel++;
                     // Match build_settings visible window (~4 rows)
                     const int listTop = CONTENT_TOP + 2;
                     const int maxVis = (CONTENT_BOTTOM - listTop - 24) / SET_ROW_H;
@@ -4256,7 +4308,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.64");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.65");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 

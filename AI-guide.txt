@@ -1,9 +1,14 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.64  (2026-10-22)
+Last: G1.65  (2026-10-22)
 ================================================================================
-[FIX] Idle wake: any key (Space/Enter/…) handled first; restores same g_screen
-[FIX] Empty Enter no longer cycles screens (was next_screen → wrong page)
-[FIX] Idle timeout apply: saves 0–99999, resets timer; serial "[IDLE] timeout NOW"
-[FIX] Space only inserts space on Msg/Contacts/Peers (not wake-blocked anymore)
+IDLE
+[DONE] Min timeout 10s (range 10–99999), default 30s
+
+TIME / DATE SUBMENUS (Settings > Time & Location)
+[DONE] 5 Local RTC > submenu:
+         Current | Hour Enter=+ | Minute Enter=+ | Type HHMM | Apply
+[DONE] 6 Local Date > submenu:
+         Current | Month+ | Day+ | Year+ | Type MMDDYY | Apply
+       G/V moves highlight; Enter on Type then digits; Enter Apply sets RTC
 ================================================================================
