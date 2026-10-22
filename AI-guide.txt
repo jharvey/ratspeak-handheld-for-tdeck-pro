@@ -1,9 +1,19 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.62  (2026-10-21)
+Last: G1.63  (2026-10-21)
 ================================================================================
-[FIX] Keyboard backlight: LEDC was never initialized (_ledcReady stayed false).
-      begin() now ledcSetup/AttachPin on BOARD_KEYBOARD_LED (GPIO 42).
-[FIX] Idle splash: maybeEnterIdle() was never called from loop() — now is.
-      Default timeout 30s; does not idle while typing/edit modes active.
+IDLE
+[DONE] Theme-matched idle splash (white or black paper)
+[DONE] Timeout submenu: type 0–99999 seconds (0 = never auto-idle)
+[DONE] Wake clears compose — no send box on Home after idle
+[DONE] No typing/send while idle
+
+COMPOSE
+[DONE] Only Msg Box / Contacts / Peers (plus Settings type-in pages)
+
+NAV
+[DONE] Bottom: Contact | Peers | Msg Box (Msg Box right for thumb)
+
+HOME
+[DONE] No compose/send strip — nav only under RTC
 ================================================================================

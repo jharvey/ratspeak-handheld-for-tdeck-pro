@@ -597,6 +597,11 @@ void applyLoraPreset(int idx) {
 }
 
 void doSendTest(const char* body) {
+    // Only from open Msg Box thread
+    if (g_screen != SCR_CHATS || !g_showHistory) {
+        Serial.println("[TX] send only from Msg Box thread");
+        return;
+    }
     if (g_screen == SCR_SETTINGS || g_screen == SCR_HOME) {
         Serial.println("[TX] ignore - not on Msg Box/Peers/Contacts");
         return;
@@ -925,6 +930,18 @@ void composeLog() {
 
 void composeAppend(char c) {
     if (c < 32 || c > 126) return;
+    // Text only on Msg Box / Contacts / Peers, or settings type-in pages
+    const bool msgScreen = (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS ||
+                            g_screen == SCR_PEERS);
+    const bool settingsType = (g_screen == SCR_SETTINGS &&
+        (g_timeEditMode || g_dateEditMode || g_idleSecsEditMode || g_nameEditMode ||
+         g_settingsPage == SET_MANUAL_TIME || g_settingsPage == SET_MANUAL_DATE ||
+         g_settingsPage == SET_IDLE_SECS));
+    if (!msgScreen && !settingsType) {
+        Serial.println("[COMPOSE] blocked on this screen");
+        return;
+    }
+    if (g_idleActive) return;
     g_composeMode = true;
     if (g_composeLen >= COMPOSE_CAP) {
         Serial.println("[COMPOSE] full");
@@ -1102,9 +1119,10 @@ ScreenId topTabScreen(int i) {
 
 // Map bottom-row index 0..2 -> screen
 ScreenId botTabScreen(int i) {
-    if (i <= 0) return SCR_CHATS;
-    if (i == 1) return SCR_CONTACTS;
-    return SCR_PEERS;
+    // Contact | Peers | Msg Box
+    if (i <= 0) return SCR_CONTACTS;
+    if (i == 1) return SCR_PEERS;
+    return SCR_CHATS;
 }
 
 bool handleTouchAt(int16_t x, int16_t y) {
@@ -1164,12 +1182,13 @@ bool handleTouchAt(int16_t x, int16_t y) {
     // Bottom nav: Contact | Msg Box | Peers
     if (y >= BOT_TOP) {
         ScreenId want = SCR_CONTACTS;
+        // Contact | Peers | Msg Box
         if (x < BOT_CONTACT_W)
             want = SCR_CONTACTS;
-        else if (x < BOT_CONTACT_W + BOT_MSGBOX_W)
-            want = SCR_CHATS;
-        else
+        else if (x < BOT_CONTACT_W + BOT_PEERS_W)
             want = SCR_PEERS;
+        else
+            want = SCR_CHATS;
         Serial.printf("[TAB] bot -> %s\n", tabLabel(want));
         if (want == g_screen) return true;
         g_showHistory = false;
@@ -1834,8 +1853,8 @@ static void draw_ratspeak_logo_bitmap(int cx, int cy) {
                 int x = xb * 8 + bit;
                 if (x >= w) break;
                 bool srcBlack = (byte & (0x80 >> bit)) != 0;
-                // Invert polarity for dark splash: light PNG pixels -> white panel
-                bool panelBlack = srcBlack;  // dark stays black; light (0) stays white
+                // Dark theme: keep PNG polarity. Light theme: invert so mark is black on white.
+                bool panelBlack = g_darkTheme ? srcBlack : !srcBlack;
                 int px = x0 + x;
                 int py = y0 + y;
                 if (px < 0 || py < 0 || px >= (int)EPD_WIDTH || py >= (int)EPD_HEIGHT)
@@ -1852,24 +1871,25 @@ void noteUserInput() {
     g_lastInputMs = millis() ? millis() : 1;
     if (g_idleActive) {
         g_idleActive = false;
+        // Never carry compose into non-message screens after idle
+        composeClear();
+        g_composeMode = false;
+        g_showHistory = false;
         Serial.println("[IDLE] wake");
         show_screen(g_screen);
     }
 }
 
 void draw_idle_screen() {
-    const bool saved = g_darkTheme;
-    g_darkTheme = true;
+    // Match current theme (white paper or black ink) — do not force dark
     clear_screen();
     draw_label_centered(0, 110, EPD_WIDTH, 22, "RatSpeak", true);
-    // Clock HH:MM only
     char lt[12], ld[12];
     formatLocalTime(lt, sizeof(lt));
     formatLocalDate(ld, sizeof(ld));
     char clockLine[40];
     snprintf(clockLine, sizeof(clockLine), "%s  %s  %s", lt, ld, tzName());
     draw_label_centered(0, 130, EPD_WIDTH, 22, clockLine, true);
-    // Battery
     int pct = -1;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
@@ -1877,12 +1897,11 @@ void draw_idle_screen() {
     char bp[12];
     snprintf(bp, sizeof(bp), "%s", g_pctStr);
     draw_label_centered(0, 188, EPD_WIDTH, 18, bp, false);
-    // Wake hint
     draw_label_centered(0, 250, EPD_WIDTH, 20, "press SPACE to wake", false);
     lv_refr_now(nullptr);
+    // Logo polarity: invert mark on white paper so it stays visible
     draw_ratspeak_logo_bitmap(EPD_WIDTH / 2, 48);
     g_display.refreshIfDirty();
-    g_darkTheme = saved;
 }
 
 void maybeEnterIdle() {
@@ -1895,10 +1914,12 @@ void maybeEnterIdle() {
         g_lastInputMs = millis() ? millis() : 1;
         return;
     }
+    if (g_idleTimeoutSec == 0) return;  // 0 = never auto-idle
     uint32_t idleMs = g_idleTimeoutSec * 1000UL;
-    if (idleMs < 1000UL) idleMs = 1000UL;
     if ((millis() - g_lastInputMs) < idleMs) return;
     g_idleActive = true;
+    composeClear();
+    g_composeMode = false;
     Serial.println("[IDLE] enter splash");
     draw_idle_screen();
 }
@@ -2089,12 +2110,13 @@ void draw_nav() {
     draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
     draw_nav_box(TOP_REFRESH_W, 0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS, 'S');
     draw_nav_box(TOP_REFRESH_W + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home", g_screen == SCR_HOME, 'H');
+    // Contact | Peers | Msg Box — Msg Box rightmost for right-thumb reach
     int x0 = 0;
     draw_nav_box(x0, BOT_TOP, BOT_CONTACT_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, 'C');
     x0 += BOT_CONTACT_W;
-    draw_nav_box(x0, BOT_TOP, BOT_MSGBOX_W, BOT_H, "Msg Box", g_screen == SCR_CHATS, 'M');
-    x0 += BOT_MSGBOX_W;
     draw_nav_box(x0, BOT_TOP, BOT_PEERS_W, BOT_H, "Peers", g_screen == SCR_PEERS, 'P');
+    x0 += BOT_PEERS_W;
+    draw_nav_box(x0, BOT_TOP, BOT_MSGBOX_W, BOT_H, "Msg Box", g_screen == SCR_CHATS, 'M');
 }
 
 
@@ -2768,7 +2790,8 @@ void build_home() {
     snprintf(rtcLine, sizeof(rtcLine), "RTC %s %s %s", lt, ld, tzName());
     fat_label(g_root, rtcLine, 4, sy + 34 + HOME_ANN_H + 4);
 
-    draw_compose_or_hint("");
+    // Home: nav only — never compose/send strip
+    draw_nav();
 }
 
 void build_list_body(const char* /*section*/, const char* emptyNote,
@@ -3285,19 +3308,33 @@ void settingsActivate() {
         if (g_settingsSel == 0) {
             g_idleMode = 0;
             Serial.println("[IDLE] mode=off");
+            g_settingsPage = SET_SCREEN;
+            g_settingsSel = 2;
+            show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 1) {
             g_idleMode = 1;
             Serial.println("[IDLE] mode=no-password");
+            g_settingsPage = SET_SCREEN;
+            g_settingsSel = 2;
+            show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 2) {
-            // Password TBD — do nothing
             Serial.println("[IDLE] password TBD");
             show_screen(SCR_SETTINGS);
-            return;
+        } else if (g_settingsSel == 3) {
+            g_settingsPage = SET_IDLE_SECS;
+            g_settingsSel = 0;
+            g_idleSecsEditMode = true;
+            g_composeMode = true;
+            composeClear();
+            char tmp[12];
+            snprintf(tmp, sizeof(tmp), "%u", (unsigned)g_idleTimeoutSec);
+            for (size_t i = 0; tmp[i] && g_composeLen < COMPOSE_CAP; i++) {
+                g_compose[g_composeLen++] = tmp[i];
+                g_compose[g_composeLen] = 0;
+            }
+            Serial.printf("[IDLE] edit timeout was %u s\n", (unsigned)g_idleTimeoutSec);
+            show_screen(SCR_SETTINGS);
         }
-        g_settingsPage = SET_SCREEN;
-        g_settingsSel = 2;
-        g_settingsScroll = 0;
-        show_screen(SCR_SETTINGS);
         return;
     }
     if (g_settingsPage == SET_LORA) {
@@ -3344,7 +3381,7 @@ void settingsActivate() {
             g_composeMode = true;
             composeClear();
             show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 7) {
+        } else if (g_settingsSel == 6) {
             gpsSetEnabled(!g_gpsEnabled);
             show_screen(SCR_SETTINGS);
         }
@@ -3392,7 +3429,6 @@ void settingsActivate() {
                 if (g_compose[i] >= '0' && g_compose[i] <= '9')
                     v = v * 10 + (uint32_t)(g_compose[i] - '0');
             }
-            if (v < 1) v = 1;
             if (v > 99999) v = 99999;
             g_idleTimeoutSec = v;
             Serial.printf("[IDLE] timeout %u s\n", (unsigned)g_idleTimeoutSec);
@@ -3480,7 +3516,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.62", 0);
+        row("Firmware", "Pro G1.63", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -3514,9 +3550,9 @@ void build_settings() {
     if (g_settingsPage == SET_IDLE_SECS) {
         char st[24];
         snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "30");
-        row("Seconds (1-99999)", st, 0);
+        row("Seconds (0-99999)", st, 0);
         row("Enter=save", "^=cancel", 1);
-        draw_compose_or_hint("Type seconds  Enter=save");
+        draw_compose_or_hint("Type 0-99999  Enter=save");
         return;
     }
     if (g_settingsPage == SET_MANUAL_TIME) {
@@ -3654,6 +3690,13 @@ void build_settings() {
 }
 
 void show_screen(ScreenId id) {
+    if (id == SCR_HOME || id == SCR_SETTINGS) {
+        if (!g_timeEditMode && !g_dateEditMode && !g_idleSecsEditMode && !g_nameEditMode) {
+            composeClear();
+            g_composeMode = false;
+        }
+    }
+
     if (id == SCR_SETTINGS && g_screen != SCR_SETTINGS) {
         // Entering Settings from another tab → root list
         g_settingsPage = SET_ROOT;
@@ -3999,8 +4042,22 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS ||
                  g_screen == SCR_PEERS);
 
+            // Settings type-in pages: digits always go to compose (even if empty)
+            if (g_screen == SCR_SETTINGS &&
+                (g_settingsPage == SET_IDLE_SECS || g_settingsPage == SET_MANUAL_TIME ||
+                 g_settingsPage == SET_MANUAL_DATE || g_idleSecsEditMode ||
+                 g_timeEditMode || g_dateEditMode)) {
+                if (ev.character >= '0' && ev.character <= '9') {
+                    composeAppend(ev.character);
+                    show_screen(SCR_SETTINGS);
+                    return true;
+                }
+            }
             // 1-9: select peer (never type digit while compose empty on msg screens)
-            if (g_screen == SCR_SETTINGS && g_composeLen == 0) {
+            if (g_screen == SCR_SETTINGS && g_composeLen == 0 &&
+                g_settingsPage != SET_IDLE_SECS &&
+                g_settingsPage != SET_MANUAL_TIME &&
+                g_settingsPage != SET_MANUAL_DATE) {
                 // W/S move highlight (scroll into view). Lone Shift = Back.
                 // G = up (above V), W also up; V/S = down
                 if (ev.character == 'g' || ev.character == 'G' ||
@@ -4170,6 +4227,12 @@ bool handleKeyEvent(const KeyEvent& ev) {
         }
         // Name-edit sub-screen or message thread: append to compose
         composeAppend(ev.character);
+        if (g_screen == SCR_SETTINGS &&
+            (g_settingsPage == SET_IDLE_SECS || g_settingsPage == SET_MANUAL_TIME ||
+             g_settingsPage == SET_MANUAL_DATE)) {
+            show_screen(SCR_SETTINGS);
+            return true;
+        }
         return false;
     }
 
@@ -4181,7 +4244,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.62");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.63");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
