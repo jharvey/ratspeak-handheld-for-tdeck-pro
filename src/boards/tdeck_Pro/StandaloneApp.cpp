@@ -1871,12 +1871,11 @@ void noteUserInput() {
     g_lastInputMs = millis() ? millis() : 1;
     if (g_idleActive) {
         g_idleActive = false;
-        // Never carry compose into non-message screens after idle
+        // Drop any stale compose; keep g_screen and thread state as they were
         composeClear();
         g_composeMode = false;
-        g_showHistory = false;
-        Serial.println("[IDLE] wake");
-        show_screen(g_screen);
+        Serial.printf("[IDLE] wake -> screen %u\n", (unsigned)g_screen);
+        show_screen(g_screen);  // same page as before idle
     }
 }
 
@@ -1916,11 +1915,14 @@ void maybeEnterIdle() {
     }
     if (g_idleTimeoutSec == 0) return;  // 0 = never auto-idle
     uint32_t idleMs = g_idleTimeoutSec * 1000UL;
-    if ((millis() - g_lastInputMs) < idleMs) return;
+    uint32_t elapsed = millis() - g_lastInputMs;
+    if (elapsed < idleMs) return;
     g_idleActive = true;
     composeClear();
     g_composeMode = false;
-    Serial.println("[IDLE] enter splash");
+    Serial.printf("[IDLE] enter splash after %u s (limit %u s) screen=%u\n",
+                  (unsigned)(elapsed / 1000UL), (unsigned)g_idleTimeoutSec,
+                  (unsigned)g_screen);
     draw_idle_screen();
 }
 
@@ -3422,20 +3424,21 @@ void settingsActivate() {
         return;
     }
     if (g_settingsPage == SET_IDLE_SECS) {
-        // Apply typed seconds or keep
+        // Apply typed seconds (0–99999). Empty keeps previous.
         if (g_composeLen > 0) {
             uint32_t v = 0;
             for (size_t i = 0; i < g_composeLen; i++) {
                 if (g_compose[i] >= '0' && g_compose[i] <= '9')
                     v = v * 10 + (uint32_t)(g_compose[i] - '0');
             }
-            if (v > 99999) v = 99999;
+            if (v > 99999UL) v = 99999UL;
             g_idleTimeoutSec = v;
-            Serial.printf("[IDLE] timeout %u s\n", (unsigned)g_idleTimeoutSec);
         }
         g_idleSecsEditMode = false;
         composeClear();
         g_composeMode = false;
+        g_lastInputMs = millis() ? millis() : 1;  // restart idle timer from now
+        Serial.printf("[IDLE] timeout NOW %u s (timer reset)\n", (unsigned)g_idleTimeoutSec);
         g_settingsPage = SET_IDLE_MODE;
         g_settingsSel = 3;
         show_screen(SCR_SETTINGS);
@@ -3516,7 +3519,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.63", 0);
+        row("Firmware", "Pro G1.64", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -3804,6 +3807,12 @@ bool handleKeyEvent(const KeyEvent& ev) {
         g_display.fullRefresh();
         return false;
     }
+    // Idle: any key (Space, Enter, letter, …) wakes back to the same screen
+    if (g_idleActive) {
+        Serial.printf("[IDLE] wake key screen=%u\n", (unsigned)g_screen);
+        noteUserInput();
+        return true;  // already redrew prior screen
+    }
     // Keyboard Up / lone Shift: in Settings list move selection up; else Back
     if (ev.up) {
         if (g_screen == SCR_SETTINGS && g_settingsPage == SET_ROOT && g_settingsSel > 0) {
@@ -4017,8 +4026,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
             settingsActivate();
             return true;
         }
-        Serial.println("[KEY] Enter empty - next screen");
-        next_screen();
+        // Home / other: stay put (do not cycle screens)
         return false;
     }
 
@@ -4028,7 +4036,11 @@ bool handleKeyEvent(const KeyEvent& ev) {
     }
 
     if (ev.space) {
-        composeAppend(' ');
+        // Space inserts only while composing on Msg Box / Contacts / Peers
+        if (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS ||
+            g_nameEditMode) {
+            composeAppend(' ');
+        }
         return false;
     }
 
@@ -4244,7 +4256,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.63");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.64");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 

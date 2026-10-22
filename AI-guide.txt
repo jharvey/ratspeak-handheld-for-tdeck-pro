@@ -1,19 +1,9 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.63  (2026-10-21)
+Last: G1.64  (2026-10-22)
 ================================================================================
-IDLE
-[DONE] Theme-matched idle splash (white or black paper)
-[DONE] Timeout submenu: type 0–99999 seconds (0 = never auto-idle)
-[DONE] Wake clears compose — no send box on Home after idle
-[DONE] No typing/send while idle
-
-COMPOSE
-[DONE] Only Msg Box / Contacts / Peers (plus Settings type-in pages)
-
-NAV
-[DONE] Bottom: Contact | Peers | Msg Box (Msg Box right for thumb)
-
-HOME
-[DONE] No compose/send strip — nav only under RTC
+[FIX] Idle wake: any key (Space/Enter/…) handled first; restores same g_screen
+[FIX] Empty Enter no longer cycles screens (was next_screen → wrong page)
+[FIX] Idle timeout apply: saves 0–99999, resets timer; serial "[IDLE] timeout NOW"
+[FIX] Space only inserts space on Msg/Contacts/Peers (not wake-blocked anymore)
 ================================================================================
