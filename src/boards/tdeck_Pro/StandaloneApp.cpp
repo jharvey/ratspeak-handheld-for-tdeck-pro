@@ -2279,7 +2279,7 @@ static void draw_settings_footer(const char* extra) {
 
     // Underlined G / V  (hotkeys)
     auto hot = [&](const char* key, const char* rest, int x) {
-        const lv_font_t* font = &lv_font_montserrat_14;
+        const lv_font_t* font = &lv_font_montserrat_16;
         lv_obj_t* k = lv_label_create(g_root);
         lv_label_set_text(k, key);
         lv_obj_set_style_text_font(k, font, 0);
@@ -2352,8 +2352,7 @@ void draw_compose_or_hint(const char* idleHint) {
         if (line1[0]) fat_label(g_root, line1, 6, y0 + 1);
         if (line2[0]) fat_label(g_root, line2, 6, y0 + COMPOSE_LINE_H);
         const int y3 = y0 + 2 * COMPOSE_LINE_H;
-        draw_enter_key_icon(6, y3 + 1);
-        fat_label(g_root, g_nameEditMode ? "Enter=save" : "Enter=send", 30, y3);
+        fat_label(g_root, g_nameEditMode ? "[Ent] save" : "[Ent] send", 6, y3);
         draw_nav();
         return;
     }
