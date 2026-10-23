@@ -3395,13 +3395,8 @@ void build_peers() {
     clampSelPeer();
 
     clear_screen();
-    int y = CONTENT_TOP;
-    char sec[28];
-    // no section title — more room for rows
-    (void)0;
-    char sec[4] = "";
-    fat_label(g_root, sec, 8, y);
-    y += 24;
+    int y = CONTENT_TOP + 4;
+    // no RECENT PEERS title — more room for rows
     if (g_msgRowCount == 0) {
         fat_label(g_root, g_msgNote, 8, y);
     } else {
