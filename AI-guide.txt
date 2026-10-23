@@ -1,14 +1,19 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.65  (2026-10-22)
+Last: G1.66  (2026-10-22)
 ================================================================================
-IDLE
-[DONE] Min timeout 10s (range 10–99999), default 30s
+BATTERY
+[DONE] Trust BQ27220 StateOfCharge (0x2C); voltage curve only if SOC fails
 
-TIME / DATE SUBMENUS (Settings > Time & Location)
-[DONE] 5 Local RTC > submenu:
-         Current | Hour Enter=+ | Minute Enter=+ | Type HHMM | Apply
-[DONE] 6 Local Date > submenu:
-         Current | Month+ | Day+ | Year+ | Type MMDDYY | Apply
-       G/V moves highlight; Enter on Type then digits; Enter Apply sets RTC
+IDLE
+[DONE] Keyboard wake only (touch ignored)
+[DONE] Shows NEW/unread message count
+[DONE] fullRefresh on enter (reduce ghosting)
+
+GPS
+[DONE] applyTimezoneEnv after GPS→RTC sync; 15s acquiring log
+       Cold start outdoors can take several minutes; enable GPS in Settings
+
+TIME
+[DONE] Local RTC opens Type time (HHMM text entry) focused
 ================================================================================

@@ -331,54 +331,45 @@ static bool bqReadU16(uint8_t reg, uint16_t& out) {
 }
 
 bool readBattery(float& volts, int& pct) {
-    // BQ27220: Voltage 0x08, RelativeSOC 0x2C, AvgCurrent 0x14 (signed mA), Flags 0x0A
-    // Gauge SoC is often pessimistic until learned; when charging / high V trust voltage more.
+    // BQ27220 fuel gauge (I2C 0x55): use chip StateOfCharge as primary.
+    // Standard cmds: Voltage 0x08, Flags 0x0A, AvgCurrent 0x14, StateOfCharge 0x2C.
     uint32_t mvSum = 0, socSum = 0;
-    int nOk = 0;
+    int nOk = 0, nSoc = 0;
     int32_t curSum = 0;
     int nCur = 0;
-    for (int i = 0; i < 5; i++) {
-        uint16_t mv = 0, soc = 0, curRaw = 0;
+    uint16_t flags = 0;
+    for (int i = 0; i < 4; i++) {
+        uint16_t mv = 0, soc = 0, curRaw = 0, fl = 0;
         if (!bqReadU16(0x08, mv)) continue;
-        if (!bqReadU16(0x2C, soc)) continue;
         if (mv < 2500 || mv > 4500) continue;
         mvSum += mv;
-        socSum += (soc > 100) ? 100 : soc;
         nOk++;
+        if (bqReadU16(0x2C, soc) && soc <= 100) {
+            socSum += soc;
+            nSoc++;
+        }
         if (bqReadU16(0x14, curRaw)) {
-            curSum += (int16_t)curRaw;  // signed mA
+            curSum += (int16_t)curRaw;
             nCur++;
         }
-        delay(3);
+        if (bqReadU16(0x0A, fl)) flags = fl;
+        delay(2);
     }
     if (nOk == 0) return false;
     volts = (mvSum / (float)nOk) / 1000.0f;
-    int gaugePct = (int)(socSum / nOk);
-    int curvePct = lipoPctFromVolts(volts);
     int16_t avgMa = (nCur > 0) ? (int16_t)(curSum / nCur) : 0;
-    bool charging = (avgMa > 15);  // charging into cell
+    bool charging = (avgMa > 10) || (flags & 0x0001);  // CHG-ish
 
-    // Full / near-full by terminal voltage (USB float ~4.15–4.22V)
-    if (volts >= 4.18f) {
-        pct = 100;
-    } else if (volts >= 4.12f && charging) {
-        pct = 99;
-    } else if (charging) {
-        // While charging, never report below the better of gauge/curve
-        pct = gaugePct > curvePct ? gaugePct : curvePct;
-        if (volts >= 4.05f && pct < 85) pct = 85;
-        if (volts >= 3.95f && pct < 70) pct = 70;
+    if (nSoc > 0) {
+        // Trust the gauge IC — that is what BQ27220 is for
+        pct = (int)(socSum / nSoc);
     } else {
-        // Discharging: prefer gauge when close to curve; otherwise blend
-        if (abs(gaugePct - curvePct) <= 15) {
-            pct = gaugePct;
-        } else if (volts >= 4.00f) {
-            // High voltage: lean toward curve (gauge often under-reads)
-            pct = (gaugePct + curvePct * 2) / 3;
-        } else {
-            pct = (gaugePct * 2 + curvePct) / 3;
-        }
+        // Fallback only if SOC register fails
+        pct = lipoPctFromVolts(volts);
+        Serial.println("[BAT] SOC reg fail — voltage curve fallback");
     }
+    // Soft ceiling while USB float
+    if (charging && volts >= 4.16f && pct < 100) pct = 100;
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
     return true;
@@ -1126,7 +1117,11 @@ ScreenId botTabScreen(int i) {
 }
 
 bool handleTouchAt(int16_t x, int16_t y) {
-    if (g_idleActive) { noteUserInput(); return true; }
+    // Idle: ignore touch — keyboard only to wake
+    if (g_idleActive) {
+        Serial.println("[IDLE] touch ignored (press a key)");
+        return true;
+    }
     noteUserInput();
     Serial.printf("[TOUCH] xy=%d,%d screen=%u\n", (int)x, (int)y, (unsigned)g_screen);
 
@@ -1881,27 +1876,41 @@ void noteUserInput() {
 }
 
 void draw_idle_screen() {
-    // Match current theme (white paper or black ink) — do not force dark
+    // Match current theme; full refresh after draw to clear ghosting
     clear_screen();
-    draw_label_centered(0, 110, EPD_WIDTH, 22, "RatSpeak", true);
+    draw_label_centered(0, 100, EPD_WIDTH, 22, "RatSpeak", true);
     char lt[12], ld[12];
     formatLocalTime(lt, sizeof(lt));
     formatLocalDate(ld, sizeof(ld));
     char clockLine[40];
     snprintf(clockLine, sizeof(clockLine), "%s  %s  %s", lt, ld, tzName());
-    draw_label_centered(0, 130, EPD_WIDTH, 22, clockLine, true);
+    draw_label_centered(0, 122, EPD_WIDTH, 22, clockLine, true);
     int pct = -1;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
-    draw_battery_gauge(EPD_WIDTH / 2 - 20, 165, 36, 16, pct);
-    char bp[12];
+    draw_battery_gauge(EPD_WIDTH / 2 - 20, 150, 36, 16, pct);
+    char bp[16];
     snprintf(bp, sizeof(bp), "%s", g_pctStr);
-    draw_label_centered(0, 188, EPD_WIDTH, 18, bp, false);
-    draw_label_centered(0, 250, EPD_WIDTH, 20, "press SPACE to wake", false);
+    draw_label_centered(0, 172, EPD_WIDTH, 18, bp, false);
+    // New / unread messages
+    unsigned unread = 0, neu = 0;
+    if (g_storeReady) {
+        unread = (unsigned)g_msgStore.totalUnreadCount();
+        // "new" = unread as proxy when no separate new counter
+        neu = unread;
+    }
+    char msgLine[40];
+    if (unread > 0)
+        snprintf(msgLine, sizeof(msgLine), "NEW messages: %u unread", unread);
+    else
+        snprintf(msgLine, sizeof(msgLine), "No new messages");
+    draw_label_centered(0, 200, EPD_WIDTH, 18, msgLine, unread > 0);
+    draw_label_centered(0, 250, EPD_WIDTH, 20, "press a KEY to wake", false);
     lv_refr_now(nullptr);
-    // Logo polarity: invert mark on white paper so it stays visible
-    draw_ratspeak_logo_bitmap(EPD_WIDTH / 2, 48);
-    g_display.refreshIfDirty();
+    draw_ratspeak_logo_bitmap(EPD_WIDTH / 2, 42);
+    // Full panel refresh clears ghosting from previous UI
+    g_display.fullRefresh();
+    Serial.println("[IDLE] fullRefresh done");
 }
 
 void maybeEnterIdle() {
@@ -2428,7 +2437,9 @@ static bool syncGpsToRtc() {
     if (epoch <= 0) return false;
     struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
     settimeofday(&tv, nullptr);
-    Serial.printf("[RTC] synced from GPS %s %s\\n", g_gpsDateStr, g_gpsTimeStr);
+    applyTimezoneEnv();
+    Serial.printf("[RTC] synced from GPS %s %s (%s)\n",
+                  g_gpsDateStr, g_gpsTimeStr, tzName());
     return true;
 }
 
@@ -2679,6 +2690,7 @@ void gpsPoll() {
                             if (epoch > 0) {
                                 struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
                                 settimeofday(&tv, nullptr);
+                                applyTimezoneEnv();
                             }
                         }
                     } else {
@@ -3371,17 +3383,18 @@ void settingsActivate() {
         } else if (g_settingsSel == 4) {
             loadManualFromClock();
             g_settingsPage = SET_MANUAL_TIME;
-            g_settingsSel = 1;  // land on Hour
-            g_timeEditMode = false;
-            g_composeMode = false;
+            g_settingsSel = 3;  // Type HHMM
+            g_timeEditMode = true;
+            g_composeMode = true;
             composeClear();
+            // Prefill current as hint digits optional — leave empty for clean type-in
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 5) {
             loadManualDateFromClock();
             g_settingsPage = SET_MANUAL_DATE;
-            g_settingsSel = 1;  // land on Month
-            g_dateEditMode = false;
-            g_composeMode = false;
+            g_settingsSel = 4;  // Type MMDDYY
+            g_dateEditMode = true;
+            g_composeMode = true;
             composeClear();
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 6) {
@@ -3542,7 +3555,7 @@ void build_settings() {
     fat_label(g_root, a, 4, y); y += 18;
 
     if (g_settingsPage == SET_IDENTITY) {
-        row("Firmware", "Pro G1.65", 0);
+        row("Firmware", "Pro G1.66", 0);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
         row("LXMF Address", a, 1);
         snprintf(a, sizeof(a), "%.16s", g_destHex);
@@ -3582,20 +3595,20 @@ void build_settings() {
         return;
     }
     if (g_settingsPage == SET_MANUAL_TIME) {
-        char st[28];
+        char st[32];
         snprintf(st, sizeof(st), "%02d:%02d %s", g_manualHour, g_manualMin, tzName());
-        row("1 Current", st, 0);
-        snprintf(st, sizeof(st), "%02d  Enter=+", g_manualHour);
+        row("1 Now", st, 0);
+        snprintf(st, sizeof(st), "%02d  Enter=+1h", g_manualHour);
         row("2 Hour", st, 1);
-        snprintf(st, sizeof(st), "%02d  Enter=+", g_manualMin);
+        snprintf(st, sizeof(st), "%02d  Enter=+1m", g_manualMin);
         row("3 Minute", st, 2);
-        if (g_timeEditMode)
-            snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "HHMM");
+        if (g_timeEditMode || g_composeLen)
+            snprintf(st, sizeof(st), ">%s_", g_composeLen ? g_compose : "");
         else
-            strcpy(st, "Enter then type");
-        row("4 Type HHMM", st, 3);
-        row("5 Apply time", "Enter=set RTC", 4);
-        draw_compose_or_hint(g_timeEditMode ? "Type HHMM Enter=Apply" : "G/V move  Enter=+");
+            strcpy(st, "type 4 digits");
+        row("4 Type time", st, 3);
+        row("5 Apply", "Enter sets RTC", 4);
+        draw_compose_or_hint("Type HHMM e.g. 1430 then Enter");
         return;
     }
     if (g_settingsPage == SET_MANUAL_DATE) {
@@ -4308,7 +4321,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.65");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.66");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
