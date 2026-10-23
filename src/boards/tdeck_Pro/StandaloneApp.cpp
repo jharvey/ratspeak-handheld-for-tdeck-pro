@@ -30,6 +30,9 @@
 #include "ratspeak_protocol.h"
 #include "util/Bytes.h"
 
+// From Keyboard.cpp — force number layer for numeric settings fields
+extern void keyboardSetNumLayer(bool on);
+
 namespace standalone {
 namespace {
 
@@ -104,6 +107,8 @@ int      g_manualYear = 2026;
 bool     g_dateEditMode = false;
 bool     g_idleSecsEditMode = false;
 char     g_idleRangeMsg[24] = {0};  // "Out of range" feedback
+char     g_numsOnlyMsg[24] = {0};   // "nums only" flash
+
 
 // Which RTC field is being typed: 0=hour 1=min 2=mon 3=day 4=year
 int      g_rtcField = 0;
@@ -950,6 +955,16 @@ void composeAppend(char c) {
         return;
     }
     if (g_idleActive) return;
+    if (isNumEntryMode()) {
+        if (c < '0' || c > '9') {
+            snprintf(g_numsOnlyMsg, sizeof(g_numsOnlyMsg), "nums only");
+            Serial.println("[COMPOSE] nums only");
+            // brief redraw to show message in footer
+            if (g_screen == SCR_SETTINGS) show_screen(SCR_SETTINGS);
+            return;
+        }
+        g_numsOnlyMsg[0] = 0;
+    }
     g_composeMode = true;
     if (g_composeLen >= COMPOSE_CAP) {
         Serial.println("[COMPOSE] full");
@@ -1175,25 +1190,34 @@ bool handleTouchAt(int16_t x, int16_t y) {
         return false;
     }
 
-    // Top nav: Settings | Home  (on Settings sub-page, left half = Back)
+    // Top nav: Refresh | Settings | Home  (Home always leaves to Home)
     if (y < TOP_H) {
-        // Refresh icon (left of Settings)
         if (x < TOP_REFRESH_W) {
             Serial.println("[UI] touch fullRefresh");
             g_display.fullRefresh();
             return true;
         }
-        if (g_screen == SCR_SETTINGS && g_settingsPage != SET_ROOT) {
-            Serial.println("[TAB] Settings Back");
-            settingsGoBack();
-            return true;
-        }
         int adj = x - TOP_REFRESH_W;
         int i = (adj < TOP_TAB_W) ? 0 : 1;
         ScreenId want = topTabScreen(i);
+        // Settings tab on a sub-page → still go to Settings root, not Back
+        if (want == SCR_SETTINGS && g_screen == SCR_SETTINGS) {
+            if (g_settingsPage != SET_ROOT) {
+                g_settingsPage = SET_ROOT;
+                g_settingsSel = g_settingsRootSel;
+                g_settingsScroll = 0;
+                show_screen(SCR_SETTINGS);
+                return true;
+            }
+            return true;
+        }
         Serial.printf("[TAB] top -> %s\n", tabLabel(want));
         if (want == g_screen) return true;
         g_showHistory = false;
+        g_nameEditMode = false;
+        composeClear();
+        g_composeMode = false;
+        keyboardSetNumLayer(false);
         show_screen(want);
         return true;
     }
@@ -1891,6 +1915,18 @@ static void draw_ratspeak_logo_bitmap(int cx, int cy) {
 }
 
 
+bool isNumEntryMode() {
+    if (g_screen != SCR_SETTINGS) return false;
+    if (g_settingsPage == SET_IDLE_SECS && g_idleSecsEditMode) return true;
+    if (g_settingsPage == SET_MANUAL_TIME && g_timeEditMode) return true;
+    if (g_settingsPage == SET_MANUAL_DATE && g_dateEditMode) return true;
+    return false;
+}
+
+void syncNumLayer() {
+    keyboardSetNumLayer(isNumEntryMode());
+}
+
 void noteUserInput() {
     g_lastInputMs = millis() ? millis() : 1;
     if (g_idleActive) {
@@ -2219,7 +2255,7 @@ void draw_menu_row(int y, int h, const char* title, const char* sub, bool select
     if (title && title[0] >= '0' && title[0] <= '9') {
         lv_obj_t* bar = lv_obj_create(row);
         lv_obj_set_size(bar, 10, 2);
-        lv_obj_set_pos(bar, 6, hasSub ? 18 : (h - 16) / 2 + 14);
+        lv_obj_set_pos(bar, 6, hasSub ? 20 : (h - 16) / 2 + 16);
         lv_obj_set_style_radius(bar, 0, 0);
         lv_obj_set_style_border_width(bar, 0, 0);
         lv_obj_set_style_bg_color(bar, theme_fg(), 0);
@@ -2264,10 +2300,66 @@ void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
 }
 
 // Settings / list footer: short key legend just above bottom nav (underlined keys)
+
+// Settings path under refresh icon, e.g. 7  7>1  7>3>2>4
+static void drawSettingsPath() {
+    if (g_screen != SCR_SETTINGS) return;
+    char path[24] = "7";
+    switch (g_settingsPage) {
+        case SET_ROOT:      strcpy(path, "7"); break;
+        case SET_TIME:      strcpy(path, "7>1"); break;
+        case SET_MANUAL_TIME: strcpy(path, "7>1>1"); break;
+        case SET_TZ:        strcpy(path, "7>1>2"); break;
+        case SET_MANUAL_LOC: strcpy(path, "7>1>4"); break;
+        case SET_IDENTITY:  strcpy(path, "7>2"); break;
+        case SET_SCREEN:    strcpy(path, "7>3"); break;
+        case SET_IDLE_MODE: strcpy(path, "7>3>2"); break;
+        case SET_IDLE_SECS: strcpy(path, "7>3>2>4"); break;
+        case SET_BATTERY:   strcpy(path, "7>4"); break;
+        case SET_LORA:      strcpy(path, "7>5"); break;
+        case SET_NETWORK:   strcpy(path, "7>6"); break;
+        case SET_AUDIO:     strcpy(path, "7>7"); break;
+        case SET_DIAG:      strcpy(path, "7>8"); break;
+        case SET_STORAGE:   strcpy(path, "7>9"); break;
+        default:            strcpy(path, "7"); break;
+    }
+    // Just under refresh button (left)
+    fat_label(g_root, path, 2, TOP_H + 1);
+}
+
+// Small up-chevron for Back (Shift) — drawn near path on settings sub-pages
+static void drawUpArrowBack(int x, int y) {
+    // 10x8 chevron pointing up
+    lv_obj_t* stem = lv_obj_create(g_root);
+    lv_obj_set_size(stem, 2, 6);
+    lv_obj_set_pos(stem, x + 4, y + 3);
+    lv_obj_set_style_border_width(stem, 0, 0);
+    lv_obj_set_style_bg_color(stem, theme_fg(), 0);
+    lv_obj_set_style_bg_opa(stem, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(stem, LV_OBJ_FLAG_SCROLLABLE);
+    // Left arm
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t* p = lv_obj_create(g_root);
+        lv_obj_set_size(p, 2, 2);
+        lv_obj_set_pos(p, x + 4 - i, y + i);
+        lv_obj_set_style_border_width(p, 0, 0);
+        lv_obj_set_style_bg_color(p, theme_fg(), 0);
+        lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
+    }
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t* p = lv_obj_create(g_root);
+        lv_obj_set_size(p, 2, 2);
+        lv_obj_set_pos(p, x + 4 + i, y + i);
+        lv_obj_set_style_border_width(p, 0, 0);
+        lv_obj_set_style_bg_color(p, theme_fg(), 0);
+        lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
+    }
+}
+
 static void draw_settings_footer(const char* extra) {
-    // Sit in the strip just above BOT_TOP — keep short to avoid clip/overlap
     const int y = BOT_TOP - 18;
-    // Clear thin band
     lv_obj_t* band = lv_obj_create(g_root);
     lv_obj_set_size(band, EPD_WIDTH, 16);
     lv_obj_set_pos(band, 0, y);
@@ -2277,7 +2369,10 @@ static void draw_settings_footer(const char* extra) {
     lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
     lv_obj_clear_flag(band, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Underlined G / V  (hotkeys)
+    // Up-arrow = Back (Shift). Drawn left of G/V legend.
+    if (g_settingsPage != SET_ROOT)
+        drawUpArrowBack(2, y);
+
     auto hot = [&](const char* key, const char* rest, int x) {
         const lv_font_t* font = &lv_font_montserrat_16;
         lv_obj_t* k = lv_label_create(g_root);
@@ -2285,19 +2380,24 @@ static void draw_settings_footer(const char* extra) {
         lv_obj_set_style_text_font(k, font, 0);
         lv_obj_set_style_text_color(k, theme_fg(), 0);
         lv_obj_set_pos(k, x, y);
+        // Underline a bit lower so it does not crowd the glyph
         lv_obj_t* bar = lv_obj_create(g_root);
         lv_obj_set_size(bar, 8, 2);
-        lv_obj_set_pos(bar, x, y + 14);
+        lv_obj_set_pos(bar, x, y + 16);
         lv_obj_set_style_border_width(bar, 0, 0);
         lv_obj_set_style_bg_color(bar, theme_fg(), 0);
         lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
         lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
         fat_label(g_root, rest, x + 10, y);
     };
-    hot("G", " up", 4);
-    hot("V", " dn", 48);
-    if (extra && extra[0])
-        fat_label(g_root, extra, 100, y);
+    const int gx = (g_settingsPage != SET_ROOT) ? 18 : 4;
+    hot("G", " up", gx);
+    hot("V", " dn", gx + 44);
+    const char* ex = extra;
+    if (g_numsOnlyMsg[0])
+        ex = g_numsOnlyMsg;
+    if (ex && ex[0])
+        fat_label(g_root, ex, gx + 90, y);
     draw_nav();
 }
 
@@ -3518,8 +3618,9 @@ void build_settings() {
     char a[40], b[36];
     int y = CONTENT_TOP + 2;
 
-    // No "^ Back" header — Shift/up is Back; G/V shown in footer
-    // List geometry (shared with touch)
+    drawSettingsPath();  // e.g. 7>1>1 under refresh
+    // List starts below path line
+    y = TOP_H + 14;
     y += SETTINGS_LIST_PAD;
     g_setListTop = y + SETTINGS_HINT_H;
     g_setListBot = CONTENT_BOTTOM - 22 - SETTINGS_HINT_H;
@@ -3536,11 +3637,12 @@ void build_settings() {
         draw_menu_row(yy, SET_ROW_H, title, sub, idx == g_settingsSel);
     };
     auto drawScrollHints = [&]() {
-        // "^ more above" sits in the pad just under Back / top nav — not over rows
+        // Keep scroll hints out of selection boxes:
+        // above = path row right side; below = just above footer (not on last row)
         if (g_settingsScroll > 0)
-            fat_label(g_root, "^ more above", 70, g_setListTop - SETTINGS_HINT_H - 1);
+            fat_label(g_root, "^ more", EPD_WIDTH - 56, TOP_H + 1);
         if (g_settingsScroll + g_setMaxVis < totalRowsHint)
-            fat_label(g_root, "v more below", 70, g_setListBot + 1);
+            fat_label(g_root, "v more", EPD_WIDTH - 56, BOT_TOP - 18);
     };
 
     if (g_settingsPage == SET_ROOT) {
@@ -3607,11 +3709,13 @@ void build_settings() {
     }
 
     if (g_settingsPage == SET_IDLE_SECS) {
-        char st[28];
-        snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "30");
+        char st[32];
+        snprintf(st, sizeof(st), ">%s (sym)", g_composeLen ? g_compose : "30");
         row("1 Seconds (10-99999)", st, 0);
         if (g_idleRangeMsg[0])
             row("2 Status", g_idleRangeMsg, 1);
+        else if (g_numsOnlyMsg[0])
+            row("2 Status", g_numsOnlyMsg, 1);
         else
             row("2 Status", "Enter=save", 1);
         totalRowsHint = 2;
@@ -3621,36 +3725,24 @@ void build_settings() {
     }
 
     if (g_settingsPage == SET_MANUAL_TIME) {
-        char st[32];
-        if (g_timeEditMode && g_rtcField == 0)
-            snprintf(st, sizeof(st), ">%s_", g_composeLen ? g_compose : "");
-        else
-            snprintf(st, sizeof(st), "%02d  Enter=type", g_manualHour);
-        row("1 Hour (0-23)", st, 0);
-        if (g_timeEditMode && g_rtcField == 1)
-            snprintf(st, sizeof(st), ">%s_", g_composeLen ? g_compose : "");
-        else
-            snprintf(st, sizeof(st), "%02d  Enter=type", g_manualMin);
-        row("2 Minute (0-59)", st, 1);
-        if (g_timeEditMode && g_rtcField == 2)
-            snprintf(st, sizeof(st), ">%s_", g_composeLen ? g_compose : "");
-        else
-            snprintf(st, sizeof(st), "%02d  Enter=type", g_manualMon);
-        row("3 Month (1-12)", st, 2);
-        if (g_timeEditMode && g_rtcField == 3)
-            snprintf(st, sizeof(st), ">%s_", g_composeLen ? g_compose : "");
-        else
-            snprintf(st, sizeof(st), "%02d  Enter=type", g_manualDay);
-        row("4 Day (1-31)", st, 3);
-        if (g_timeEditMode && g_rtcField == 4)
-            snprintf(st, sizeof(st), ">%s_", g_composeLen ? g_compose : "");
-        else
-            snprintf(st, sizeof(st), "%04d Enter=type", g_manualYear);
-        row("5 Year", st, 4);
+        char st[36];
+        auto fieldSub = [&](int field, int val, int width) {
+            if (g_timeEditMode && g_rtcField == field)
+                snprintf(st, sizeof(st), ">%s_ (sym)", g_composeLen ? g_compose : "");
+            else if (width == 4)
+                snprintf(st, sizeof(st), "%04d Enter=type", val);
+            else
+                snprintf(st, sizeof(st), "%02d Enter=type", val);
+        };
+        fieldSub(0, g_manualHour, 2); row("1 Hour (0-23)", st, 0);
+        fieldSub(1, g_manualMin, 2);  row("2 Minute (0-59)", st, 1);
+        fieldSub(2, g_manualMon, 2);  row("3 Month (1-12)", st, 2);
+        fieldSub(3, g_manualDay, 2);  row("4 Day (1-31)", st, 3);
+        fieldSub(4, g_manualYear, 4); row("5 Year", st, 4);
         row("6 Apply to RTC", "Enter=save all", 5);
         totalRowsHint = 6;
         drawScrollHints();
-        draw_compose_or_hint(g_timeEditMode ? "Digits only  Enter=set field" : "Enter=type field");
+        draw_compose_or_hint(g_timeEditMode ? "Enter set" : "Enter type");
         return;
     }
 
@@ -3816,6 +3908,7 @@ void show_screen(ScreenId id) {
     if (g_storeReady) g_lastUiRevision = g_msgStore.revision();
     g_composeDirty = false;
     Serial.printf("[UI] screen %u (%s) drawn\n", (unsigned)id, tabLabel(id));
+    syncNumLayer();
 }
 
 void next_screen() {
@@ -3943,8 +4036,10 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 }
                 Serial.printf("[RTC] field %d = %d\n", g_rtcField, v);
                 g_timeEditMode = false;
+                g_numsOnlyMsg[0] = 0;
                 composeClear();
                 g_composeMode = false;
+                keyboardSetNumLayer(false);
                 show_screen(SCR_SETTINGS);
                 return true;
             }
@@ -4370,7 +4465,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.69");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.70");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 

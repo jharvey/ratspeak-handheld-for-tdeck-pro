@@ -1,22 +1,20 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.69  (2026-10-23)
+Last: G1.70  (2026-10-23)
 ================================================================================
-UI
-[DONE] Settings footer just above Msg Box: underlined G up / V dn / Enter open
-[DONE] Removed "^ Back" header (Shift/up still backs out)
-[DONE] Leading 1-9 underlined on menu rows (digit keys)
-[DONE] No Enter=send overlay on settings type pages (was covering idle secs)
-[DONE] Selection clamps at first/last row (no wrap past ends)
-[DONE] Screen: Theme / Idle splash / Backlight (removed redundant Invert)
+NAV PATH (top-left under refresh)
+  Settings=7 → 7>1 Time, 7>1>1 RTC fields, 7>3 Screen, 7>3>2>4 idle secs, …
 
-IDLE TIMEOUT ENTRY
-[DONE] Enter saves; out of range clamps 10..99999 and shows "Out of range→N"
+SCROLL HINTS
+  "^ more" / "v more" on right edge (not over selection boxes)
 
-BATTERY / BQ27220 "learn"
-  Fuel-gauge chips estimate % from voltage + coulomb count. Until the pack has
-  been through a real empty→full (or full→empty) cycle, RelativeStateOfCharge
-  can sit far from true (e.g. 45% at 4.1V on USB). "Learn" = use the device
-  until low, then charge uninterrupted to full so the gauge can recalibrate.
-  Voltage-curve blend still corrects the worst USB cases.
+BACK / HOME
+  Up-chevron in footer = Shift/Up Back
+  Home tab always goes to Home (not settings parent)
+
+NUMERIC ENTRY (RTC / idle secs)
+  Auto SYM layer (keyboardSetNumLayer) — type digits without SYM key
+  Active field shows "(sym)"; non-digit → "nums only"
+
+Also ship Keyboard.cpp (force num layer).
 ================================================================================

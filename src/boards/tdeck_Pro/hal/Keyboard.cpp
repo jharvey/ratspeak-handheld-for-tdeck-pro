@@ -4,6 +4,11 @@
 
 int Keyboard::_debugCount = 0;
 
+// App can force SYM/number layer (RTC/idle numeric fields)
+static bool g_forceNumLayer = false;
+void keyboardSetNumLayer(bool on) { g_forceNumLayer = on; }
+
+
 // TCA8418
 static constexpr uint8_t TCA8418_ADDR = 0x34;
 
@@ -464,7 +469,7 @@ void Keyboard::mapKey(uint8_t row, uint8_t col, bool pressed)
 
   char output = key;
 
-  if (_symHeld) {
+  if (_symHeld || g_forceNumLayer) {
     output = symbolFor(key);
   }
   else if (key >= 'a' && key <= 'z') {
