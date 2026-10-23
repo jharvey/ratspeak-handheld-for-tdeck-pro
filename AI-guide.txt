@@ -1,21 +1,13 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.67  (2026-10-23)
+Last: G1.68  (2026-10-23)
 ================================================================================
+[FIX] Settings > Screen & Input restored (Theme / Idle / Backlight)
+[FIX] All settings sub-pages draw rows again (was blank)
+[FIX] Touch hits use same listTop/listBot as drawn boxes
+[FIX] "^ more above" moved up into pad under Back header
 IDLE
-[DONE] Timer resets on every key AND every touch (not only wake)
-       Idle after N seconds with no key and no touch
-
-SETTINGS LIST
-[DONE] List shifted down; "^ more above" / "v more below" scroll hints
-
-TIME & LOCATION (reordered)
-1 Set RTC time >  — Hour, Minute, Month, Day, Year (type digits only) + Apply
-2 Time zone >
-3 Enable GPS (auto-sync when fix)
-4 Manual location > (lat,lon when no GPS)
-5 Sync GPS now
-
-RTC ENTRY
-[DONE] Each field typed separately (no : or / needed)
+[DONE] Full refresh only on enter; partial when unread or battery changes
+BATTERY
+[DONE] When USB/high V and gauge lagging, prefer voltage curve (fixes ~45%@4.1V)
 ================================================================================

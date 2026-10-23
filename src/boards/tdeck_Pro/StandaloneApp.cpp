@@ -94,6 +94,8 @@ bool g_autoGpsSyncedBoot = false;
 uint32_t g_lastGpsSyncMs = 0;
 uint8_t  g_idleMode = 1;  // 0=off 1=no-pass default 2=password TBD
 bool     g_idleActive = false;
+int      g_idleLastUnread = -1;
+int      g_idleLastPct = -1;
 uint32_t g_lastInputMs = 0;
 uint32_t g_idleTimeoutSec = 30;  // 10..99999, default 30s
 int      g_manualMon = 1;
@@ -367,16 +369,22 @@ bool readBattery(float& volts, int& pct) {
     int16_t avgMa = (nCur > 0) ? (int16_t)(curSum / nCur) : 0;
     bool charging = (avgMa > 10) || (flags & 0x0001);  // CHG-ish
 
-    if (nSoc > 0) {
-        // Trust the gauge IC — that is what BQ27220 is for
-        pct = (int)(socSum / nSoc);
+    int gaugePct = (nSoc > 0) ? (int)(socSum / nSoc) : -1;
+    int curvePct = lipoPctFromVolts(volts);
+    if (gaugePct >= 0) {
+        // Unlearned gauges often read ~40% at 4.1V on USB — correct with curve
+        if ((charging || volts >= 4.05f) && gaugePct + 20 < curvePct)
+            pct = curvePct;
+        else if (!charging && abs(gaugePct - curvePct) > 25)
+            pct = (gaugePct + curvePct) / 2;
+        else
+            pct = gaugePct;
     } else {
-        // Fallback only if SOC register fails
-        pct = lipoPctFromVolts(volts);
-        Serial.println("[BAT] SOC reg fail — voltage curve fallback");
+        pct = curvePct;
+        Serial.println("[BAT] SOC reg fail — voltage curve");
     }
-    // Soft ceiling while USB float
-    if (charging && volts >= 4.16f && pct < 100) pct = 100;
+    if (charging && volts >= 4.16f) pct = 100;
+    else if (charging && volts >= 4.10f && pct < 90) pct = 90;
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
     return true;
@@ -1084,7 +1092,14 @@ constexpr int STATS_H        = 32;  // CONV / NEW / UNRD strip
 constexpr int PEERS_TOP      = CONTENT_TOP + STATS_H + 4;
 constexpr int ROW_H          = 44;
 constexpr int SET_ROW_H      = 44;
+constexpr int SETTINGS_HINT_H  = 12;
+constexpr int SETTINGS_LIST_PAD = 4;
 int g_settingsScroll = 0;
+// Computed each draw; touch uses these so hits match boxes
+int g_setListTop = 0;
+int g_setListBot = 0;
+int g_setMaxVis  = 4;
+
 // Home grid - zero outer margin, 2px tile gap
 constexpr int TILE_GAP       = 2;
 constexpr int TILE_W         = (EPD_WIDTH - TILE_GAP * 2) / 3;  // 78
@@ -1198,13 +1213,15 @@ bool handleTouchAt(int16_t x, int16_t y) {
         return true;
     }
 
-    // Settings list touch
+    // Settings list touch — use same geometry as build_settings()
     if (g_screen == SCR_SETTINGS) {
-        const int listTop = CONTENT_TOP + 2;
-        const int maxVis = (CONTENT_BOTTOM - listTop - 4) / SET_ROW_H;
-        if (y >= listTop && y < CONTENT_BOTTOM) {
+        int listTop = g_setListTop > 0 ? g_setListTop : (CONTENT_TOP + 30);
+        int listBot = g_setListBot > 0 ? g_setListBot : (CONTENT_BOTTOM - 30);
+        int maxVis  = g_setMaxVis > 0 ? g_setMaxVis : 4;
+        if (y >= listTop && y < listBot) {
             int row = (y - listTop) / SET_ROW_H;
             if (row < 0) row = 0;
+            if (row >= maxVis) row = maxVis - 1;
             int idx = g_settingsScroll + row;
             int maxIdx = 8;
             if (g_settingsPage == SET_TZ) maxIdx = kTzCount - 1;
@@ -1213,10 +1230,11 @@ bool handleTouchAt(int16_t x, int16_t y) {
             else if (g_settingsPage == SET_SCREEN) maxIdx = 3;
             else if (g_settingsPage == SET_MANUAL_TIME) maxIdx = 5;
             else if (g_settingsPage == SET_MANUAL_LOC) maxIdx = 2;
-            else if (g_settingsPage == SET_MANUAL_DATE) maxIdx = 5;
+            else if (g_settingsPage == SET_IDENTITY) maxIdx = 2;
+            else if (g_settingsPage == SET_IDLE_SECS) maxIdx = 1;
             if (idx > maxIdx) idx = maxIdx;
             g_settingsSel = idx;
-            Serial.printf("[SET] touch sel=%d\n", g_settingsSel);
+            Serial.printf("[SET] touch sel=%d y=%d top=%d\n", g_settingsSel, (int)y, listTop);
             settingsActivate();
             return true;
         }
@@ -1883,8 +1901,8 @@ void noteUserInput() {
     }
 }
 
-void draw_idle_screen() {
-    // Match current theme; full refresh after draw to clear ghosting
+// paintIdleContent: shared by enter (full) and update (partial)
+static void paintIdleContent() {
     clear_screen();
     draw_label_centered(0, 100, EPD_WIDTH, 22, "RatSpeak", true);
     char lt[12], ld[12];
@@ -1900,13 +1918,9 @@ void draw_idle_screen() {
     char bp[16];
     snprintf(bp, sizeof(bp), "%s", g_pctStr);
     draw_label_centered(0, 172, EPD_WIDTH, 18, bp, false);
-    // New / unread messages
-    unsigned unread = 0, neu = 0;
-    if (g_storeReady) {
+    unsigned unread = 0;
+    if (g_storeReady)
         unread = (unsigned)g_msgStore.totalUnreadCount();
-        // "new" = unread as proxy when no separate new counter
-        neu = unread;
-    }
     char msgLine[40];
     if (unread > 0)
         snprintf(msgLine, sizeof(msgLine), "NEW messages: %u unread", unread);
@@ -1916,9 +1930,30 @@ void draw_idle_screen() {
     draw_label_centered(0, 250, EPD_WIDTH, 20, "press a KEY to wake", false);
     lv_refr_now(nullptr);
     draw_ratspeak_logo_bitmap(EPD_WIDTH / 2, 42);
-    // Full panel refresh clears ghosting from previous UI
+    g_idleLastUnread = (int)unread;
+    g_idleLastPct = pct;
+}
+
+void draw_idle_screen() {
+    paintIdleContent();
+    // Full refresh only on enter — clears ghosting from previous UI
     g_display.fullRefresh();
     Serial.println("[IDLE] fullRefresh done");
+}
+
+// While idle: partial redraw if unread or battery % changed
+void maybeUpdateIdle() {
+    if (!g_idleActive) return;
+    refreshLiveData();
+    int pct = -1;
+    if (g_pctStr[0] && g_pctStr[0] != '-')
+        pct = atoi(g_pctStr);
+    int unread = g_storeReady ? (int)g_msgStore.totalUnreadCount() : 0;
+    if (pct == g_idleLastPct && unread == g_idleLastUnread)
+        return;
+    paintIdleContent();
+    g_display.refreshIfDirty();  // partial / localized only
+    Serial.printf("[IDLE] partial update unread=%d pct=%d\n", unread, pct);
 }
 
 void maybeEnterIdle() {
@@ -3295,7 +3330,7 @@ void settingsActivate() {
         return;
     }
     if (g_settingsPage == SET_SCREEN) {
-        if (g_settingsSel == 1) {
+        if (g_settingsSel == 0 || g_settingsSel == 1) {
             g_darkTheme = !g_darkTheme;
             Serial.printf("[THEME] %s\n", g_darkTheme ? "black-ink" : "white-paper");
             show_screen(SCR_SETTINGS);
@@ -3305,11 +3340,9 @@ void settingsActivate() {
             g_settingsScroll = 0;
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 3) {
-            static bool s_lit = false;
-            s_lit = !s_lit;
-            if (s_lit) g_kb.backlightOn();
-            else g_kb.backlightOff();
-            Serial.printf("[KB] backlight %s\n", s_lit ? "ON" : "OFF");
+            if (g_kb.backlightIsLit()) g_kb.backlightOff();
+            else g_kb.backlightOn();
+            Serial.printf("[KB] backlight %s\n", g_kb.backlightIsLit() ? "ON" : "OFF");
             show_screen(SCR_SETTINGS);
         }
         return;
@@ -3454,7 +3487,7 @@ void settingsActivate() {
         return;
     }
     if (g_settingsPage == SET_STORAGE) {
-        if (g_settingsSel == 5) {
+        if (g_settingsSel == 3) {
             doAnnounce();
             if (g_featAudio) g_audio.playAnnounce();
             show_screen(SCR_SETTINGS);
@@ -3463,34 +3496,41 @@ void settingsActivate() {
     }
 }
 
+
+
 void build_settings() {
     clear_screen();
+    char a[40], b[36];
     int y = CONTENT_TOP + 2;
-    char a[36], b[36];
+
+    // Header: back hint only (keep short — avoid overlap with scroll label)
     if (g_settingsPage != SET_ROOT) {
-        fat_label(g_root, "^ Back = Shift up-key", 4, y);
-        y += 16;
+        fat_label(g_root, "^ Back", 4, y);
+        y += 14;
     }
-    const int hintH = 14;
-    y += 6;  // shift list down for clearer header
-    const int listTop = y + hintH;
-    const int listBot = CONTENT_BOTTOM - 24 - hintH;
-    int maxVis = (listBot - listTop) / SET_ROW_H;
-    if (maxVis < 1) maxVis = 1;
+
+    // List geometry (shared with touch)
+    y += SETTINGS_LIST_PAD;
+    g_setListTop = y + SETTINGS_HINT_H;
+    g_setListBot = CONTENT_BOTTOM - 22 - SETTINGS_HINT_H;
+    g_setMaxVis = (g_setListBot - g_setListTop) / SET_ROW_H;
+    if (g_setMaxVis < 1) g_setMaxVis = 1;
     int totalRowsHint = 9;
+
     auto row = [&](const char* title, const char* sub, int idx) {
         if (idx + 1 > totalRowsHint) totalRowsHint = idx + 1;
         if (idx < g_settingsScroll) return;
-        if (idx >= g_settingsScroll + maxVis) return;
-        int yy = listTop + (idx - g_settingsScroll) * SET_ROW_H;
-        if (yy + SET_ROW_H > listBot) return;
+        if (idx >= g_settingsScroll + g_setMaxVis) return;
+        int yy = g_setListTop + (idx - g_settingsScroll) * SET_ROW_H;
+        if (yy + SET_ROW_H > g_setListBot) return;
         draw_menu_row(yy, SET_ROW_H, title, sub, idx == g_settingsSel);
     };
     auto drawScrollHints = [&]() {
+        // "^ more above" sits in the pad just under Back / top nav — not over rows
         if (g_settingsScroll > 0)
-            fat_label(g_root, "^ more above", EPD_WIDTH / 2 - 48, listTop - hintH);
-        if (g_settingsScroll + maxVis < totalRowsHint)
-            fat_label(g_root, "v more below", EPD_WIDTH / 2 - 48, listBot + 2);
+            fat_label(g_root, "^ more above", 70, g_setListTop - SETTINGS_HINT_H - 1);
+        if (g_settingsScroll + g_setMaxVis < totalRowsHint)
+            fat_label(g_root, "v more below", 70, g_setListBot + 1);
     };
 
     if (g_settingsPage == SET_ROOT) {
@@ -3518,16 +3558,55 @@ void build_settings() {
         return;
     }
 
-    // Sub-page title
-    const char* titles[] = {
-        "SETTINGS", "Identity & Device", "Screen & Input", "Battery",
-        "LoRa", "Network", "Time & Location", "Alerts & Audio",
-        "Diagnostics", "Storage & Maint."
-    };
-    int ti = (int)g_settingsPage;
-    if (ti < 0 || ti > 9) ti = 0;
-    snprintf(a, sizeof(a), "< %s", titles[ti < 10 ? ti : 0]);
-    fat_label(g_root, a, 4, CONTENT_TOP + 2);
+    if (g_settingsPage == SET_IDENTITY) {
+        snprintf(a, sizeof(a), "%.16s", g_destHex);
+        row("1 Destination", a, 0);
+        loadSelfName();
+        snprintf(a, sizeof(a), "%.16s", g_selfName[0] ? g_selfName : "(none)");
+        row("2 Display name", a, 1);
+        row("3 LXMF address", "same as dest", 2);
+        totalRowsHint = 3;
+        drawScrollHints();
+        draw_compose_or_hint("^=back");
+        return;
+    }
+
+    if (g_settingsPage == SET_SCREEN) {
+        row("1 Theme", g_darkTheme ? "Black ink" : "White paper", 0);
+        row("2 Invert (tap)", g_darkTheme ? "dark" : "light", 1);
+        const char* idleLab = (g_idleMode == 0) ? "Off" :
+                              (g_idleMode == 1) ? "No password" : "Password TBD";
+        row("3 Idle splash >", idleLab, 2);
+        row("4 Key backlight", g_kb.backlightIsLit() ? "ON" : "OFF", 3);
+        totalRowsHint = 4;
+        drawScrollHints();
+        draw_compose_or_hint("Enter=select  ^=back");
+        return;
+    }
+
+    if (g_settingsPage == SET_IDLE_MODE) {
+        row("1 No idle screen", g_idleMode == 0 ? "*" : "", 0);
+        row("2 Idle no password", g_idleMode == 1 ? "*" : "", 1);
+        row("3 Idle + password TBD", "", 2);
+        char is[16];
+        snprintf(is, sizeof(is), "%u s", (unsigned)g_idleTimeoutSec);
+        row("4 Idle timeout >", is, 3);
+        totalRowsHint = 4;
+        drawScrollHints();
+        draw_compose_or_hint("Enter=select  ^=back");
+        return;
+    }
+
+    if (g_settingsPage == SET_IDLE_SECS) {
+        char st[24];
+        snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "30");
+        row("1 Seconds (10-99999)", st, 0);
+        row("2 Enter=save", "^=cancel", 1);
+        totalRowsHint = 2;
+        drawScrollHints();
+        draw_compose_or_hint("Type 10-99999  Enter=save");
+        return;
+    }
 
     if (g_settingsPage == SET_MANUAL_TIME) {
         char st[32];
@@ -3562,6 +3641,7 @@ void build_settings() {
         draw_compose_or_hint(g_timeEditMode ? "Digits only  Enter=set field" : "Enter=type field");
         return;
     }
+
     if (g_settingsPage == SET_MANUAL_LOC) {
         char st[36];
         if (g_composeLen)
@@ -3572,7 +3652,7 @@ void build_settings() {
             strcpy(st, "lat,lon");
         row("1 Type lat,lon", st, 0);
         row("2 Apply position", "Enter=save", 1);
-        row("3 Clear position", g_hasManualPos ? "Enter=clear" : "—", 2);
+        row("3 Clear position", g_hasManualPos ? "Enter=clear" : "-", 2);
         totalRowsHint = 3;
         drawScrollHints();
         draw_compose_or_hint("e.g. 40.71,-74.00");
@@ -3592,107 +3672,102 @@ void build_settings() {
         draw_compose_or_hint("G/V scroll  Enter=pick");
         return;
     }
+
     if (g_settingsPage == SET_BATTERY) {
         snprintf(a, sizeof(a), "%s", g_pctStr);
-        row("Estimated Charge", a, 0);
+        row("1 Charge (gauge)", a, 0);
         snprintf(a, sizeof(a), "%s", g_batStr);
-        row("Battery Volts", a, 1);
-        row("Battery Display", "Bar+%", 2);
+        row("2 Battery volts", a, 1);
+        row("3 Note", "BQ27220 may need learn", 2);
+        totalRowsHint = 3;
+        drawScrollHints();
         draw_compose_or_hint("^=back");
         return;
     }
+
     if (g_settingsPage == SET_LORA) {
-        row("LoRa Radio", g_featLora ? "ON" : "OFF", 0);
+        row("1 LoRa Radio", g_featLora ? "ON" : "OFF", 0);
         snprintf(a, sizeof(a), "Americas (%.0f)", LORA_DEFAULT_FREQ / 1e6f);
-        row("Region Preset", a, 1);
-        row("Link Preset", kLoraPresets[g_loraPreset].name, 2);
+        row("2 Region Preset", a, 1);
+        row("3 Link Preset", kLoraPresets[g_loraPreset].name, 2);
         snprintf(a, sizeof(a), "%s", g_rssiStr);
-        row("Last RSSI", a, 3);
-        row("Developer RF", "locked", 4);
-        draw_compose_or_hint("0=radio 2=preset cycle  ^back");
+        row("4 Last RSSI", a, 3);
+        totalRowsHint = 4;
+        drawScrollHints();
+        draw_compose_or_hint("0=radio 2=preset  ^=back");
         return;
     }
+
     if (g_settingsPage == SET_NETWORK) {
-        row("WiFi Mode", "stub", 0);
-        row("Scan Networks", "[future]", 1);
-        row("WiFi SSID", "(not set)", 2);
-        row("TCP Server", "None", 3);
-        row("Port", "4242", 4);
-        row("LAN Discovery", "OFF", 5);
+        row("1 WiFi Mode", "stub", 0);
+        row("2 Scan Networks", "[future]", 1);
+        row("3 TCP Server", "None", 2);
+        totalRowsHint = 3;
+        drawScrollHints();
         draw_compose_or_hint("WiFi/TCP future");
         return;
     }
+
     if (g_settingsPage == SET_TIME) {
-        char st[36], loc[16];
+        char st[36], loc[16], dt[16];
         formatLocalTime(loc, sizeof(loc));
-        char dt[16];
         formatLocalDate(dt, sizeof(dt));
-        // 1 Set RTC time (date + time fields)
         snprintf(st, sizeof(st), "%s %s", loc, dt);
         row("1 Set RTC time >", st, 0);
-        // 2 Time zone
         snprintf(st, sizeof(st), "%s UTC%+d", tzName(), tzOffsetHours());
         row("2 Time zone >", st, 1);
-        // 3 Enable GPS (+ auto sync when fix)
         snprintf(st, sizeof(st), "%s %s %us",
                  g_gpsEnabled ? "ON" : "OFF", g_gpsStatus, (unsigned)g_gpsSats);
         row("3 Enable GPS", st, 2);
-        // 4 Manual default position
         if (g_hasManualPos)
             snprintf(st, sizeof(st), "%.2f,%.2f", g_manualLat, g_manualLon);
         else
             strcpy(st, "not set");
         row("4 Manual location >", st, 3);
-        // 5 Sync now (if fix)
         row("5 Sync GPS now", g_gpsHasFix ? "Enter=sync" : "need fix", 4);
         totalRowsHint = 5;
         drawScrollHints();
         draw_compose_or_hint("Enter opens item");
         return;
     }
+
     if (g_settingsPage == SET_AUDIO) {
-        row("Audio Alerts", g_featAudio ? "ON" : "OFF", 0);
-        row("Volume", "default", 1);
-        row("Vibrate on msg", g_featAudio ? "ON" : "OFF", 2);
+        row("1 Audio Alerts", g_featAudio ? "ON" : "OFF", 0);
+        row("2 Volume", "default", 1);
+        row("3 Vibrate on msg", g_featAudio ? "ON" : "OFF", 2);
+        totalRowsHint = 3;
+        drawScrollHints();
         draw_compose_or_hint("Enter toggles audio");
         return;
     }
+
     if (g_settingsPage == SET_DIAG) {
-        row("RNS Transport", g_protoReady ? "ACTIVE" : "OFF", 0);
-        snprintf(a, sizeof(a), "%s", g_pathsStr);
-        row("Known Paths", a, 1);
-        snprintf(a, sizeof(a), "%s", g_linksStr);
-        row("Live Links", a, 2);
+        snprintf(a, sizeof(a), "P%s L%s", g_pathsStr, g_linksStr);
+        row("1 Paths/Links", a, 0);
         snprintf(a, sizeof(a), "%s", g_rssiStr);
-        row("LoRa / RSSI", a, 3);
-        size_t hi = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-        snprintf(a, sizeof(a), "%u KB", (unsigned)(hi / 1024));
-        row("Heap free", a, 4);
-        size_t ps = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-        snprintf(a, sizeof(a), "%u KB", (unsigned)(ps / 1024));
-        row("PSRAM free", a, 5);
-        snprintf(a, sizeof(a), "%lu s", (unsigned long)(millis() / 1000UL));
-        row("Uptime", a, 6);
+        row("2 Last RSSI", a, 1);
+        snprintf(a, sizeof(a), "%s", g_lxmfqStr);
+        row("3 LXMF queue", a, 2);
+        totalRowsHint = 3;
+        drawScrollHints();
         draw_compose_or_hint("^=back");
         return;
     }
+
     if (g_settingsPage == SET_STORAGE) {
-        size_t hi = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-        size_t ps = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-        snprintf(a, sizeof(a), "%u KB", (unsigned)(hi / 1024));
-        row("Free Heap", a, 0);
-        snprintf(a, sizeof(a), "%u KB", (unsigned)(ps / 1024));
-        row("Free PSRAM", a, 1);
-        row("Flash", "LittleFS", 2);
-        row("SD Card", "optional", 3);
-        row("SD Msg Store", "flash", 4);
+        snprintf(a, sizeof(a), "%u KB", (unsigned)(ESP.getFreeHeap() / 1024));
+        row("1 Free heap", a, 0);
+        snprintf(a, sizeof(a), "%u KB", (unsigned)(ESP.getFreePsram() / 1024));
+        row("2 Free PSRAM", a, 1);
+        row("3 Flash", "LittleFS", 2);
         snprintf(a, sizeof(a), "Ann %s", g_announceStr);
-        row("Send Announce", a, 5);
-        row("Show QR Code", "[future]", 6);
-        row("Reboot Now", "hold power", 7);
+        row("4 Send Announce", a, 3);
+        totalRowsHint = 4;
+        drawScrollHints();
         draw_compose_or_hint("Enter on Announce to send");
         return;
     }
+
     draw_compose_or_hint("^=back");
 }
 
@@ -4277,7 +4352,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.67");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.68");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
