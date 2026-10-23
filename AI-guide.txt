@@ -1,20 +1,25 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.70  (2026-10-23)
+Last: G1.71  (2026-10-23)
 ================================================================================
-NAV PATH (top-left under refresh)
-  Settings=7 → 7>1 Time, 7>1>1 RTC fields, 7>3 Screen, 7>3>2>4 idle secs, …
+PATH: Settings = S  (S>1>1 RTC, S>3 Screen, S>3>2>4 idle secs, …)
 
-SCROLL HINTS
-  "^ more" / "v more" on right edge (not over selection boxes)
+NAV
+[DONE] G/V list move (settings + contacts/msg/peers); S is NOT down
+[DONE] Footer: up/down arrow glyphs + G/V + short Enter=…
+[DONE] Mic no longer full-refreshes (use header refresh icon)
 
-BACK / HOME
-  Up-chevron in footer = Shift/Up Back
-  Home tab always goes to Home (not settings parent)
+LISTS
+[DONE] Short footers (no clipped Enter=ope)
+[DONE] Contacts: Contact #N header on rename
+[DONE] Peers: no RECENT PEERS title; no send from list
 
-NUMERIC ENTRY (RTC / idle secs)
-  Auto SYM layer (keyboardSetNumLayer) — type digits without SYM key
-  Active field shows "(sym)"; non-digit → "nums only"
+IDLE
+[DONE] Clock + single battery % + uptime (theme fg) + messages
 
-Also ship Keyboard.cpp (force num layer).
+SPLASH
+[DONE] Full-panel theme bg (no white strip); respects light/dark
+
+BATTERY page
+[DONE] Info-only (no selection highlight)
 ================================================================================
