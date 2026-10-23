@@ -1,19 +1,21 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.66  (2026-10-22)
+Last: G1.67  (2026-10-23)
 ================================================================================
-BATTERY
-[DONE] Trust BQ27220 StateOfCharge (0x2C); voltage curve only if SOC fails
-
 IDLE
-[DONE] Keyboard wake only (touch ignored)
-[DONE] Shows NEW/unread message count
-[DONE] fullRefresh on enter (reduce ghosting)
+[DONE] Timer resets on every key AND every touch (not only wake)
+       Idle after N seconds with no key and no touch
 
-GPS
-[DONE] applyTimezoneEnv after GPS→RTC sync; 15s acquiring log
-       Cold start outdoors can take several minutes; enable GPS in Settings
+SETTINGS LIST
+[DONE] List shifted down; "^ more above" / "v more below" scroll hints
 
-TIME
-[DONE] Local RTC opens Type time (HHMM text entry) focused
+TIME & LOCATION (reordered)
+1 Set RTC time >  — Hour, Minute, Month, Day, Year (type digits only) + Apply
+2 Time zone >
+3 Enable GPS (auto-sync when fix)
+4 Manual location > (lat,lon when no GPS)
+5 Sync GPS now
+
+RTC ENTRY
+[DONE] Each field typed separately (no : or / needed)
 ================================================================================
