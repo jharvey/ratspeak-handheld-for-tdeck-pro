@@ -103,7 +103,7 @@ uint32_t g_lastInputMs = 0;
 uint32_t g_idleTimeoutSec = 30;  // 10..99999, default 30s
 int      g_manualMon = 1;
 int      g_manualDay = 1;
-int      g_manualYear = 2026;
+int      g_manualYear = 2027;
 bool     g_dateEditMode = false;
 bool     g_idleSecsEditMode = false;
 char     g_idleRangeMsg[24] = {0};  // "Out of range" feedback
@@ -1943,23 +1943,30 @@ void noteUserInput() {
 
 // paintIdleContent: shared by enter (full) and update (partial)
 static void paintIdleContent() {
+    // Always full clear — prevents UP/% ghosts from partials
     clear_screen();
-    draw_ratspeak_logo_bitmap(EPD_WIDTH / 2, 42);
-    draw_label_centered(0, 100, EPD_WIDTH, 22, "RatSpeak", true);
+    draw_ratspeak_logo_bitmap(EPD_WIDTH / 2, 36);
+    draw_label_centered(0, 88, EPD_WIDTH, 22, "RatSpeak", true);
+
+    // RTC: date then HH:MM + TZ (not uptime)
     char lt[12], ld[12];
     formatLocalTime(lt, sizeof(lt));
     formatLocalDate(ld, sizeof(ld));
     char clockLine[40];
-    snprintf(clockLine, sizeof(clockLine), "%s  %s  %s", lt, ld, tzName());
-    draw_label_centered(0, 122, EPD_WIDTH, 22, clockLine, true);
+    snprintf(clockLine, sizeof(clockLine), "%s  %s  %s", ld, lt, tzName());
+    draw_label_centered(0, 112, EPD_WIDTH, 20, clockLine, true);
+
+    // Battery gauge with single % to the right (no second %)
     int pct = -1;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
-    draw_battery_gauge(EPD_WIDTH / 2 - 28, 150, 40, 18, pct);
-    // single % next to gauge only (no duplicate line)
-    char bp[12];
-    snprintf(bp, sizeof(bp), "%s", g_pctStr);
-    fat_label(g_root, bp, EPD_WIDTH / 2 + 18, 152);
+    draw_battery_gauge(EPD_WIDTH / 2 - 40, 140, 36, 16, pct);
+    if (pct >= 0) {
+        char bp[8];
+        snprintf(bp, sizeof(bp), "%d%%", pct);
+        fat_label(g_root, bp, EPD_WIDTH / 2 + 2, 142);
+    }
+
     unsigned unread = 0;
     if (g_storeReady)
         unread = (unsigned)g_msgStore.totalUnreadCount();
@@ -1968,16 +1975,18 @@ static void paintIdleContent() {
         snprintf(msgLine, sizeof(msgLine), "NEW messages: %u unread", unread);
     else
         snprintf(msgLine, sizeof(msgLine), "No new messages");
-    draw_label_centered(0, 190, EPD_WIDTH, 18, msgLine, unread > 0);
-    draw_label_centered(0, 230, EPD_WIDTH, 20, "press a KEY to wake", false);
-    // Uptime in theme foreground (was washed out / wrong polarity)
+    draw_label_centered(0, 180, EPD_WIDTH, 18, msgLine, unread > 0);
+
+    draw_label_centered(0, 220, EPD_WIDTH, 20, "press a KEY to wake", false);
+
+    // Single solid UP (theme fg) — only place UP appears on device
     uint32_t sec = millis() / 1000UL;
     char up[24];
     snprintf(up, sizeof(up), "UP %02u:%02u:%02u",
              (unsigned)((sec / 3600UL) % 100UL),
              (unsigned)((sec / 60UL) % 60UL),
              (unsigned)(sec % 60UL));
-    draw_label_centered(0, 260, EPD_WIDTH, 16, up, false);
+    draw_label_centered(0, 250, EPD_WIDTH, 18, up, true);
     lv_refr_now(nullptr);
     g_idleLastUnread = (int)unread;
     g_idleLastPct = pct;
@@ -2293,28 +2302,21 @@ void draw_menu_row(int y, int h, const char* title, const char* sub, bool select
 
 
 void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
-    const int gap = 2;
-    const int bw = (EPD_WIDTH - 4 - 2 * gap) / 3;
-    const int bh = STATS_H - 2;
-    char a[14], b[14], c[14];
-    snprintf(a, sizeof(a), "%02u CONV", conv);
-    snprintf(b, sizeof(b), "%02u NEW", neu);
-    snprintf(c, sizeof(c), "%02u UNRD", unread);
-    const char* labs[3] = { a, b, c };
-    for (int i = 0; i < 3; i++) {
-        int x = 2 + i * (bw + gap);
-        lv_obj_t* box = lv_obj_create(g_root);
-        lv_obj_set_size(box, bw, bh);
-        lv_obj_set_pos(box, x, y);
-        lv_obj_set_style_radius(box, 0, 0);
-        lv_obj_set_style_border_width(box, 1, 0);
-        lv_obj_set_style_border_color(box, theme_fg(), 0);
-        lv_obj_set_style_bg_color(box, theme_bg(), 0);
-        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
-        lv_obj_set_style_pad_all(box, 0, 0);
-        lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
-        fat_label(g_root, labs[i], x + 4, y + 6);
-    }
+    // Compact unread-only strip (CONV/NEW removed — too wide)
+    (void)conv; (void)neu;
+    char c[20];
+    snprintf(c, sizeof(c), "UNRD %u", unread);
+    lv_obj_t* box = lv_obj_create(g_root);
+    lv_obj_set_size(box, 72, STATS_H - 4);
+    lv_obj_set_pos(box, EPD_WIDTH - 76, y);
+    lv_obj_set_style_radius(box, 0, 0);
+    lv_obj_set_style_border_width(box, 1, 0);
+    lv_obj_set_style_border_color(box, theme_fg(), 0);
+    lv_obj_set_style_bg_color(box, theme_bg(), 0);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(box, 0, 0);
+    lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+    fat_label(g_root, c, EPD_WIDTH - 72, y + 4);
 }
 
 // Settings / list footer: short key legend just above bottom nav (underlined keys)
@@ -2387,28 +2389,7 @@ static void draw_settings_footer(const char* extra) {
     lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
     lv_obj_clear_flag(band, LV_OBJ_FLAG_SCROLLABLE);
 
-    // [up arrow] G   [down arrow] V   Enter …
-    // arrows centered on underlined G/V keys
-    auto drawArrow = [&](int x, int y0, bool up) {
-        // simple chevron
-        for (int i = 0; i < 4; i++) {
-            int yy = up ? (y0 + i) : (y0 + 6 - i);
-            lv_obj_t* p = lv_obj_create(g_root);
-            lv_obj_set_size(p, 2, 2);
-            lv_obj_set_pos(p, x + 4 - i, yy);
-            lv_obj_set_style_border_width(p, 0, 0);
-            lv_obj_set_style_bg_color(p, theme_fg(), 0);
-            lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
-            lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_t* q = lv_obj_create(g_root);
-            lv_obj_set_size(q, 2, 2);
-            lv_obj_set_pos(q, x + 4 + i, yy);
-            lv_obj_set_style_border_width(q, 0, 0);
-            lv_obj_set_style_bg_color(q, theme_fg(), 0);
-            lv_obj_set_style_bg_opa(q, LV_OPA_COVER, 0);
-            lv_obj_clear_flag(q, LV_OBJ_FLAG_SCROLLABLE);
-        }
-    };
+    // Same baseline: ^G  vV  Enter…  (underlines under G/V)
     auto hot = [&](const char* key, int x) {
         fat_label(g_root, key, x, y);
         lv_obj_t* bar = lv_obj_create(g_root);
@@ -2419,15 +2400,15 @@ static void draw_settings_footer(const char* extra) {
         lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
         lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
     };
-    drawArrow(2, y + 2, true);
-    hot("G", 16);
-    drawArrow(32, y + 2, false);
-    hot("V", 46);
+    fat_label(g_root, "^", 2, y);
+    hot("G", 14);
+    fat_label(g_root, "v", 30, y);
+    hot("V", 42);
     const char* ex = extra;
     if (g_numsOnlyMsg[0])
         ex = g_numsOnlyMsg;
     if (ex && ex[0])
-        fat_label(g_root, ex, 64, y);
+        fat_label(g_root, ex, 60, y);
     draw_nav();
 }
 
@@ -2508,30 +2489,25 @@ void draw_compose_or_hint(const char* idleHint) {
     // List screens: short footer (fit 240px)
     const int yf = BOT_TOP - 18;
     if (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS) {
-        // arrows + G/V + short action
-        auto arr = [&](int x, bool up) {
-            for (int i = 0; i < 4; i++) {
-                int yy = up ? (yf + 2 + i) : (yf + 8 - i);
-                for (int s = 0; s < 2; s++) {
-                    lv_obj_t* p = lv_obj_create(g_root);
-                    lv_obj_set_size(p, 2, 2);
-                    lv_obj_set_pos(p, x + 4 + (s ? i : -i), yy);
-                    lv_obj_set_style_border_width(p, 0, 0);
-                    lv_obj_set_style_bg_color(p, theme_fg(), 0);
-                    lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
-                    lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
-                }
-            }
-        };
-        arr(2, true);
-        fat_label(g_root, "G", 16, yf);
-        arr(30, false);
-        fat_label(g_root, "V", 44, yf);
+        fat_label(g_root, "^", 2, yf);
+        fat_label(g_root, "G", 14, yf);
+        fat_label(g_root, "v", 30, yf);
+        fat_label(g_root, "V", 42, yf);
+        // underline G/V
+        for (int x : {14, 42}) {
+            lv_obj_t* bar = lv_obj_create(g_root);
+            lv_obj_set_size(bar, 9, 2);
+            lv_obj_set_pos(bar, x, yf + 16);
+            lv_obj_set_style_border_width(bar, 0, 0);
+            lv_obj_set_style_bg_color(bar, theme_fg(), 0);
+            lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+            lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+        }
         const char* shortH = "Enter=open";
         if (g_screen == SCR_CONTACTS) shortH = "Enter=name";
-        else if (g_screen == SCR_PEERS) shortH = "1-9 select";
+        else if (g_screen == SCR_PEERS) shortH = "";  // display only
         else if (g_showHistory) shortH = "Enter=send";
-        fat_label(g_root, shortH, 64, yf);
+        if (shortH[0]) fat_label(g_root, shortH, 60, yf);
         draw_nav();
         return;
     }
@@ -2629,10 +2605,32 @@ static void applyTimezoneEnv() {
     setenv("TZ", tzEnvString(), 1);
     tzset();
 }
+static void ensureDefaultRtc() {
+    // If wall clock never set, seed Jan 1 2027 12:00 local so UI is not all dashes
+    time_t now = time(nullptr);
+    if (now >= 100000) return;
+    applyTimezoneEnv();
+    struct tm t = {};
+    t.tm_year = 2027 - 1900;
+    t.tm_mon = 0;   // January
+    t.tm_mday = 1;
+    t.tm_hour = 12;
+    t.tm_min = 0;
+    t.tm_sec = 0;
+    t.tm_isdst = -1;
+    time_t epoch = mktime(&t);
+    if (epoch <= 0) return;
+    struct timeval tv = { .tv_sec = epoch, .tv_usec = 0 };
+    settimeofday(&tv, nullptr);
+    g_manualYear = 2027; g_manualMon = 1; g_manualDay = 1;
+    g_manualHour = 12; g_manualMin = 0;
+    Serial.println("[RTC] defaulted to 2027-01-01 12:00 local");
+}
 static void formatLocalTime(char* out, size_t n) {
+    ensureDefaultRtc();
     time_t now = time(nullptr);
     if (now < 100000) {
-        snprintf(out, n, "--:--");
+        snprintf(out, n, "12:00");
         return;
     }
     applyTimezoneEnv();
@@ -2805,9 +2803,10 @@ static void loadManualFromClock() {
 }
 
 static void formatLocalDate(char* out, size_t n) {
+    ensureDefaultRtc();
     time_t now = time(nullptr);
     if (now < 100000) {
-        snprintf(out, n, "--/--/--");
+        snprintf(out, n, "01/01/27");
         return;
     }
     applyTimezoneEnv();
@@ -3115,7 +3114,7 @@ void build_chats() {
         if (g_msgRowCount > 0 && g_msgRows[g_selPeer].used) {
             char hex[33];
             peerToHex32(g_msgRows[g_selPeer].peer, hex);
-            snprintf(hdr, sizeof(hdr), "%d: to %s",
+            snprintf(hdr, sizeof(hdr), "%d: >>> %s",
                      g_selPeer + 1, g_msgRows[g_selPeer].line1);
         } else
             strcpy(hdr, "Chat");
@@ -3365,8 +3364,8 @@ void build_contacts() {
         return;
     }
 
-    fat_label(g_root, "0=this  1-9=peer", 4, y);
-    y += 22;
+    // no "0=this" header — list starts immediately with room for ^ more
+    y += 4;
     for (int i = 0; i < g_msgRowCount; i++) {
         if (!g_msgRows[i].used) continue;
         char title[28];
@@ -3406,10 +3405,8 @@ void build_peers() {
             formatPeerSub(g_msgRows[i].line2, sizeof(g_msgRows[i].line2),
                           g_msgRows[i].peer, nullptr);
             char title[28], sub[36];
-            if (i == g_selPeer)
-                snprintf(title, sizeof(title), ">%d %s", i + 1, g_msgRows[i].line1);
-            else
-                snprintf(title, sizeof(title), " %d %s", i + 1, g_msgRows[i].line1);
+            // Peers list is display-only (no selection chrome)
+            snprintf(title, sizeof(title), " %d %s", i + 1, g_msgRows[i].line1);
             if (g_msgRows[i].line2[0])
                 snprintf(sub, sizeof(sub), "%.28s", g_msgRows[i].line2);
             else {
@@ -3417,7 +3414,7 @@ void build_peers() {
                 peerToHex32(g_msgRows[i].peer, hex);
                 snprintf(sub, sizeof(sub), "%.12s...", hex);
             }
-            draw_menu_row(y, ROW_H, title, sub, i == g_selPeer);
+            draw_menu_row(y, ROW_H, title, sub, false);
             y += ROW_H;
             if (y > CONTENT_BOTTOM - 8) break;
         }
@@ -4585,8 +4582,9 @@ bool handleKeyEvent(const KeyEvent& ev) {
 
 bool begin() {
     Serial.println();
+    ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.71");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.72");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 

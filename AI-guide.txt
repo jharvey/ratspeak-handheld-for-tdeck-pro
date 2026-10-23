@@ -1,25 +1,20 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.71  (2026-10-23)
+Last: G1.72  (2026-10-23)
 ================================================================================
-PATH: Settings = S  (S>1>1 RTC, S>3 Screen, S>3>2>4 idle secs, …)
-
-NAV
-[DONE] G/V list move (settings + contacts/msg/peers); S is NOT down
-[DONE] Footer: up/down arrow glyphs + G/V + short Enter=…
-[DONE] Mic no longer full-refreshes (use header refresh icon)
-
-LISTS
-[DONE] Short footers (no clipped Enter=ope)
-[DONE] Contacts: Contact #N header on rename
-[DONE] Peers: no RECENT PEERS title; no send from list
+RTC
+[DONE] Default 2027-01-01 12:00 local if never set (no more ---- dashes)
+[DONE] Manual field edit + GPS sync still update RTC
 
 IDLE
-[DONE] Clock + single battery % + uptime (theme fg) + messages
+[DONE] Date then HH:MM + TZ; single battery %; one solid UP only
+[DONE] Full clear each paint (kills UP/% ghosts)
 
-SPLASH
-[DONE] Full-panel theme bg (no white strip); respects light/dark
-
-BATTERY page
-[DONE] Info-only (no selection highlight)
+UI
+[DONE] TZ shown as EST (UTC-5)
+[DONE] Chat header: N: >>> name
+[DONE] Msg Box: compact UNRD only (CONV/NEW removed)
+[DONE] Peers display-only (no > highlight)
+[DONE] Contacts: no 0=this header
+[DONE] Footer: ^G vV same baseline
 ================================================================================
