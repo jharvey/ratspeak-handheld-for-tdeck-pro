@@ -48,6 +48,45 @@ bool g_featGps   = false;
 bool g_featLora  = true;   // display/radio intent (radio stays up for mesh)
 bool g_darkTheme = false;  // false=white paper, true=black-ink select
 
+static void loadUiPrefs() {
+    Preferences prefs;
+    if (!prefs.begin("rs_ui", true)) return;
+    g_darkTheme = prefs.getBool("dark", false);
+    g_tzIndex = prefs.getInt("tz", 0);
+    if (g_tzIndex < 0 || g_tzIndex >= 18) g_tzIndex = 0;
+    // Restore last wall clock (survives soft/hard reset when NVS kept)
+    int64_t epoch = prefs.getLong64("epoch", 0);
+    prefs.end();
+    if (epoch > 100000) {
+        struct timeval tv = { .tv_sec = (time_t)epoch, .tv_usec = 0 };
+        settimeofday(&tv, nullptr);
+        Serial.printf("[RTC] restored epoch=%lld\n", (long long)epoch);
+    }
+    Serial.printf("[UI] theme=%s tz=%d\n", g_darkTheme ? "dark" : "light", g_tzIndex);
+}
+static void saveUiPrefs() {
+    Preferences prefs;
+    if (!prefs.begin("rs_ui", false)) return;
+    prefs.putBool("dark", g_darkTheme);
+    prefs.putInt("tz", g_tzIndex);
+    time_t now = time(nullptr);
+    if (now > 100000)
+        prefs.putLong64("epoch", (int64_t)now);
+    prefs.end();
+}
+static void maybeSaveRtcEpoch() {
+    static uint32_t last = 0;
+    uint32_t now = millis();
+    if (last && (now - last) < 60000UL) return;  // once/minute
+    last = now ? now : 1;
+    time_t t = time(nullptr);
+    if (t < 100000) return;
+    Preferences prefs;
+    if (!prefs.begin("rs_ui", false)) return;
+    prefs.putLong64("epoch", (int64_t)t);
+    prefs.end();
+}
+
 struct LoraPreset { const char* name; uint8_t sf; float bw; uint8_t cr; };
 static const LoraPreset kLoraPresets[] = {
     {"Long Fast",  11, 250000.f, 5},
@@ -144,6 +183,8 @@ lv_obj_t* g_root = nullptr;
 
 char g_batStr[20]    = "n/a";
 char g_pctStr[8]     = "--%";
+bool g_batCharging   = false;
+
 char g_destHex[17]   = "................";
 char g_loraStr[12]   = "off";
 char g_rssiStr[16]   = "-";
@@ -377,6 +418,7 @@ bool readBattery(float& volts, int& pct) {
     volts = (mvSum / (float)nOk) / 1000.0f;
     int16_t avgMa = (nCur > 0) ? (int16_t)(curSum / nCur) : 0;
     bool charging = (avgMa > 10) || (flags & 0x0001);  // CHG-ish
+    g_batCharging = charging;
 
     int gaugePct = (nSoc > 0) ? (int)(socSum / nSoc) : -1;
     int curvePct = lipoPctFromVolts(volts);
@@ -1960,12 +2002,8 @@ static void paintIdleContent() {
     int pct = -1;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
+    // gauge draws the single % label itself — do not draw another
     draw_battery_gauge(EPD_WIDTH / 2 - 40, 140, 36, 16, pct);
-    if (pct >= 0) {
-        char bp[8];
-        snprintf(bp, sizeof(bp), "%d%%", pct);
-        fat_label(g_root, bp, EPD_WIDTH / 2 + 2, 142);
-    }
 
     unsigned unread = 0;
     if (g_storeReady)
@@ -1982,10 +2020,11 @@ static void paintIdleContent() {
     // Single solid UP (theme fg) — only place UP appears on device
     uint32_t sec = millis() / 1000UL;
     char up[24];
-    snprintf(up, sizeof(up), "UP %02u:%02u:%02u",
-             (unsigned)((sec / 3600UL) % 100UL),
-             (unsigned)((sec / 60UL) % 60UL),
-             (unsigned)(sec % 60UL));
+    // DDDD:HH:MM (no seconds)
+    unsigned days = (unsigned)(sec / 86400UL);
+    unsigned hrs  = (unsigned)((sec / 3600UL) % 24UL);
+    unsigned mins = (unsigned)((sec / 60UL) % 60UL);
+    snprintf(up, sizeof(up), "UP %04u:%02u:%02u", days, hrs, mins);
     draw_label_centered(0, 250, EPD_WIDTH, 18, up, true);
     lv_refr_now(nullptr);
     g_idleLastUnread = (int)unread;
@@ -2007,11 +2046,29 @@ void maybeUpdateIdle() {
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
     int unread = g_storeReady ? (int)g_msgStore.totalUnreadCount() : 0;
-    if (pct == g_idleLastPct && unread == g_idleLastUnread)
+    // Minute tick — update clock + uptime
+    static uint32_t s_lastMin = 0;
+    uint32_t minNow = millis() / 60000UL;
+    bool minTick = (minNow != s_lastMin);
+    if (!minTick && pct == g_idleLastPct && unread == g_idleLastUnread)
         return;
+    s_lastMin = minNow;
     paintIdleContent();
     g_display.refreshIfDirty();  // partial / localized only
-    Serial.printf("[IDLE] partial update unread=%d pct=%d\n", unread, pct);
+    Serial.printf("[IDLE] update unread=%d pct=%d minTick=%d\n", unread, pct, (int)minTick);
+}
+
+void maybeHomeMinuteRedraw() {
+    if (g_idleActive) return;
+    if (g_screen != SCR_HOME) return;
+    if (g_composeLen > 0 || g_composeMode) return;
+    static uint32_t s_homeMin = 0;
+    uint32_t minNow = millis() / 60000UL;
+    if (minNow == s_homeMin) return;
+    s_homeMin = minNow;
+    refreshLiveData();
+    show_screen(SCR_HOME);
+    Serial.println("[HOME] minute redraw");
 }
 
 void maybeEnterIdle() {
@@ -2224,7 +2281,8 @@ void draw_nav() {
         draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
         draw_nav_box(TOP_REFRESH_W, 0, TOP_TAB_W, TOP_H, "Settings", false, 'S');
         draw_nav_box(TOP_REFRESH_W + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home", false, 'H');
-        draw_nav_box(0, BOT_TOP, EPD_WIDTH, BOT_H, "^ BACK UP TO MSG BOX", true, '^');
+        const char* back = g_nameEditMode ? "^ BACK UP TO CONTACTS" : "^ BACK UP TO MSG BOX";
+        draw_nav_box(0, BOT_TOP, EPD_WIDTH, BOT_H, back, true, '^');
         return;
     }
     draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
@@ -2960,7 +3018,9 @@ void build_home() {
 
     loadSelfName();
     fat_label(g_root, g_selfName[0] ? g_selfName : "IDENTITY", 6, y0 + 2);
-    const char* on = (g_loraIf && g_loraIf->isOnline()) ? "ONLINE" : "OFFLINE";
+    const char* on = (g_loraIf && g_loraIf->isOnline())
+        ? (g_batCharging ? "CHARGING" : "ONLINE")
+        : "OFFLINE";
     // ~30px left of prior 118; gauge ~15px left of prior far-right
     fat_label(g_root, on, 88, y0 + 2);
     int pct = 0;
@@ -3509,6 +3569,7 @@ void settingsActivate() {
     if (g_settingsPage == SET_SCREEN) {
         if (g_settingsSel == 0) {
             g_darkTheme = !g_darkTheme;
+            saveUiPrefs();
             Serial.printf("[THEME] %s\n", g_darkTheme ? "black-ink" : "white-paper");
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 1) {
@@ -3528,6 +3589,7 @@ void settingsActivate() {
         if (g_settingsSel >= 0 && g_settingsSel < kTzCount) {
             g_tzIndex = g_settingsSel;
             applyTimezoneEnv();
+            saveUiPrefs();
             Serial.printf("[TZ] %s %s\n", tzName(), tzEnvString());
         }
         g_settingsPage = SET_TIME;
@@ -4153,6 +4215,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
                     if (v > 2099) v = 2099;
                     g_manualYear = v;
                 }
+                // Push field to wall clock immediately so Home/Idle reflect change
+                applyManualLocalTime();
                 Serial.printf("[RTC] field %d = %d\n", g_rtcField, v);
                 g_timeEditMode = false;
                 g_numsOnlyMsg[0] = 0;
@@ -4582,9 +4646,11 @@ bool handleKeyEvent(const KeyEvent& ev) {
 
 bool begin() {
     Serial.println();
+    loadUiPrefs();   // theme + tz + last epoch (before default seed)
+    applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.72");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.73");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
@@ -4711,6 +4777,9 @@ void loop() {
     maybeAutoRedrawMessages();
     maybeAutoRedrawPeers();
     maybeComposeRedraw();
+    maybeUpdateIdle();
+    maybeHomeMinuteRedraw();
+    maybeSaveRtcEpoch();
     maybeEnterIdle();
 
     if (g_kbOk) {

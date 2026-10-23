@@ -1,20 +1,24 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.72  (2026-10-23)
+Last: G1.73  (2026-10-23)
 ================================================================================
-RTC
-[DONE] Default 2027-01-01 12:00 local if never set (no more ---- dashes)
-[DONE] Manual field edit + GPS sync still update RTC
+PERSIST (NVS rs_ui)
+[DONE] Theme (dark/light) survives power cycle
+[DONE] Timezone index survives
+[DONE] RTC epoch saved ~1/min + on manual set; restored on boot
+  Note: bottom RESET still loses SRAM RTC; NVS restore brings time back.
+
+HOME
+[DONE] CHARGING when BQ27220 reports charge current / flags
+[DONE] Minute redraw for RTC line
 
 IDLE
-[DONE] Date then HH:MM + TZ; single battery %; one solid UP only
-[DONE] Full clear each paint (kills UP/% ghosts)
+[DONE] Logo present; single % (gauge only); UP = DDDD:HH:MM (no seconds)
+[DONE] Minute partial update for clock + UP
 
-UI
-[DONE] TZ shown as EST (UTC-5)
-[DONE] Chat header: N: >>> name
-[DONE] Msg Box: compact UNRD only (CONV/NEW removed)
-[DONE] Peers display-only (no > highlight)
-[DONE] Contacts: no 0=this header
-[DONE] Footer: ^G vV same baseline
+RTC ENTRY
+[DONE] Each field Enter calls applyManualLocalTime() so Home updates
+
+NAV
+[DONE] Name edit: "^ BACK UP TO CONTACTS"
 ================================================================================
