@@ -294,6 +294,8 @@ void appendAnnouncedPeers();  // E23: fill empty slots from AnnounceManager
 void loadHistoryRows();
 void composeClear();
 void composeAppend(char c);
+bool isNumEntryMode();
+void syncNumLayer();
 void composeBackspace();
 void composeLog();
 void clampSelPeer();
