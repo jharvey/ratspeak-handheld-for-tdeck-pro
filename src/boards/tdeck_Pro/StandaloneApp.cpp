@@ -103,6 +103,8 @@ int      g_manualDay = 1;
 int      g_manualYear = 2026;
 bool     g_dateEditMode = false;
 bool     g_idleSecsEditMode = false;
+char     g_idleRangeMsg[24] = {0};  // "Out of range" feedback
+
 // Which RTC field is being typed: 0=hour 1=min 2=mon 3=day 4=year
 int      g_rtcField = 0;
 float    g_manualLat = 0.0f;
@@ -2213,6 +2215,17 @@ void draw_menu_row(int y, int h, const char* title, const char* sub, bool select
         lv_obj_set_style_text_color(lab, theme_fg(), 0);
         lv_obj_set_pos(lab, 6 + k, hasSub ? 4 : (h - 16) / 2);
     }
+    // Underline leading 0-9 so keyboard digit nav is obvious
+    if (title && title[0] >= '0' && title[0] <= '9') {
+        lv_obj_t* bar = lv_obj_create(row);
+        lv_obj_set_size(bar, 10, 2);
+        lv_obj_set_pos(bar, 6, hasSub ? 18 : (h - 16) / 2 + 14);
+        lv_obj_set_style_radius(bar, 0, 0);
+        lv_obj_set_style_border_width(bar, 0, 0);
+        lv_obj_set_style_bg_color(bar, theme_fg(), 0);
+        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    }
     if (hasSub) {
         for (int k = 0; k < passes; k++) {
             lv_obj_t* s = lv_label_create(row);
@@ -2223,6 +2236,7 @@ void draw_menu_row(int y, int h, const char* title, const char* sub, bool select
         }
     }
 }
+
 
 void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
     const int gap = 2;
@@ -2245,76 +2259,66 @@ void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
         lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
         lv_obj_set_style_pad_all(box, 0, 0);
         lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_t* lab = lv_label_create(box);
-        lv_label_set_text(lab, labs[i]);
-        lv_obj_set_style_text_font(lab, &lv_font_montserrat_12, 0);
-        lv_obj_set_style_text_color(lab, theme_fg(), 0);
-        lv_coord_t tw = lv_txt_get_width(labs[i], strlen(labs[i]),
-                                         &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
-        if (tw <= 0) tw = (lv_coord_t)(strlen(labs[i]) * 6);
-        int lx = (bw - (int)tw) / 2;
-        if (lx < 2) lx = 2;
-        lv_obj_set_pos(lab, lx, (bh - 12) / 2);
+        fat_label(g_root, labs[i], x + 4, y + 6);
     }
 }
 
-// Small Enter-key glyph (matches physical key: rounded square + return arrow)
-static void draw_enter_key_icon(int x, int y) {
-    // Outer key body 20x16
-    lv_obj_t* key = lv_obj_create(g_root);
-    lv_obj_set_size(key, 20, 16);
-    lv_obj_set_pos(key, x, y);
-    lv_obj_set_style_radius(key, 3, 0);
-    lv_obj_set_style_border_width(key, 2, 0);
-    lv_obj_set_style_border_color(key, theme_fg(), 0);
-    lv_obj_set_style_bg_color(key, theme_bg(), 0);
-    lv_obj_set_style_bg_opa(key, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(key, 0, 0);
-    lv_obj_clear_flag(key, LV_OBJ_FLAG_SCROLLABLE);
-    // Vertical stem of return arrow
-    lv_obj_t* stem = lv_obj_create(g_root);
-    lv_obj_set_size(stem, 2, 8);
-    lv_obj_set_pos(stem, x + 13, y + 3);
-    lv_obj_set_style_radius(stem, 0, 0);
-    lv_obj_set_style_border_width(stem, 0, 0);
-    lv_obj_set_style_bg_color(stem, theme_fg(), 0);
-    lv_obj_set_style_bg_opa(stem, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(stem, LV_OBJ_FLAG_SCROLLABLE);
-    // Horizontal bar
-    lv_obj_t* bar = lv_obj_create(g_root);
-    lv_obj_set_size(bar, 9, 2);
-    lv_obj_set_pos(bar, x + 5, y + 9);
-    lv_obj_set_style_radius(bar, 0, 0);
-    lv_obj_set_style_border_width(bar, 0, 0);
-    lv_obj_set_style_bg_color(bar, theme_fg(), 0);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
-    // Arrow head (left-pointing block)
-    lv_obj_t* head = lv_obj_create(g_root);
-    lv_obj_set_size(head, 4, 6);
-    lv_obj_set_pos(head, x + 4, y + 7);
-    lv_obj_set_style_radius(head, 0, 0);
-    lv_obj_set_style_border_width(head, 0, 0);
-    lv_obj_set_style_bg_color(head, theme_fg(), 0);
-    lv_obj_set_style_bg_opa(head, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(head, LV_OBJ_FLAG_SCROLLABLE);
+// Settings / list footer: short key legend just above bottom nav (underlined keys)
+static void draw_settings_footer(const char* extra) {
+    // Sit in the strip just above BOT_TOP — keep short to avoid clip/overlap
+    const int y = BOT_TOP - 18;
+    // Clear thin band
+    lv_obj_t* band = lv_obj_create(g_root);
+    lv_obj_set_size(band, EPD_WIDTH, 16);
+    lv_obj_set_pos(band, 0, y);
+    lv_obj_set_style_radius(band, 0, 0);
+    lv_obj_set_style_border_width(band, 0, 0);
+    lv_obj_set_style_bg_color(band, theme_bg(), 0);
+    lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(band, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Underlined G / V  (hotkeys)
+    auto hot = [&](const char* key, const char* rest, int x) {
+        const lv_font_t* font = &lv_font_montserrat_14;
+        lv_obj_t* k = lv_label_create(g_root);
+        lv_label_set_text(k, key);
+        lv_obj_set_style_text_font(k, font, 0);
+        lv_obj_set_style_text_color(k, theme_fg(), 0);
+        lv_obj_set_pos(k, x, y);
+        lv_obj_t* bar = lv_obj_create(g_root);
+        lv_obj_set_size(bar, 8, 2);
+        lv_obj_set_pos(bar, x, y + 14);
+        lv_obj_set_style_border_width(bar, 0, 0);
+        lv_obj_set_style_bg_color(bar, theme_fg(), 0);
+        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+        fat_label(g_root, rest, x + 10, y);
+    };
+    hot("G", " up", 4);
+    hot("V", " dn", 48);
+    if (extra && extra[0])
+        fat_label(g_root, extra, 100, y);
+    draw_nav();
 }
 
 void draw_compose_or_hint(const char* idleHint) {
-    // Full-width 3-line box above bottom nav (draft x2 + Enter line always present
-    // for thread; other screens keep simple one-line hints without the box).
+    // Thread / name-edit: 3-line compose box with Enter=send/save
+    // Settings / other: short footer only (no Enter=send overlay)
     const int y0 = COMPOSE_STRIP_Y;
-    const int boxH = COMPOSE_STRIP_H;
     const bool typing = (g_composeLen > 0 || g_composeMode);
+    const bool settingsType =
+        (g_screen == SCR_SETTINGS &&
+         (g_settingsPage == SET_IDLE_SECS || g_settingsPage == SET_MANUAL_TIME ||
+          g_settingsPage == SET_MANUAL_DATE || g_settingsPage == SET_MANUAL_LOC ||
+          g_timeEditMode || g_dateEditMode || g_idleSecsEditMode));
     const bool threadSend = idleHint && (strstr(idleHint, "Enter=send") || strstr(idleHint, "Enter = send"));
-    const bool showComposeBox = typing || threadSend || g_nameEditMode ||
-                                (idleHint && idleHint[0] == '\0' && g_showHistory);
+    const bool showComposeBox =
+        !settingsType && (typing || threadSend || g_nameEditMode ||
+                          (idleHint && idleHint[0] == '\0' && g_showHistory));
 
     if (showComposeBox) {
-        // Full-width outline so idle vs typing does not jump layout
-        lv_obj_t* box = lv_obj_create(g_root);
-        // Lower edge flush with BACK bar (BOT_TOP); text lines stay at y0+
         const int boxBottom = BOT_TOP;
+        lv_obj_t* box = lv_obj_create(g_root);
         lv_obj_set_size(box, EPD_WIDTH - 4, boxBottom - y0);
         lv_obj_set_pos(box, 2, y0);
         lv_obj_set_style_radius(box, 0, 0);
@@ -2345,33 +2349,44 @@ void draw_compose_or_hint(const char* idleHint) {
         } else if (g_nameEditMode) {
             strcpy(line1, "Name: _");
         }
-        // else leave blank draft lines when idle in thread
-
-        if (line1[0])
-            fat_label(g_root, line1, 6, y0 + 1);
-        if (line2[0])
-            fat_label(g_root, line2, 6, y0 + COMPOSE_LINE_H);
-
-        // Line 3 always: Enter icon + action (stable position)
+        if (line1[0]) fat_label(g_root, line1, 6, y0 + 1);
+        if (line2[0]) fat_label(g_root, line2, 6, y0 + COMPOSE_LINE_H);
         const int y3 = y0 + 2 * COMPOSE_LINE_H;
         draw_enter_key_icon(6, y3 + 1);
-        fat_label(g_root,
-                  g_nameEditMode ? "Enter=save" : "Enter=send",
-                  30, y3);
-    } else if (idleHint && idleHint[0]) {
-        fat_label(g_root, idleHint, 4, y0 + COMPOSE_LINE_H);
+        fat_label(g_root, g_nameEditMode ? "Enter=save" : "Enter=send", 30, y3);
+        draw_nav();
+        return;
     }
+
+    // Settings: compact footer with underlined G/V
+    if (g_screen == SCR_SETTINGS) {
+        const char* extra = "Enter open";
+        if (settingsType) {
+            if (g_settingsPage == SET_IDLE_SECS)
+                extra = g_composeLen ? "Enter save" : "type secs";
+            else if (g_timeEditMode || g_dateEditMode)
+                extra = "Enter set";
+            else
+                extra = "type+Enter";
+        } else if (idleHint && strstr(idleHint, "Enter=select"))
+            extra = "Enter open";
+        else if (idleHint && strstr(idleHint, "pick"))
+            extra = "Enter pick";
+        draw_settings_footer(extra);
+        return;
+    }
+
+    // Other screens: one-line hint above nav
+    if (idleHint && idleHint[0])
+        fat_label(g_root, idleHint, 4, BOT_TOP - 18);
     draw_nav();
 }
-
-
 
 void add_row(int& y, const char* left, const char* right) {
     fat_label(g_root, left, 8, y);
     fat_label(g_root, right, 118, y);
     y += 22;
 }
-
 void draw_battery_gauge(int x, int y, int w, int h, int pct) {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
@@ -3330,16 +3345,16 @@ void settingsActivate() {
         return;
     }
     if (g_settingsPage == SET_SCREEN) {
-        if (g_settingsSel == 0 || g_settingsSel == 1) {
+        if (g_settingsSel == 0) {
             g_darkTheme = !g_darkTheme;
             Serial.printf("[THEME] %s\n", g_darkTheme ? "black-ink" : "white-paper");
             show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 2) {
+        } else if (g_settingsSel == 1) {
             g_settingsPage = SET_IDLE_MODE;
             g_settingsSel = (int)g_idleMode;
             g_settingsScroll = 0;
             show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 3) {
+        } else if (g_settingsSel == 2) {
             if (g_kb.backlightIsLit()) g_kb.backlightOff();
             else g_kb.backlightOn();
             Serial.printf("[KB] backlight %s\n", g_kb.backlightIsLit() ? "ON" : "OFF");
@@ -3380,6 +3395,7 @@ void settingsActivate() {
             g_settingsSel = 0;
             g_idleSecsEditMode = true;
             g_composeMode = true;
+            g_idleRangeMsg[0] = 0;
             composeClear();
             char tmp[12];
             snprintf(tmp, sizeof(tmp), "%u", (unsigned)g_idleTimeoutSec);
@@ -3503,12 +3519,7 @@ void build_settings() {
     char a[40], b[36];
     int y = CONTENT_TOP + 2;
 
-    // Header: back hint only (keep short — avoid overlap with scroll label)
-    if (g_settingsPage != SET_ROOT) {
-        fat_label(g_root, "^ Back", 4, y);
-        y += 14;
-    }
-
+    // No "^ Back" header — Shift/up is Back; G/V shown in footer
     // List geometry (shared with touch)
     y += SETTINGS_LIST_PAD;
     g_setListTop = y + SETTINGS_HINT_H;
@@ -3573,14 +3584,13 @@ void build_settings() {
 
     if (g_settingsPage == SET_SCREEN) {
         row("1 Theme", g_darkTheme ? "Black ink" : "White paper", 0);
-        row("2 Invert (tap)", g_darkTheme ? "dark" : "light", 1);
         const char* idleLab = (g_idleMode == 0) ? "Off" :
                               (g_idleMode == 1) ? "No password" : "Password TBD";
-        row("3 Idle splash >", idleLab, 2);
-        row("4 Key backlight", g_kb.backlightIsLit() ? "ON" : "OFF", 3);
-        totalRowsHint = 4;
+        row("2 Idle splash >", idleLab, 1);
+        row("3 Key backlight", g_kb.backlightIsLit() ? "ON" : "OFF", 2);
+        totalRowsHint = 3;
         drawScrollHints();
-        draw_compose_or_hint("Enter=select  ^=back");
+        draw_compose_or_hint("Enter=select");
         return;
     }
 
@@ -3598,13 +3608,16 @@ void build_settings() {
     }
 
     if (g_settingsPage == SET_IDLE_SECS) {
-        char st[24];
+        char st[28];
         snprintf(st, sizeof(st), ">%s", g_composeLen ? g_compose : "30");
         row("1 Seconds (10-99999)", st, 0);
-        row("2 Enter=save", "^=cancel", 1);
+        if (g_idleRangeMsg[0])
+            row("2 Status", g_idleRangeMsg, 1);
+        else
+            row("2 Status", "Enter=save", 1);
         totalRowsHint = 2;
         drawScrollHints();
-        draw_compose_or_hint("Type 10-99999  Enter=save");
+        draw_compose_or_hint("Enter save");
         return;
     }
 
@@ -3678,7 +3691,7 @@ void build_settings() {
         row("1 Charge (gauge)", a, 0);
         snprintf(a, sizeof(a), "%s", g_batStr);
         row("2 Battery volts", a, 1);
-        row("3 Note", "BQ27220 may need learn", 2);
+        row("3 Note", "full cycle learns gauge", 2);
         totalRowsHint = 3;
         drawScrollHints();
         draw_compose_or_hint("^=back");
@@ -4174,10 +4187,16 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 if (ev.character == 'v' || ev.character == 'V' ||
                     ev.character == 's' || ev.character == 'S') {
                     int maxNav = 8;
-                    if (g_settingsPage == SET_MANUAL_TIME) maxNav = 4;
-                    else if (g_settingsPage == SET_MANUAL_DATE) maxNav = 5;
+                    if (g_settingsPage == SET_ROOT) maxNav = 8;
+                    else if (g_settingsPage == SET_MANUAL_TIME) maxNav = 5;
+                    else if (g_settingsPage == SET_MANUAL_LOC) maxNav = 2;
                     else if (g_settingsPage == SET_IDLE_MODE) maxNav = 3;
-                    else if (g_settingsPage == SET_TIME) maxNav = 6;
+                    else if (g_settingsPage == SET_IDLE_SECS) maxNav = 1;
+                    else if (g_settingsPage == SET_TIME) maxNav = 4;
+                    else if (g_settingsPage == SET_SCREEN) maxNav = 2;
+                    else if (g_settingsPage == SET_TZ) maxNav = kTzCount - 1;
+                    else if (g_settingsPage == SET_IDENTITY) maxNav = 2;
+                    // stop at last row — no wrap
                     if (g_settingsSel < maxNav) g_settingsSel++;
                     // Match build_settings visible window (~4 rows)
                     const int listTop = CONTENT_TOP + 2;
@@ -4352,7 +4371,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
 bool begin() {
     Serial.println();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.68");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.69");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 

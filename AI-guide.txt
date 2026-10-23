@@ -1,13 +1,22 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.68  (2026-10-23)
+Last: G1.69  (2026-10-23)
 ================================================================================
-[FIX] Settings > Screen & Input restored (Theme / Idle / Backlight)
-[FIX] All settings sub-pages draw rows again (was blank)
-[FIX] Touch hits use same listTop/listBot as drawn boxes
-[FIX] "^ more above" moved up into pad under Back header
-IDLE
-[DONE] Full refresh only on enter; partial when unread or battery changes
-BATTERY
-[DONE] When USB/high V and gauge lagging, prefer voltage curve (fixes ~45%@4.1V)
+UI
+[DONE] Settings footer just above Msg Box: underlined G up / V dn / Enter open
+[DONE] Removed "^ Back" header (Shift/up still backs out)
+[DONE] Leading 1-9 underlined on menu rows (digit keys)
+[DONE] No Enter=send overlay on settings type pages (was covering idle secs)
+[DONE] Selection clamps at first/last row (no wrap past ends)
+[DONE] Screen: Theme / Idle splash / Backlight (removed redundant Invert)
+
+IDLE TIMEOUT ENTRY
+[DONE] Enter saves; out of range clamps 10..99999 and shows "Out of range→N"
+
+BATTERY / BQ27220 "learn"
+  Fuel-gauge chips estimate % from voltage + coulomb count. Until the pack has
+  been through a real empty→full (or full→empty) cycle, RelativeStateOfCharge
+  can sit far from true (e.g. 45% at 4.1V on USB). "Learn" = use the device
+  until low, then charge uninterrupted to full so the gauge can recalibrate.
+  Voltage-curve blend still corrects the worst USB cases.
 ================================================================================
