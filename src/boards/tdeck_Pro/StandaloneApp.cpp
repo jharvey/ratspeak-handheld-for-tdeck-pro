@@ -48,44 +48,7 @@ bool g_featGps   = false;
 bool g_featLora  = true;   // display/radio intent (radio stays up for mesh)
 bool g_darkTheme = false;  // false=white paper, true=black-ink select
 
-static void loadUiPrefs() {
-    Preferences prefs;
-    if (!prefs.begin("rs_ui", true)) return;
-    g_darkTheme = prefs.getBool("dark", false);
-    g_tzIndex = prefs.getInt("tz", 0);
-    if (g_tzIndex < 0 || g_tzIndex >= 18) g_tzIndex = 0;
-    // Restore last wall clock (survives soft/hard reset when NVS kept)
-    int64_t epoch = prefs.getLong64("epoch", 0);
-    prefs.end();
-    if (epoch > 100000) {
-        struct timeval tv = { .tv_sec = (time_t)epoch, .tv_usec = 0 };
-        settimeofday(&tv, nullptr);
-        Serial.printf("[RTC] restored epoch=%lld\n", (long long)epoch);
-    }
-    Serial.printf("[UI] theme=%s tz=%d\n", g_darkTheme ? "dark" : "light", g_tzIndex);
-}
-static void saveUiPrefs() {
-    Preferences prefs;
-    if (!prefs.begin("rs_ui", false)) return;
-    prefs.putBool("dark", g_darkTheme);
-    prefs.putInt("tz", g_tzIndex);
-    time_t now = time(nullptr);
-    if (now > 100000)
-        prefs.putLong64("epoch", (int64_t)now);
-    prefs.end();
-}
-static void maybeSaveRtcEpoch() {
-    static uint32_t last = 0;
-    uint32_t now = millis();
-    if (last && (now - last) < 60000UL) return;  // once/minute
-    last = now ? now : 1;
-    time_t t = time(nullptr);
-    if (t < 100000) return;
-    Preferences prefs;
-    if (!prefs.begin("rs_ui", false)) return;
-    prefs.putLong64("epoch", (int64_t)t);
-    prefs.end();
-}
+
 
 struct LoraPreset { const char* name; uint8_t sf; float bw; uint8_t cr; };
 static const LoraPreset kLoraPresets[] = {
@@ -128,6 +91,45 @@ SettingsPage g_settingsPage = SET_ROOT;
 int g_settingsSel = 0;  // highlighted row on current page
 int g_settingsRootSel = 0;  // remembered root row when entering a sub-page
 int g_tzIndex = 0;  // 0=EST default; see kTzNames
+
+static void loadUiPrefs() {
+    Preferences prefs;
+    if (!prefs.begin("rs_ui", true)) return;
+    g_darkTheme = prefs.getBool("dark", false);
+    g_tzIndex = prefs.getInt("tz", 0);
+    if (g_tzIndex < 0 || g_tzIndex >= 18) g_tzIndex = 0;
+    // Restore last wall clock (survives soft/hard reset when NVS kept)
+    int64_t epoch = prefs.getLong64("epoch", 0);
+    prefs.end();
+    if (epoch > 100000) {
+        struct timeval tv = { .tv_sec = (time_t)epoch, .tv_usec = 0 };
+        settimeofday(&tv, nullptr);
+        Serial.printf("[RTC] restored epoch=%lld\n", (long long)epoch);
+    }
+    Serial.printf("[UI] theme=%s tz=%d\n", g_darkTheme ? "dark" : "light", g_tzIndex);
+}
+static void saveUiPrefs() {
+    Preferences prefs;
+    if (!prefs.begin("rs_ui", false)) return;
+    prefs.putBool("dark", g_darkTheme);
+    prefs.putInt("tz", g_tzIndex);
+    time_t now = time(nullptr);
+    if (now > 100000)
+        prefs.putLong64("epoch", (int64_t)now);
+    prefs.end();
+}
+static void maybeSaveRtcEpoch() {
+    static uint32_t last = 0;
+    uint32_t now = millis();
+    if (last && (now - last) < 60000UL) return;  // once/minute
+    last = now ? now : 1;
+    time_t t = time(nullptr);
+    if (t < 100000) return;
+    Preferences prefs;
+    if (!prefs.begin("rs_ui", false)) return;
+    prefs.putLong64("epoch", (int64_t)t);
+    prefs.end();
+}
 int g_manualHour = 12;
 int g_manualMin  = 0;
 bool g_timeEditMode = false;  // type HHMM for RTC
