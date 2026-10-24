@@ -188,7 +188,8 @@ char g_batStr[20]    = "n/a";
 char g_pctStr[8]     = "--%";
 bool g_batCharging   = false;
 bool g_usbPower      = false;  // external 5V present (USB)
-int16_t g_avgMa      = 0;      // last AverageCurrent mA (+in / -out)
+int16_t g_avgMa      = 0;      // last AverageCurrent mA (+in charge / -out load)
+uint16_t g_batFlags   = 0;      // BQ27220 Flags 0x0A
 
 char g_destHex[17]   = "................";
 char g_loraStr[12]   = "off";
@@ -426,6 +427,7 @@ bool readBattery(float& volts, int& pct) {
     volts = (mvSum / (float)nOk) / 1000.0f;
     int16_t avgMa = (nCur > 0) ? (int16_t)(curSum / nCur) : 0;
     g_avgMa = avgMa;
+    g_batFlags = flags;
     // Charging: current into pack (hysteresis)
     static bool s_chg = false;
     if (avgMa > 20) s_chg = true;
@@ -1017,10 +1019,9 @@ void composeAppend(char c) {
     // Text only on Msg Box / Contacts / Peers, or settings type-in pages
     const bool msgScreen = (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS ||
                             g_screen == SCR_PEERS);
+    // Only when actively typing into a field box (not merely viewing a menu page)
     const bool settingsType = (g_screen == SCR_SETTINGS &&
-        (g_timeEditMode || g_dateEditMode || g_idleSecsEditMode || g_nameEditMode ||
-         g_settingsPage == SET_MANUAL_TIME || g_settingsPage == SET_MANUAL_DATE ||
-         g_settingsPage == SET_IDLE_SECS));
+        (g_timeEditMode || g_dateEditMode || g_idleSecsEditMode));
     if (!msgScreen && !settingsType) {
         Serial.println("[COMPOSE] blocked on this screen");
         return;
@@ -2520,11 +2521,15 @@ static void draw_list_footer(const char* extra) {
         if (t && t[0])
             draw_label_centered(x, y - 1, w, fh, t, false);
     };
-    boxlab(0, 36, "^G");
-    boxlab(36, 36, "vV");
-    const char* ex = (extra && extra[0]) ? extra : "Enter open";
+    boxlab(0, 44, "G=up");
+    boxlab(44, 44, "V=dn");
+    const char* ex = (extra && extra[0]) ? extra : "";
     if (g_numsOnlyMsg[0]) ex = g_numsOnlyMsg;
-    boxlab(72, 100, ex);
+    // Skip default "Enter open"; only show non-empty useful hints
+    if (ex && ex[0] && strcmp(ex, "Enter open") != 0 && strcmp(ex, "Enter opens item") != 0)
+        boxlab(88, 84, ex);
+    else
+        boxlab(88, 84, "");
     boxlab(172, 68, g_footerMoreDn ? "v more" : "");
     draw_nav();
 }
@@ -3514,46 +3519,50 @@ void build_contacts() {
     if (g_nameEditMode) {
         const bool self = (g_msgRowCount > 0 && g_msgRows[g_selPeer].used &&
                            isLocalPeer(g_msgRows[g_selPeer].peer));
+        y = CONTENT_TOP + 18;
         {
-            char cn[28];
-            snprintf(cn, sizeof(cn), "Contact #%d", g_selPeer);
-            fat_label(g_root, cn, 4, y);
-            y += 18;
+            char cn[32];
+            snprintf(cn, sizeof(cn), "%d : Contact", g_selPeer);
+            fat_label(g_root, cn, 6, y);
+            y += 22;
         }
-        fat_label(g_root, self ? "Set THIS radio name" : "Set contact name", 4, y);
-        y += 20;
+        fat_label(g_root, self ? "Set THIS radio name" : "Set contact name", 6, y);
+        y += 22;
         if (g_msgRowCount > 0 && g_msgRows[g_selPeer].used) {
             char hex[33];
             peerToHex32(g_msgRows[g_selPeer].peer, hex);
-            fat_label(g_root, g_msgRows[g_selPeer].line1, 4, y);
-            y += 18;
+            char line[36];
+            snprintf(line, sizeof(line), "Was : %s", g_msgRows[g_selPeer].line1);
+            fat_label(g_root, line, 6, y);
+            y += 20;
             char sub[40];
-            snprintf(sub, sizeof(sub), "ID: %.16s", hex);
-            fat_label(g_root, sub, 4, y);
-            y += 22;
+            snprintf(sub, sizeof(sub), "ID  : %.16s", hex);
+            fat_label(g_root, sub, 6, y);
+            y += 24;
         }
-        fat_label(g_root, "Type name, Enter=save", 4, y);
-        y += 20;
+        fat_label(g_root, "Type name, Enter = save", 6, y);
+        y += 22;
         if (g_composeLen > 0) {
             char shown[40];
             snprintf(shown, sizeof(shown), "Name: %s", g_compose);
-            fat_label(g_root, shown, 4, y);
+            fat_label(g_root, shown, 6, y);
         } else {
-            fat_label(g_root, "Name: _", 4, y);
+            fat_label(g_root, "Name: _", 6, y);
         }
         draw_compose_or_hint("Enter=save  ^=BACK");
         return;
     }
 
-    // no "0=this" header — list starts immediately with room for ^ more
-    y += 4;
+    // Shift list down so "^ more" can sit under top nav (same as Settings)
+    y = CONTENT_TOP + 18;
     for (int i = 0; i < g_msgRowCount; i++) {
         if (!g_msgRows[i].used) continue;
-        char title[28];
+        char title[32];
+        // Match Peers format: " N : Name" / ">N : Name"
         if (i == g_selPeer)
-            snprintf(title, sizeof(title), ">%d %s", i, g_msgRows[i].line1);
+            snprintf(title, sizeof(title), ">%d : %s", i, g_msgRows[i].line1);
         else
-            snprintf(title, sizeof(title), " %d %s", i, g_msgRows[i].line1);
+            snprintf(title, sizeof(title), " %d : %s", i, g_msgRows[i].line1);
         draw_menu_row(y, ROW_H, title, g_msgRows[i].line2, i == g_selPeer);
         y += ROW_H;
         if (y > CONTENT_BOTTOM - 8) break;
@@ -3575,7 +3584,8 @@ void build_peers() {
     clampSelPeer();
 
     clear_screen();
-    int y = CONTENT_TOP + 4;
+    // Shift list down so "^ more" can sit under top nav (same as Settings/Contacts)
+    int y = CONTENT_TOP + 18;
     // no RECENT PEERS title — more room for rows
     if (g_msgRowCount == 0) {
         fat_label(g_root, g_msgNote, 8, y);
@@ -3606,8 +3616,11 @@ void build_peers() {
 void settingsGoBack() {
     if (g_settingsPage != SET_ROOT) {
         g_timeEditMode = false;
+        g_dateEditMode = false;
+        g_idleSecsEditMode = false;
         composeClear();
         g_composeMode = false;
+        keyboardSetNumLayer(false);
         if (g_settingsPage == SET_TZ) {
             g_settingsPage = SET_TIME;
             g_settingsSel = 1;
@@ -3784,6 +3797,7 @@ void settingsActivate() {
             g_dateEditMode = false;
             composeClear();
             g_composeMode = false;
+            keyboardSetNumLayer(false);
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 1) {
             g_settingsPage = SET_TZ;
@@ -3931,7 +3945,7 @@ void build_settings() {
         row("9 : Menu : Storage", "heap/flash", 8);
         totalRowsHint = 9;
         drawScrollHints();
-        draw_compose_or_hint("Enter open");
+        draw_compose_or_hint("");
         return;
     }
 
@@ -4050,23 +4064,31 @@ void build_settings() {
     }
 
     if (g_settingsPage == SET_BATTERY) {
+        // Full BQ27220 serial-stream style menu (info only)
         char a[40];
-        snprintf(a, sizeof(a), "%s", g_batStr);
-        row("1 Voltage", a, 0);
-        snprintf(a, sizeof(a), "%s", g_pctStr);
-        row("2 State of charge", a, 1);
+        snprintf(a, sizeof(a), "%s", g_batStr[0] ? g_batStr : "--");
+        row("1 : Info : Voltage", a, 0);
+        snprintf(a, sizeof(a), "%s", g_pctStr[0] ? g_pctStr : "--");
+        row("2 : Info : State of charge", a, 1);
+        // Negative avgMa = pack is discharging (consuming); positive = charging
         if (g_avgMa > 5)
-            snprintf(a, sizeof(a), "+%d mA charge", (int)g_avgMa);
+            snprintf(a, sizeof(a), "+%d mA charging", (int)g_avgMa);
         else if (g_avgMa < -5)
-            snprintf(a, sizeof(a), "%d mA load", (int)g_avgMa);
+            snprintf(a, sizeof(a), "%d mA consuming", (int)g_avgMa);
         else
             snprintf(a, sizeof(a), "%d mA idle", (int)g_avgMa);
-        row("3 Current (now)", a, 2);
+        row("3 : Info : Average current", a, 2);
+        snprintf(a, sizeof(a), "%s", g_batCharging ? "YES (CHG)" : "no");
+        row("4 : Info : Charging", a, 3);
+        snprintf(a, sizeof(a), "%s", g_usbPower ? "YES (5V rail)" : "no (on battery)");
+        row("5 : Info : USB power", a, 4);
+        snprintf(a, sizeof(a), "0x%04X", (unsigned)g_batFlags);
+        row("6 : Info : Gauge flags", a, 5);
         snprintf(a, sizeof(a), "%s / %s",
                  g_usbPower ? "USB PWR" : "battery",
-                 g_batCharging ? "charging" : "not chg");
-        row("4 Power source", a, 3);
-        totalRowsHint = 4;
+                 g_batCharging ? "charging" : "discharging");
+        row("7 : Info : Power source", a, 6);
+        totalRowsHint = 7;
         drawScrollHints();
         draw_compose_or_hint("info only");
         return;
@@ -4093,7 +4115,7 @@ void build_settings() {
         row("5 Scan networks", "[future]", 4);
         totalRowsHint = 5;
         drawScrollHints();
-        draw_compose_or_hint("Enter open");
+        draw_compose_or_hint("");
         return;
     }
 
@@ -4116,7 +4138,7 @@ void build_settings() {
         row("5 : Toggle : Sync GPS now", g_gpsHasFix ? "Enter=sync" : "need fix", 4);
         totalRowsHint = 5;
         drawScrollHints();
-        draw_compose_or_hint("Enter opens item");
+        draw_compose_or_hint("");
         return;
     }
 
@@ -4300,7 +4322,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 else if (g_settingsPage == SET_TIME) maxNav = 4;
                 else if (g_settingsPage == SET_SCREEN) maxNav = 2;
                 else if (g_settingsPage == SET_NETWORK) maxNav = 4;
-                else if (g_settingsPage == SET_BATTERY) maxNav = -1;
+                else if (g_settingsPage == SET_BATTERY) maxNav = 6;
                 else if (g_settingsPage == SET_TZ) maxNav = kTzCount - 1;
                 else if (g_settingsPage == SET_IDENTITY) maxNav = 2;
                 else if (g_settingsPage == SET_LORA) maxNav = 3;
