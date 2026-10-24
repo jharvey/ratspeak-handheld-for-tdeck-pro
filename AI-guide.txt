@@ -1,26 +1,18 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.75  (2026-10-24)
+Last: G1.76  (2026-10-24)
 ================================================================================
-TOP NAV (all pages)
-[DONE] Refresh | vertical battery (charge bolt) | Settings | Home
+CHROME
+[DONE] Footer ^G|vV|Enter edge-to-edge, no outer gap, sits on bot nav
+[DONE] v more uses right footer cell; ^ more second top row right
+[DONE] Unread = full-width info strip under content top
 
-PATH
-[DONE] S.1 / S.3.2 instead of S>1 (dots)
-
-SCROLL
-[DONE] ^ more top-right box when more above
-[DONE] v more bottom-right above MSG BOX when more below
-
-FOOTER (settings)
-[DONE] boxed ^G | vV | Enter open
+BATTERY
+[DONE] Clearer 5-segment lightning when charging (USB / CHG / high-V)
 
 IDLE
-[DONE] Spaced date/time characters
+[DONE] UP spaced like date/time
 
-MSG BOX
-[DONE] "Unread N" left side
-
-REMOVED
-[DONE] S.3.4 Buzzer (use S.7 Alerts & Audio)
+LABELS
+[DONE] "N : Menu|Toggle|Entry : title" on settings rows
 ================================================================================

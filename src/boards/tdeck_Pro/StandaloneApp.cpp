@@ -420,7 +420,8 @@ bool readBattery(float& volts, int& pct) {
     if (nOk == 0) return false;
     volts = (mvSum / (float)nOk) / 1000.0f;
     int16_t avgMa = (nCur > 0) ? (int16_t)(curSum / nCur) : 0;
-    bool charging = (avgMa > 10) || (flags & 0x0001);  // CHG-ish
+    // CHG flag, positive current into pack, or high V while on USB
+    bool charging = (avgMa > 5) || (flags & 0x0001) || (volts >= 4.12f && avgMa > -5);
     g_batCharging = charging;
 
     int gaugePct = (nSoc > 0) ? (int)(socSum / nSoc) : -1;
@@ -2044,8 +2045,16 @@ static void paintIdleContent() {
     unsigned days = (unsigned)(sec / 86400UL);
     unsigned hrs  = (unsigned)((sec / 3600UL) % 24UL);
     unsigned mins = (unsigned)((sec / 60UL) % 60UL);
-    char up[24];
-    snprintf(up, sizeof(up), "UP %04u:%02u:%02u", days, hrs, mins);
+    char upRaw[20], up[36];
+    snprintf(upRaw, sizeof(upRaw), "UP %04u:%02u:%02u", days, hrs, mins);
+    {
+        size_t j = 0;
+        for (size_t i = 0; upRaw[i] && j + 2 < sizeof(up); i++) {
+            up[j++] = upRaw[i];
+            if (upRaw[i+1]) up[j++] = ' ';
+        }
+        up[j] = 0;
+    }
     draw_label_centered(0, 252, EPD_WIDTH, 18, up, true);
 
     lv_refr_now(nullptr);
@@ -2305,7 +2314,7 @@ void draw_nav() {
         pct = atoi(g_pctStr);
     if (g_showHistory || g_nameEditMode) {
         draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
-        draw_battery_nav_icon(TOP_REFRESH_W + 4, 4, TOP_BAT_W - 8, TOP_H - 8, pct);
+        draw_battery_nav_icon(TOP_REFRESH_W + 5, 3, TOP_BAT_W - 10, TOP_H - 6, pct);
         int sx = TOP_REFRESH_W + TOP_BAT_W;
         draw_nav_box(sx, 0, TOP_TAB_W, TOP_H, "Settings", false, 'S');
         draw_nav_box(sx + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home", false, 'H');
@@ -2314,7 +2323,7 @@ void draw_nav() {
         return;
     }
     draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
-    draw_battery_nav_icon(TOP_REFRESH_W + 4, 4, TOP_BAT_W - 8, TOP_H - 8, pct);
+    draw_battery_nav_icon(TOP_REFRESH_W + 5, 3, TOP_BAT_W - 10, TOP_H - 6, pct);
     int sx = TOP_REFRESH_W + TOP_BAT_W;
     draw_nav_box(sx, 0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS, 'S');
     draw_nav_box(sx + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home", g_screen == SCR_HOME, 'H');
@@ -2467,10 +2476,12 @@ static void drawUpArrowBack(int x, int y) {
 }
 
 static void draw_settings_footer(const char* extra) {
-    const int y = BOT_TOP - 20;
+    // Flush strip just above bottom nav — no outer gap, shared borders
+    const int fh = 20;
+    const int y = BOT_TOP - fh;
     auto boxlab = [&](int x, int w, const char* t) {
         lv_obj_t* b = lv_obj_create(g_root);
-        lv_obj_set_size(b, w, 18);
+        lv_obj_set_size(b, w, fh);
         lv_obj_set_pos(b, x, y);
         lv_obj_set_style_radius(b, 0, 0);
         lv_obj_set_style_border_width(b, 1, 0);
@@ -2479,13 +2490,16 @@ static void draw_settings_footer(const char* extra) {
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
         lv_obj_set_style_pad_all(b, 0, 0);
         lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
-        fat_label(g_root, t, x + 3, y + 2);
+        fat_label(g_root, t, x + 3, y + 3);
     };
-    boxlab(2, 28, "^G");
-    boxlab(32, 28, "vV");
+    // 240px: 36 + 36 + 100 + 68 = 240 edge-to-edge
+    boxlab(0, 36, "^G");
+    boxlab(36, 36, "vV");
     const char* ex = (extra && extra[0]) ? extra : "Enter open";
     if (g_numsOnlyMsg[0]) ex = g_numsOnlyMsg;
-    boxlab(62, 90, ex);
+    boxlab(72, 100, ex);
+    // v more slot reserved right (filled by drawScrollHints when needed)
+    boxlab(172, 68, "");  // empty frame; label drawn over when moreDn
     draw_nav();
 }
 
@@ -2636,18 +2650,23 @@ void draw_battery_gauge(int x, int y, int w, int h, int pct) {
         lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
     }
     if (g_batCharging) {
-        int bx = x + w / 2 - 2;
-        int by = y + 1;
-        for (int i = 0; i < 3; i++) {
+        auto pix = [&](int px, int py, int pw, int ph) {
             lv_obj_t* z = lv_obj_create(g_root);
-            lv_obj_set_size(z, 3, 3);
-            lv_obj_set_pos(z, bx + (i == 1 ? 2 : 0), by + i * 4);
+            lv_obj_set_size(z, pw, ph);
+            lv_obj_set_pos(z, px, py);
             lv_obj_set_style_radius(z, 0, 0);
             lv_obj_set_style_border_width(z, 0, 0);
             lv_obj_set_style_bg_color(z, theme_fg(), 0);
             lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
             lv_obj_clear_flag(z, LV_OBJ_FLAG_SCROLLABLE);
-        }
+        };
+        int cx = x + w / 2;
+        int cy = y + h / 2;
+        pix(cx + 1, cy - 5, 5, 2);
+        pix(cx - 1, cy - 3, 4, 2);
+        pix(cx - 3, cy - 1, 7, 2);
+        pix(cx + 0, cy + 1, 4, 2);
+        pix(cx - 4, cy + 3, 5, 2);
     }
     char ps[8];
     if (pct >= 0) snprintf(ps, sizeof(ps), "%d%%", pct);
@@ -2690,14 +2709,24 @@ void draw_battery_nav_icon(int x, int y, int w, int h, int pct) {
         lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
     }
     if (g_batCharging) {
-        lv_obj_t* z = lv_obj_create(g_root);
-        lv_obj_set_size(z, 2, bh / 2);
-        lv_obj_set_pos(z, x + w / 2 - 1, by + bh / 4);
-        lv_obj_set_style_radius(z, 0, 0);
-        lv_obj_set_style_border_width(z, 0, 0);
-        lv_obj_set_style_bg_color(z, theme_fg(), 0);
-        lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
-        lv_obj_clear_flag(z, LV_OBJ_FLAG_SCROLLABLE);
+        // Classic lightning: top-right, mid-left, mid-right, bottom-left
+        auto pix = [&](int px, int py, int pw, int ph) {
+            lv_obj_t* z = lv_obj_create(g_root);
+            lv_obj_set_size(z, pw, ph);
+            lv_obj_set_pos(z, px, py);
+            lv_obj_set_style_radius(z, 0, 0);
+            lv_obj_set_style_border_width(z, 0, 0);
+            lv_obj_set_style_bg_color(z, theme_fg(), 0);
+            lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
+            lv_obj_clear_flag(z, LV_OBJ_FLAG_SCROLLABLE);
+        };
+        int cx = x + w / 2;
+        int cy = by + bh / 2;
+        pix(cx + 1, cy - 6, 4, 2);   // top bar
+        pix(cx - 1, cy - 4, 3, 2);
+        pix(cx - 3, cy - 1, 6, 2);   // middle thick
+        pix(cx + 0, cy + 1, 3, 2);
+        pix(cx - 4, cy + 3, 4, 2);   // bottom
     }
 }
 
@@ -3849,10 +3878,12 @@ void build_settings() {
     auto drawScrollHints = [&]() {
         bool moreUp = g_settingsScroll > 0;
         bool moreDn = (g_settingsScroll + g_setMaxVis) < totalRowsHint;
+        // Second top row (path band): ^ more flush right, height = PATH_H
+        const int pathH = 18;
         if (moreUp) {
             lv_obj_t* b = lv_obj_create(g_root);
-            lv_obj_set_size(b, 52, 14);
-            lv_obj_set_pos(b, EPD_WIDTH - 54, TOP_H + 1);
+            lv_obj_set_size(b, 68, pathH);
+            lv_obj_set_pos(b, EPD_WIDTH - 68, TOP_H);
             lv_obj_set_style_radius(b, 0, 0);
             lv_obj_set_style_border_width(b, 1, 0);
             lv_obj_set_style_border_color(b, theme_fg(), 0);
@@ -3860,20 +3891,11 @@ void build_settings() {
             lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
             lv_obj_set_style_pad_all(b, 0, 0);
             lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
-            fat_label(g_root, "^ more", EPD_WIDTH - 52, TOP_H + 2);
+            fat_label(g_root, "^ more", EPD_WIDTH - 64, TOP_H + 2);
         }
+        // Bottom strip right cell (same band as ^G/vV)
         if (moreDn) {
-            lv_obj_t* b = lv_obj_create(g_root);
-            lv_obj_set_size(b, 52, 14);
-            lv_obj_set_pos(b, EPD_WIDTH - 54, BOT_TOP - 16);
-            lv_obj_set_style_radius(b, 0, 0);
-            lv_obj_set_style_border_width(b, 1, 0);
-            lv_obj_set_style_border_color(b, theme_fg(), 0);
-            lv_obj_set_style_bg_color(b, theme_bg(), 0);
-            lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-            lv_obj_set_style_pad_all(b, 0, 0);
-            lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
-            fat_label(g_root, "v more", EPD_WIDTH - 52, BOT_TOP - 15);
+            fat_label(g_root, "v more", 176, BOT_TOP - 17);
         }
     };
 
@@ -3881,21 +3903,21 @@ void build_settings() {
         char lt[12];
         formatLocalTime(lt, sizeof(lt));
         snprintf(a, sizeof(a), "%s %s", lt, tzName());
-        row("1 Time & Location", a, 0);
-        row("2 WiFi", g_featWifi ? "ON" : "OFF", 1);
-        row("3 Screen & I/O", "e-ink / keys / buzzer", 2);
+        row("1 : Menu : Time & Location", a, 0);
+        row("2 : Menu : WiFi", g_featWifi ? "ON" : "OFF", 1);
+        row("3 : Menu : Screen & I/O", "e-ink / keys", 2);
         snprintf(a, sizeof(a), "%s %s", g_batStr, g_pctStr);
-        row("4 Battery", a, 3);
+        row("4 : Menu : Battery", a, 3);
         snprintf(a, sizeof(a), "%.14s", g_destHex);
-        row("5 Identity & Device", a, 4);
+        row("5 : Menu : Identity", a, 4);
         snprintf(a, sizeof(a), "LF %.0fMHz %s", LORA_DEFAULT_FREQ / 1e6f,
                  g_featLora ? "ON" : "OFF");
-        row("6 LoRa", a, 5);
+        row("6 : Menu : LoRa", a, 5);
         snprintf(a, sizeof(a), "Vol %s", g_featAudio ? "ON" : "OFF");
-        row("7 Alerts & Audio", a, 6);
+        row("7 : Menu : Alerts", a, 6);
         snprintf(a, sizeof(a), "P%s L%s", g_pathsStr, g_linksStr);
-        row("8 Diagnostics", a, 7);
-        row("9 Storage & Maint.", "heap/flash", 8);
+        row("8 : Menu : Diagnostics", a, 7);
+        row("9 : Menu : Storage", "heap/flash", 8);
         totalRowsHint = 9;
         drawScrollHints();
         draw_compose_or_hint("Enter open");
@@ -3916,11 +3938,11 @@ void build_settings() {
     }
 
     if (g_settingsPage == SET_SCREEN) {
-        row("1 Theme", g_darkTheme ? "Black ink" : "White paper", 0);
+        row("1 : Toggle : Theme", g_darkTheme ? "Black ink" : "White paper", 0);
         const char* idleLab = (g_idleMode == 0) ? "Off" :
                               (g_idleMode == 1) ? "No password" : "Password TBD";
-        row("2 Idle splash >", idleLab, 1);
-        row("3 Key backlight", g_kb.backlightIsLit() ? "ON" : "OFF", 2);
+        row("2 : Menu : Idle splash", idleLab, 1);
+        row("3 : Toggle : Key backlight", g_kb.backlightIsLit() ? "ON" : "OFF", 2);
         totalRowsHint = 3;
         drawScrollHints();
         draw_compose_or_hint("Enter=select");
@@ -3973,12 +3995,12 @@ void build_settings() {
             else
                 snprintf(st, sizeof(st), "%02d Enter=type", val);
         };
-        fieldSub(0, g_manualHour, 2); row("1 Hour (0-23)", st, 0);
-        fieldSub(1, g_manualMin, 2);  row("2 Minute (0-59)", st, 1);
-        fieldSub(2, g_manualMon, 2);  row("3 Month (1-12)", st, 2);
-        fieldSub(3, g_manualDay, 2);  row("4 Day (1-31)", st, 3);
-        fieldSub(4, g_manualYear, 4); row("5 Year", st, 4);
-        row("6 Apply to RTC", "Enter=save all", 5);
+        fieldSub(0, g_manualHour, 2); row("1 : Entry : Hour (0-23)", st, 0);
+        fieldSub(1, g_manualMin, 2);  row("2 : Entry : Minute (0-59)", st, 1);
+        fieldSub(2, g_manualMon, 2);  row("3 : Entry : Month (1-12)", st, 2);
+        fieldSub(3, g_manualDay, 2);  row("4 : Entry : Day (1-31)", st, 3);
+        fieldSub(4, g_manualYear, 4); row("5 : Entry : Year", st, 4);
+        row("6 : Toggle : Apply to RTC", "Enter=save all", 5);
         totalRowsHint = 6;
         drawScrollHints();
         draw_compose_or_hint(g_timeEditMode ? "Enter set" : "Enter type");
@@ -4046,7 +4068,7 @@ void build_settings() {
     }
 
     if (g_settingsPage == SET_NETWORK) {
-        row("1 Enable WiFi", g_featWifi ? "ON" : "OFF", 0);
+        row("1 : Toggle : Enable WiFi", g_featWifi ? "ON" : "OFF", 0);
         row("2 Status", g_featWifi ? "enabled (no radio yet)" : "disabled", 1);
         row("3 IP address", g_featWifi ? "0.0.0.0" : "n/a", 2);
         row("4 MAC", "see ESP32", 3);
@@ -4064,16 +4086,16 @@ void build_settings() {
         snprintf(st, sizeof(st), "%s %s", loc, dt);
         row("1 Set RTC time >", st, 0);
         snprintf(st, sizeof(st), "%s UTC%+d", tzName(), tzOffsetHours());
-        row("2 Time zone >", st, 1);
+        row("2 : Menu : Time zone", st, 1);
         snprintf(st, sizeof(st), "%s %s %us",
                  g_gpsEnabled ? "ON" : "OFF", g_gpsStatus, (unsigned)g_gpsSats);
-        row("3 Enable GPS", st, 2);
+        row("3 : Toggle : Enable GPS", st, 2);
         if (g_hasManualPos)
             snprintf(st, sizeof(st), "%.2f,%.2f", g_manualLat, g_manualLon);
         else
             strcpy(st, "not set");
-        row("4 Manual location >", st, 3);
-        row("5 Sync GPS now", g_gpsHasFix ? "Enter=sync" : "need fix", 4);
+        row("4 : Menu : Manual location", st, 3);
+        row("5 : Toggle : Sync GPS now", g_gpsHasFix ? "Enter=sync" : "need fix", 4);
         totalRowsHint = 5;
         drawScrollHints();
         draw_compose_or_hint("Enter opens item");
@@ -4761,7 +4783,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.75");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.76");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
