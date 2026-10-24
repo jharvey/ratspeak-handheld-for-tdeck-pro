@@ -187,6 +187,8 @@ lv_obj_t* g_root = nullptr;
 char g_batStr[20]    = "n/a";
 char g_pctStr[8]     = "--%";
 bool g_batCharging   = false;
+bool g_usbPower      = false;  // external 5V present (USB)
+int16_t g_avgMa      = 0;      // last AverageCurrent mA (+in / -out)
 
 char g_destHex[17]   = "................";
 char g_loraStr[12]   = "off";
@@ -423,19 +425,26 @@ bool readBattery(float& volts, int& pct) {
     if (nOk == 0) return false;
     volts = (mvSum / (float)nOk) / 1000.0f;
     int16_t avgMa = (nCur > 0) ? (int16_t)(curSum / nCur) : 0;
-    // BQ27220 AverageCurrent: positive = current into pack (charging).
-    // Flags bit0 is DSG (discharging) — do NOT use as charge indicator.
-    // Hysteresis: on above +20 mA, off below +8 mA (avoids chatter).
+    g_avgMa = avgMa;
+    // Charging: current into pack (hysteresis)
     static bool s_chg = false;
     if (avgMa > 20) s_chg = true;
     else if (avgMa < 8) s_chg = false;
-    bool charging = s_chg;
-    g_batCharging = charging;
+    g_batCharging = s_chg;
+    // USB power: either charging, or float/full on rail (not discharging hard)
+    // Unplugged logs show ~-15..-25 mA; plugged float is ~-5..+40 at 4.1V+
+    static bool s_usb = false;
+    if (avgMa > 15 || (volts >= 4.15f && avgMa > -8))
+        s_usb = true;
+    else if (avgMa < -12)
+        s_usb = false;
+    g_usbPower = s_usb;
     static uint32_t s_lastLog = 0;
     if (millis() - s_lastLog > 5000) {
         s_lastLog = millis();
-        Serial.printf("[BAT] V=%.3f pct=%d avgMa=%d chg=%d flags=0x%04x\n",
-                      volts, pct, (int)avgMa, (int)charging, (unsigned)flags);
+        Serial.printf("[BAT] V=%.3f pct=%d avgMa=%d chg=%d usb=%d flags=0x%04x\n",
+                      volts, pct, (int)avgMa, (int)g_batCharging, (int)g_usbPower,
+                      (unsigned)flags);
     }
 
     int gaugePct = (nSoc > 0) ? (int)(socSum / nSoc) : -1;
@@ -2413,7 +2422,6 @@ void draw_menu_row(int y, int h, const char* title, const char* sub, bool select
 
 
 void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
-    // Compact unread-only strip (CONV/NEW removed — too wide)
     (void)conv; (void)neu;
     char c[20];
     if (unread > 99)
@@ -2421,8 +2429,8 @@ void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
     else
         snprintf(c, sizeof(c), "Unread %02u", unread);
     lv_obj_t* box = lv_obj_create(g_root);
-    lv_obj_set_size(box, 88, STATS_H - 4);
-    lv_obj_set_pos(box, 2, y);
+    lv_obj_set_size(box, 124, 18);  // +space so "00" not clipped
+    lv_obj_set_pos(box, 0, y);
     lv_obj_set_style_radius(box, 0, 0);
     lv_obj_set_style_border_width(box, 1, 0);
     lv_obj_set_style_border_color(box, theme_fg(), 0);
@@ -2430,7 +2438,7 @@ void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
     lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(box, 0, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
-    fat_label(g_root, c, 6, y + 4);
+    fat_label(g_root, c, 4, y + 1);
 }
 
 // Settings / list footer: short key legend just above bottom nav (underlined keys)
@@ -2605,7 +2613,7 @@ void draw_compose_or_hint(const char* idleHint) {
         g_footerMoreDn = false;  // list screens: no scroll strip yet
         const char* shortH = "Enter open";
         if (g_screen == SCR_CONTACTS) shortH = "Enter name";
-        else if (g_screen == SCR_PEERS) shortH = "1-9";
+        else if (g_screen == SCR_PEERS) shortH = "";
         else if (g_showHistory) shortH = "Enter send";
         draw_list_footer(shortH);
         return;
@@ -3115,7 +3123,7 @@ void gpsPoll() {
 
 void build_home() {
     clear_screen();
-    const int y0 = CONTENT_TOP;  // flush under top nav
+    const int y0 = CONTENT_TOP - 1;  // flush under top nav
 
     // Identity - full width, no side gap, flush under Settings|Home
     lv_obj_t* idBox = lv_obj_create(g_root);
@@ -3132,7 +3140,7 @@ void build_home() {
     loadSelfName();
     fat_label(g_root, g_selfName[0] ? g_selfName : "IDENTITY", 6, y0 + 2);
     const char* on = (g_loraIf && g_loraIf->isOnline())
-        ? (g_batCharging ? "CHG" : "ONLINE")
+        ? (g_batCharging ? "CHG" : (g_usbPower ? "USB PWR" : "ONLINE"))
         : "OFFLINE";
     // ~30px left of prior 118; gauge ~15px left of prior far-right
     fat_label(g_root, on, 88, y0 + 2);
@@ -3592,7 +3600,7 @@ void build_peers() {
             if (y > CONTENT_BOTTOM - 8) break;
         }
     }
-    draw_compose_or_hint("1-9 select");
+    draw_compose_or_hint("");
 }
 
 void settingsGoBack() {
@@ -4042,18 +4050,25 @@ void build_settings() {
     }
 
     if (g_settingsPage == SET_BATTERY) {
-        // Info-only: draw without selection highlight (dashed feel via thin border)
-        int saveSel = g_settingsSel;
-        g_settingsSel = -1;
-        snprintf(a, sizeof(a), "%s", g_pctStr);
-        row("1 Charge (gauge)", a, 0);
+        char a[40];
         snprintf(a, sizeof(a), "%s", g_batStr);
-        row("2 Battery volts", a, 1);
-        row("3 Note", "full cycle learns gauge", 2);
-        g_settingsSel = saveSel;
-        totalRowsHint = 3;
+        row("1 Voltage", a, 0);
+        snprintf(a, sizeof(a), "%s", g_pctStr);
+        row("2 State of charge", a, 1);
+        if (g_avgMa > 5)
+            snprintf(a, sizeof(a), "+%d mA charge", (int)g_avgMa);
+        else if (g_avgMa < -5)
+            snprintf(a, sizeof(a), "%d mA load", (int)g_avgMa);
+        else
+            snprintf(a, sizeof(a), "%d mA idle", (int)g_avgMa);
+        row("3 Current (now)", a, 2);
+        snprintf(a, sizeof(a), "%s / %s",
+                 g_usbPower ? "USB PWR" : "battery",
+                 g_batCharging ? "charging" : "not chg");
+        row("4 Power source", a, 3);
+        totalRowsHint = 4;
         drawScrollHints();
-        draw_compose_or_hint("Enter open");
+        draw_compose_or_hint("info only");
         return;
     }
 
@@ -4786,7 +4801,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.77");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.78");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
