@@ -91,6 +91,7 @@ SettingsPage g_settingsPage = SET_ROOT;
 int g_settingsSel = 0;  // highlighted row on current page
 int g_settingsRootSel = 0;  // remembered root row when entering a sub-page
 int g_tzIndex = 0;  // 0=EST default; see kTzNames
+static constexpr int kTzCount = 18;
 
 static void loadUiPrefs() {
     Preferences prefs;
@@ -352,96 +353,21 @@ void goBackFromMessage();
 void noteUserInput();
 void draw_idle_screen();
 void maybeEnterIdle();
+void spiBusIdle();
+static const char* tzName();
+static void formatLocalTime(char* out, size_t n);
+static void formatLocalDate(char* out, size_t n);
 void draw_battery_gauge(int x, int y, int w, int h, int pct);
-void draw_battery_nav_icon(int x, int y, int w, int h, int pct) {
-    // Full box so bottom edge matches Settings/Home chrome
-    lv_obj_t* frame = lv_obj_create(g_root);
-    lv_obj_set_size(frame, w + 8, h);
-    lv_obj_set_pos(frame, x - 4, y);
-    lv_obj_set_style_radius(frame, 0, 0);
-    lv_obj_set_style_border_width(frame, 1, 0);
-    lv_obj_set_style_border_color(frame, theme_fg(), 0);
-    lv_obj_set_style_bg_color(frame, theme_bg(), 0);
-    lv_obj_set_style_bg_opa(frame, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(frame, 0, 0);
-    lv_obj_clear_flag(frame, LV_OBJ_FLAG_SCROLLABLE);
+void draw_battery_nav_icon(int x, int y, int w, int h, int pct);
 
-    // Tip on top (centered in frame)
-    int bx = x;
-    int by0 = y + 3;
-    int bw = w;
-    int bh = h - 8;
-    lv_obj_t* tip = lv_obj_create(g_root);
-    lv_obj_set_size(tip, bw / 3, 3);
-    lv_obj_set_pos(tip, bx + bw / 3, y + 2);
-    lv_obj_set_style_radius(tip, 0, 0);
-    lv_obj_set_style_border_width(tip, 0, 0);
-    lv_obj_set_style_bg_color(tip, theme_fg(), 0);
-    lv_obj_set_style_bg_opa(tip, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(tip, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* body = lv_obj_create(g_root);
-    lv_obj_set_size(body, bw, bh);
-    lv_obj_set_pos(body, bx, by0 + 2);
-    lv_obj_set_style_radius(body, 0, 0);
-    lv_obj_set_style_border_width(body, 1, 0);
-    lv_obj_set_style_border_color(body, theme_fg(), 0);
-    lv_obj_set_style_bg_color(body, theme_bg(), 0);
-    lv_obj_set_style_bg_opa(body, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(body, 0, 0);
-    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
-
-    if (pct > 0) {
-        int fh = ((bh - 4) * pct) / 100;
-        if (fh < 1) fh = 1;
-        if (fh > bh - 4) fh = bh - 4;
-        lv_obj_t* fill = lv_obj_create(g_root);
-        lv_obj_set_size(fill, bw - 4, fh);
-        lv_obj_set_pos(fill, bx + 2, by0 + 2 + bh - 2 - fh);
-        lv_obj_set_style_radius(fill, 0, 0);
-        lv_obj_set_style_border_width(fill, 0, 0);
-        lv_obj_set_style_bg_color(fill, theme_fg(), 0);
-        lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
-        lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
-    }
-    if (g_batCharging) {
-        // Bolt in theme_bg so it cuts out of solid fill (visible when charging)
-        auto pix = [&](int px, int py, int pw, int ph) {
-            lv_obj_t* z = lv_obj_create(g_root);
-            lv_obj_set_size(z, pw, ph);
-            lv_obj_set_pos(z, px, py);
-            lv_obj_set_style_radius(z, 0, 0);
-            lv_obj_set_style_border_width(z, 0, 0);
-            lv_obj_set_style_bg_color(z, theme_bg(), 0);
-            lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
-            lv_obj_clear_flag(z, LV_OBJ_FLAG_SCROLLABLE);
-        };
-        int cx = bx + bw / 2;
-        int cy = by0 + 2 + bh / 2;
-        // Zigzag bolt (cutout)
-        pix(cx + 0, cy - 7, 5, 2);
-        pix(cx - 1, cy - 5, 4, 2);
-        pix(cx - 3, cy - 2, 7, 3);
-        pix(cx - 1, cy + 1, 4, 2);
-        pix(cx - 4, cy + 3, 5, 2);
-        // Also draw thin fg outline bolts offset so visible on empty battery
-        auto pixFg = [&](int px, int py, int pw, int ph) {
-            lv_obj_t* z = lv_obj_create(g_root);
-            lv_obj_set_size(z, pw, ph);
-            lv_obj_set_pos(z, px, py);
-            lv_obj_set_style_radius(z, 0, 0);
-            lv_obj_set_style_border_width(z, 0, 0);
-            lv_obj_set_style_bg_color(z, theme_fg(), 0);
-            lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
-            lv_obj_clear_flag(z, LV_OBJ_FLAG_SCROLLABLE);
-        };
-        // small + next to body when fill low
-        if (pct < 40) {
-            pixFg(cx - 1, cy - 6, 2, 10);
-            pixFg(cx - 4, cy - 1, 8, 2);
-        }
-    }
+void spiBusIdle() {
+    pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
+    pinMode(LORA_CS, OUTPUT); digitalWrite(LORA_CS, HIGH);
+#ifdef SD_CS
+    pinMode(SD_CS, OUTPUT); digitalWrite(SD_CS, HIGH);
+#endif
 }
+
 
 
 // LiPo voltage → rough SoC (fallback / sanity check for gauge)
