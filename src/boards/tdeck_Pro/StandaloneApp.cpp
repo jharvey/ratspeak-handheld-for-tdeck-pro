@@ -353,19 +353,96 @@ void noteUserInput();
 void draw_idle_screen();
 void maybeEnterIdle();
 void draw_battery_gauge(int x, int y, int w, int h, int pct);
-void draw_battery_nav_icon(int x, int y, int w, int h, int pct);
-static const char* tzName();
-static void formatLocalTime(char* out, size_t n);
-static void formatLocalDate(char* out, size_t n);
-static constexpr int kTzCount = 18;
+void draw_battery_nav_icon(int x, int y, int w, int h, int pct) {
+    // Full box so bottom edge matches Settings/Home chrome
+    lv_obj_t* frame = lv_obj_create(g_root);
+    lv_obj_set_size(frame, w + 8, h);
+    lv_obj_set_pos(frame, x - 4, y);
+    lv_obj_set_style_radius(frame, 0, 0);
+    lv_obj_set_style_border_width(frame, 1, 0);
+    lv_obj_set_style_border_color(frame, theme_fg(), 0);
+    lv_obj_set_style_bg_color(frame, theme_bg(), 0);
+    lv_obj_set_style_bg_opa(frame, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(frame, 0, 0);
+    lv_obj_clear_flag(frame, LV_OBJ_FLAG_SCROLLABLE);
 
-void spiBusIdle() {
-    pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
-    pinMode(LORA_CS, OUTPUT); digitalWrite(LORA_CS, HIGH);
-#ifdef SD_CS
-    pinMode(SD_CS, OUTPUT); digitalWrite(SD_CS, HIGH);
-#endif
+    // Tip on top (centered in frame)
+    int bx = x;
+    int by0 = y + 3;
+    int bw = w;
+    int bh = h - 8;
+    lv_obj_t* tip = lv_obj_create(g_root);
+    lv_obj_set_size(tip, bw / 3, 3);
+    lv_obj_set_pos(tip, bx + bw / 3, y + 2);
+    lv_obj_set_style_radius(tip, 0, 0);
+    lv_obj_set_style_border_width(tip, 0, 0);
+    lv_obj_set_style_bg_color(tip, theme_fg(), 0);
+    lv_obj_set_style_bg_opa(tip, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(tip, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* body = lv_obj_create(g_root);
+    lv_obj_set_size(body, bw, bh);
+    lv_obj_set_pos(body, bx, by0 + 2);
+    lv_obj_set_style_radius(body, 0, 0);
+    lv_obj_set_style_border_width(body, 1, 0);
+    lv_obj_set_style_border_color(body, theme_fg(), 0);
+    lv_obj_set_style_bg_color(body, theme_bg(), 0);
+    lv_obj_set_style_bg_opa(body, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(body, 0, 0);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+
+    if (pct > 0) {
+        int fh = ((bh - 4) * pct) / 100;
+        if (fh < 1) fh = 1;
+        if (fh > bh - 4) fh = bh - 4;
+        lv_obj_t* fill = lv_obj_create(g_root);
+        lv_obj_set_size(fill, bw - 4, fh);
+        lv_obj_set_pos(fill, bx + 2, by0 + 2 + bh - 2 - fh);
+        lv_obj_set_style_radius(fill, 0, 0);
+        lv_obj_set_style_border_width(fill, 0, 0);
+        lv_obj_set_style_bg_color(fill, theme_fg(), 0);
+        lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
+    }
+    if (g_batCharging) {
+        // Bolt in theme_bg so it cuts out of solid fill (visible when charging)
+        auto pix = [&](int px, int py, int pw, int ph) {
+            lv_obj_t* z = lv_obj_create(g_root);
+            lv_obj_set_size(z, pw, ph);
+            lv_obj_set_pos(z, px, py);
+            lv_obj_set_style_radius(z, 0, 0);
+            lv_obj_set_style_border_width(z, 0, 0);
+            lv_obj_set_style_bg_color(z, theme_bg(), 0);
+            lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
+            lv_obj_clear_flag(z, LV_OBJ_FLAG_SCROLLABLE);
+        };
+        int cx = bx + bw / 2;
+        int cy = by0 + 2 + bh / 2;
+        // Zigzag bolt (cutout)
+        pix(cx + 0, cy - 7, 5, 2);
+        pix(cx - 1, cy - 5, 4, 2);
+        pix(cx - 3, cy - 2, 7, 3);
+        pix(cx - 1, cy + 1, 4, 2);
+        pix(cx - 4, cy + 3, 5, 2);
+        // Also draw thin fg outline bolts offset so visible on empty battery
+        auto pixFg = [&](int px, int py, int pw, int ph) {
+            lv_obj_t* z = lv_obj_create(g_root);
+            lv_obj_set_size(z, pw, ph);
+            lv_obj_set_pos(z, px, py);
+            lv_obj_set_style_radius(z, 0, 0);
+            lv_obj_set_style_border_width(z, 0, 0);
+            lv_obj_set_style_bg_color(z, theme_fg(), 0);
+            lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
+            lv_obj_clear_flag(z, LV_OBJ_FLAG_SCROLLABLE);
+        };
+        // small + next to body when fill low
+        if (pct < 40) {
+            pixFg(cx - 1, cy - 6, 2, 10);
+            pixFg(cx - 4, cy - 1, 8, 2);
+        }
+    }
 }
+
 
 // LiPo voltage → rough SoC (fallback / sanity check for gauge)
 static int lipoPctFromVolts(float v) {
@@ -420,9 +497,20 @@ bool readBattery(float& volts, int& pct) {
     if (nOk == 0) return false;
     volts = (mvSum / (float)nOk) / 1000.0f;
     int16_t avgMa = (nCur > 0) ? (int16_t)(curSum / nCur) : 0;
-    // CHG flag, positive current into pack, or high V while on USB
-    bool charging = (avgMa > 5) || (flags & 0x0001) || (volts >= 4.12f && avgMa > -5);
+    // BQ27220 AverageCurrent: positive = current into pack (charging).
+    // Flags bit0 is DSG (discharging) — do NOT use as charge indicator.
+    // Hysteresis: on above +20 mA, off below +8 mA (avoids chatter).
+    static bool s_chg = false;
+    if (avgMa > 20) s_chg = true;
+    else if (avgMa < 8) s_chg = false;
+    bool charging = s_chg;
     g_batCharging = charging;
+    static uint32_t s_lastLog = 0;
+    if (millis() - s_lastLog > 5000) {
+        s_lastLog = millis();
+        Serial.printf("[BAT] V=%.3f pct=%d avgMa=%d chg=%d flags=0x%04x\n",
+                      volts, pct, (int)avgMa, (int)charging, (unsigned)flags);
+    }
 
     int gaugePct = (nSoc > 0) ? (int)(socSum / nSoc) : -1;
     int curvePct = lipoPctFromVolts(volts);
@@ -2265,12 +2353,12 @@ void draw_nav_box(int x, int y, int w, int h, const char* label, bool active, ch
 
 
 static void draw_refresh_btn(int x, int y, int w, int h) {
-    // Box
+    // Box — 1px border like non-selected nav tabs
     lv_obj_t* box = lv_obj_create(g_root);
     lv_obj_set_size(box, w, h);
     lv_obj_set_pos(box, x, y);
     lv_obj_set_style_radius(box, 0, 0);
-    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_set_style_border_width(box, 1, 0);
     lv_obj_set_style_border_color(box, theme_fg(), 0);
     lv_obj_set_style_bg_color(box, theme_bg(), 0);
     lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
@@ -2402,7 +2490,10 @@ void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
     // Compact unread-only strip (CONV/NEW removed — too wide)
     (void)conv; (void)neu;
     char c[20];
-    snprintf(c, sizeof(c), "Unread %u", unread);
+    if (unread > 99)
+        snprintf(c, sizeof(c), "Unread +99");
+    else
+        snprintf(c, sizeof(c), "Unread %02u", unread);
     lv_obj_t* box = lv_obj_create(g_root);
     lv_obj_set_size(box, 88, STATS_H - 4);
     lv_obj_set_pos(box, 2, y);
@@ -2475,8 +2566,9 @@ static void drawUpArrowBack(int x, int y) {
     }
 }
 
-static void draw_settings_footer(const char* extra) {
-    // Flush strip just above bottom nav — no outer gap, shared borders
+// Shared list footer used by Settings / Contacts / Peers / Msg Box
+static bool g_footerMoreDn = false;
+static void draw_list_footer(const char* extra) {
     const int fh = 20;
     const int y = BOT_TOP - fh;
     auto boxlab = [&](int x, int w, const char* t) {
@@ -2490,17 +2582,20 @@ static void draw_settings_footer(const char* extra) {
         lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
         lv_obj_set_style_pad_all(b, 0, 0);
         lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
-        fat_label(g_root, t, x + 3, y + 3);
+        // center text in box
+        if (t && t[0])
+            draw_label_centered(x, y - 1, w, fh, t, false);
     };
-    // 240px: 36 + 36 + 100 + 68 = 240 edge-to-edge
     boxlab(0, 36, "^G");
     boxlab(36, 36, "vV");
     const char* ex = (extra && extra[0]) ? extra : "Enter open";
     if (g_numsOnlyMsg[0]) ex = g_numsOnlyMsg;
     boxlab(72, 100, ex);
-    // v more slot reserved right (filled by drawScrollHints when needed)
-    boxlab(172, 68, "");  // empty frame; label drawn over when moreDn
+    boxlab(172, 68, g_footerMoreDn ? "v more" : "");
     draw_nav();
+}
+static void draw_settings_footer(const char* extra) {
+    draw_list_footer(extra);
 }
 
 
@@ -2581,26 +2676,12 @@ void draw_compose_or_hint(const char* idleHint) {
     // List screens: short footer (fit 240px)
     const int yf = BOT_TOP - 18;
     if (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS) {
-        fat_label(g_root, "^", 2, yf);
-        fat_label(g_root, "G", 14, yf);
-        fat_label(g_root, "v", 30, yf);
-        fat_label(g_root, "V", 42, yf);
-        // underline G/V
-        for (int x : {14, 42}) {
-            lv_obj_t* bar = lv_obj_create(g_root);
-            lv_obj_set_size(bar, 9, 2);
-            lv_obj_set_pos(bar, x, yf + 16);
-            lv_obj_set_style_border_width(bar, 0, 0);
-            lv_obj_set_style_bg_color(bar, theme_fg(), 0);
-            lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-            lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
-        }
-        const char* shortH = "Enter=open";
-        if (g_screen == SCR_CONTACTS) shortH = "Enter=name";
-        else if (g_screen == SCR_PEERS) shortH = "";  // display only
-        else if (g_showHistory) shortH = "Enter=send";
-        if (shortH[0]) fat_label(g_root, shortH, 60, yf);
-        draw_nav();
+        g_footerMoreDn = false;  // list screens: no scroll strip yet
+        const char* shortH = "Enter open";
+        if (g_screen == SCR_CONTACTS) shortH = "Enter name";
+        else if (g_screen == SCR_PEERS) shortH = "1-9";
+        else if (g_showHistory) shortH = "Enter send";
+        draw_list_footer(shortH);
         return;
     }
     if (idleHint && idleHint[0]) {
@@ -2656,7 +2737,7 @@ void draw_battery_gauge(int x, int y, int w, int h, int pct) {
             lv_obj_set_pos(z, px, py);
             lv_obj_set_style_radius(z, 0, 0);
             lv_obj_set_style_border_width(z, 0, 0);
-            lv_obj_set_style_bg_color(z, theme_fg(), 0);
+            lv_obj_set_style_bg_color(z, theme_bg(), 0);  // cutout on fill
             lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
             lv_obj_clear_flag(z, LV_OBJ_FLAG_SCROLLABLE);
         };
@@ -3125,7 +3206,7 @@ void build_home() {
     loadSelfName();
     fat_label(g_root, g_selfName[0] ? g_selfName : "IDENTITY", 6, y0 + 2);
     const char* on = (g_loraIf && g_loraIf->isOnline())
-        ? (g_batCharging ? "CHARGING" : "ONLINE")
+        ? (g_batCharging ? "CHG" : "ONLINE")
         : "OFFLINE";
     // ~30px left of prior 118; gauge ~15px left of prior far-right
     fat_label(g_root, on, 88, y0 + 2);
@@ -3216,9 +3297,9 @@ void build_list_body(const char* /*section*/, const char* emptyNote,
         for (int i = 0; i < g_msgRowCount; i++) {
             char title[28], sub[28];
             if (i == g_selPeer)
-                snprintf(title, sizeof(title), ">%d %s", i + 1, g_msgRows[i].line1);
+                snprintf(title, sizeof(title), ">%d : %s", i + 1, g_msgRows[i].line1);
             else
-                snprintf(title, sizeof(title), " %d %s", i + 1, g_msgRows[i].line1);
+                snprintf(title, sizeof(title), " %d : %s", i + 1, g_msgRows[i].line1);
             if (g_msgRows[i].line2[0])
                 snprintf(sub, sizeof(sub), "%.26s", g_msgRows[i].line2);
             else
@@ -3572,7 +3653,7 @@ void build_peers() {
                           g_msgRows[i].peer, nullptr);
             char title[28], sub[36];
             // Peers list is display-only (no selection chrome)
-            snprintf(title, sizeof(title), " %d %s", i + 1, g_msgRows[i].line1);
+            snprintf(title, sizeof(title), " %d : %s", i + 1, g_msgRows[i].line1);
             if (g_msgRows[i].line2[0])
                 snprintf(sub, sizeof(sub), "%.28s", g_msgRows[i].line2);
             else {
@@ -3878,7 +3959,7 @@ void build_settings() {
     auto drawScrollHints = [&]() {
         bool moreUp = g_settingsScroll > 0;
         bool moreDn = (g_settingsScroll + g_setMaxVis) < totalRowsHint;
-        // Second top row (path band): ^ more flush right, height = PATH_H
+        g_footerMoreDn = moreDn;
         const int pathH = 18;
         if (moreUp) {
             lv_obj_t* b = lv_obj_create(g_root);
@@ -3891,11 +3972,7 @@ void build_settings() {
             lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
             lv_obj_set_style_pad_all(b, 0, 0);
             lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
-            fat_label(g_root, "^ more", EPD_WIDTH - 64, TOP_H + 2);
-        }
-        // Bottom strip right cell (same band as ^G/vV)
-        if (moreDn) {
-            fat_label(g_root, "v more", 176, BOT_TOP - 17);
+            draw_label_centered(EPD_WIDTH - 68, TOP_H - 1, 68, pathH, "^ more", false);
         }
     };
 
@@ -4783,7 +4860,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.76");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.77");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
