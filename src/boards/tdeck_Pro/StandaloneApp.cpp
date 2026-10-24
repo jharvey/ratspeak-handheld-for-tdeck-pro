@@ -182,6 +182,7 @@ enum ScreenId : uint8_t {
     SCR_COUNT
 };
 ScreenId g_screen = SCR_HOME;
+bool g_menuOpen = false;  // G1.80: top MENU overlay open
 lv_obj_t* g_root = nullptr;
 
 char g_batStr[20]    = "n/a";
@@ -1092,6 +1093,47 @@ void goBackFromMessage() {
 }
 
 // Unified Back: message UI, Settings sub-page, or stay
+
+static void menuClose() {
+    if (!g_menuOpen) return;
+    g_menuOpen = false;
+    Serial.println("[MENU] close");
+}
+
+static void menuOpen() {
+    g_menuOpen = true;
+    Serial.println("[MENU] open");
+}
+
+static void menuToggle() {
+    if (g_menuOpen) menuClose();
+    else menuOpen();
+}
+
+static ScreenId menuRowScreen(int row) {
+    switch (row) {
+        case 0: return SCR_HOME;
+        case 1: return SCR_SETTINGS;
+        case 2: return SCR_CONTACTS;
+        case 3: return SCR_PEERS;
+        default: return SCR_CHATS;  // Msg Box
+    }
+}
+
+static void menuGo(ScreenId id) {
+    menuClose();
+    g_showHistory = false;
+    g_nameEditMode = false;
+    composeClear();
+    g_composeMode = false;
+    keyboardSetNumLayer(false);
+    if (id == SCR_SETTINGS) {
+        g_settingsPage = SET_ROOT;
+        g_settingsSel = 0;
+    }
+    show_screen(id);
+}
+
 bool doBackAction() {
     if (g_menuOpen) {
         menuClose();
@@ -1176,9 +1218,15 @@ constexpr int COMPOSE_LINE_H  = 18;
 constexpr int COMPOSE_STRIP_H = COMPOSE_LINE_H * 3;        // 54
 constexpr int COMPOSE_STRIP_Y = BOT_TOP - COMPOSE_STRIP_H; // 226 when BOT_TOP=280
 constexpr int THREAD_Y_MAX    = COMPOSE_STRIP_Y - 2;       // bubbles stop above strip
-constexpr int TOP_TAB_W     = (EPD_WIDTH - TOP_REFRESH_W - TOP_BAT_W) / 2;
-// Bottom: Chats | Contact | Peers
-// Bottom order: Contact | Msg Box | Peers
+constexpr int TOP_TAB_W     = (EPD_WIDTH - TOP_REFRESH_W - TOP_BAT_W) / 2;  // clock | MENU
+// Menu overlay column under the MENU tab (1 wide x 5 tall)
+constexpr int MENU_ROW_H     = 36;
+constexpr int MENU_ROWS      = 5;
+constexpr int MENU_BOX_W     = TOP_TAB_W;
+constexpr int MENU_BOX_X     = TOP_REFRESH_W + TOP_BAT_W + TOP_TAB_W;
+constexpr int MENU_BOX_Y     = TOP_H;
+// Bottom: Contact | Peers | Msg Box
+// Bottom order: Contact | Peers | Msg Box
 constexpr int BOT_CONTACT_W  = 80;
 constexpr int BOT_MSGBOX_W   = 96;
 constexpr int BOT_PEERS_W    = 64;   // 80+96+64=240
