@@ -353,6 +353,7 @@ void noteUserInput();
 void draw_idle_screen();
 void maybeEnterIdle();
 void draw_battery_gauge(int x, int y, int w, int h, int pct);
+void draw_battery_nav_icon(int x, int y, int w, int h, int pct);
 static const char* tzName();
 static void formatLocalTime(char* out, size_t n);
 static void formatLocalDate(char* out, size_t n);
@@ -1133,7 +1134,8 @@ bool cst328Read(int16_t& x, int16_t& y) {
 // Touch hit-test must stay in sync with draw_nav().
 // ---------------------------------------------------------------------------
 constexpr int TOP_H          = 36;
-constexpr int TOP_REFRESH_W  = 32;  // refresh icon left of Settings
+constexpr int TOP_REFRESH_W  = 28;  // refresh icon
+constexpr int TOP_BAT_W      = 28;  // vertical battery between refresh and Settings
 constexpr int BOT_H          = 40;
 constexpr int BOT_TOP        = EPD_HEIGHT - BOT_H;          // 280
 constexpr int CONTENT_TOP    = TOP_H;                      // 36 - no gap under nav
@@ -1144,7 +1146,7 @@ constexpr int COMPOSE_LINE_H  = 18;
 constexpr int COMPOSE_STRIP_H = COMPOSE_LINE_H * 3;        // 54
 constexpr int COMPOSE_STRIP_Y = BOT_TOP - COMPOSE_STRIP_H; // 226 when BOT_TOP=280
 constexpr int THREAD_Y_MAX    = COMPOSE_STRIP_Y - 2;       // bubbles stop above strip
-constexpr int TOP_TAB_W     = (EPD_WIDTH - TOP_REFRESH_W) / 2;               // 120
+constexpr int TOP_TAB_W     = (EPD_WIDTH - TOP_REFRESH_W - TOP_BAT_W) / 2;
 // Bottom: Chats | Contact | Peers
 // Bottom order: Contact | Msg Box | Peers
 constexpr int BOT_CONTACT_W  = 80;
@@ -1223,7 +1225,7 @@ bool handleTouchAt(int16_t x, int16_t y) {
                 g_display.fullRefresh();
                 return true;
             }
-            int adj = x - TOP_REFRESH_W;
+            int adj = x - TOP_REFRESH_W - TOP_BAT_W;
             int i = (adj < TOP_TAB_W) ? 0 : 1;
             ScreenId want = topTabScreen(i);
             g_showHistory = false;
@@ -1243,7 +1245,7 @@ bool handleTouchAt(int16_t x, int16_t y) {
             g_display.fullRefresh();
             return true;
         }
-        int adj = x - TOP_REFRESH_W;
+        int adj = x - TOP_REFRESH_W - TOP_BAT_W;
         int i = (adj < TOP_TAB_W) ? 0 : 1;
         ScreenId want = topTabScreen(i);
         // Settings tab on a sub-page → still go to Settings root, not Back
@@ -1998,9 +2000,25 @@ static void paintIdleContent() {
     char lt[12], ld[12];
     formatLocalTime(lt, sizeof(lt));
     formatLocalDate(ld, sizeof(ld));
-    char dateLine[28], timeLine[28];
-    snprintf(dateLine, sizeof(dateLine), "%s", ld);
-    snprintf(timeLine, sizeof(timeLine), "%s  %s", lt, tzName());
+    char dateLine[32], timeLine[32];
+    {
+        size_t j = 0;
+        for (size_t i = 0; ld[i] && j + 2 < sizeof(dateLine); i++) {
+            dateLine[j++] = ld[i];
+            if (ld[i+1]) dateLine[j++] = ' ';
+        }
+        dateLine[j] = 0;
+    }
+    {
+        char tmp[20];
+        snprintf(tmp, sizeof(tmp), "%s %s", lt, tzName());
+        size_t j = 0;
+        for (size_t i = 0; tmp[i] && j + 2 < sizeof(timeLine); i++) {
+            timeLine[j++] = tmp[i];
+            if (tmp[i+1]) timeLine[j++] = ' ';
+        }
+        timeLine[j] = 0;
+    }
     draw_label_centered(0, 102, EPD_WIDTH, 22, dateLine, true);
     draw_label_centered(0, 124, EPD_WIDTH, 22, timeLine, true);
 
@@ -2282,19 +2300,24 @@ static void draw_refresh_btn(int x, int y, int w, int h) {
 }
 
 void draw_nav() {
-    // Thread / name-edit: only full-width Back (Contact/Peers not usable here)
+    int pct = -1;
+    if (g_pctStr[0] && g_pctStr[0] != '-')
+        pct = atoi(g_pctStr);
     if (g_showHistory || g_nameEditMode) {
         draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
-        draw_nav_box(TOP_REFRESH_W, 0, TOP_TAB_W, TOP_H, "Settings", false, 'S');
-        draw_nav_box(TOP_REFRESH_W + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home", false, 'H');
+        draw_battery_nav_icon(TOP_REFRESH_W + 4, 4, TOP_BAT_W - 8, TOP_H - 8, pct);
+        int sx = TOP_REFRESH_W + TOP_BAT_W;
+        draw_nav_box(sx, 0, TOP_TAB_W, TOP_H, "Settings", false, 'S');
+        draw_nav_box(sx + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home", false, 'H');
         const char* back = g_nameEditMode ? "^ BACK UP TO CONTACTS" : "^ BACK UP TO MSG BOX";
         draw_nav_box(0, BOT_TOP, EPD_WIDTH, BOT_H, back, true, '^');
         return;
     }
     draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
-    draw_nav_box(TOP_REFRESH_W, 0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS, 'S');
-    draw_nav_box(TOP_REFRESH_W + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home", g_screen == SCR_HOME, 'H');
-    // Contact | Peers | Msg Box — Msg Box rightmost for right-thumb reach
+    draw_battery_nav_icon(TOP_REFRESH_W + 4, 4, TOP_BAT_W - 8, TOP_H - 8, pct);
+    int sx = TOP_REFRESH_W + TOP_BAT_W;
+    draw_nav_box(sx, 0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS, 'S');
+    draw_nav_box(sx + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home", g_screen == SCR_HOME, 'H');
     int x0 = 0;
     draw_nav_box(x0, BOT_TOP, BOT_CONTACT_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, 'C');
     x0 += BOT_CONTACT_W;
@@ -2302,6 +2325,7 @@ void draw_nav() {
     x0 += BOT_PEERS_W;
     draw_nav_box(x0, BOT_TOP, BOT_MSGBOX_W, BOT_H, "Msg Box", g_screen == SCR_CHATS, 'M');
 }
+
 
 
 void draw_action_btn(int x, int y, int w, int h, const char* label) {
@@ -2369,10 +2393,10 @@ void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
     // Compact unread-only strip (CONV/NEW removed — too wide)
     (void)conv; (void)neu;
     char c[20];
-    snprintf(c, sizeof(c), "UNRD %u", unread);
+    snprintf(c, sizeof(c), "Unread %u", unread);
     lv_obj_t* box = lv_obj_create(g_root);
-    lv_obj_set_size(box, 72, STATS_H - 4);
-    lv_obj_set_pos(box, EPD_WIDTH - 76, y);
+    lv_obj_set_size(box, 88, STATS_H - 4);
+    lv_obj_set_pos(box, 2, y);
     lv_obj_set_style_radius(box, 0, 0);
     lv_obj_set_style_border_width(box, 1, 0);
     lv_obj_set_style_border_color(box, theme_fg(), 0);
@@ -2380,7 +2404,7 @@ void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
     lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(box, 0, 0);
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
-    fat_label(g_root, c, EPD_WIDTH - 72, y + 4);
+    fat_label(g_root, c, 6, y + 4);
 }
 
 // Settings / list footer: short key legend just above bottom nav (underlined keys)
@@ -2391,20 +2415,20 @@ static void drawSettingsPath() {
     char path[24] = "7";
     switch (g_settingsPage) {
         case SET_ROOT:      strcpy(path, "S"); break;
-        case SET_TIME:      strcpy(path, "S>1"); break;
-        case SET_MANUAL_TIME: strcpy(path, "S>1>1"); break;
+        case SET_TIME:      strcpy(path, "S.1"); break;
+        case SET_MANUAL_TIME: strcpy(path, "S.1.1"); break;
         case SET_TZ:        strcpy(path, "S>1>2"); break;
         case SET_MANUAL_LOC: strcpy(path, "S>1>4"); break;
-        case SET_NETWORK:   strcpy(path, "S>2"); break;
-        case SET_SCREEN:    strcpy(path, "S>3"); break;
-        case SET_IDLE_MODE: strcpy(path, "S>3>2"); break;
-        case SET_IDLE_SECS: strcpy(path, "S>3>2>4"); break;
-        case SET_BATTERY:   strcpy(path, "S>4"); break;
-        case SET_IDENTITY:  strcpy(path, "S>5"); break;
-        case SET_LORA:      strcpy(path, "S>6"); break;
-        case SET_AUDIO:     strcpy(path, "S>7"); break;
-        case SET_DIAG:      strcpy(path, "S>8"); break;
-        case SET_STORAGE:   strcpy(path, "S>9"); break;
+        case SET_NETWORK:   strcpy(path, "S.2"); break;
+        case SET_SCREEN:    strcpy(path, "S.3"); break;
+        case SET_IDLE_MODE: strcpy(path, "S.3.2"); break;
+        case SET_IDLE_SECS: strcpy(path, "S.3.2.4"); break;
+        case SET_BATTERY:   strcpy(path, "S.4"); break;
+        case SET_IDENTITY:  strcpy(path, "S.5"); break;
+        case SET_LORA:      strcpy(path, "S.6"); break;
+        case SET_AUDIO:     strcpy(path, "S.7"); break;
+        case SET_DIAG:      strcpy(path, "S.8"); break;
+        case SET_STORAGE:   strcpy(path, "S.9"); break;
         default:            strcpy(path, "S"); break;
     }
     // Just under refresh button (left)
@@ -2443,38 +2467,28 @@ static void drawUpArrowBack(int x, int y) {
 }
 
 static void draw_settings_footer(const char* extra) {
-    const int y = BOT_TOP - 18;
-    lv_obj_t* band = lv_obj_create(g_root);
-    lv_obj_set_size(band, EPD_WIDTH, 16);
-    lv_obj_set_pos(band, 0, y);
-    lv_obj_set_style_radius(band, 0, 0);
-    lv_obj_set_style_border_width(band, 0, 0);
-    lv_obj_set_style_bg_color(band, theme_bg(), 0);
-    lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
-    lv_obj_clear_flag(band, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Same baseline: ^G  vV  Enter…  (underlines under G/V)
-    auto hot = [&](const char* key, int x) {
-        fat_label(g_root, key, x, y);
-        lv_obj_t* bar = lv_obj_create(g_root);
-        lv_obj_set_size(bar, 9, 2);
-        lv_obj_set_pos(bar, x, y + 16);
-        lv_obj_set_style_border_width(bar, 0, 0);
-        lv_obj_set_style_bg_color(bar, theme_fg(), 0);
-        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-        lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    const int y = BOT_TOP - 20;
+    auto boxlab = [&](int x, int w, const char* t) {
+        lv_obj_t* b = lv_obj_create(g_root);
+        lv_obj_set_size(b, w, 18);
+        lv_obj_set_pos(b, x, y);
+        lv_obj_set_style_radius(b, 0, 0);
+        lv_obj_set_style_border_width(b, 1, 0);
+        lv_obj_set_style_border_color(b, theme_fg(), 0);
+        lv_obj_set_style_bg_color(b, theme_bg(), 0);
+        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(b, 0, 0);
+        lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+        fat_label(g_root, t, x + 3, y + 2);
     };
-    fat_label(g_root, "^", 2, y);
-    hot("G", 14);
-    fat_label(g_root, "v", 30, y);
-    hot("V", 42);
-    const char* ex = extra;
-    if (g_numsOnlyMsg[0])
-        ex = g_numsOnlyMsg;
-    if (ex && ex[0])
-        fat_label(g_root, ex, 60, y);
+    boxlab(2, 28, "^G");
+    boxlab(32, 28, "vV");
+    const char* ex = (extra && extra[0]) ? extra : "Enter open";
+    if (g_numsOnlyMsg[0]) ex = g_numsOnlyMsg;
+    boxlab(62, 90, ex);
     draw_nav();
 }
+
 
 void draw_compose_or_hint(const char* idleHint) {
     // Thread / name-edit: 3-line compose box with Enter=send/save
@@ -2590,46 +2604,103 @@ void add_row(int& y, const char* left, const char* right) {
     y += 22;
 }
 void draw_battery_gauge(int x, int y, int w, int h, int pct) {
-    if (pct < 0) pct = 0;
-    if (pct > 100) pct = 100;
-    // Outer body
     lv_obj_t* body = lv_obj_create(g_root);
     lv_obj_set_size(body, w, h);
     lv_obj_set_pos(body, x, y);
     lv_obj_set_style_radius(body, 0, 0);
-    lv_obj_set_style_border_width(body, 2, 0);
+    lv_obj_set_style_border_width(body, 1, 0);
     lv_obj_set_style_border_color(body, theme_fg(), 0);
-    lv_obj_set_style_bg_color(body, lv_color_white(), 0);
+    lv_obj_set_style_bg_color(body, theme_bg(), 0);
     lv_obj_set_style_bg_opa(body, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(body, 0, 0);
     lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
-    // Tip
     lv_obj_t* tip = lv_obj_create(g_root);
-    lv_obj_set_size(tip, 4, h / 2);
+    lv_obj_set_size(tip, 3, h / 2);
     lv_obj_set_pos(tip, x + w, y + h / 4);
     lv_obj_set_style_radius(tip, 0, 0);
-    lv_obj_set_style_border_width(tip, 1, 0);
-    lv_obj_set_style_border_color(tip, theme_fg(), 0);
+    lv_obj_set_style_border_width(tip, 0, 0);
     lv_obj_set_style_bg_color(tip, theme_fg(), 0);
     lv_obj_set_style_bg_opa(tip, LV_OPA_COVER, 0);
     lv_obj_clear_flag(tip, LV_OBJ_FLAG_SCROLLABLE);
-    // Fill
-    int inner = w - 6;
-    int fw = (inner * pct) / 100;
-    if (fw > 0) {
+    if (pct > 0) {
+        int fw = ((w - 4) * pct) / 100;
+        if (fw < 1) fw = 1;
+        if (fw > w - 4) fw = w - 4;
         lv_obj_t* fill = lv_obj_create(g_root);
-        lv_obj_set_size(fill, fw, h - 6);
-        lv_obj_set_pos(fill, x + 3, y + 3);
+        lv_obj_set_size(fill, fw, h - 4);
+        lv_obj_set_pos(fill, x + 2, y + 2);
         lv_obj_set_style_radius(fill, 0, 0);
         lv_obj_set_style_border_width(fill, 0, 0);
         lv_obj_set_style_bg_color(fill, theme_fg(), 0);
         lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
         lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
     }
+    if (g_batCharging) {
+        int bx = x + w / 2 - 2;
+        int by = y + 1;
+        for (int i = 0; i < 3; i++) {
+            lv_obj_t* z = lv_obj_create(g_root);
+            lv_obj_set_size(z, 3, 3);
+            lv_obj_set_pos(z, bx + (i == 1 ? 2 : 0), by + i * 4);
+            lv_obj_set_style_radius(z, 0, 0);
+            lv_obj_set_style_border_width(z, 0, 0);
+            lv_obj_set_style_bg_color(z, theme_fg(), 0);
+            lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
+            lv_obj_clear_flag(z, LV_OBJ_FLAG_SCROLLABLE);
+        }
+    }
     char ps[8];
-    snprintf(ps, sizeof(ps), "%d%%", pct);
-    fat_label(g_root, ps, x + w + 10, y);
+    if (pct >= 0) snprintf(ps, sizeof(ps), "%d%%", pct);
+    else strcpy(ps, "--%");
+    fat_label(g_root, ps, x + w + 6, y);
 }
+
+void draw_battery_nav_icon(int x, int y, int w, int h, int pct) {
+    lv_obj_t* tip = lv_obj_create(g_root);
+    lv_obj_set_size(tip, w / 3, 3);
+    lv_obj_set_pos(tip, x + w / 3, y);
+    lv_obj_set_style_radius(tip, 0, 0);
+    lv_obj_set_style_border_width(tip, 0, 0);
+    lv_obj_set_style_bg_color(tip, theme_fg(), 0);
+    lv_obj_set_style_bg_opa(tip, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(tip, LV_OBJ_FLAG_SCROLLABLE);
+    int by = y + 3;
+    int bh = h - 5;
+    lv_obj_t* body = lv_obj_create(g_root);
+    lv_obj_set_size(body, w, bh);
+    lv_obj_set_pos(body, x, by);
+    lv_obj_set_style_radius(body, 0, 0);
+    lv_obj_set_style_border_width(body, 1, 0);
+    lv_obj_set_style_border_color(body, theme_fg(), 0);
+    lv_obj_set_style_bg_color(body, theme_bg(), 0);
+    lv_obj_set_style_bg_opa(body, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(body, 0, 0);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    if (pct > 0) {
+        int fh = ((bh - 4) * pct) / 100;
+        if (fh < 1) fh = 1;
+        if (fh > bh - 4) fh = bh - 4;
+        lv_obj_t* fill = lv_obj_create(g_root);
+        lv_obj_set_size(fill, w - 4, fh);
+        lv_obj_set_pos(fill, x + 2, by + bh - 2 - fh);
+        lv_obj_set_style_radius(fill, 0, 0);
+        lv_obj_set_style_border_width(fill, 0, 0);
+        lv_obj_set_style_bg_color(fill, theme_fg(), 0);
+        lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
+    }
+    if (g_batCharging) {
+        lv_obj_t* z = lv_obj_create(g_root);
+        lv_obj_set_size(z, 2, bh / 2);
+        lv_obj_set_pos(z, x + w / 2 - 1, by + bh / 4);
+        lv_obj_set_style_radius(z, 0, 0);
+        lv_obj_set_style_border_width(z, 0, 0);
+        lv_obj_set_style_bg_color(z, theme_fg(), 0);
+        lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(z, LV_OBJ_FLAG_SCROLLABLE);
+    }
+}
+
 
 
 
@@ -3596,12 +3667,6 @@ void settingsActivate() {
             else g_kb.backlightOn();
             Serial.printf("[KB] backlight %s\n", g_kb.backlightIsLit() ? "ON" : "OFF");
             show_screen(SCR_SETTINGS);
-        } else if (g_settingsSel == 3) {
-            g_featAudio = !g_featAudio;
-            g_audio.setEnabled(g_featAudio);
-            Serial.printf("[BUZZ] %s\n", g_featAudio ? "ON" : "OFF");
-            if (g_featAudio) notifyInbound();
-            show_screen(SCR_SETTINGS);
         }
         return;
     }
@@ -3782,15 +3847,33 @@ void build_settings() {
         draw_menu_row(yy, SET_ROW_H, title, sub, idx == g_settingsSel);
     };
     auto drawScrollHints = [&]() {
-        // Both hints in path band (right) so they are never under footer/nav
-        if (g_settingsScroll > 0)
-            fat_label(g_root, "^ more", EPD_WIDTH - 56, TOP_H + 1);
-        if (g_settingsScroll + g_setMaxVis < totalRowsHint)
-            fat_label(g_root, "v more", EPD_WIDTH - 56, TOP_H + 1);
-        // If both, show stacked labels
-        if (g_settingsScroll > 0 && g_settingsScroll + g_setMaxVis < totalRowsHint) {
-            fat_label(g_root, "^ more", EPD_WIDTH - 56, TOP_H + 1);
-            fat_label(g_root, "v more", EPD_WIDTH - 56, TOP_H + 15);
+        bool moreUp = g_settingsScroll > 0;
+        bool moreDn = (g_settingsScroll + g_setMaxVis) < totalRowsHint;
+        if (moreUp) {
+            lv_obj_t* b = lv_obj_create(g_root);
+            lv_obj_set_size(b, 52, 14);
+            lv_obj_set_pos(b, EPD_WIDTH - 54, TOP_H + 1);
+            lv_obj_set_style_radius(b, 0, 0);
+            lv_obj_set_style_border_width(b, 1, 0);
+            lv_obj_set_style_border_color(b, theme_fg(), 0);
+            lv_obj_set_style_bg_color(b, theme_bg(), 0);
+            lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+            lv_obj_set_style_pad_all(b, 0, 0);
+            lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+            fat_label(g_root, "^ more", EPD_WIDTH - 52, TOP_H + 2);
+        }
+        if (moreDn) {
+            lv_obj_t* b = lv_obj_create(g_root);
+            lv_obj_set_size(b, 52, 14);
+            lv_obj_set_pos(b, EPD_WIDTH - 54, BOT_TOP - 16);
+            lv_obj_set_style_radius(b, 0, 0);
+            lv_obj_set_style_border_width(b, 1, 0);
+            lv_obj_set_style_border_color(b, theme_fg(), 0);
+            lv_obj_set_style_bg_color(b, theme_bg(), 0);
+            lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+            lv_obj_set_style_pad_all(b, 0, 0);
+            lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+            fat_label(g_root, "v more", EPD_WIDTH - 52, BOT_TOP - 15);
         }
     };
 
@@ -3838,8 +3921,7 @@ void build_settings() {
                               (g_idleMode == 1) ? "No password" : "Password TBD";
         row("2 Idle splash >", idleLab, 1);
         row("3 Key backlight", g_kb.backlightIsLit() ? "ON" : "OFF", 2);
-        row("4 Buzzer", g_featAudio ? "ON" : "OFF", 3);
-        totalRowsHint = 4;
+        totalRowsHint = 3;
         drawScrollHints();
         draw_compose_or_hint("Enter=select");
         return;
@@ -4176,7 +4258,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 else if (g_settingsPage == SET_IDLE_MODE) maxNav = 3;
                 else if (g_settingsPage == SET_IDLE_SECS) maxNav = 1;
                 else if (g_settingsPage == SET_TIME) maxNav = 4;
-                else if (g_settingsPage == SET_SCREEN) maxNav = 3;
+                else if (g_settingsPage == SET_SCREEN) maxNav = 2;
                 else if (g_settingsPage == SET_NETWORK) maxNav = 4;
                 else if (g_settingsPage == SET_BATTERY) maxNav = -1;
                 else if (g_settingsPage == SET_TZ) maxNav = kTzCount - 1;
@@ -4497,7 +4579,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
                     else if (g_settingsPage == SET_IDLE_MODE) maxNav = 3;
                     else if (g_settingsPage == SET_IDLE_SECS) maxNav = 1;
                     else if (g_settingsPage == SET_TIME) maxNav = 4;
-                    else if (g_settingsPage == SET_SCREEN) maxNav = 3;
+                    else if (g_settingsPage == SET_SCREEN) maxNav = 2;
                 else if (g_settingsPage == SET_NETWORK) maxNav = 4;
                     else if (g_settingsPage == SET_TZ) maxNav = kTzCount - 1;
                     else if (g_settingsPage == SET_IDENTITY) maxNav = 2;
@@ -4679,7 +4761,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.74");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.75");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 

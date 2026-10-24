@@ -1,22 +1,26 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.74  (2026-10-23)
+Last: G1.75  (2026-10-24)
 ================================================================================
-IDLE
-[DONE] Logo stamped after LVGL (was wiped before)
-[DONE] Date + time on separate wide lines
+TOP NAV (all pages)
+[DONE] Refresh | vertical battery (charge bolt) | Settings | Home
 
-SETTINGS ROOT
-1 Time & Location
-2 WiFi          → S>2 enable / status / IP / MAC / scan
-3 Screen & I/O  → Theme, Idle, Backlight, Buzzer (S>3>4)
-4 Battery
-5 Identity
-6 LoRa
-7 Alerts & Audio
-8 Diagnostics
-9 Storage
+PATH
+[DONE] S.1 / S.3.2 instead of S>1 (dots)
 
 SCROLL
-[DONE] v more / ^ more in path band (visible on S>1>1)
+[DONE] ^ more top-right box when more above
+[DONE] v more bottom-right above MSG BOX when more below
+
+FOOTER (settings)
+[DONE] boxed ^G | vV | Enter open
+
+IDLE
+[DONE] Spaced date/time characters
+
+MSG BOX
+[DONE] "Unread N" left side
+
+REMOVED
+[DONE] S.3.4 Buzzer (use S.7 Alerts & Audio)
 ================================================================================
