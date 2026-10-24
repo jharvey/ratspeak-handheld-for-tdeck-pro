@@ -1297,21 +1297,24 @@ bool handleTouchAt(int16_t x, int16_t y) {
             goBackFromMessage();
             return true;
         }
-        // Top Settings|Home still work
+        // Top: refresh | clock | MENU (MENU opens overlay; does NOT jump Home)
         if (y < TOP_H) {
             if (x < TOP_REFRESH_W) {
                 g_display.fullRefresh();
                 return true;
             }
             int adj = x - TOP_REFRESH_W - TOP_BAT_W;
-            int i = (adj < TOP_TAB_W) ? 0 : 1;
-            ScreenId want = topTabScreen(i);
-            g_showHistory = false;
-            g_nameEditMode = false;
-            composeClear();
-            g_composeMode = false;
-            show_screen(want);
-            return true;
+            if (adj >= TOP_TAB_W) {
+                // Leave thread/rename first so MENU lists over the parent screen
+                g_showHistory = false;
+                g_nameEditMode = false;
+                composeClear();
+                g_composeMode = false;
+                menuOpen();
+                show_screen(g_screen);
+                return true;
+            }
+            return true;  // clock: display only
         }
         return false;
     }
@@ -2128,17 +2131,20 @@ static void paintIdleContent() {
     unsigned days = (unsigned)(sec / 86400UL);
     unsigned hrs  = (unsigned)((sec / 3600UL) % 24UL);
     unsigned mins = (unsigned)((sec / 60UL) % 60UL);
-    char upRaw[20], up[36];
-    snprintf(upRaw, sizeof(upRaw), "UP %04u:%02u:%02u", days, hrs, mins);
+    // uptime DDDD:HH:MM (spaced), then wall clock on the next line
+    char upRaw[24], up[40];
+    snprintf(upRaw, sizeof(upRaw), "uptime %04u:%02u:%02u", days, hrs, mins);
     {
         size_t j = 0;
         for (size_t i = 0; upRaw[i] && j + 2 < sizeof(up); i++) {
             up[j++] = upRaw[i];
-            if (upRaw[i+1]) up[j++] = ' ';
+            if (upRaw[i + 1]) up[j++] = ' ';
         }
         up[j] = 0;
     }
-    draw_label_centered(0, 252, EPD_WIDTH, 18, up, true);
+    draw_label_centered(0, 248, EPD_WIDTH, 18, up, true);
+    // Wall time again under uptime (same spaced style as above)
+    draw_label_centered(0, 268, EPD_WIDTH, 18, timeLine, true);
 
     lv_refr_now(nullptr);
     // Stamp logo AFTER LVGL so it is not wiped by the canvas clear
@@ -2416,12 +2422,48 @@ void draw_nav() {
     draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
     draw_battery_nav_icon(TOP_REFRESH_W + 5, 3, TOP_BAT_W - 10, TOP_H - 6, pct);
     int sx = TOP_REFRESH_W + TOP_BAT_W;
-    char clockBuf[8];
-    formatLocalTime(clockBuf, sizeof(clockBuf));
-    // strip seconds if present
-    if (clockBuf[2] == ':' && clockBuf[5] == ':')
-        clockBuf[5] = 0;  // HH:MM
-    draw_nav_box(sx, 0, TOP_TAB_W, TOP_H, clockBuf[0] ? clockBuf : "--:--", false, 0);
+    // Clock cell: date on top row, spaced time on bottom (idle-style spacing)
+    {
+        lv_obj_t* cbox = lv_obj_create(g_root);
+        lv_obj_set_size(cbox, TOP_TAB_W, TOP_H);
+        lv_obj_set_pos(cbox, sx, 0);
+        lv_obj_set_style_radius(cbox, 0, 0);
+        lv_obj_set_style_border_width(cbox, 1, 0);
+        lv_obj_set_style_border_color(cbox, theme_fg(), 0);
+        lv_obj_set_style_bg_color(cbox, theme_bg(), 0);
+        lv_obj_set_style_bg_opa(cbox, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(cbox, 0, 0);
+        lv_obj_clear_flag(cbox, LV_OBJ_FLAG_SCROLLABLE);
+
+        char lt[12], ld[12];
+        formatLocalTime(lt, sizeof(lt));
+        formatLocalDate(ld, sizeof(ld));
+        // Compact MM/DD only so spaced digits fit in ~92px cell
+        char md[8];
+        if (ld[0] && ld[2] == '/' && ld[5] == '/')
+            snprintf(md, sizeof(md), "%c%c/%c%c", ld[0], ld[1], ld[3], ld[4]);
+        else
+            snprintf(md, sizeof(md), "%.5s", ld);
+        char dateSp[24] = {0}, timeSp[24] = {0};
+        {
+            size_t j = 0;
+            for (size_t i = 0; md[i] && j + 2 < sizeof(dateSp); i++) {
+                dateSp[j++] = md[i];
+                if (md[i + 1]) dateSp[j++] = ' ';
+            }
+            dateSp[j] = 0;
+        }
+        {
+            size_t j = 0;
+            for (size_t i = 0; lt[i] && j + 2 < sizeof(timeSp); i++) {
+                timeSp[j++] = lt[i];
+                if (lt[i + 1]) timeSp[j++] = ' ';
+            }
+            timeSp[j] = 0;
+        }
+        draw_label_centered(sx, 1, TOP_TAB_W, 16, dateSp[0] ? dateSp : "--", false);
+        draw_label_centered(sx, 17, TOP_TAB_W, 16, timeSp[0] ? timeSp : "- - : - -", false);
+    }
     draw_nav_box(sx + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "MENU", g_menuOpen, 'M');
 
     if (g_showHistory || g_nameEditMode) {
@@ -2602,15 +2644,16 @@ static void draw_list_footer(const char* extra) {
         if (t && t[0])
             draw_label_centered(x, y - 1, w, fh, t, false);
     };
-    boxlab(0, 44, "G=up");
-    boxlab(44, 44, "V=dn");
+    // Match "v more" width (~68); labels G=up / V=Down
+    boxlab(0, 68, "G=up");
+    boxlab(68, 68, "V=Down");
     const char* ex = (extra && extra[0]) ? extra : "";
     if (g_numsOnlyMsg[0]) ex = g_numsOnlyMsg;
-    // Skip default "Enter open"; only show non-empty useful hints
+    // Middle cell only for real hints; right cell = v more (same width as G/V)
     if (ex && ex[0] && strcmp(ex, "Enter open") != 0 && strcmp(ex, "Enter opens item") != 0)
-        boxlab(88, 84, ex);
+        boxlab(136, 36, ex);
     else
-        boxlab(88, 84, "");
+        boxlab(136, 36, "");
     boxlab(172, 68, g_footerMoreDn ? "v more" : "");
     draw_nav();
 }
@@ -3283,15 +3326,7 @@ void build_home() {
     fat_label(g_root, annAgo, 4, sy + 16);
     draw_action_btn(0, sy + 34, EPD_WIDTH, HOME_ANN_H, "Announce");
 
-    // RTC only under Announce (GPS lives in Settings > Time)
-    char rtcLine[40];
-    char lt[12], ld[12];
-    formatLocalTime(lt, sizeof(lt));
-    formatLocalDate(ld, sizeof(ld));
-    snprintf(rtcLine, sizeof(rtcLine), "RTC %s %s %s", lt, ld, tzName());
-    fat_label(g_root, rtcLine, 4, sy + 34 + HOME_ANN_H + 4);
-
-    // Home: nav only — never compose/send strip
+    // Home: nav only — never compose/send strip (clock is in top header)
     draw_nav();
 }
 
@@ -3650,7 +3685,7 @@ void build_contacts() {
     }
     if (g_msgRowCount == 0)
         fat_label(g_root, "(no peers - Announce)", 8, y);
-    draw_compose_or_hint("Enter=name");
+    draw_compose_or_hint("");
 }
 
 void build_peers() {
@@ -4936,7 +4971,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.80");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.81");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
