@@ -1093,6 +1093,11 @@ void goBackFromMessage() {
 
 // Unified Back: message UI, Settings sub-page, or stay
 bool doBackAction() {
+    if (g_menuOpen) {
+        menuClose();
+        show_screen(g_screen);
+        return true;
+    }
     if (inMessageUi()) {
         goBackFromMessage();
         return true;
@@ -1263,7 +1268,7 @@ bool handleTouchAt(int16_t x, int16_t y) {
         return false;
     }
 
-    // Top nav: Refresh | Settings | Home  (Home always leaves to Home)
+    // Top nav: Refresh | bat | clock | MENU
     if (y < TOP_H) {
         if (x < TOP_REFRESH_W) {
             Serial.println("[UI] touch fullRefresh");
@@ -1271,27 +1276,33 @@ bool handleTouchAt(int16_t x, int16_t y) {
             return true;
         }
         int adj = x - TOP_REFRESH_W - TOP_BAT_W;
-        int i = (adj < TOP_TAB_W) ? 0 : 1;
-        ScreenId want = topTabScreen(i);
-        // Settings tab on a sub-page → still go to Settings root, not Back
-        if (want == SCR_SETTINGS && g_screen == SCR_SETTINGS) {
-            if (g_settingsPage != SET_ROOT) {
-                g_settingsPage = SET_ROOT;
-                g_settingsSel = g_settingsRootSel;
-                g_settingsScroll = 0;
-                show_screen(SCR_SETTINGS);
-                return true;
-            }
+        if (adj >= TOP_TAB_W) {
+            Serial.println("[TAB] top -> MENU");
+            menuToggle();
+            show_screen(g_screen);  // redraw with/without overlay
             return true;
         }
-        Serial.printf("[TAB] top -> %s\n", tabLabel(want));
-        if (want == g_screen) return true;
-        g_showHistory = false;
-        g_nameEditMode = false;
-        composeClear();
-        g_composeMode = false;
-        keyboardSetNumLayer(false);
-        show_screen(want);
+        return true;  // clock area: display only
+    }
+
+    // MENU overlay: column under MENU tab (Home / Settings / Contacts / Peers / Msg Box)
+    if (g_menuOpen) {
+        const int mx0 = MENU_BOX_X;
+        const int mx1 = MENU_BOX_X + MENU_BOX_W;
+        const int my0 = MENU_BOX_Y;
+        const int my1 = MENU_BOX_Y + MENU_ROWS * MENU_ROW_H;
+        if (x >= mx0 && x < mx1 && y >= my0 && y < my1) {
+            int row = (y - my0) / MENU_ROW_H;
+            if (row < 0) row = 0;
+            if (row >= MENU_ROWS) row = MENU_ROWS - 1;
+            ScreenId want = menuRowScreen(row);
+            Serial.printf("[MENU] touch row=%d -> %s\n", row, tabLabel(want));
+            menuGo(want);
+            return true;
+        }
+        // Tap outside overlay closes it
+        menuClose();
+        show_screen(g_screen);
         return true;
     }
 
@@ -2332,31 +2343,53 @@ static void draw_refresh_btn(int x, int y, int w, int h) {
     lv_obj_clear_flag(a2, LV_OBJ_FLAG_SCROLLABLE);
 }
 
+void draw_menu_overlay() {
+    if (!g_menuOpen) return;
+    // 1-wide x 5-tall column under MENU; top bar stays visible
+    static const char* kLab[5] = {"Home", "Settings", "Contacts", "Peers", "Msg Box"};
+    static const char kKey[5]  = {'H', 'S', 'C', 'P', 'M'};
+    for (int i = 0; i < MENU_ROWS; i++) {
+        const int y = MENU_BOX_Y + i * MENU_ROW_H;
+        const bool active =
+            (i == 0 && g_screen == SCR_HOME) ||
+            (i == 1 && g_screen == SCR_SETTINGS) ||
+            (i == 2 && g_screen == SCR_CONTACTS) ||
+            (i == 3 && g_screen == SCR_PEERS) ||
+            (i == 4 && g_screen == SCR_CHATS);
+        draw_nav_box(MENU_BOX_X, y, MENU_BOX_W, MENU_ROW_H, kLab[i], active, kKey[i]);
+    }
+}
+
 void draw_nav() {
     int pct = -1;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
-    if (g_showHistory || g_nameEditMode) {
-        draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
-        draw_battery_nav_icon(TOP_REFRESH_W + 5, 3, TOP_BAT_W - 10, TOP_H - 6, pct);
-        int sx = TOP_REFRESH_W + TOP_BAT_W;
-        draw_nav_box(sx, 0, TOP_TAB_W, TOP_H, "Settings", false, 'S');
-        draw_nav_box(sx + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home", false, 'H');
-        const char* back = g_nameEditMode ? "^ BACK UP TO CONTACTS" : "^ BACK UP TO MSG BOX";
-        draw_nav_box(0, BOT_TOP, EPD_WIDTH, BOT_H, back, true, '^');
-        return;
-    }
+    // Top always: refresh | bat | clock | MENU (visible even with overlay)
     draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
     draw_battery_nav_icon(TOP_REFRESH_W + 5, 3, TOP_BAT_W - 10, TOP_H - 6, pct);
     int sx = TOP_REFRESH_W + TOP_BAT_W;
-    draw_nav_box(sx, 0, TOP_TAB_W, TOP_H, "Settings", g_screen == SCR_SETTINGS, 'S');
-    draw_nav_box(sx + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "Home", g_screen == SCR_HOME, 'H');
+    char clockBuf[8];
+    formatLocalTime(clockBuf, sizeof(clockBuf));
+    // strip seconds if present
+    if (clockBuf[2] == ':' && clockBuf[5] == ':')
+        clockBuf[5] = 0;  // HH:MM
+    draw_nav_box(sx, 0, TOP_TAB_W, TOP_H, clockBuf[0] ? clockBuf : "--:--", false, 0);
+    draw_nav_box(sx + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "MENU", g_menuOpen, 'M');
+
+    if (g_showHistory || g_nameEditMode) {
+        const char* back = g_nameEditMode ? "^ BACK UP TO CONTACTS" : "^ BACK UP TO MSG BOX";
+        draw_nav_box(0, BOT_TOP, EPD_WIDTH, BOT_H, back, true, '^');
+        draw_menu_overlay();
+        return;
+    }
+    // Bottom: Contact | Peers | Msg Box on every page
     int x0 = 0;
     draw_nav_box(x0, BOT_TOP, BOT_CONTACT_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, 'C');
     x0 += BOT_CONTACT_W;
     draw_nav_box(x0, BOT_TOP, BOT_PEERS_W, BOT_H, "Peers", g_screen == SCR_PEERS, 'P');
     x0 += BOT_PEERS_W;
     draw_nav_box(x0, BOT_TOP, BOT_MSGBOX_W, BOT_H, "Msg Box", g_screen == SCR_CHATS, 'M');
+    draw_menu_overlay();
 }
 
 
@@ -4199,7 +4232,15 @@ void show_screen(ScreenId id) {
         // Leaving settings clears sub-page so next visit starts clean
         // (keep if only redrawing same settings)
     }
+    // Close MENU when navigating to a different screen
+    if (id != g_screen)
+        g_menuOpen = false;
     g_screen = id;
+    // SYM/force-num only while typing digits
+    if (!isNumEntryMode())
+        keyboardSetNumLayer(false);
+    else
+        syncNumLayer();
     refreshLiveData();
     switch (id) {
         case SCR_HOME:     build_home(); break;
@@ -4304,6 +4345,28 @@ bool handleKeyEvent(const KeyEvent& ev) {
     }
     // Any key/touch activity resets idle timer (touch does this in handleTouchAt)
     noteUserInput();
+
+    // G1.80: never leave force-num/SYM layer on outside true digit fields.
+    // Sticky force was mapping C/M/H/S/P to symbols so nav letters failed.
+    if (!isNumEntryMode())
+        keyboardSetNumLayer(false);
+    else
+        syncNumLayer();
+
+    // MENU overlay open: H/S/C/P/M pick destination; M again or Esc closes
+    if (g_menuOpen && ev.character && !ev.enter && !ev.del) {
+        const char ch = ev.character;
+        if (ch == 'h' || ch == 'H') { menuGo(SCR_HOME); return true; }
+        if (ch == 's' || ch == 'S') { menuGo(SCR_SETTINGS); return true; }
+        if (ch == 'c' || ch == 'C') { menuGo(SCR_CONTACTS); return true; }
+        if (ch == 'p' || ch == 'P') { menuGo(SCR_PEERS); return true; }
+        if (ch == 'm' || ch == 'M') { menuGo(SCR_CHATS); return true; }
+        if (ch == 0x1b) { menuClose(); show_screen(g_screen); return true; }
+        // other keys close overlay
+        menuClose();
+        show_screen(g_screen);
+        return true;
+    }
 
     // G/V navigate lists (before other shortcuts). S is NOT down (Settings tab).
     if (ev.character && !ev.enter && !ev.del && !ev.space) {
@@ -4743,7 +4806,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
                         return true;
                     }
                     if (ev.character == 'm' || ev.character == 'M') {
-                        show_screen(SCR_CHATS);
+                        menuToggle();
+                        show_screen(g_screen);
                         return true;
                     }
                     if (ev.character == 'c' || ev.character == 'C') {
@@ -4776,18 +4840,19 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 }
                 if (ev.character == 'm' || ev.character == 'M') {
                     g_showHistory = false;
-                    show_screen(SCR_CHATS);
-                    return false;
+                    menuToggle();
+                    show_screen(g_screen);
+                    return true;
                 }
                 if (ev.character == 'c' || ev.character == 'C') {
                     g_showHistory = false;
                     show_screen(SCR_CONTACTS);
-                    return false;
+                    return true;
                 }
                 if (ev.character == 'p' || ev.character == 'P') {
                     g_showHistory = false;
                     show_screen(SCR_PEERS);
-                    return false;
+                    return true;
                 }
                 if (ev.character == 't' || ev.character == 'T') {
                     doSendTest(nullptr);
@@ -4823,7 +4888,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.78");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.80");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 

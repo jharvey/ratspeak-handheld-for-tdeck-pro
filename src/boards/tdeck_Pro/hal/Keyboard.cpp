@@ -469,8 +469,16 @@ void Keyboard::mapKey(uint8_t row, uint8_t col, bool pressed)
 
   char output = key;
 
-  if (_symHeld || g_forceNumLayer) {
+  // Force-num layer (app-driven): only remap keys that produce 0-9 / symbols
+  // for RTC entry. Never swallow letter keys used for nav (C/M/H/S/P...).
+  // Physical SYM held still uses full symbol layer.
+  if (_symHeld) {
     output = symbolFor(key);
+  } else if (g_forceNumLayer) {
+    char sym = symbolFor(key);
+    if (sym >= '0' && sym <= '9')
+      output = sym;
+    // else leave letter as letter so nav shortcuts keep working
   }
   else if (key >= 'a' && key <= 'z') {
 

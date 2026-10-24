@@ -1,47 +1,29 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.79  (2026-10-24)
+Last: G1.80  (2026-10-24)
 ================================================================================
-CHROME
-[DONE] Footer G=up | V=dn edge cells; no default "Enter open" middle label
-[DONE] v more uses right footer cell; ^ more second top row right
-[DONE] Unread = full-width info strip under content top
-[DONE] Contacts / Peers list shifted down (CONTENT_TOP+18) for ^ more room
-
-BATTERY
-[DONE] Clearer 5-segment lightning when charging (USB / CHG / high-V)
-[DONE] S.4 Battery = full info menu from serial stream:
-      Voltage, SoC, avgMa (negative = consuming, positive = charging),
-      Charging, USB power, Gauge flags 0xNNNN, Power source
-[DONE] g_batFlags stored from BQ27220 Flags 0x0A
-
-CONTACTS
-[DONE] List rows formatted like Peers: " N : Name" / ">N : Name"
-[DONE] Enter-name sub-screen spaced like Peers (N : Contact, Was :, ID  :)
+TOP NAV
+[DONE] [↻] [bat] [ HH:MM clock ] [ MENU ]  — Settings/Home tabs removed
+[DONE] MENU opens overlay column under MENU tab (1 wide × 5 tall):
+      Home / Settings / Contacts / Peers / Msg Box (bottom)
+[DONE] Overlay leaves top bar visible (time + MENU)
+[DONE] M key toggles MENU; from overlay H/S/C/P/M jump to dest
+[DONE] Bottom nav still Contact | Peers | Msg Box on all pages
+[DONE] Underlined hotkeys kept on bottom + overlay rows
 
 INPUT / SYM
-[DONE] Force-num (SYM) layer ONLY while actively typing a numeric field
-      (g_timeEditMode / g_dateEditMode / g_idleSecsEditMode) — not on
-      menu pages such as S.1.1 / S.2 / S.3
-[DONE] composeAppend settingsType no longer treats SET_MANUAL_* menus as type-in
-[DONE] settingsGoBack + open SET_MANUAL_TIME clear keyboardSetNumLayer(false)
-[DONE] isNumEntryMode() gates keyboardSetNumLayer via syncNumLayer()
+[DONE] Force-num layer cleared on every key unless isNumEntryMode()
+[DONE] Keyboard: force-num only remaps keys that yield 0-9; letters pass
+      through so C/M/H/S/P nav always works even if force stuck
+[DONE] SYM sticky fix from G1.79 retained
 
-IDLE
-[DONE] UP spaced like date/time
-
-LABELS
-[DONE] "N : Menu|Toggle|Entry|Info : title" on settings rows
+BATTERY / CONTACTS (G1.79)
+[DONE] S.4 full serial info menu; contacts Peers-style " N : Name"
 
 PHASE
-G1.79 — battery info menu, contacts format, footer legend, SYM sticky fix,
-        Contacts/Peers list top offset
+G1.80 — MENU overlay + clock top bar; SYM/nav letters hardened
 
 BUILD
-  env: tdeck_pro_standalone (or cooperative)
-  Full file: src/boards/tdeck_Pro/StandaloneApp.cpp
-  Keep cooperative green.
-
-WHEN ADDING FEATURES
-  Full files preferred (not diffs).
+  env: tdeck_pro_standalone
+  Files: StandaloneApp.cpp, hal/Keyboard.cpp
 ================================================================================
