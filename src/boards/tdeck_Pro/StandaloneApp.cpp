@@ -2131,7 +2131,7 @@ static void paintIdleContent() {
     unsigned days = (unsigned)(sec / 86400UL);
     unsigned hrs  = (unsigned)((sec / 3600UL) % 24UL);
     unsigned mins = (unsigned)((sec / 60UL) % 60UL);
-    // uptime DDDD:HH:MM (spaced), then wall clock on the next line
+    // Single centered line: uptime DDDD:HH:MM (no second wall-clock at bottom)
     char upRaw[24], up[40];
     snprintf(upRaw, sizeof(upRaw), "uptime %04u:%02u:%02u", days, hrs, mins);
     {
@@ -2142,9 +2142,7 @@ static void paintIdleContent() {
         }
         up[j] = 0;
     }
-    draw_label_centered(0, 248, EPD_WIDTH, 18, up, true);
-    // Wall time again under uptime (same spaced style as above)
-    draw_label_centered(0, 268, EPD_WIDTH, 18, timeLine, true);
+    draw_label_centered(0, 252, EPD_WIDTH, 18, up, true);
 
     lv_refr_now(nullptr);
     // Stamp logo AFTER LVGL so it is not wiped by the canvas clear
@@ -2644,16 +2642,17 @@ static void draw_list_footer(const char* extra) {
         if (t && t[0])
             draw_label_centered(x, y - 1, w, fh, t, false);
     };
-    // Match "v more" width (~68); labels G=up / V=Down
-    boxlab(0, 68, "G=up");
-    boxlab(68, 68, "V=Down");
+    // G=up compact; V=Down wider for label; v more stays ~68 with same edge spacing
+    boxlab(0, 52, "G=up");
+    boxlab(52, 92, "V=Down");
     const char* ex = (extra && extra[0]) ? extra : "";
     if (g_numsOnlyMsg[0]) ex = g_numsOnlyMsg;
-    // Middle cell only for real hints; right cell = v more (same width as G/V)
-    if (ex && ex[0] && strcmp(ex, "Enter open") != 0 && strcmp(ex, "Enter opens item") != 0)
-        boxlab(136, 36, ex);
+    // Middle only for real hints; right = v more (68, flush to right edge)
+    if (ex && ex[0] && strcmp(ex, "Enter open") != 0 && strcmp(ex, "Enter opens item") != 0
+        && strcmp(ex, "Enter name") != 0 && strcmp(ex, "Enter send") != 0)
+        boxlab(144, 28, ex);
     else
-        boxlab(136, 36, "");
+        boxlab(144, 28, "");
     boxlab(172, 68, g_footerMoreDn ? "v more" : "");
     draw_nav();
 }
@@ -2740,10 +2739,11 @@ void draw_compose_or_hint(const char* idleHint) {
     const int yf = BOT_TOP - 18;
     if (g_screen == SCR_CHATS || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS) {
         g_footerMoreDn = false;  // list screens: no scroll strip yet
-        const char* shortH = "Enter open";
-        if (g_screen == SCR_CONTACTS) shortH = "Enter name";
+        const char* shortH = "";
+        if (g_screen == SCR_CONTACTS) shortH = "";  // no Enter hint on contacts list
         else if (g_screen == SCR_PEERS) shortH = "";
         else if (g_showHistory) shortH = "Enter send";
+        // Msg Box list: no default Enter open
         draw_list_footer(shortH);
         return;
     }
@@ -4971,7 +4971,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.81");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.82");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
