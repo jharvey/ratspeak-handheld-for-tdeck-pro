@@ -1,29 +1,109 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.80  (2026-10-24)
+Last: G1.83  (2026-10-24)
 ================================================================================
+Long-term backlog → Future_steps.txt (do not strip future items from there).
+
+Standalone excludes LvglApplication.cpp / full Plus UI; uses boards/tdeck_Pro
+(DisplayEink, LvglPort, LvglStubs, StandaloneApp, hal/Keyboard).
+
+Status tags: [DONE] solid on hardware   [IN-PROGRESS] partial / next polish
+             [TODO] not started
+
+--------------------------------------------------------------------------------
+CURRENT PHASE (G1.83)
+--------------------------------------------------------------------------------
 TOP NAV
-[DONE] [↻] [bat] [ HH:MM clock ] [ MENU ]  — Settings/Home tabs removed
+[DONE] Layout: [↻ refresh] [battery box] [ date + time ] [ MENU ]
+[DONE] Clock cell: MM/DD on top line, HH:MM below (idle-style spacing where used)
+[DONE] Battery cell has full border box (bottom line) like refresh/clock
 [DONE] MENU opens overlay column under MENU tab (1 wide × 5 tall):
-      Home / Settings / Contacts / Peers / Msg Box (bottom)
+      Home / Settings / Contacts / Peers / Msg Box (bottom row)
 [DONE] Overlay leaves top bar visible (time + MENU)
-[DONE] M key toggles MENU; from overlay H/S/C/P/M jump to dest
-[DONE] Bottom nav still Contact | Peers | Msg Box on all pages
-[DONE] Underlined hotkeys kept on bottom + overlay rows
+[DONE] M key toggles MENU; from overlay H/S/C/P/M jump to destination
+[DONE] Thread / name-edit: MENU opens overlay (does NOT jump Home via topTabScreen)
+[DONE] Home is M then H (or MENU → Home)
+
+BOTTOM NAV
+[DONE] Contact | Peers | Msg Box on every page (underlined C / P / M)
+[DONE] Thread / name-edit: full-width "^ BACK UP TO …" bar instead
+
+FOOTER (above bottom nav on list/settings)
+[DONE] Boxes align with bottom nav widths: Contact(80) | Peers(64) | Msg Box(96)
+[DONE] Labels: V=Down | G=up | v more (when scrollable)
+[DONE] Keys still: G = list up, V = list down
+[DONE] No default "Enter open" / "Enter name" middle junk on Contacts
+
+IDLE SPLASH
+[DONE] Logo + RatSpeak title + spaced date + spaced time (with TZ)
+[DONE] Battery gauge + unread line + "press a KEY to wake"
+[DONE] Two centered lines at bottom:
+        uptime DDDDD:HH:MM
+        #####:##:##          (5-digit days, actual value)
+[DONE] No redundant second wall-clock under uptime
+
+HOME
+[DONE] Identity card, tiles (LORA/PATH/LINK/PEERS/AUDIO/LXMFQ), Announce
+[DONE] No RTC line under Announce (clock lives in top header only)
+
+CONTACTS
+[DONE] List: " N : Name" / ">N : Name" (Peers-style)
+[DONE] Enter opens rename sub-screen; type name; Enter saves; ^=BACK cancels
+[DONE] Rename layout: "N : Contact", Was :, ID  :
+[DONE] No "Enter=name" footer on list
+
+PEERS / MSG BOX
+[DONE] List shifted down (CONTENT_TOP+18) for ^ more room under top nav
+[DONE] Msg Box: open thread; type+Enter send; bottom BACK bar
+
+SETTINGS
+[DONE] Path under refresh (S, S.1, S.4, …)
+[DONE] "N : Menu|Toggle|Entry|Info : title" row labels
+[DONE] S.4 Battery = full info menu from BQ27220 serial stream:
+      Voltage, SoC, Average current (neg = consuming, pos = charging),
+      Charging, USB power, Gauge flags 0xNNNN, Power source
+[DONE] g_batFlags stored from Flags 0x0A
 
 INPUT / SYM
-[DONE] Force-num layer cleared on every key unless isNumEntryMode()
-[DONE] Keyboard: force-num only remaps keys that yield 0-9; letters pass
-      through so C/M/H/S/P nav always works even if force stuck
-[DONE] SYM sticky fix from G1.79 retained
+[DONE] Force-num layer only while actively typing a numeric field
+      (g_timeEditMode / g_dateEditMode / g_idleSecsEditMode)
+[DONE] Not on menu pages (S.1.1 list, S.2, etc.)
+[DONE] keyboardSetNumLayer(false) on show_screen / settingsGoBack / every key
+      when !isNumEntryMode()
+[DONE] Keyboard.cpp: force-num only remaps keys that yield 0-9; letters pass
+      so C/M/H/S/P nav always works
+[DONE] Underlined nav letters jump to that screen from list/home/settings
+      (when not composing)
 
-BATTERY / CONTACTS (G1.79)
-[DONE] S.4 full serial info menu; contacts Peers-style " N : Name"
+BATTERY UI
+[DONE] Clearer 5-segment lightning when charging (USB / CHG / high-V)
 
-PHASE
-G1.80 — MENU overlay + clock top bar; SYM/nav letters hardened
+PROTOCOL / BRING-UP (earlier phases, still green)
+[DONE] PSRAM QSPI; LXMF announce/send/receive when quiet
+[DONE] Contacts flat list; hash-stable selection
+[DONE] Compose partial strip; UI prefers partial full-window
+[DONE] Theme invert (white-paper / black-ink)
 
+--------------------------------------------------------------------------------
 BUILD
-  env: tdeck_pro_standalone
-  Files: StandaloneApp.cpp, hal/Keyboard.cpp
+--------------------------------------------------------------------------------
+  env: tdeck_pro_standalone  (keep tdeck_pro_cooperative green)
+  Primary UI file: src/boards/tdeck_Pro/StandaloneApp.cpp
+  Keyboard SYM/force-num: src/boards/tdeck_Pro/hal/Keyboard.cpp
+  Prefer full files (not diffs) when handing patches to the device tree.
+
+--------------------------------------------------------------------------------
+HARDWARE NOTES (T-Deck Pro v1.1)
+--------------------------------------------------------------------------------
+  E-ink 240×320, TCA8418 keyboard, CST328 touch, SX1262 LoRa, BQ27220 gauge
+  GPS UART1 RX=44 TX=43 EN=39; keyboard LED=42; motor=2
+  See boards/tdeck_Pro/config/BoardConfig.h for pins.
+
+--------------------------------------------------------------------------------
+WHEN ADDING FEATURES
+--------------------------------------------------------------------------------
+  Full files preferred.
+  Keep cooperative green.
+  Do not re-enable force-num except inside true digit-entry boxes.
+  Top MENU must never map through topTabScreen() to Home.
 ================================================================================

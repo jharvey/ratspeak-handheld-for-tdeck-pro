@@ -45,14 +45,14 @@ UI / UX
 -------
 - DONE - Theme toggle: white paper (default) vs black ink background
 - Settings full parity with Plus (WiFi client, TCP, GPS time, identity create/erase)
-- DONE -  Contacts rename closer to Plus (context menu: Save Contact / Message / Close)
+- DONE - Contacts rename closer to Plus (context menu: Save Contact / Message / Close)
 - Msg Box delivery status polish (queued / sent / delivered / fail)
-- Scroll indicators on long lists (Contacts, Peers, Settings)
+- DONE - Scroll indicators on long lists (Contacts, Peers, Settings)
 - Optional fuller LVGL screens later (keep standalone build rules)
 - Geo maps on SD (offline map tiles / position display when GPS enabled)
 - IN PROGRESS - add a idle screen options, after like 1 min you need password to gain access to device, screen is blank when idle. 
 - DONE - add manual refresh button, for ghosting issues. Do full screen refresh. 
-- add GPS clock displayed on idle screen / header. 
+- DONE - add GPS clock displayed on idle screen / header. 
 - add battery / charge indicator. Lighting bolt in the battery icon, or a plug icon? Something to say it's getting power over USB. 
 
 Audio / modes

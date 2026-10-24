@@ -2131,18 +2131,21 @@ static void paintIdleContent() {
     unsigned days = (unsigned)(sec / 86400UL);
     unsigned hrs  = (unsigned)((sec / 3600UL) % 24UL);
     unsigned mins = (unsigned)((sec / 60UL) % 60UL);
-    // Single centered line: uptime DDDD:HH:MM (no second wall-clock at bottom)
-    char upRaw[24], up[40];
-    snprintf(upRaw, sizeof(upRaw), "uptime %04u:%02u:%02u", days, hrs, mins);
+    // Two centered lines:
+    //   uptime DDDDD:HH:MM   (format label)
+    //   #####:##:##          (actual value, 5-digit days)
+    char upVal[20], upValSp[40];
+    snprintf(upVal, sizeof(upVal), "%05u:%02u:%02u", days, hrs, mins);
     {
         size_t j = 0;
-        for (size_t i = 0; upRaw[i] && j + 2 < sizeof(up); i++) {
-            up[j++] = upRaw[i];
-            if (upRaw[i + 1]) up[j++] = ' ';
+        for (size_t i = 0; upVal[i] && j + 2 < sizeof(upValSp); i++) {
+            upValSp[j++] = upVal[i];
+            if (upVal[i + 1]) upValSp[j++] = ' ';
         }
-        up[j] = 0;
+        upValSp[j] = 0;
     }
-    draw_label_centered(0, 252, EPD_WIDTH, 18, up, true);
+    draw_label_centered(0, 248, EPD_WIDTH, 18, "uptime DDDDD:HH:MM", true);
+    draw_label_centered(0, 268, EPD_WIDTH, 18, upValSp, true);
 
     lv_refr_now(nullptr);
     // Stamp logo AFTER LVGL so it is not wiped by the canvas clear
@@ -2418,7 +2421,20 @@ void draw_nav() {
         pct = atoi(g_pctStr);
     // Top always: refresh | bat | clock | MENU (visible even with overlay)
     draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
-    draw_battery_nav_icon(TOP_REFRESH_W + 5, 3, TOP_BAT_W - 10, TOP_H - 6, pct);
+    // Battery cell: same border box as neighbors (bottom line included)
+    {
+        lv_obj_t* bbox = lv_obj_create(g_root);
+        lv_obj_set_size(bbox, TOP_BAT_W, TOP_H);
+        lv_obj_set_pos(bbox, TOP_REFRESH_W, 0);
+        lv_obj_set_style_radius(bbox, 0, 0);
+        lv_obj_set_style_border_width(bbox, 1, 0);
+        lv_obj_set_style_border_color(bbox, theme_fg(), 0);
+        lv_obj_set_style_bg_color(bbox, theme_bg(), 0);
+        lv_obj_set_style_bg_opa(bbox, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(bbox, 0, 0);
+        lv_obj_clear_flag(bbox, LV_OBJ_FLAG_SCROLLABLE);
+        draw_battery_nav_icon(TOP_REFRESH_W + 5, 3, TOP_BAT_W - 10, TOP_H - 6, pct);
+    }
     int sx = TOP_REFRESH_W + TOP_BAT_W;
     // Clock cell: date on top row, spaced time on bottom (idle-style spacing)
     {
@@ -2642,18 +2658,20 @@ static void draw_list_footer(const char* extra) {
         if (t && t[0])
             draw_label_centered(x, y - 1, w, fh, t, false);
     };
-    // G=up compact; V=Down wider for label; v more stays ~68 with same edge spacing
-    boxlab(0, 52, "G=up");
-    boxlab(52, 92, "V=Down");
+    // Align vertical dividers with bottom nav: Contact(80) | Peers(64) | Msg Box(96)
+    // Flip order: V=Down under Contact, G=up under Peers, v more under Msg Box
+    boxlab(0, BOT_CONTACT_W, "V=Down");
+    boxlab(BOT_CONTACT_W, BOT_PEERS_W, "G=up");
     const char* ex = (extra && extra[0]) ? extra : "";
     if (g_numsOnlyMsg[0]) ex = g_numsOnlyMsg;
-    // Middle only for real hints; right = v more (68, flush to right edge)
-    if (ex && ex[0] && strcmp(ex, "Enter open") != 0 && strcmp(ex, "Enter opens item") != 0
-        && strcmp(ex, "Enter name") != 0 && strcmp(ex, "Enter send") != 0)
-        boxlab(144, 28, ex);
+    const bool showEx = ex && ex[0]
+        && strcmp(ex, "Enter open") != 0 && strcmp(ex, "Enter opens item") != 0
+        && strcmp(ex, "Enter name") != 0 && strcmp(ex, "Enter send") != 0;
+    if (showEx)
+        boxlab(BOT_CONTACT_W + BOT_PEERS_W, BOT_MSGBOX_W, ex);
     else
-        boxlab(144, 28, "");
-    boxlab(172, 68, g_footerMoreDn ? "v more" : "");
+        boxlab(BOT_CONTACT_W + BOT_PEERS_W, BOT_MSGBOX_W,
+               g_footerMoreDn ? "v more" : "");
     draw_nav();
 }
 static void draw_settings_footer(const char* extra) {
@@ -4971,7 +4989,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.82");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.83");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
