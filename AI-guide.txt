@@ -1,24 +1,22 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.73  (2026-10-23)
+Last: G1.74  (2026-10-23)
 ================================================================================
-PERSIST (NVS rs_ui)
-[DONE] Theme (dark/light) survives power cycle
-[DONE] Timezone index survives
-[DONE] RTC epoch saved ~1/min + on manual set; restored on boot
-  Note: bottom RESET still loses SRAM RTC; NVS restore brings time back.
-
-HOME
-[DONE] CHARGING when BQ27220 reports charge current / flags
-[DONE] Minute redraw for RTC line
-
 IDLE
-[DONE] Logo present; single % (gauge only); UP = DDDD:HH:MM (no seconds)
-[DONE] Minute partial update for clock + UP
+[DONE] Logo stamped after LVGL (was wiped before)
+[DONE] Date + time on separate wide lines
 
-RTC ENTRY
-[DONE] Each field Enter calls applyManualLocalTime() so Home updates
+SETTINGS ROOT
+1 Time & Location
+2 WiFi          → S>2 enable / status / IP / MAC / scan
+3 Screen & I/O  → Theme, Idle, Backlight, Buzzer (S>3>4)
+4 Battery
+5 Identity
+6 LoRa
+7 Alerts & Audio
+8 Diagnostics
+9 Storage
 
-NAV
-[DONE] Name edit: "^ BACK UP TO CONTACTS"
+SCROLL
+[DONE] v more / ^ more in path band (visible on S>1>1)
 ================================================================================

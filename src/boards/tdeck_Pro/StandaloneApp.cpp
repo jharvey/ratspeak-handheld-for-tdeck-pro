@@ -1300,6 +1300,7 @@ bool handleTouchAt(int16_t x, int16_t y) {
             else if (g_settingsPage == SET_TIME) maxIdx = 4;
             else if (g_settingsPage == SET_IDLE_MODE) maxIdx = 3;
             else if (g_settingsPage == SET_SCREEN) maxIdx = 3;
+            else if (g_settingsPage == SET_NETWORK) maxIdx = 4;
             else if (g_settingsPage == SET_MANUAL_TIME) maxIdx = 5;
             else if (g_settingsPage == SET_MANUAL_LOC) maxIdx = 2;
             else if (g_settingsPage == SET_IDENTITY) maxIdx = 2;
@@ -1989,23 +1990,25 @@ void noteUserInput() {
 static void paintIdleContent() {
     // Always full clear — prevents UP/% ghosts from partials
     clear_screen();
-    draw_ratspeak_logo_bitmap(EPD_WIDTH / 2, 36);
-    draw_label_centered(0, 88, EPD_WIDTH, 22, "RatSpeak", true);
 
-    // RTC: date then HH:MM + TZ (not uptime)
+    // Title
+    draw_label_centered(0, 78, EPD_WIDTH, 22, "RatSpeak", true);
+
+    // Date + time on separate wider lines (easier to read)
     char lt[12], ld[12];
     formatLocalTime(lt, sizeof(lt));
     formatLocalDate(ld, sizeof(ld));
-    char clockLine[40];
-    snprintf(clockLine, sizeof(clockLine), "%s  %s  %s", ld, lt, tzName());
-    draw_label_centered(0, 112, EPD_WIDTH, 20, clockLine, true);
+    char dateLine[28], timeLine[28];
+    snprintf(dateLine, sizeof(dateLine), "%s", ld);
+    snprintf(timeLine, sizeof(timeLine), "%s  %s", lt, tzName());
+    draw_label_centered(0, 102, EPD_WIDTH, 22, dateLine, true);
+    draw_label_centered(0, 124, EPD_WIDTH, 22, timeLine, true);
 
-    // Battery gauge with single % to the right (no second %)
     int pct = -1;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
-    // gauge draws the single % label itself — do not draw another
-    draw_battery_gauge(EPD_WIDTH / 2 - 40, 140, 36, 16, pct);
+    // gauge draws the single % — do not draw another
+    draw_battery_gauge(EPD_WIDTH / 2 - 40, 152, 36, 16, pct);
 
     unsigned unread = 0;
     if (g_storeReady)
@@ -2015,20 +2018,21 @@ static void paintIdleContent() {
         snprintf(msgLine, sizeof(msgLine), "NEW messages: %u unread", unread);
     else
         snprintf(msgLine, sizeof(msgLine), "No new messages");
-    draw_label_centered(0, 180, EPD_WIDTH, 18, msgLine, unread > 0);
+    draw_label_centered(0, 188, EPD_WIDTH, 18, msgLine, unread > 0);
 
     draw_label_centered(0, 220, EPD_WIDTH, 20, "press a KEY to wake", false);
 
-    // Single solid UP (theme fg) — only place UP appears on device
     uint32_t sec = millis() / 1000UL;
-    char up[24];
-    // DDDD:HH:MM (no seconds)
     unsigned days = (unsigned)(sec / 86400UL);
     unsigned hrs  = (unsigned)((sec / 3600UL) % 24UL);
     unsigned mins = (unsigned)((sec / 60UL) % 60UL);
+    char up[24];
     snprintf(up, sizeof(up), "UP %04u:%02u:%02u", days, hrs, mins);
-    draw_label_centered(0, 250, EPD_WIDTH, 18, up, true);
+    draw_label_centered(0, 252, EPD_WIDTH, 18, up, true);
+
     lv_refr_now(nullptr);
+    // Stamp logo AFTER LVGL so it is not wiped by the canvas clear
+    draw_ratspeak_logo_bitmap(EPD_WIDTH / 2, 36);
     g_idleLastUnread = (int)unread;
     g_idleLastPct = pct;
 }
@@ -2391,13 +2395,13 @@ static void drawSettingsPath() {
         case SET_MANUAL_TIME: strcpy(path, "S>1>1"); break;
         case SET_TZ:        strcpy(path, "S>1>2"); break;
         case SET_MANUAL_LOC: strcpy(path, "S>1>4"); break;
-        case SET_IDENTITY:  strcpy(path, "S>2"); break;
+        case SET_NETWORK:   strcpy(path, "S>2"); break;
         case SET_SCREEN:    strcpy(path, "S>3"); break;
         case SET_IDLE_MODE: strcpy(path, "S>3>2"); break;
         case SET_IDLE_SECS: strcpy(path, "S>3>2>4"); break;
         case SET_BATTERY:   strcpy(path, "S>4"); break;
-        case SET_LORA:      strcpy(path, "S>5"); break;
-        case SET_NETWORK:   strcpy(path, "S>6"); break;
+        case SET_IDENTITY:  strcpy(path, "S>5"); break;
+        case SET_LORA:      strcpy(path, "S>6"); break;
         case SET_AUDIO:     strcpy(path, "S>7"); break;
         case SET_DIAG:      strcpy(path, "S>8"); break;
         case SET_STORAGE:   strcpy(path, "S>9"); break;
@@ -3543,8 +3547,8 @@ void settingsActivate() {
     // Activate highlighted row on current settings page
     if (g_settingsPage == SET_ROOT) {
         static const SettingsPage kMap[] = {
-            SET_TIME, SET_IDENTITY, SET_SCREEN, SET_BATTERY, SET_LORA,
-            SET_NETWORK, SET_AUDIO, SET_DIAG, SET_STORAGE
+            SET_TIME, SET_NETWORK, SET_SCREEN, SET_BATTERY, SET_IDENTITY,
+            SET_LORA, SET_AUDIO, SET_DIAG, SET_STORAGE
         };
         if (g_settingsSel >= 0 && g_settingsSel < 9) {
             g_settingsRootSel = g_settingsSel;  // remember for Back
@@ -3558,6 +3562,14 @@ void settingsActivate() {
         return;
     }
     // Sub-page actions
+    if (g_settingsPage == SET_NETWORK) {
+        if (g_settingsSel == 0) {
+            g_featWifi = !g_featWifi;
+            Serial.printf("[WIFI] %s (radio bring-up TBD)\n", g_featWifi ? "ON" : "OFF");
+            show_screen(SCR_SETTINGS);
+        }
+        return;
+    }
     if (g_settingsPage == SET_AUDIO) {
         if (g_settingsSel == 0) {
             g_featAudio = !g_featAudio;
@@ -3583,6 +3595,12 @@ void settingsActivate() {
             if (g_kb.backlightIsLit()) g_kb.backlightOff();
             else g_kb.backlightOn();
             Serial.printf("[KB] backlight %s\n", g_kb.backlightIsLit() ? "ON" : "OFF");
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 3) {
+            g_featAudio = !g_featAudio;
+            g_audio.setEnabled(g_featAudio);
+            Serial.printf("[BUZZ] %s\n", g_featAudio ? "ON" : "OFF");
+            if (g_featAudio) notifyInbound();
             show_screen(SCR_SETTINGS);
         }
         return;
@@ -3764,12 +3782,16 @@ void build_settings() {
         draw_menu_row(yy, SET_ROW_H, title, sub, idx == g_settingsSel);
     };
     auto drawScrollHints = [&]() {
-        // Keep scroll hints out of selection boxes:
-        // above = path row right side; below = just above footer (not on last row)
+        // Both hints in path band (right) so they are never under footer/nav
         if (g_settingsScroll > 0)
             fat_label(g_root, "^ more", EPD_WIDTH - 56, TOP_H + 1);
         if (g_settingsScroll + g_setMaxVis < totalRowsHint)
-            fat_label(g_root, "v more", EPD_WIDTH - 56, BOT_TOP - 18);
+            fat_label(g_root, "v more", EPD_WIDTH - 56, TOP_H + 1);
+        // If both, show stacked labels
+        if (g_settingsScroll > 0 && g_settingsScroll + g_setMaxVis < totalRowsHint) {
+            fat_label(g_root, "^ more", EPD_WIDTH - 56, TOP_H + 1);
+            fat_label(g_root, "v more", EPD_WIDTH - 56, TOP_H + 15);
+        }
     };
 
     if (g_settingsPage == SET_ROOT) {
@@ -3777,15 +3799,15 @@ void build_settings() {
         formatLocalTime(lt, sizeof(lt));
         snprintf(a, sizeof(a), "%s %s", lt, tzName());
         row("1 Time & Location", a, 0);
-        snprintf(a, sizeof(a), "%.14s", g_destHex);
-        row("2 Identity & Device", a, 1);
-        row("3 Screen & Input", "e-ink / keys", 2);
+        row("2 WiFi", g_featWifi ? "ON" : "OFF", 1);
+        row("3 Screen & I/O", "e-ink / keys / buzzer", 2);
         snprintf(a, sizeof(a), "%s %s", g_batStr, g_pctStr);
         row("4 Battery", a, 3);
+        snprintf(a, sizeof(a), "%.14s", g_destHex);
+        row("5 Identity & Device", a, 4);
         snprintf(a, sizeof(a), "LF %.0fMHz %s", LORA_DEFAULT_FREQ / 1e6f,
                  g_featLora ? "ON" : "OFF");
-        row("5 LoRa", a, 4);
-        row("6 Network", "WiFi/TCP stub", 5);
+        row("6 LoRa", a, 5);
         snprintf(a, sizeof(a), "Vol %s", g_featAudio ? "ON" : "OFF");
         row("7 Alerts & Audio", a, 6);
         snprintf(a, sizeof(a), "P%s L%s", g_pathsStr, g_linksStr);
@@ -3793,7 +3815,7 @@ void build_settings() {
         row("9 Storage & Maint.", "heap/flash", 8);
         totalRowsHint = 9;
         drawScrollHints();
-        draw_compose_or_hint("G/W up  V down  Enter=open");
+        draw_compose_or_hint("Enter open");
         return;
     }
 
@@ -3816,7 +3838,8 @@ void build_settings() {
                               (g_idleMode == 1) ? "No password" : "Password TBD";
         row("2 Idle splash >", idleLab, 1);
         row("3 Key backlight", g_kb.backlightIsLit() ? "ON" : "OFF", 2);
-        totalRowsHint = 3;
+        row("4 Buzzer", g_featAudio ? "ON" : "OFF", 3);
+        totalRowsHint = 4;
         drawScrollHints();
         draw_compose_or_hint("Enter=select");
         return;
@@ -3941,12 +3964,14 @@ void build_settings() {
     }
 
     if (g_settingsPage == SET_NETWORK) {
-        row("1 WiFi Mode", "stub", 0);
-        row("2 Scan Networks", "[future]", 1);
-        row("3 TCP Server", "None", 2);
-        totalRowsHint = 3;
+        row("1 Enable WiFi", g_featWifi ? "ON" : "OFF", 0);
+        row("2 Status", g_featWifi ? "enabled (no radio yet)" : "disabled", 1);
+        row("3 IP address", g_featWifi ? "0.0.0.0" : "n/a", 2);
+        row("4 MAC", "see ESP32", 3);
+        row("5 Scan networks", "[future]", 4);
+        totalRowsHint = 5;
         drawScrollHints();
-        draw_compose_or_hint("WiFi/TCP future");
+        draw_compose_or_hint("Enter open");
         return;
     }
 
@@ -4151,7 +4176,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 else if (g_settingsPage == SET_IDLE_MODE) maxNav = 3;
                 else if (g_settingsPage == SET_IDLE_SECS) maxNav = 1;
                 else if (g_settingsPage == SET_TIME) maxNav = 4;
-                else if (g_settingsPage == SET_SCREEN) maxNav = 2;
+                else if (g_settingsPage == SET_SCREEN) maxNav = 3;
+                else if (g_settingsPage == SET_NETWORK) maxNav = 4;
                 else if (g_settingsPage == SET_BATTERY) maxNav = -1;
                 else if (g_settingsPage == SET_TZ) maxNav = kTzCount - 1;
                 else if (g_settingsPage == SET_IDENTITY) maxNav = 2;
@@ -4471,7 +4497,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
                     else if (g_settingsPage == SET_IDLE_MODE) maxNav = 3;
                     else if (g_settingsPage == SET_IDLE_SECS) maxNav = 1;
                     else if (g_settingsPage == SET_TIME) maxNav = 4;
-                    else if (g_settingsPage == SET_SCREEN) maxNav = 2;
+                    else if (g_settingsPage == SET_SCREEN) maxNav = 3;
+                else if (g_settingsPage == SET_NETWORK) maxNav = 4;
                     else if (g_settingsPage == SET_TZ) maxNav = kTzCount - 1;
                     else if (g_settingsPage == SET_IDENTITY) maxNav = 2;
                     // stop at last row — no wrap
@@ -4652,7 +4679,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.73");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.74");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
