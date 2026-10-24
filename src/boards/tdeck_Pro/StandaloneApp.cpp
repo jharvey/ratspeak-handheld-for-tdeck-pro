@@ -2779,6 +2779,70 @@ void add_row(int& y, const char* left, const char* right) {
     fat_label(g_root, right, 118, y);
     y += 22;
 }
+// Draw a solid rect in theme color (fg or bg)
+static void bat_rect(int px, int py, int pw, int ph, bool useFg) {
+    if (pw < 1 || ph < 1) return;
+    lv_obj_t* z = lv_obj_create(g_root);
+    lv_obj_set_size(z, pw, ph);
+    lv_obj_set_pos(z, px, py);
+    lv_obj_set_style_radius(z, 0, 0);
+    lv_obj_set_style_border_width(z, 0, 0);
+    // Over filled (black) region → white bolt; over empty (white) → black bolt
+    lv_obj_set_style_bg_color(z, useFg ? theme_fg() : theme_bg(), 0);
+    lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(z, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+// Horizontal fill grows left→right. Bolt inverts vs local fill.
+// fillRightX = exclusive right edge of filled region (body interior).
+static void bat_bolt_h(int cx, int cy, int fillRightX) {
+    // Each segment may straddle the fill boundary → split for two-tone bolt
+    auto seg = [&](int px, int py, int pw, int ph) {
+        int x1 = px, x2 = px + pw;
+        if (x2 <= fillRightX) {
+            // fully over fill → inverse (white on black)
+            bat_rect(px, py, pw, ph, false);
+        } else if (x1 >= fillRightX) {
+            // fully over empty → black on white
+            bat_rect(px, py, pw, ph, true);
+        } else {
+            // straddles: left white (on fill), right black (on empty)
+            int wL = fillRightX - x1;
+            bat_rect(x1, py, wL, ph, false);
+            bat_rect(fillRightX, py, x2 - fillRightX, ph, true);
+        }
+    };
+    seg(cx + 1, cy - 5, 5, 2);
+    seg(cx - 1, cy - 3, 4, 2);
+    seg(cx - 3, cy - 1, 7, 2);
+    seg(cx + 0, cy + 1, 4, 2);
+    seg(cx - 4, cy + 3, 5, 2);
+}
+
+// Vertical fill grows bottom→top. fillTopY = top edge of filled region.
+static void bat_bolt_v(int cx, int cy, int fillTopY) {
+    auto seg = [&](int px, int py, int pw, int ph) {
+        int y1 = py, y2 = py + ph;
+        if (y1 >= fillTopY) {
+            // fully over fill (lower/black) → white bolt
+            bat_rect(px, py, pw, ph, false);
+        } else if (y2 <= fillTopY) {
+            // fully over empty (upper/white) → black bolt
+            bat_rect(px, py, pw, ph, true);
+        } else {
+            // straddles: top black (empty), bottom white (fill)
+            int hTop = fillTopY - y1;
+            bat_rect(px, y1, pw, hTop, true);
+            bat_rect(px, fillTopY, pw, y2 - fillTopY, false);
+        }
+    };
+    seg(cx + 1, cy - 6, 4, 2);
+    seg(cx - 1, cy - 4, 3, 2);
+    seg(cx - 3, cy - 1, 6, 2);
+    seg(cx + 0, cy + 1, 3, 2);
+    seg(cx - 4, cy + 3, 4, 2);
+}
+
 void draw_battery_gauge(int x, int y, int w, int h, int pct) {
     lv_obj_t* body = lv_obj_create(g_root);
     lv_obj_set_size(body, w, h);
@@ -2798,8 +2862,9 @@ void draw_battery_gauge(int x, int y, int w, int h, int pct) {
     lv_obj_set_style_bg_color(tip, theme_fg(), 0);
     lv_obj_set_style_bg_opa(tip, LV_OPA_COVER, 0);
     lv_obj_clear_flag(tip, LV_OBJ_FLAG_SCROLLABLE);
+    int fw = 0;
     if (pct > 0) {
-        int fw = ((w - 4) * pct) / 100;
+        fw = ((w - 4) * pct) / 100;
         if (fw < 1) fw = 1;
         if (fw > w - 4) fw = w - 4;
         lv_obj_t* fill = lv_obj_create(g_root);
@@ -2812,23 +2877,9 @@ void draw_battery_gauge(int x, int y, int w, int h, int pct) {
         lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
     }
     if (g_batCharging) {
-        auto pix = [&](int px, int py, int pw, int ph) {
-            lv_obj_t* z = lv_obj_create(g_root);
-            lv_obj_set_size(z, pw, ph);
-            lv_obj_set_pos(z, px, py);
-            lv_obj_set_style_radius(z, 0, 0);
-            lv_obj_set_style_border_width(z, 0, 0);
-            lv_obj_set_style_bg_color(z, theme_bg(), 0);  // cutout on fill
-            lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
-            lv_obj_clear_flag(z, LV_OBJ_FLAG_SCROLLABLE);
-        };
-        int cx = x + w / 2;
-        int cy = y + h / 2;
-        pix(cx + 1, cy - 5, 5, 2);
-        pix(cx - 1, cy - 3, 4, 2);
-        pix(cx - 3, cy - 1, 7, 2);
-        pix(cx + 0, cy + 1, 4, 2);
-        pix(cx - 4, cy + 3, 5, 2);
+        // Bolt color is opposite of local battery background (ref graphic)
+        int fillRight = x + 2 + fw;
+        bat_bolt_h(x + w / 2, y + h / 2, fillRight);
     }
     char ps[8];
     if (pct >= 0) snprintf(ps, sizeof(ps), "%d%%", pct);
@@ -2857,8 +2908,9 @@ void draw_battery_nav_icon(int x, int y, int w, int h, int pct) {
     lv_obj_set_style_bg_opa(body, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(body, 0, 0);
     lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    int fh = 0;
     if (pct > 0) {
-        int fh = ((bh - 4) * pct) / 100;
+        fh = ((bh - 4) * pct) / 100;
         if (fh < 1) fh = 1;
         if (fh > bh - 4) fh = bh - 4;
         lv_obj_t* fill = lv_obj_create(g_root);
@@ -2871,24 +2923,9 @@ void draw_battery_nav_icon(int x, int y, int w, int h, int pct) {
         lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
     }
     if (g_batCharging) {
-        // Classic lightning: top-right, mid-left, mid-right, bottom-left
-        auto pix = [&](int px, int py, int pw, int ph) {
-            lv_obj_t* z = lv_obj_create(g_root);
-            lv_obj_set_size(z, pw, ph);
-            lv_obj_set_pos(z, px, py);
-            lv_obj_set_style_radius(z, 0, 0);
-            lv_obj_set_style_border_width(z, 0, 0);
-            lv_obj_set_style_bg_color(z, theme_fg(), 0);
-            lv_obj_set_style_bg_opa(z, LV_OPA_COVER, 0);
-            lv_obj_clear_flag(z, LV_OBJ_FLAG_SCROLLABLE);
-        };
-        int cx = x + w / 2;
-        int cy = by + bh / 2;
-        pix(cx + 1, cy - 6, 4, 2);   // top bar
-        pix(cx - 1, cy - 4, 3, 2);
-        pix(cx - 3, cy - 1, 6, 2);   // middle thick
-        pix(cx + 0, cy + 1, 3, 2);
-        pix(cx - 4, cy + 3, 4, 2);   // bottom
+        // Vertical fill from bottom; bolt inverts across fill boundary
+        int fillTopY = by + bh - 2 - fh;
+        bat_bolt_v(x + w / 2, by + bh / 2, fillTopY);
     }
 }
 
@@ -4989,7 +5026,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.83");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.84");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
