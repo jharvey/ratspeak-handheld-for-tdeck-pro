@@ -451,9 +451,9 @@ bool readBattery(float& volts, int& pct) {
     int curvePct = lipoPctFromVolts(volts);
     if (gaugePct >= 0) {
         // Unlearned gauges often read ~40% at 4.1V on USB — correct with curve
-        if ((charging || volts >= 4.05f) && gaugePct + 20 < curvePct)
+        if ((g_batCharging || volts >= 4.05f) && gaugePct + 20 < curvePct)
             pct = curvePct;
-        else if (!charging && abs(gaugePct - curvePct) > 25)
+        else if (!g_batCharging && abs(gaugePct - curvePct) > 25)
             pct = (gaugePct + curvePct) / 2;
         else
             pct = gaugePct;
@@ -461,8 +461,8 @@ bool readBattery(float& volts, int& pct) {
         pct = curvePct;
         Serial.println("[BAT] SOC reg fail — voltage curve");
     }
-    if (charging && volts >= 4.16f) pct = 100;
-    else if (charging && volts >= 4.10f && pct < 90) pct = 90;
+    if (g_batCharging && volts >= 4.16f) pct = 100;
+    else if (g_batCharging && volts >= 4.10f && pct < 90) pct = 90;
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
     return true;
