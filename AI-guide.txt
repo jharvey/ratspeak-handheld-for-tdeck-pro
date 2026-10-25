@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.89  (2026-10-24)
+Last: G1.90  (2026-10-25)
 ================================================================================
 Long-term backlog → Future_steps.txt (do not strip future items from there).
 
@@ -11,7 +11,7 @@ Status tags: [DONE] solid on hardware   [IN-PROGRESS] partial / next polish
              [TODO] not started
 
 --------------------------------------------------------------------------------
-CURRENT PHASE (G1.89)
+CURRENT PHASE (G1.90)
 --------------------------------------------------------------------------------
 TOP NAV
 [DONE] Layout: [↻ refresh] [battery box] [ date + time ] [ MENU ]
@@ -51,7 +51,10 @@ SETTINGS S.4 BATTERY
               "Not charging | unplugged"
 [DONE] Rows 5–7: USB power, gauge flags, power source
 [DONE] Prefer BQ27220 StateOfCharge; do not force 100% on USB plug
-[DONE] Auto-redraw ~2s when charging or USB presence flips
+[DONE] Auto-redraw ~0.8s when charging or USB presence flips
+[DONE] USB clears on avgMa<0 or DSG (was sticky ~30s after unplug)
+[DONE] S.4.1 voltage only; S.4.4 cord right-justified in 11-char field
+[DONE] Idle: uptime 3-line normal weight; KEY wake bold at bottom; cord not bold
 
 BATTERY ICONS
 [DONE] Lightning bolt while charging (inverts vs fill: white on black, etc.)

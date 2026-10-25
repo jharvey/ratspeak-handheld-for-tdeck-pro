@@ -432,19 +432,25 @@ bool readBattery(float& volts, int& pct) {
     g_batFlags = flags;
     // BQ27220 Flags bit0 = DSG (1=discharging, 0=charge or relax)
     const bool dsg = (flags & 0x0001) != 0;
-    // Charging: current into pack, or gauge says not-DSG with positive current.
-    // Clear quickly on any clear discharge so unplug is not sticky.
+    // Charging: clear on any discharge so unplug is not sticky (video: was ~30s lag)
     static bool s_chg = false;
-    if (avgMa > 10 || (!dsg && avgMa > 3))
+    if (avgMa > 15)
         s_chg = true;
-    if (avgMa < -5 || dsg)
+    if (avgMa < 0 || dsg)
         s_chg = false;
     g_batCharging = s_chg;
-    // USB: charging, or mild positive/float current. Unplug (~-15..-25 mA) clears.
+    // USB: require clear positive charge current to set; clear on any negative /
+    // near-zero discharge. Old threshold avgMa<-10 missed idle ~-5 mA unplug.
     static bool s_usb = false;
-    if (s_chg || avgMa > 8)
+    static uint32_t s_lastChargeMs = 0;
+    if (avgMa > 20)
+        s_lastChargeMs = millis();
+    if (s_chg || avgMa > 20)
         s_usb = true;
-    if (avgMa < -10 || (dsg && avgMa < 0))
+    if (avgMa < 0 || dsg)
+        s_usb = false;
+    // Failsafe: no positive charge current for 2.5s and not charging → unplugged
+    if (!s_chg && avgMa <= 8 && (millis() - s_lastChargeMs) > 2500UL)
         s_usb = false;
     g_usbPower = s_usb;
     static uint32_t s_lastLog = 0;
@@ -2130,7 +2136,8 @@ static void paintIdleContent() {
             cordLine = "charging";
         else
             cordLine = "unplugged";
-        draw_label_centered(0, 172, EPD_WIDTH, 16, cordLine, g_usbPower || g_batCharging);
+        // Normal weight (not bold) — same as rest of idle page
+        draw_label_centered(0, 172, EPD_WIDTH, 16, cordLine, false);
     }
 
     unsigned unread = 0;
@@ -2141,20 +2148,29 @@ static void paintIdleContent() {
         snprintf(msgLine, sizeof(msgLine), "NEW messages: %u unread", unread);
     else
         snprintf(msgLine, sizeof(msgLine), "No new messages");
-    draw_label_centered(0, 196, EPD_WIDTH, 18, msgLine, unread > 0);
-
-    draw_label_centered(0, 222, EPD_WIDTH, 20, "press a KEY to wake", false);
+    draw_label_centered(0, 192, EPD_WIDTH, 18, msgLine, unread > 0);
 
     uint32_t sec = millis() / 1000UL;
     unsigned days = (unsigned)(sec / 86400UL);
     unsigned hrs  = (unsigned)((sec / 3600UL) % 24UL);
     unsigned mins = (unsigned)((sec / 60UL) % 60UL);
-    // Two centered lines:
-    //   uptime DDDDD:HH:MM   (format label)
-    //   #####:##:##          (actual value, 5-digit days)
-    char upVal[20], upValSp[40];
-    snprintf(upVal, sizeof(upVal), "%05u:%02u:%02u", days, hrs, mins);
+    // Three normal-weight lines:
+    //   uptime
+    //   D D D D D : H H : M M
+    //   # # # # # : # # : # #
+    char upFmtSp[40], upValSp[40];
     {
+        const char* fmt = "DDDDD:HH:MM";
+        size_t j = 0;
+        for (size_t i = 0; fmt[i] && j + 2 < sizeof(upFmtSp); i++) {
+            upFmtSp[j++] = fmt[i];
+            if (fmt[i + 1]) upFmtSp[j++] = ' ';
+        }
+        upFmtSp[j] = 0;
+    }
+    {
+        char upVal[20];
+        snprintf(upVal, sizeof(upVal), "%05u:%02u:%02u", days, hrs, mins);
         size_t j = 0;
         for (size_t i = 0; upVal[i] && j + 2 < sizeof(upValSp); i++) {
             upValSp[j++] = upVal[i];
@@ -2162,8 +2178,12 @@ static void paintIdleContent() {
         }
         upValSp[j] = 0;
     }
-    draw_label_centered(0, 248, EPD_WIDTH, 18, "uptime DDDDD:HH:MM", true);
-    draw_label_centered(0, 268, EPD_WIDTH, 18, upValSp, true);
+    draw_label_centered(0, 218, EPD_WIDTH, 16, "uptime", false);
+    draw_label_centered(0, 236, EPD_WIDTH, 16, upFmtSp, false);
+    draw_label_centered(0, 254, EPD_WIDTH, 16, upValSp, false);
+
+    // Bottom of splash — bold so it jumps out
+    draw_label_centered(0, 292, EPD_WIDTH, 22, "press a KEY to wake", true);
 
     lv_refr_now(nullptr);
     // Stamp logo AFTER LVGL so it is not wiped by the canvas clear
@@ -2213,13 +2233,13 @@ void maybeHomeMinuteRedraw() {
 }
 
 void maybeBatteryPowerRedraw() {
-    // Poll gauge every ~2s; full redraw when charging or USB presence flips
+    // Poll gauge every ~0.8s so plug/unplug UI tracks within ~1-2s
     static uint32_t s_last = 0;
     static bool s_init = false;
     static bool s_prevChg = false;
     static bool s_prevUsb = false;
     uint32_t now = millis();
-    if (now - s_last < 2000) return;
+    if (now - s_last < 800) return;
     s_last = now;
 
     bool prevChg = g_batCharging;
@@ -4193,9 +4213,10 @@ void build_settings() {
         g_footerMoreDn = moreDn;
         const int pathH = 18;
         if (moreUp) {
+            // y = TOP_H-1 so top border does not double with nav bottom (less "bold")
             lv_obj_t* b = lv_obj_create(g_root);
             lv_obj_set_size(b, 68, pathH);
-            lv_obj_set_pos(b, EPD_WIDTH - 68, TOP_H);
+            lv_obj_set_pos(b, EPD_WIDTH - 68, TOP_H - 1);
             lv_obj_set_style_radius(b, 0, 0);
             lv_obj_set_style_border_width(b, 1, 0);
             lv_obj_set_style_border_color(b, theme_fg(), 0);
@@ -4203,7 +4224,7 @@ void build_settings() {
             lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
             lv_obj_set_style_pad_all(b, 0, 0);
             lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
-            draw_label_centered(EPD_WIDTH - 68, TOP_H - 1, 68, pathH, "^ more", false);
+            draw_label_centered(EPD_WIDTH - 68, TOP_H - 2, 68, pathH, "^ more", false);
         }
     };
 
@@ -4349,25 +4370,11 @@ void build_settings() {
     if (g_settingsPage == SET_BATTERY) {
         // Info menu — | columns aligned between title and value lines
         char a[44];
-        // Row 1: title + value left-aligned; | under Voltage|SOC (photo layout)
-        {
-            char volt[12];
-            if (g_batStr[0] && g_batStr[0] != 'n')
-                snprintf(volt, sizeof(volt), "%s", g_batStr);
-            else
-                strcpy(volt, "--");
-            int soc = -1;
-            if (g_pctStr[0] && g_pctStr[0] != '-')
-                soc = atoi(g_pctStr);
-            // "4.09 V | 49 %" — modest pad so | sits under title's |
-            if (soc >= 0)
-                snprintf(a, sizeof(a), "%-7s | %d %%", volt, soc);
-            else
-                snprintf(a, sizeof(a), "%-7s | -- %%", volt);
-        }
-        row("1 : Info : Voltage | SOC %", a, 0);
+        // Row 1: voltage only (SOC is row 2)
+        snprintf(a, sizeof(a), "%s", g_batStr[0] ? g_batStr : "--");
+        row("1 : Info : Voltage", a, 0);
 
-        // Row 2: keep dedicated SOC for clarity (chip reading)
+        // Row 2: chip SOC
         snprintf(a, sizeof(a), "%s", g_pctStr[0] ? g_pctStr : "--");
         row("2 : Info : State of charge", a, 1);
 
@@ -4380,7 +4387,8 @@ void build_settings() {
             snprintf(a, sizeof(a), "%d mA idle", (int)g_avgMa);
         row("3 : Info : Average current", a, 2);
 
-        // Row 4: left-aligned status | cord (match annotated photos)
+        // Row 4: status left, cord right-justified in fixed width so | stays put
+        // "plugged in" and "unplugged" share the same 11-char field
         {
             const char* st = "Not charging";
             const char* cord = "unplugged";
@@ -4394,9 +4402,9 @@ void build_settings() {
                 st = "Bat full/idle";
                 cord = "plugged in";
             }
-            // "Not charging | unplugged" / "charging | plugged in"
-            // pad status to 13 so | roughly under title "Status |"
-            snprintf(a, sizeof(a), "%-13s | %s", st, cord);
+            char cordR[14];
+            snprintf(cordR, sizeof(cordR), "%11s", cord);  // right-justify
+            snprintf(a, sizeof(a), "%-13s | %s", st, cordR);
         }
         row("4 : Info : Status | Cord stat", a, 3);
 
@@ -5178,7 +5186,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.89");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.90");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
