@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.90  (2026-10-25)
+Last: G1.91  (2026-10-25)
 ================================================================================
 Long-term backlog → Future_steps.txt (do not strip future items from there).
 
@@ -11,7 +11,7 @@ Status tags: [DONE] solid on hardware   [IN-PROGRESS] partial / next polish
              [TODO] not started
 
 --------------------------------------------------------------------------------
-CURRENT PHASE (G1.90)
+CURRENT PHASE (G1.91)
 --------------------------------------------------------------------------------
 TOP NAV
 [DONE] Layout: [↻ refresh] [battery box] [ date + time ] [ MENU ]
@@ -55,6 +55,10 @@ SETTINGS S.4 BATTERY
 [DONE] USB clears on avgMa<0 or DSG (was sticky ~30s after unplug)
 [DONE] S.4.1 voltage only; S.4.4 cord right-justified in 11-char field
 [DONE] Idle: uptime 3-line normal weight; KEY wake bold at bottom; cord not bold
+[DONE] Vertical battery icon (nav style) on idle + home identity
+[DONE] Home: CHG/USB/ON under battery icon, name row uncrowded
+[DONE] Charge detect: strong +mA always wins over sticky DSG flag
+[DONE] Uptime DDDDD:HH:MM / value with no inter-character spaces
 
 BATTERY ICONS
 [DONE] Lightning bolt while charging (inverts vs fill: white on black, etc.)

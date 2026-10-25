@@ -432,24 +432,24 @@ bool readBattery(float& volts, int& pct) {
     g_batFlags = flags;
     // BQ27220 Flags bit0 = DSG (1=discharging, 0=charge or relax)
     const bool dsg = (flags & 0x0001) != 0;
-    // Charging: clear on any discharge so unplug is not sticky (video: was ~30s lag)
+    // Strong positive current always means charging — never let a sticky DSG
+    // flag override (photo: +767 mA still showed "Not charging").
     static bool s_chg = false;
     if (avgMa > 15)
         s_chg = true;
-    if (avgMa < 0 || dsg)
+    else if (avgMa < 0 || (dsg && avgMa <= 5))
         s_chg = false;
     g_batCharging = s_chg;
-    // USB: require clear positive charge current to set; clear on any negative /
-    // near-zero discharge. Old threshold avgMa<-10 missed idle ~-5 mA unplug.
+    // USB: set on charge; clear only when current is negative / DSG with no charge
     static bool s_usb = false;
     static uint32_t s_lastChargeMs = 0;
     if (avgMa > 20)
         s_lastChargeMs = millis();
     if (s_chg || avgMa > 20)
         s_usb = true;
-    if (avgMa < 0 || dsg)
+    else if (avgMa < 0 || (dsg && avgMa <= 5))
         s_usb = false;
-    // Failsafe: no positive charge current for 2.5s and not charging → unplugged
+    // Failsafe: no strong charge current for 2.5s and not charging → unplugged
     if (!s_chg && avgMa <= 8 && (millis() - s_lastChargeMs) > 2500UL)
         s_usb = false;
     g_usbPower = s_usb;
@@ -2122,10 +2122,21 @@ static void paintIdleContent() {
     int pct = -1;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
-    // gauge draws the single % — do not draw another
-    draw_battery_gauge(EPD_WIDTH / 2 - 40, 152, 36, 16, pct);
+    // Vertical battery (same as top-nav / home) + % to the right
+    {
+        const int bw = 18, bh = 28;
+        const int bx = EPD_WIDTH / 2 - bw / 2 - 14;
+        const int by = 148;
+        draw_battery_nav_icon(bx, by, bw, bh, pct);
+        char pctLab[8];
+        if (pct >= 0)
+            snprintf(pctLab, sizeof(pctLab), "%d%%", pct);
+        else
+            strcpy(pctLab, "--%");
+        draw_label_centered(bx + bw + 2, by + 6, 40, 16, pctLab, false);
+    }
 
-    // Cord / charge status directly under battery gauge
+    // Cord / charge status under battery — normal weight
     {
         const char* cordLine = "unplugged";
         if (g_batCharging && g_usbPower)
@@ -2136,8 +2147,7 @@ static void paintIdleContent() {
             cordLine = "charging";
         else
             cordLine = "unplugged";
-        // Normal weight (not bold) — same as rest of idle page
-        draw_label_centered(0, 172, EPD_WIDTH, 16, cordLine, false);
+        draw_label_centered(0, 180, EPD_WIDTH, 16, cordLine, false);
     }
 
     unsigned unread = 0;
@@ -2148,39 +2158,21 @@ static void paintIdleContent() {
         snprintf(msgLine, sizeof(msgLine), "NEW messages: %u unread", unread);
     else
         snprintf(msgLine, sizeof(msgLine), "No new messages");
-    draw_label_centered(0, 192, EPD_WIDTH, 18, msgLine, unread > 0);
+    draw_label_centered(0, 198, EPD_WIDTH, 18, msgLine, unread > 0);
 
     uint32_t sec = millis() / 1000UL;
     unsigned days = (unsigned)(sec / 86400UL);
     unsigned hrs  = (unsigned)((sec / 3600UL) % 24UL);
     unsigned mins = (unsigned)((sec / 60UL) % 60UL);
-    // Three normal-weight lines:
+    // Three normal-weight lines, same font, no inter-char spaces:
     //   uptime
-    //   D D D D D : H H : M M
-    //   # # # # # : # # : # #
-    char upFmtSp[40], upValSp[40];
-    {
-        const char* fmt = "DDDDD:HH:MM";
-        size_t j = 0;
-        for (size_t i = 0; fmt[i] && j + 2 < sizeof(upFmtSp); i++) {
-            upFmtSp[j++] = fmt[i];
-            if (fmt[i + 1]) upFmtSp[j++] = ' ';
-        }
-        upFmtSp[j] = 0;
-    }
-    {
-        char upVal[20];
-        snprintf(upVal, sizeof(upVal), "%05u:%02u:%02u", days, hrs, mins);
-        size_t j = 0;
-        for (size_t i = 0; upVal[i] && j + 2 < sizeof(upValSp); i++) {
-            upValSp[j++] = upVal[i];
-            if (upVal[i + 1]) upValSp[j++] = ' ';
-        }
-        upValSp[j] = 0;
-    }
-    draw_label_centered(0, 218, EPD_WIDTH, 16, "uptime", false);
-    draw_label_centered(0, 236, EPD_WIDTH, 16, upFmtSp, false);
-    draw_label_centered(0, 254, EPD_WIDTH, 16, upValSp, false);
+    //   DDDDD:HH:MM
+    //   00000:00:02
+    char upVal[20];
+    snprintf(upVal, sizeof(upVal), "%05u:%02u:%02u", days, hrs, mins);
+    draw_label_centered(0, 224, EPD_WIDTH, 16, "uptime", false);
+    draw_label_centered(0, 242, EPD_WIDTH, 16, "DDDDD:HH:MM", false);
+    draw_label_centered(0, 260, EPD_WIDTH, 16, upVal, false);
 
     // Bottom of splash — bold so it jumps out
     draw_label_centered(0, 292, EPD_WIDTH, 22, "press a KEY to wake", true);
@@ -3454,16 +3446,22 @@ void build_home() {
     lv_obj_clear_flag(idBox, LV_OBJ_FLAG_SCROLLABLE);
 
     loadSelfName();
+    // Name on left — full width available (no CHG crowding the title row)
     fat_label(g_root, g_selfName[0] ? g_selfName : "IDENTITY", 6, y0 + 2);
-    const char* on = (g_loraIf && g_loraIf->isOnline())
-        ? (g_batCharging ? "CHG" : (g_usbPower ? "USB PWR" : "ONLINE"))
-        : "OFFLINE";
-    // ~30px left of prior 118; gauge ~15px left of prior far-right
-    fat_label(g_root, on, 88, y0 + 2);
     int pct = 0;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
-    draw_battery_gauge(EPD_WIDTH - 77, y0 + 3, 32, 14, pct);
+    // Vertical battery (same orientation as top-nav icon)
+    const int batX = EPD_WIDTH - 26;
+    const int batY = y0 + 4;
+    draw_battery_nav_icon(batX, batY, 18, 28, pct);
+    // Status under the battery icon (not to its left)
+    {
+        const char* on = (g_loraIf && g_loraIf->isOnline())
+            ? (g_batCharging ? "CHG" : (g_usbPower ? "USB" : "ON"))
+            : "OFF";
+        draw_label_centered(batX - 6, batY + 30, 30, 14, on, false);
+    }
     char shortId[14];
     snprintf(shortId, sizeof(shortId), "%.10s", g_destHex);
     fat_label(g_root, shortId, 6, y0 + 20);
@@ -4387,8 +4385,7 @@ void build_settings() {
             snprintf(a, sizeof(a), "%d mA idle", (int)g_avgMa);
         row("3 : Info : Average current", a, 2);
 
-        // Row 4: status left, cord right-justified in fixed width so | stays put
-        // "plugged in" and "unplugged" share the same 11-char field
+        // Row 4: fixed left column so | lines up; cord left-aligned after |
         {
             const char* st = "Not charging";
             const char* cord = "unplugged";
@@ -4402,9 +4399,8 @@ void build_settings() {
                 st = "Bat full/idle";
                 cord = "plugged in";
             }
-            char cordR[14];
-            snprintf(cordR, sizeof(cordR), "%11s", cord);  // right-justify
-            snprintf(a, sizeof(a), "%-13s | %s", st, cordR);
+            // Longest status "Not charging" / "Bat full/idle" = 13
+            snprintf(a, sizeof(a), "%-13s | %s", st, cord);
         }
         row("4 : Info : Status | Cord stat", a, 3);
 
@@ -5186,7 +5182,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.90");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.91");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
