@@ -4335,7 +4335,7 @@ void build_settings() {
     if (g_settingsPage == SET_BATTERY) {
         // Info menu — | columns aligned between title and value lines
         char a[44];
-        // Row 1: Voltage | SOC %  (same values idle screen uses)
+        // Row 1: "1 : Info : Voltage | SOC %" — | aligned on both lines
         {
             char volt[12];
             if (g_batStr[0] && g_batStr[0] != 'n')
@@ -4345,13 +4345,16 @@ void build_settings() {
             int soc = -1;
             if (g_pctStr[0] && g_pctStr[0] != '-')
                 soc = atoi(g_pctStr);
-            // fixed field before | so pipes line up under "Voltage | SOC %"
+            // Title: "1 : Info : Voltage | SOC %"
+            // Prefix before | = "1 : Info : Voltage " = 19 chars
+            char left[24];
+            snprintf(left, sizeof(left), "%-19s", volt);
             if (soc >= 0)
-                snprintf(a, sizeof(a), "%-8s| %d %%", volt, soc);
+                snprintf(a, sizeof(a), "%s| %d %%", left, soc);
             else
-                snprintf(a, sizeof(a), "%-8s| -- %%", volt);
+                snprintf(a, sizeof(a), "%s| -- %%", left);
         }
-        row("1 Voltage | SOC %", a, 0);
+        row("1 : Info : Voltage | SOC %", a, 0);
 
         // Row 2: keep dedicated SOC for clarity (chip reading)
         snprintf(a, sizeof(a), "%s", g_pctStr[0] ? g_pctStr : "--");
@@ -4366,7 +4369,7 @@ void build_settings() {
             snprintf(a, sizeof(a), "%d mA idle", (int)g_avgMa);
         row("3 : Info : Average current", a, 2);
 
-        // Row 4: Status | cord — left-justified fixed phrases, | aligned
+        // Row 4: "4 : Info : Status | Cord stat" — | aligned on both lines
         {
             const char* st = "Not charging";
             const char* cord = "unplugged";
@@ -4375,15 +4378,19 @@ void build_settings() {
                 cord = "plugged in";
             } else if (g_batCharging) {
                 st = "charging";
-                cord = "unplugged";  // rare
+                cord = "unplugged";
             } else if (g_usbPower) {
-                st = "Bat full / idle";
+                st = "Bat full/idle";
                 cord = "plugged in";
             }
-            // pad status field so | lines up under "Status | cord"
-            snprintf(a, sizeof(a), "%-15s| %s", st, cord);
+            // Title is "4 : Info : Status | Cord stat"
+            // Prefix before | is 18 chars: "4 : Info : Status "
+            // Value uses same 18-char left field so pipes stack
+            char left[20];
+            snprintf(left, sizeof(left), "%-18s", st);
+            snprintf(a, sizeof(a), "%s| %s", left, cord);
         }
-        row("4 Status         | cord", a, 3);
+        row("4 : Info : Status | Cord stat", a, 3);
 
         snprintf(a, sizeof(a), "%s", g_usbPower ? "YES (5V / USB)" : "no (on battery)");
         row("5 : Info : USB power", a, 4);
@@ -5163,7 +5170,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.87");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.88");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
