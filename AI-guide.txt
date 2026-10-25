@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.83  (2026-10-24)
+Last: G1.89  (2026-10-24)
 ================================================================================
 Long-term backlog → Future_steps.txt (do not strip future items from there).
 
@@ -11,99 +11,79 @@ Status tags: [DONE] solid on hardware   [IN-PROGRESS] partial / next polish
              [TODO] not started
 
 --------------------------------------------------------------------------------
-CURRENT PHASE (G1.83)
+CURRENT PHASE (G1.89)
 --------------------------------------------------------------------------------
 TOP NAV
 [DONE] Layout: [↻ refresh] [battery box] [ date + time ] [ MENU ]
-[DONE] Clock cell: MM/DD on top line, HH:MM below (idle-style spacing where used)
+[DONE] Clock cell: MM/DD on top line, HH:MM below
 [DONE] Battery cell has full border box (bottom line) like refresh/clock
-[DONE] MENU opens overlay column under MENU tab (1 wide × 5 tall):
-      Home / Settings / Contacts / Peers / Msg Box (bottom row)
-[DONE] Overlay leaves top bar visible (time + MENU)
-[DONE] M key toggles MENU; from overlay H/S/C/P/M jump to destination
-[DONE] Thread / name-edit: MENU opens overlay (does NOT jump Home via topTabScreen)
-[DONE] Home is M then H (or MENU → Home)
+[DONE] MENU overlay: Home / Settings / Contacts / Peers / Msg Box
+[DONE] Overlay leaves top bar visible; M toggles; MENU never maps to Home via topTab
 
 BOTTOM NAV
-[DONE] Contact | Peers | Msg Box on every page (underlined C / P / M)
-[DONE] Thread / name-edit: full-width "^ BACK UP TO …" bar instead
+[DONE] Contact | Peers | Msg Box on every page (C / P / M)
+[DONE] Thread / name-edit: full-width "^ BACK UP TO …" bar
 
-FOOTER (above bottom nav on list/settings)
-[DONE] Boxes align with bottom nav widths: Contact(80) | Peers(64) | Msg Box(96)
-[DONE] Labels: V=Down | G=up | v more (when scrollable)
-[DONE] Keys still: G = list up, V = list down
-[DONE] No default "Enter open" / "Enter name" middle junk on Contacts
+FOOTER
+[DONE] V=Down | G=up | v more widths = Contact(80) | Peers(64) | Msg Box(96)
+[DONE] Keys: G = list up, V = list down
 
 IDLE SPLASH
-[DONE] Logo + RatSpeak title + spaced date + spaced time (with TZ)
-[DONE] Battery gauge + unread line + "press a KEY to wake"
-[DONE] Two centered lines at bottom:
-        uptime DDDDD:HH:MM
-        #####:##:##          (5-digit days, actual value)
-[DONE] No redundant second wall-clock under uptime
+[DONE] Logo + RatSpeak + spaced date + spaced time (TZ)
+[DONE] Battery gauge + % ; cord line under gauge:
+      "charging | plugged in" / "plugged in" / "unplugged"
+[DONE] Unread line + "press a KEY to wake"
+[DONE] Two lines: "uptime DDDDD:HH:MM" then value #####:##:##
 
 HOME
-[DONE] Identity card, tiles (LORA/PATH/LINK/PEERS/AUDIO/LXMFQ), Announce
-[DONE] No RTC line under Announce (clock lives in top header only)
+[DONE] Identity card, tiles, Announce; no RTC under Announce
+[DONE] CHG / USB PWR / ONLINE identity status from charge flags
 
-CONTACTS
-[DONE] List: " N : Name" / ">N : Name" (Peers-style)
-[DONE] Enter opens rename sub-screen; type name; Enter saves; ^=BACK cancels
-[DONE] Rename layout: "N : Contact", Was :, ID  :
-[DONE] No "Enter=name" footer on list
+CONTACTS / PEERS / MSG BOX
+[DONE] Peers-style list; rename sub-screen; no Enter=name footer junk
 
-PEERS / MSG BOX
-[DONE] List shifted down (CONTENT_TOP+18) for ^ more room under top nav
-[DONE] Msg Box: open thread; type+Enter send; bottom BACK bar
+SETTINGS S.4 BATTERY
+[DONE] Row 1: "1 : Info : Voltage | SOC %" / "4.09 V | 49 %" (left values)
+[DONE] Row 2: State of charge (chip %)
+[DONE] Row 3: Average current (+mA charging / −mA consuming)
+[DONE] Row 4: "4 : Info : Status | Cord stat"
+      Values: "charging | plugged in", "Bat full/idle | plugged in",
+              "Not charging | unplugged"
+[DONE] Rows 5–7: USB power, gauge flags, power source
+[DONE] Prefer BQ27220 StateOfCharge; do not force 100% on USB plug
+[DONE] Auto-redraw ~2s when charging or USB presence flips
 
-SETTINGS
-[DONE] Path under refresh (S, S.1, S.4, …)
-[DONE] "N : Menu|Toggle|Entry|Info : title" row labels
-[DONE] S.4 Battery = full info menu from BQ27220 serial stream:
-      Voltage, SoC, Average current (neg = consuming, pos = charging),
-      Charging, USB power, Gauge flags 0xNNNN, Power source
-[DONE] g_batFlags stored from Flags 0x0A
+BATTERY ICONS
+[DONE] Lightning bolt while charging (inverts vs fill: white on black, etc.)
+[DONE] Plug icon when USB powered but not charging (float/full)
+[DONE] No icon on battery-only
 
 INPUT / SYM
-[DONE] Force-num layer only while actively typing a numeric field
-      (g_timeEditMode / g_dateEditMode / g_idleSecsEditMode)
-[DONE] Not on menu pages (S.1.1 list, S.2, etc.)
-[DONE] keyboardSetNumLayer(false) on show_screen / settingsGoBack / every key
-      when !isNumEntryMode()
-[DONE] Keyboard.cpp: force-num only remaps keys that yield 0-9; letters pass
-      so C/M/H/S/P nav always works
-[DONE] Underlined nav letters jump to that screen from list/home/settings
-      (when not composing)
+[DONE] Force-num only inside true digit-entry boxes
+[DONE] Nav letters (C/M/H/S/P) work from list screens; layer cleared on key
 
-BATTERY UI
-[DONE] Clearer 5-segment lightning when charging (USB / CHG / high-V)
-
-PROTOCOL / BRING-UP (earlier phases, still green)
-[DONE] PSRAM QSPI; LXMF announce/send/receive when quiet
-[DONE] Contacts flat list; hash-stable selection
-[DONE] Compose partial strip; UI prefers partial full-window
-[DONE] Theme invert (white-paper / black-ink)
+PROTOCOL (earlier, still green)
+[DONE] PSRAM; LXMF announce/send/receive; theme invert
 
 --------------------------------------------------------------------------------
 BUILD
 --------------------------------------------------------------------------------
   env: tdeck_pro_standalone  (keep tdeck_pro_cooperative green)
-  Primary UI file: src/boards/tdeck_Pro/StandaloneApp.cpp
-  Keyboard SYM/force-num: src/boards/tdeck_Pro/hal/Keyboard.cpp
-  Prefer full files (not diffs) when handing patches to the device tree.
+  Primary UI: src/boards/tdeck_Pro/StandaloneApp.cpp
+  Keyboard:   src/boards/tdeck_Pro/hal/Keyboard.cpp
+  Prefer full files (not diffs) when handing patches.
 
 --------------------------------------------------------------------------------
-HARDWARE NOTES (T-Deck Pro v1.1)
+HARDWARE (T-Deck Pro v1.1)
 --------------------------------------------------------------------------------
-  E-ink 240×320, TCA8418 keyboard, CST328 touch, SX1262 LoRa, BQ27220 gauge
-  GPS UART1 RX=44 TX=43 EN=39; keyboard LED=42; motor=2
-  See boards/tdeck_Pro/config/BoardConfig.h for pins.
+  E-ink 240×320, TCA8418, CST328, SX1262, BQ27220
+  GPS UART1 RX=44 TX=43 EN=39; KB LED=42; motor=2
+  See boards/tdeck_Pro/config/BoardConfig.h
 
 --------------------------------------------------------------------------------
 WHEN ADDING FEATURES
 --------------------------------------------------------------------------------
-  Full files preferred.
-  Keep cooperative green.
-  Do not re-enable force-num except inside true digit-entry boxes.
+  Full files preferred. Keep cooperative green.
+  Do not re-enable force-num except inside digit-entry boxes.
   Top MENU must never map through topTabScreen() to Home.
 ================================================================================

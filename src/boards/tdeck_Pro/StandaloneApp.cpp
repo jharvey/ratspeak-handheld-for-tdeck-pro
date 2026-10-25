@@ -2119,6 +2119,20 @@ static void paintIdleContent() {
     // gauge draws the single % — do not draw another
     draw_battery_gauge(EPD_WIDTH / 2 - 40, 152, 36, 16, pct);
 
+    // Cord / charge status directly under battery gauge
+    {
+        const char* cordLine = "unplugged";
+        if (g_batCharging && g_usbPower)
+            cordLine = "charging | plugged in";
+        else if (g_usbPower)
+            cordLine = "plugged in";
+        else if (g_batCharging)
+            cordLine = "charging";
+        else
+            cordLine = "unplugged";
+        draw_label_centered(0, 172, EPD_WIDTH, 16, cordLine, g_usbPower || g_batCharging);
+    }
+
     unsigned unread = 0;
     if (g_storeReady)
         unread = (unsigned)g_msgStore.totalUnreadCount();
@@ -2127,9 +2141,9 @@ static void paintIdleContent() {
         snprintf(msgLine, sizeof(msgLine), "NEW messages: %u unread", unread);
     else
         snprintf(msgLine, sizeof(msgLine), "No new messages");
-    draw_label_centered(0, 188, EPD_WIDTH, 18, msgLine, unread > 0);
+    draw_label_centered(0, 196, EPD_WIDTH, 18, msgLine, unread > 0);
 
-    draw_label_centered(0, 220, EPD_WIDTH, 20, "press a KEY to wake", false);
+    draw_label_centered(0, 222, EPD_WIDTH, 20, "press a KEY to wake", false);
 
     uint32_t sec = millis() / 1000UL;
     unsigned days = (unsigned)(sec / 86400UL);
@@ -4335,7 +4349,7 @@ void build_settings() {
     if (g_settingsPage == SET_BATTERY) {
         // Info menu — | columns aligned between title and value lines
         char a[44];
-        // Row 1: "1 : Info : Voltage | SOC %" — | aligned on both lines
+        // Row 1: title + value left-aligned; | under Voltage|SOC (photo layout)
         {
             char volt[12];
             if (g_batStr[0] && g_batStr[0] != 'n')
@@ -4345,14 +4359,11 @@ void build_settings() {
             int soc = -1;
             if (g_pctStr[0] && g_pctStr[0] != '-')
                 soc = atoi(g_pctStr);
-            // Title: "1 : Info : Voltage | SOC %"
-            // Prefix before | = "1 : Info : Voltage " = 19 chars
-            char left[24];
-            snprintf(left, sizeof(left), "%-19s", volt);
+            // "4.09 V | 49 %" — modest pad so | sits under title's |
             if (soc >= 0)
-                snprintf(a, sizeof(a), "%s| %d %%", left, soc);
+                snprintf(a, sizeof(a), "%-7s | %d %%", volt, soc);
             else
-                snprintf(a, sizeof(a), "%s| -- %%", left);
+                snprintf(a, sizeof(a), "%-7s | -- %%", volt);
         }
         row("1 : Info : Voltage | SOC %", a, 0);
 
@@ -4369,7 +4380,7 @@ void build_settings() {
             snprintf(a, sizeof(a), "%d mA idle", (int)g_avgMa);
         row("3 : Info : Average current", a, 2);
 
-        // Row 4: "4 : Info : Status | Cord stat" — | aligned on both lines
+        // Row 4: left-aligned status | cord (match annotated photos)
         {
             const char* st = "Not charging";
             const char* cord = "unplugged";
@@ -4383,12 +4394,9 @@ void build_settings() {
                 st = "Bat full/idle";
                 cord = "plugged in";
             }
-            // Title is "4 : Info : Status | Cord stat"
-            // Prefix before | is 18 chars: "4 : Info : Status "
-            // Value uses same 18-char left field so pipes stack
-            char left[20];
-            snprintf(left, sizeof(left), "%-18s", st);
-            snprintf(a, sizeof(a), "%s| %s", left, cord);
+            // "Not charging | unplugged" / "charging | plugged in"
+            // pad status to 13 so | roughly under title "Status |"
+            snprintf(a, sizeof(a), "%-13s | %s", st, cord);
         }
         row("4 : Info : Status | Cord stat", a, 3);
 
@@ -5170,7 +5178,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.88");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.89");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
