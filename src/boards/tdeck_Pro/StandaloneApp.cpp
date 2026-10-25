@@ -3481,16 +3481,15 @@ void build_home() {
         lv_obj_clear_flag(topRule, LV_OBJ_FLAG_SCROLLABLE);
     }
 
-    // Identity: left status column (full refresh+bat width), name on the right.
-    // Vertical rule continues battery cell right edge. Labels left-aligned.
+    // Identity: status centered in refresh+bat column; name to the right.
+    // Vertical rule continues battery cell right edge.
     loadSelfName();
     int pct = 0;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
 
-    // Left column spans refresh + battery so text has room and sits left
-    const int leftX = 2;
-    const int leftW = TOP_REFRESH_W + TOP_BAT_W - 4;  // ~52px
+    const int colX = 0;
+    const int colW = TOP_REFRESH_W + TOP_BAT_W;  // full width under ↻ + bat
     const int batRight = TOP_REFRESH_W + TOP_BAT_W - 1;
     const int rightX = batRight + 6;
 
@@ -3506,22 +3505,28 @@ void build_home() {
         lv_obj_clear_flag(vline, LV_OBJ_FLAG_SCROLLABLE);
     }
 
-    // Left-aligned status under the bat column (not overlapping name)
+    // Centered in the battery column. Prefer full words; shorten if wider than col.
+    auto fitWord = [&](const char* full, const char* shortW) -> const char* {
+        lv_coord_t tw = lv_txt_get_width(full, strlen(full), &lv_font_montserrat_16, 0, LV_TEXT_FLAG_NONE);
+        return (tw > colW - 2) ? shortW : full;
+    };
     {
         char pctLab[8];
         if (pct >= 0) snprintf(pctLab, sizeof(pctLab), "%d%%", pct);
         else strcpy(pctLab, "--%");
-        fat_label(g_root, pctLab, leftX, y0 + 2);
+        draw_label_centered(colX, y0 + 2, colW, 16, pctLab, false);
     }
     {
-        const char* chgWord = g_batCharging ? "charg"
-            : (g_usbPower ? "plug" : "batt");
-        fat_label(g_root, chgWord, leftX, y0 + 18);
+        const char* chgWord = g_batCharging
+            ? fitWord("charging", "charg")
+            : (g_usbPower ? fitWord("plugged", "plug") : fitWord("battery", "batt"));
+        draw_label_centered(colX, y0 + 18, colW, 16, chgWord, false);
     }
     {
-        // short so it fits in ~52px without clipping into the name column
-        const char* onWord = (g_loraIf && g_loraIf->isOnline()) ? "on" : "off";
-        fat_label(g_root, onWord, leftX, y0 + 34);
+        const char* onWord = (g_loraIf && g_loraIf->isOnline())
+            ? fitWord("online", "on")
+            : fitWord("offline", "off");
+        draw_label_centered(colX, y0 + 34, colW, 16, onWord, false);
     }
 
     // Right: name + ids (clear of the vertical rule)
@@ -5246,7 +5251,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.94");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.95");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
