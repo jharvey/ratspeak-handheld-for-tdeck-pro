@@ -455,22 +455,21 @@ bool readBattery(float& volts, int& pct) {
                       (int)dsg, (unsigned)flags);
     }
 
+    // Prefer BQ27220 StateOfCharge (chip). Do NOT force 100% just because USB
+    // is plugged in — that made the UI jump to 100% on charge.
     int gaugePct = (nSoc > 0) ? (int)(socSum / nSoc) : -1;
     int curvePct = lipoPctFromVolts(volts);
     if (gaugePct >= 0) {
-        // Unlearned gauges often read ~40% at 4.1V on USB — correct with curve
-        if ((g_batCharging || volts >= 4.05f) && gaugePct + 20 < curvePct)
-            pct = curvePct;
-        else if (!g_batCharging && abs(gaugePct - curvePct) > 25)
-            pct = (gaugePct + curvePct) / 2;
+        // Only blend if gauge is wildly off vs open-circuit voltage curve
+        // (unlearned gauge). Never inflate to 100% on plug alone.
+        if (abs(gaugePct - curvePct) > 45)
+            pct = (gaugePct * 2 + curvePct) / 3;  // trust chip more
         else
             pct = gaugePct;
     } else {
         pct = curvePct;
         Serial.println("[BAT] SOC reg fail — voltage curve");
     }
-    if (g_batCharging && volts >= 4.16f) pct = 100;
-    else if (g_batCharging && volts >= 4.10f && pct < 90) pct = 90;
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
     return true;
@@ -4334,13 +4333,31 @@ void build_settings() {
     }
 
     if (g_settingsPage == SET_BATTERY) {
-        // Full BQ27220 serial-stream style menu (info only)
-        char a[40];
-        snprintf(a, sizeof(a), "%s", g_batStr[0] ? g_batStr : "--");
-        row("1 : Info : Voltage", a, 0);
+        // Info menu — | columns aligned between title and value lines
+        char a[44];
+        // Row 1: Voltage | SOC %  (same values idle screen uses)
+        {
+            char volt[12];
+            if (g_batStr[0] && g_batStr[0] != 'n')
+                snprintf(volt, sizeof(volt), "%s", g_batStr);
+            else
+                strcpy(volt, "--");
+            int soc = -1;
+            if (g_pctStr[0] && g_pctStr[0] != '-')
+                soc = atoi(g_pctStr);
+            // fixed field before | so pipes line up under "Voltage | SOC %"
+            if (soc >= 0)
+                snprintf(a, sizeof(a), "%-8s| %d %%", volt, soc);
+            else
+                snprintf(a, sizeof(a), "%-8s| -- %%", volt);
+        }
+        row("1 Voltage | SOC %", a, 0);
+
+        // Row 2: keep dedicated SOC for clarity (chip reading)
         snprintf(a, sizeof(a), "%s", g_pctStr[0] ? g_pctStr : "--");
         row("2 : Info : State of charge", a, 1);
-        // Negative avgMa = pack is discharging (consuming); positive = charging
+
+        // Row 3: current
         if (g_avgMa > 5)
             snprintf(a, sizeof(a), "+%d mA charging", (int)g_avgMa);
         else if (g_avgMa < -5)
@@ -4348,16 +4365,26 @@ void build_settings() {
         else
             snprintf(a, sizeof(a), "%d mA idle", (int)g_avgMa);
         row("3 : Info : Average current", a, 2);
-        // Combined line: charging state | USB/plugged state
-        if (g_batCharging && g_usbPower)
-            snprintf(a, sizeof(a), "charging | plugged in");
-        else if (g_batCharging)
-            snprintf(a, sizeof(a), "charging | (no USB flag)");
-        else if (g_usbPower)
-            snprintf(a, sizeof(a), "full/idle | plugged in");
-        else
-            snprintf(a, sizeof(a), "no | on battery");
-        row("4 : Info : Charging | USB", a, 3);
+
+        // Row 4: Status | cord — left-justified fixed phrases, | aligned
+        {
+            const char* st = "Not charging";
+            const char* cord = "unplugged";
+            if (g_batCharging && g_usbPower) {
+                st = "charging";
+                cord = "plugged in";
+            } else if (g_batCharging) {
+                st = "charging";
+                cord = "unplugged";  // rare
+            } else if (g_usbPower) {
+                st = "Bat full / idle";
+                cord = "plugged in";
+            }
+            // pad status field so | lines up under "Status | cord"
+            snprintf(a, sizeof(a), "%-15s| %s", st, cord);
+        }
+        row("4 Status         | cord", a, 3);
+
         snprintf(a, sizeof(a), "%s", g_usbPower ? "YES (5V / USB)" : "no (on battery)");
         row("5 : Info : USB power", a, 4);
         snprintf(a, sizeof(a), "0x%04X", (unsigned)g_batFlags);
@@ -5136,7 +5163,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.86");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.87");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
