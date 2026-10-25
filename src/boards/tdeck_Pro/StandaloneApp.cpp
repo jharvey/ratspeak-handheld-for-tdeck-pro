@@ -2027,6 +2027,23 @@ void draw_label_centered(int x, int y, int w, int h, const char* label, bool bol
     }
 }
 
+
+// Place each character in a fixed-width slot so two lines (template + value)
+// share identical column positions (colons stack). Montserrat is proportional
+// so we do not rely on a mono font.
+static void draw_fixed_slots_centered(int y, const char* s) {
+    if (!s || !s[0]) return;
+    const int n = (int)strlen(s);
+    const int cell = 11;  // px per character slot
+    const int total = n * cell;
+    int x0 = (EPD_WIDTH - total) / 2;
+    if (x0 < 0) x0 = 0;
+    for (int i = 0; i < n; i++) {
+        char ch[2] = { s[i], 0 };
+        draw_label_centered(x0 + i * cell, y, cell, 16, ch, false);
+    }
+}
+
 // G1.49: stamp 1-bit PROGMEM logo from RatSpeak_Logo.png into DisplayEink FB.
 // PNG is dark-bg + light mark; packed with 1=black. Dark splash = black paper.
 static void draw_ratspeak_logo_bitmap(int cx, int cy) {
@@ -2164,15 +2181,12 @@ static void paintIdleContent() {
     unsigned days = (unsigned)(sec / 86400UL);
     unsigned hrs  = (unsigned)((sec / 3600UL) % 24UL);
     unsigned mins = (unsigned)((sec / 60UL) % 60UL);
-    // Three normal-weight lines, same font, no inter-char spaces:
-    //   uptime
-    //   DDDDD:HH:MM
-    //   00000:00:02
+    // Three lines; template + value use fixed per-char slots so : stack
     char upVal[20];
     snprintf(upVal, sizeof(upVal), "%05u:%02u:%02u", days, hrs, mins);
     draw_label_centered(0, 224, EPD_WIDTH, 16, "uptime", false);
-    draw_label_centered(0, 242, EPD_WIDTH, 16, "DDDDD:HH:MM", false);
-    draw_label_centered(0, 260, EPD_WIDTH, 16, upVal, false);
+    draw_fixed_slots_centered(242, "DDDDD:HH:MM");
+    draw_fixed_slots_centered(260, upVal);
 
     // Bottom of splash — bold so it jumps out
     draw_label_centered(0, 292, EPD_WIDTH, 22, "press a KEY to wake", true);
@@ -3445,29 +3459,44 @@ void build_home() {
     lv_obj_set_style_pad_all(idBox, 0, 0);
     lv_obj_clear_flag(idBox, LV_OBJ_FLAG_SCROLLABLE);
 
+    // Identity layout (annotated Home_Bat_mod):
+    // Left column: 52% / charging / online   (no redundant battery icon)
+    // Right: name, hash, LXMF hash
     loadSelfName();
-    // Name on left — full width available (no CHG crowding the title row)
-    fat_label(g_root, g_selfName[0] ? g_selfName : "IDENTITY", 6, y0 + 2);
     int pct = 0;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
-    // Vertical battery (same orientation as top-nav icon)
-    const int batX = EPD_WIDTH - 26;
-    const int batY = y0 + 4;
-    draw_battery_nav_icon(batX, batY, 18, 28, pct);
-    // Status under the battery icon (not to its left)
+
+    const int leftW = 70;   // status column width
+    const int rightX = leftW + 4;
+
+    // Left: percent
     {
-        const char* on = (g_loraIf && g_loraIf->isOnline())
-            ? (g_batCharging ? "CHG" : (g_usbPower ? "USB" : "ON"))
-            : "OFF";
-        draw_label_centered(batX - 6, batY + 30, 30, 14, on, false);
+        char pctLab[8];
+        if (pct >= 0) snprintf(pctLab, sizeof(pctLab), "%d%%", pct);
+        else strcpy(pctLab, "--%");
+        fat_label(g_root, pctLab, 4, y0 + 2);
     }
+    // Left: charge word
+    {
+        const char* chgWord = g_batCharging ? "charging"
+            : (g_usbPower ? "plugged" : "battery");
+        fat_label(g_root, chgWord, 4, y0 + 18);
+    }
+    // Left: online / offline
+    {
+        const char* onWord = (g_loraIf && g_loraIf->isOnline()) ? "online" : "offline";
+        fat_label(g_root, onWord, 4, y0 + 34);
+    }
+
+    // Right: name + ids
+    fat_label(g_root, g_selfName[0] ? g_selfName : "IDENTITY", rightX, y0 + 2);
     char shortId[14];
     snprintf(shortId, sizeof(shortId), "%.10s", g_destHex);
-    fat_label(g_root, shortId, 6, y0 + 20);
+    fat_label(g_root, shortId, rightX, y0 + 18);
     char lxmfLine[28];
     snprintf(lxmfLine, sizeof(lxmfLine), "LXMF %.10s", g_destHex);
-    fat_label(g_root, lxmfLine, 6, y0 + 38);
+    fat_label(g_root, lxmfLine, rightX, y0 + 34);
 
     // 3x2 tiles - flush, 2px gaps only
     const int gx = 0;
@@ -5182,7 +5211,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.91");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.92");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
