@@ -2034,7 +2034,7 @@ void draw_label_centered(int x, int y, int w, int h, const char* label, bool bol
 static void draw_fixed_slots_centered(int y, const char* s) {
     if (!s || !s[0]) return;
     const int n = (int)strlen(s);
-    const int cell = 11;  // px per character slot
+    const int cell = 12;  // px per character slot (balances wide D vs narrow 0)
     const int total = n * cell;
     int x0 = (EPD_WIDTH - total) / 2;
     if (x0 < 0) x0 = 0;
@@ -2511,7 +2511,7 @@ void draw_nav() {
         pct = atoi(g_pctStr);
     // Top always: refresh | bat | clock | MENU (visible even with overlay)
     draw_refresh_btn(0, 0, TOP_REFRESH_W, TOP_H);
-    // Battery cell: same border box as neighbors (bottom line included)
+    // Battery cell: full border on non-home; home omits bottom so % joins the cell
     {
         lv_obj_t* bbox = lv_obj_create(g_root);
         lv_obj_set_size(bbox, TOP_BAT_W, TOP_H);
@@ -2519,6 +2519,12 @@ void draw_nav() {
         lv_obj_set_style_radius(bbox, 0, 0);
         lv_obj_set_style_border_width(bbox, 1, 0);
         lv_obj_set_style_border_color(bbox, theme_fg(), 0);
+        // Home: open bottom so identity % reads as part of the battery column
+        if (g_screen == SCR_HOME && !g_idleActive)
+            lv_obj_set_style_border_side(bbox,
+                (lv_border_side_t)(LV_BORDER_SIDE_TOP | LV_BORDER_SIDE_LEFT | LV_BORDER_SIDE_RIGHT), 0);
+        else
+            lv_obj_set_style_border_side(bbox, LV_BORDER_SIDE_FULL, 0);
         lv_obj_set_style_bg_color(bbox, theme_bg(), 0);
         lv_obj_set_style_bg_opa(bbox, LV_OPA_COVER, 0);
         lv_obj_set_style_pad_all(bbox, 0, 0);
@@ -3447,46 +3453,74 @@ void build_home() {
     clear_screen();
     const int y0 = CONTENT_TOP - 1;  // flush under top nav
 
-    // Identity - full width, no side gap, flush under Settings|Home
+    // Identity - full width. Open top under the battery column so % joins
+    // the nav battery cell (no horizontal rule under the icon on Home).
     lv_obj_t* idBox = lv_obj_create(g_root);
     lv_obj_set_size(idBox, EPD_WIDTH, HOME_ID_H);
     lv_obj_set_pos(idBox, 0, y0);
     lv_obj_set_style_radius(idBox, 0, 0);
     lv_obj_set_style_border_width(idBox, 2, 0);
     lv_obj_set_style_border_color(idBox, theme_fg(), 0);
+    // Omit TOP so battery cell opens into the % column; draw top rule only
+    // from the battery's right edge across the name area.
+    lv_obj_set_style_border_side(idBox,
+        (lv_border_side_t)(LV_BORDER_SIDE_LEFT | LV_BORDER_SIDE_RIGHT | LV_BORDER_SIDE_BOTTOM), 0);
     lv_obj_set_style_bg_color(idBox, theme_bg(), 0);
     lv_obj_set_style_bg_opa(idBox, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(idBox, 0, 0);
     lv_obj_clear_flag(idBox, LV_OBJ_FLAG_SCROLLABLE);
+    {
+        const int batRight = TOP_REFRESH_W + TOP_BAT_W - 1;
+        lv_obj_t* topRule = lv_obj_create(g_root);
+        lv_obj_set_size(topRule, EPD_WIDTH - batRight, 2);
+        lv_obj_set_pos(topRule, batRight, y0);
+        lv_obj_set_style_radius(topRule, 0, 0);
+        lv_obj_set_style_border_width(topRule, 0, 0);
+        lv_obj_set_style_bg_color(topRule, theme_fg(), 0);
+        lv_obj_set_style_bg_opa(topRule, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(topRule, LV_OBJ_FLAG_SCROLLABLE);
+    }
 
-    // Identity layout (annotated Home_Bat_mod):
-    // Left column: 52% / charging / online   (no redundant battery icon)
-    // Right: name, hash, LXMF hash
+    // Identity: left column under top-nav battery (no 2nd icon).
+    // Short labels: charg / plug / batt + online / offline
+    // Vertical rule continues the battery cell's right edge down through the card.
     loadSelfName();
     int pct = 0;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
 
-    const int leftW = 70;   // status column width
-    const int rightX = leftW + 4;
+    // Column width matches top-nav battery cell so the drop-line is continuous
+    const int leftW = TOP_BAT_W;
+    const int rightX = TOP_REFRESH_W + TOP_BAT_W + 4;
+    const int batRight = TOP_REFRESH_W + TOP_BAT_W - 1;
 
-    // Left: percent
+    // Vertical line: right edge of battery cell extended through identity
+    {
+        lv_obj_t* vline = lv_obj_create(g_root);
+        lv_obj_set_size(vline, 1, HOME_ID_H);
+        lv_obj_set_pos(vline, batRight, y0);
+        lv_obj_set_style_radius(vline, 0, 0);
+        lv_obj_set_style_border_width(vline, 0, 0);
+        lv_obj_set_style_bg_color(vline, theme_fg(), 0);
+        lv_obj_set_style_bg_opa(vline, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(vline, LV_OBJ_FLAG_SCROLLABLE);
+    }
+
+    // Left column centered under battery
     {
         char pctLab[8];
         if (pct >= 0) snprintf(pctLab, sizeof(pctLab), "%d%%", pct);
         else strcpy(pctLab, "--%");
-        fat_label(g_root, pctLab, 4, y0 + 2);
+        draw_label_centered(TOP_REFRESH_W, y0 + 2, leftW, 16, pctLab, false);
     }
-    // Left: charge word
     {
-        const char* chgWord = g_batCharging ? "charging"
-            : (g_usbPower ? "plugged" : "battery");
-        fat_label(g_root, chgWord, 4, y0 + 18);
+        const char* chgWord = g_batCharging ? "charg"
+            : (g_usbPower ? "plug" : "batt");
+        draw_label_centered(TOP_REFRESH_W, y0 + 18, leftW, 16, chgWord, false);
     }
-    // Left: online / offline
     {
         const char* onWord = (g_loraIf && g_loraIf->isOnline()) ? "online" : "offline";
-        fat_label(g_root, onWord, 4, y0 + 34);
+        draw_label_centered(TOP_REFRESH_W, y0 + 34, leftW, 16, onWord, false);
     }
 
     // Right: name + ids
@@ -5211,7 +5245,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.92");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.93");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 

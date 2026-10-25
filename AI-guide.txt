@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.92  (2026-10-25)
+Last: G1.93  (2026-10-25)
 ================================================================================
 Long-term backlog → Future_steps.txt (do not strip future items from there).
 
@@ -11,7 +11,7 @@ Status tags: [DONE] solid on hardware   [IN-PROGRESS] partial / next polish
              [TODO] not started
 
 --------------------------------------------------------------------------------
-CURRENT PHASE (G1.92)
+CURRENT PHASE (G1.93)
 --------------------------------------------------------------------------------
 TOP NAV
 [DONE] Layout: [↻ refresh] [battery box] [ date + time ] [ MENU ]
@@ -59,7 +59,9 @@ SETTINGS S.4 BATTERY
 [DONE] Home: CHG/USB/ON under battery icon, name row uncrowded
 [DONE] Charge detect: strong +mA always wins over sticky DSG flag
 [DONE] Uptime DDDDD:HH:MM / value with fixed per-char slots (colons stack)
-[DONE] Home identity: left %/charging/online, right name+ids; no 2nd bat icon
+[DONE] Home identity: left %/charg|plug|batt/online under nav bat; name right
+[DONE] Home: nav bat open bottom + vertical drop-line; other screens full bat box
+[DONE] Idle uptime slots cell=12 for D/0 balance
 
 BATTERY ICONS
 [DONE] Lightning bolt while charging (inverts vs fill: white on black, etc.)
