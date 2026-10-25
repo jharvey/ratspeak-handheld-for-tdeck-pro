@@ -429,25 +429,29 @@ bool readBattery(float& volts, int& pct) {
     int16_t avgMa = (nCur > 0) ? (int16_t)(curSum / nCur) : 0;
     g_avgMa = avgMa;
     g_batFlags = flags;
-    // Charging: current into pack (hysteresis)
+    // BQ27220 Flags bit0 = DSG (1=discharging, 0=charge or relax)
+    const bool dsg = (flags & 0x0001) != 0;
+    // Charging: current into pack, or gauge says not-DSG with positive current.
+    // Clear quickly on any clear discharge so unplug is not sticky.
     static bool s_chg = false;
-    if (avgMa > 20) s_chg = true;
-    else if (avgMa < 8) s_chg = false;
+    if (avgMa > 10 || (!dsg && avgMa > 3))
+        s_chg = true;
+    if (avgMa < -5 || dsg)
+        s_chg = false;
     g_batCharging = s_chg;
-    // USB power: either charging, or float/full on rail (not discharging hard)
-    // Unplugged logs show ~-15..-25 mA; plugged float is ~-5..+40 at 4.1V+
+    // USB: charging, or mild positive/float current. Unplug (~-15..-25 mA) clears.
     static bool s_usb = false;
-    if (avgMa > 15 || (volts >= 4.15f && avgMa > -8))
+    if (s_chg || avgMa > 8)
         s_usb = true;
-    else if (avgMa < -12)
+    if (avgMa < -10 || (dsg && avgMa < 0))
         s_usb = false;
     g_usbPower = s_usb;
     static uint32_t s_lastLog = 0;
     if (millis() - s_lastLog > 5000) {
         s_lastLog = millis();
-        Serial.printf("[BAT] V=%.3f pct=%d avgMa=%d chg=%d usb=%d flags=0x%04x\n",
+        Serial.printf("[BAT] V=%.3f pct=%d avgMa=%d chg=%d usb=%d dsg=%d flags=0x%04x\n",
                       volts, pct, (int)avgMa, (int)g_batCharging, (int)g_usbPower,
-                      (unsigned)flags);
+                      (int)dsg, (unsigned)flags);
     }
 
     int gaugePct = (nSoc > 0) ? (int)(socSum / nSoc) : -1;
@@ -2796,27 +2800,24 @@ static void bat_rect(int px, int py, int pw, int ph, bool useFg) {
 // Horizontal fill grows left→right. Bolt inverts vs local fill.
 // fillRightX = exclusive right edge of filled region (body interior).
 static void bat_bolt_h(int cx, int cy, int fillRightX) {
-    // Each segment may straddle the fill boundary → split for two-tone bolt
     auto seg = [&](int px, int py, int pw, int ph) {
         int x1 = px, x2 = px + pw;
         if (x2 <= fillRightX) {
-            // fully over fill → inverse (white on black)
-            bat_rect(px, py, pw, ph, false);
+            bat_rect(px, py, pw, ph, false);  // white on fill
         } else if (x1 >= fillRightX) {
-            // fully over empty → black on white
-            bat_rect(px, py, pw, ph, true);
+            bat_rect(px, py, pw, ph, true);   // black on empty
         } else {
-            // straddles: left white (on fill), right black (on empty)
             int wL = fillRightX - x1;
             bat_rect(x1, py, wL, ph, false);
             bat_rect(fillRightX, py, x2 - fillRightX, ph, true);
         }
     };
-    seg(cx + 1, cy - 5, 5, 2);
-    seg(cx - 1, cy - 3, 4, 2);
-    seg(cx - 3, cy - 1, 7, 2);
-    seg(cx + 0, cy + 1, 4, 2);
-    seg(cx - 4, cy + 3, 5, 2);
+    // Thicker zig-zag so e-ink shows the bolt clearly
+    seg(cx + 1, cy - 6, 6, 3);
+    seg(cx - 2, cy - 3, 5, 3);
+    seg(cx - 4, cy - 0, 9, 3);
+    seg(cx - 1, cy + 3, 5, 3);
+    seg(cx - 5, cy + 6, 6, 3);
 }
 
 // Vertical fill grows bottom→top. fillTopY = top edge of filled region.
@@ -2824,23 +2825,21 @@ static void bat_bolt_v(int cx, int cy, int fillTopY) {
     auto seg = [&](int px, int py, int pw, int ph) {
         int y1 = py, y2 = py + ph;
         if (y1 >= fillTopY) {
-            // fully over fill (lower/black) → white bolt
-            bat_rect(px, py, pw, ph, false);
+            bat_rect(px, py, pw, ph, false);  // white on fill
         } else if (y2 <= fillTopY) {
-            // fully over empty (upper/white) → black bolt
-            bat_rect(px, py, pw, ph, true);
+            bat_rect(px, py, pw, ph, true);   // black on empty
         } else {
-            // straddles: top black (empty), bottom white (fill)
             int hTop = fillTopY - y1;
             bat_rect(px, y1, pw, hTop, true);
             bat_rect(px, fillTopY, pw, y2 - fillTopY, false);
         }
     };
-    seg(cx + 1, cy - 6, 4, 2);
-    seg(cx - 1, cy - 4, 3, 2);
-    seg(cx - 3, cy - 1, 6, 2);
-    seg(cx + 0, cy + 1, 3, 2);
-    seg(cx - 4, cy + 3, 4, 2);
+    // Thicker for small nav icon
+    seg(cx + 1, cy - 7, 5, 3);
+    seg(cx - 2, cy - 4, 4, 3);
+    seg(cx - 4, cy - 1, 8, 3);
+    seg(cx - 1, cy + 2, 4, 3);
+    seg(cx - 5, cy + 5, 5, 3);
 }
 
 void draw_battery_gauge(int x, int y, int w, int h, int pct) {
@@ -5026,7 +5025,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.84");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.85");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
