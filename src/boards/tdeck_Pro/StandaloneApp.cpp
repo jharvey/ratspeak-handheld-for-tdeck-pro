@@ -357,6 +357,7 @@ void goBackFromMessage();
 void noteUserInput();
 void draw_idle_screen();
 void maybeEnterIdle();
+void maybeBatteryPowerRedraw();
 void spiBusIdle();
 static const char* tzName();
 static void formatLocalTime(char* out, size_t n);
@@ -2198,6 +2199,52 @@ void maybeHomeMinuteRedraw() {
     Serial.println("[HOME] minute redraw");
 }
 
+void maybeBatteryPowerRedraw() {
+    // Poll gauge every ~2s; full redraw when charging or USB presence flips
+    static uint32_t s_last = 0;
+    static bool s_init = false;
+    static bool s_prevChg = false;
+    static bool s_prevUsb = false;
+    uint32_t now = millis();
+    if (now - s_last < 2000) return;
+    s_last = now;
+
+    bool prevChg = g_batCharging;
+    bool prevUsb = g_usbPower;
+    float v = 0;
+    int pct = -1;
+    if (!readBattery(v, pct)) return;
+    snprintf(g_batStr, sizeof(g_batStr), "%.2f V", v);
+    if (pct >= 0) snprintf(g_pctStr, sizeof(g_pctStr), "%d%%", pct);
+    else strcpy(g_pctStr, "--%");
+
+    if (!s_init) {
+        s_init = true;
+        s_prevChg = g_batCharging;
+        s_prevUsb = g_usbPower;
+        return;
+    }
+    if (g_batCharging == s_prevChg && g_usbPower == s_prevUsb)
+        return;
+    Serial.printf("[BAT] power change chg %d->%d usb %d->%d — redraw\n",
+                  (int)s_prevChg, (int)g_batCharging,
+                  (int)s_prevUsb, (int)g_usbPower);
+    s_prevChg = g_batCharging;
+    s_prevUsb = g_usbPower;
+
+    // Do not clobber active typing
+    if (g_composeLen > 0 || g_composeMode || g_nameEditMode ||
+        g_timeEditMode || g_dateEditMode || g_idleSecsEditMode)
+        return;
+
+    if (g_idleActive) {
+        paintIdleContent();
+        g_display.partialRefresh(0, 0, EPD_WIDTH, EPD_HEIGHT);
+        return;
+    }
+    show_screen(g_screen);
+}
+
 void maybeEnterIdle() {
     if (g_idleMode == 0) return;           // disabled
     if (g_idleActive) return;
@@ -2842,6 +2889,53 @@ static void bat_bolt_v(int cx, int cy, int fillTopY) {
     seg(cx - 5, cy + 5, 5, 3);
 }
 
+// Plug icon (USB powered, not actively charging / float-full).
+// Same invert-vs-fill rules as the bolt.
+static void bat_plug_h(int cx, int cy, int fillRightX) {
+    auto seg = [&](int px, int py, int pw, int ph) {
+        int x1 = px, x2 = px + pw;
+        if (x2 <= fillRightX)
+            bat_rect(px, py, pw, ph, false);
+        else if (x1 >= fillRightX)
+            bat_rect(px, py, pw, ph, true);
+        else {
+            int wL = fillRightX - x1;
+            bat_rect(x1, py, wL, ph, false);
+            bat_rect(fillRightX, py, x2 - fillRightX, ph, true);
+        }
+    };
+    // Two prongs left, body right — reads as a plug inside the cell
+    seg(cx - 6, cy - 4, 3, 2);
+    seg(cx - 6, cy + 2, 3, 2);
+    seg(cx - 3, cy - 5, 2, 10);
+    seg(cx - 1, cy - 3, 6, 6);
+}
+
+static void bat_plug_v(int cx, int cy, int fillTopY) {
+    auto seg = [&](int px, int py, int pw, int ph) {
+        int y1 = py, y2 = py + ph;
+        if (y1 >= fillTopY)
+            bat_rect(px, py, pw, ph, false);
+        else if (y2 <= fillTopY)
+            bat_rect(px, py, pw, ph, true);
+        else {
+            int hTop = fillTopY - y1;
+            bat_rect(px, y1, pw, hTop, true);
+            bat_rect(px, fillTopY, pw, y2 - fillTopY, false);
+        }
+    };
+    // Prongs on top, body below
+    seg(cx - 3, cy - 7, 2, 4);
+    seg(cx + 1, cy - 7, 2, 4);
+    seg(cx - 4, cy - 3, 8, 2);
+    seg(cx - 3, cy - 1, 6, 7);
+}
+
+// true when we should show lightning (active charge into pack)
+static bool batShowBolt() { return g_batCharging; }
+// true when plugged in but not charging (float / full on USB)
+static bool batShowPlug() { return g_usbPower && !g_batCharging; }
+
 void draw_battery_gauge(int x, int y, int w, int h, int pct) {
     lv_obj_t* body = lv_obj_create(g_root);
     lv_obj_set_size(body, w, h);
@@ -2875,10 +2969,13 @@ void draw_battery_gauge(int x, int y, int w, int h, int pct) {
         lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
         lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
     }
-    if (g_batCharging) {
-        // Bolt color is opposite of local battery background (ref graphic)
+    {
         int fillRight = x + 2 + fw;
-        bat_bolt_h(x + w / 2, y + h / 2, fillRight);
+        int cx = x + w / 2, cy = y + h / 2;
+        if (batShowBolt())
+            bat_bolt_h(cx, cy, fillRight);
+        else if (batShowPlug())
+            bat_plug_h(cx, cy, fillRight);
     }
     char ps[8];
     if (pct >= 0) snprintf(ps, sizeof(ps), "%d%%", pct);
@@ -2921,10 +3018,13 @@ void draw_battery_nav_icon(int x, int y, int w, int h, int pct) {
         lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
         lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
     }
-    if (g_batCharging) {
-        // Vertical fill from bottom; bolt inverts across fill boundary
+    {
         int fillTopY = by + bh - 2 - fh;
-        bat_bolt_v(x + w / 2, by + bh / 2, fillTopY);
+        int cx = x + w / 2, cy = by + bh / 2;
+        if (batShowBolt())
+            bat_bolt_v(cx, cy, fillTopY);
+        else if (batShowPlug())
+            bat_plug_v(cx, cy, fillTopY);
     }
 }
 
@@ -4248,15 +4348,26 @@ void build_settings() {
         else
             snprintf(a, sizeof(a), "%d mA idle", (int)g_avgMa);
         row("3 : Info : Average current", a, 2);
-        snprintf(a, sizeof(a), "%s", g_batCharging ? "YES (CHG)" : "no");
-        row("4 : Info : Charging", a, 3);
-        snprintf(a, sizeof(a), "%s", g_usbPower ? "YES (5V rail)" : "no (on battery)");
+        // Combined line: charging state | USB/plugged state
+        if (g_batCharging && g_usbPower)
+            snprintf(a, sizeof(a), "charging | plugged in");
+        else if (g_batCharging)
+            snprintf(a, sizeof(a), "charging | (no USB flag)");
+        else if (g_usbPower)
+            snprintf(a, sizeof(a), "full/idle | plugged in");
+        else
+            snprintf(a, sizeof(a), "no | on battery");
+        row("4 : Info : Charging | USB", a, 3);
+        snprintf(a, sizeof(a), "%s", g_usbPower ? "YES (5V / USB)" : "no (on battery)");
         row("5 : Info : USB power", a, 4);
         snprintf(a, sizeof(a), "0x%04X", (unsigned)g_batFlags);
         row("6 : Info : Gauge flags", a, 5);
-        snprintf(a, sizeof(a), "%s / %s",
-                 g_usbPower ? "USB PWR" : "battery",
-                 g_batCharging ? "charging" : "discharging");
+        if (g_batCharging)
+            snprintf(a, sizeof(a), "USB charging");
+        else if (g_usbPower)
+            snprintf(a, sizeof(a), "USB powered (not charging)");
+        else
+            snprintf(a, sizeof(a), "battery only");
         row("7 : Info : Power source", a, 6);
         totalRowsHint = 7;
         drawScrollHints();
@@ -5025,7 +5136,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.85");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.86");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
@@ -5154,6 +5265,7 @@ void loop() {
     maybeComposeRedraw();
     maybeUpdateIdle();
     maybeHomeMinuteRedraw();
+    maybeBatteryPowerRedraw();
     maybeSaveRtcEpoch();
     maybeEnterIdle();
 
