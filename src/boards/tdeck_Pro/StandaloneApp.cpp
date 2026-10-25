@@ -3481,18 +3481,18 @@ void build_home() {
         lv_obj_clear_flag(topRule, LV_OBJ_FLAG_SCROLLABLE);
     }
 
-    // Identity: left column under top-nav battery (no 2nd icon).
-    // Short labels: charg / plug / batt + online / offline
-    // Vertical rule continues the battery cell's right edge down through the card.
+    // Identity: left status column (full refresh+bat width), name on the right.
+    // Vertical rule continues battery cell right edge. Labels left-aligned.
     loadSelfName();
     int pct = 0;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
 
-    // Column width matches top-nav battery cell so the drop-line is continuous
-    const int leftW = TOP_BAT_W;
-    const int rightX = TOP_REFRESH_W + TOP_BAT_W + 4;
+    // Left column spans refresh + battery so text has room and sits left
+    const int leftX = 2;
+    const int leftW = TOP_REFRESH_W + TOP_BAT_W - 4;  // ~52px
     const int batRight = TOP_REFRESH_W + TOP_BAT_W - 1;
+    const int rightX = batRight + 6;
 
     // Vertical line: right edge of battery cell extended through identity
     {
@@ -3506,24 +3506,25 @@ void build_home() {
         lv_obj_clear_flag(vline, LV_OBJ_FLAG_SCROLLABLE);
     }
 
-    // Left column centered under battery
+    // Left-aligned status under the bat column (not overlapping name)
     {
         char pctLab[8];
         if (pct >= 0) snprintf(pctLab, sizeof(pctLab), "%d%%", pct);
         else strcpy(pctLab, "--%");
-        draw_label_centered(TOP_REFRESH_W, y0 + 2, leftW, 16, pctLab, false);
+        fat_label(g_root, pctLab, leftX, y0 + 2);
     }
     {
         const char* chgWord = g_batCharging ? "charg"
             : (g_usbPower ? "plug" : "batt");
-        draw_label_centered(TOP_REFRESH_W, y0 + 18, leftW, 16, chgWord, false);
+        fat_label(g_root, chgWord, leftX, y0 + 18);
     }
     {
-        const char* onWord = (g_loraIf && g_loraIf->isOnline()) ? "online" : "offline";
-        draw_label_centered(TOP_REFRESH_W, y0 + 34, leftW, 16, onWord, false);
+        // short so it fits in ~52px without clipping into the name column
+        const char* onWord = (g_loraIf && g_loraIf->isOnline()) ? "on" : "off";
+        fat_label(g_root, onWord, leftX, y0 + 34);
     }
 
-    // Right: name + ids
+    // Right: name + ids (clear of the vertical rule)
     fat_label(g_root, g_selfName[0] ? g_selfName : "IDENTITY", rightX, y0 + 2);
     char shortId[14];
     snprintf(shortId, sizeof(shortId), "%.10s", g_destHex);
@@ -5245,7 +5246,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.93");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.94");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
