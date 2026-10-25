@@ -3470,8 +3470,8 @@ void build_home() {
     lv_obj_set_style_pad_all(idBox, 0, 0);
     lv_obj_clear_flag(idBox, LV_OBJ_FLAG_SCROLLABLE);
     {
-        // Top rule only over the name area (status column stays open to nav bat)
-        const int divX = 80;
+        // Top rule only over the name area (status column open under nav bat)
+        const int divX = TOP_REFRESH_W + TOP_BAT_W;
         lv_obj_t* topRule = lv_obj_create(g_root);
         lv_obj_set_size(topRule, EPD_WIDTH - divX, 2);
         lv_obj_set_pos(topRule, divX, y0);
@@ -3482,25 +3482,25 @@ void build_home() {
         lv_obj_clear_flag(topRule, LV_OBJ_FLAG_SCROLLABLE);
     }
 
-    // Identity per Home_Bat_mod reference:
-    // Wide left status column (~80px) with centered % / charging / online.
-    // Vertical rule separates status from name; name never overlaps.
+    // Identity per Home_Bat_mod:
+    // Vertical line continues straight down from battery icon right edge.
+    // Centered: 52% / Charg|Batt|Plug / Online  (OK if Online clips a bit)
     loadSelfName();
     int pct = 0;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
 
-    // Wide enough for "charging" / "online" at montserrat_16 (~70px)
+    // Divider = right edge of top-nav battery cell
+    const int divX = TOP_REFRESH_W + TOP_BAT_W;
     const int colX = 0;
-    const int colW = 80;
-    const int divX = colW;           // vertical divider
-    const int rightX = divX + 6;     // name starts clear of divider
+    const int colW = divX;
+    const int rightX = divX + 4;
 
-    // Vertical divider between status and name
+    // Vertical line straight down from battery icon
     {
         lv_obj_t* vline = lv_obj_create(g_root);
         lv_obj_set_size(vline, 1, HOME_ID_H);
-        lv_obj_set_pos(vline, divX, y0);
+        lv_obj_set_pos(vline, divX - 1, y0);
         lv_obj_set_style_radius(vline, 0, 0);
         lv_obj_set_style_border_width(vline, 0, 0);
         lv_obj_set_style_bg_color(vline, theme_fg(), 0);
@@ -3508,7 +3508,7 @@ void build_home() {
         lv_obj_clear_flag(vline, LV_OBJ_FLAG_SCROLLABLE);
     }
 
-    // Centered in the status column (reference layout)
+    // Centered under ↻ + bat
     {
         char pctLab[8];
         if (pct >= 0) snprintf(pctLab, sizeof(pctLab), "%d%%", pct);
@@ -3516,12 +3516,12 @@ void build_home() {
         draw_label_centered(colX, y0 + 2, colW, 16, pctLab, false);
     }
     {
-        const char* chgWord = g_batCharging ? "charging"
-            : (g_usbPower ? "plugged" : "battery");
+        const char* chgWord = g_batCharging ? "Charg"
+            : (g_usbPower ? "Plug" : "Batt");
         draw_label_centered(colX, y0 + 18, colW, 16, chgWord, false);
     }
     {
-        const char* onWord = (g_loraIf && g_loraIf->isOnline()) ? "online" : "offline";
+        const char* onWord = (g_loraIf && g_loraIf->isOnline()) ? "Online" : "Offline";
         draw_label_centered(colX, y0 + 34, colW, 16, onWord, false);
     }
 
@@ -5247,7 +5247,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.96");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.97");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
