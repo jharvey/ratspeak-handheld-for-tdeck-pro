@@ -1,6 +1,7 @@
 #include "StandaloneApp.h"
 
 #include <SPI.h>
+#include <SD.h>
 #include <Wire.h>
 #include <lvgl.h>
 #include <Preferences.h>
@@ -73,12 +74,14 @@ enum SettingsPage : uint8_t {
     SET_IDENTITY,
     SET_SCREEN,
     SET_BATTERY,
+    SET_BAT_LOG,      // S.4.8 battery log
     SET_LORA,
     SET_NETWORK,
     SET_TIME,
     SET_AUDIO,
     SET_DIAG,
     SET_STORAGE,
+    SET_SD,           // S.9.x SD card tools
     SET_TZ,
     SET_IDLE_MODE,
     SET_MANUAL_TIME,
@@ -191,6 +194,122 @@ bool g_batCharging   = false;
 bool g_usbPower      = false;  // external 5V present (USB)
 int16_t g_avgMa      = 0;      // last AverageCurrent mA (+in charge / -out load)
 uint16_t g_batFlags   = 0;      // BQ27220 Flags 0x0A
+
+// ---- Battery log (internal ring + optional SD CSV) ----
+struct BatLogSample {
+    uint32_t ms;
+    uint16_t mv;
+    int16_t  avgMa;
+    int8_t   pct;
+    uint16_t flags;
+    uint8_t  chg;
+    uint8_t  usb;
+};
+static constexpr int kBatLogCap = 120;  // ~10 min at 5s interval
+static BatLogSample g_batLog[kBatLogCap];
+static uint16_t g_batLogHead = 0;
+static uint16_t g_batLogCount = 0;
+static bool g_batLogInternal = false;
+static bool g_batLogSd = false;
+static bool g_sdMounted = false;
+static uint32_t g_batLogLastMs = 0;
+static char g_sdStatus[28] = "not mounted";
+
+static void batLogPush(const BatLogSample& s) {
+    g_batLog[g_batLogHead] = s;
+    g_batLogHead = (g_batLogHead + 1) % kBatLogCap;
+    if (g_batLogCount < kBatLogCap) g_batLogCount++;
+}
+
+static void batLogSampleNow() {
+    BatLogSample s{};
+    s.ms = millis();
+    // volts in g_batStr like "3.90V" — parse mV roughly
+    float v = 0;
+    if (g_batStr[0]) sscanf(g_batStr, "%f", &v);
+    s.mv = (uint16_t)(v * 1000.0f + 0.5f);
+    s.avgMa = (int16_t)g_avgMa;
+    s.pct = (g_pctStr[0] && g_pctStr[0] != '-') ? (int8_t)atoi(g_pctStr) : (int8_t)-1;
+    s.flags = g_batFlags;
+    s.chg = g_batCharging ? 1 : 0;
+    s.usb = g_usbPower ? 1 : 0;
+    if (g_batLogInternal)
+        batLogPush(s);
+    if (g_batLogSd && g_sdMounted) {
+        File f = SD.open("/batlog.csv", FILE_APPEND);
+        if (f) {
+            f.printf("%lu,%u,%d,%d,0x%04X,%u,%u\n",
+                     (unsigned long)s.ms, (unsigned)s.mv, (int)s.avgMa,
+                     (int)s.pct, (unsigned)s.flags, (unsigned)s.chg, (unsigned)s.usb);
+            f.close();
+        }
+    }
+}
+
+static void batLogTick() {
+    if (!g_batLogInternal && !g_batLogSd) return;
+    uint32_t now = millis();
+    if (now - g_batLogLastMs < 5000UL) return;
+    g_batLogLastMs = now;
+    batLogSampleNow();
+}
+
+static void batLogDumpSerial() {
+    Serial.println("[BATLOG] ---- dump begin ----");
+    Serial.println("ms,mv,avgMa,pct,flags,chg,usb");
+    if (g_batLogCount == 0) {
+        Serial.println("[BATLOG] (empty)");
+        return;
+    }
+    uint16_t start = (g_batLogHead + kBatLogCap - g_batLogCount) % kBatLogCap;
+    for (uint16_t i = 0; i < g_batLogCount; i++) {
+        const BatLogSample& s = g_batLog[(start + i) % kBatLogCap];
+        Serial.printf("%lu,%u,%d,%d,0x%04X,%u,%u\n",
+                      (unsigned long)s.ms, (unsigned)s.mv, (int)s.avgMa,
+                      (int)s.pct, (unsigned)s.flags, (unsigned)s.chg, (unsigned)s.usb);
+    }
+    Serial.printf("[BATLOG] ---- %u samples ----\n", (unsigned)g_batLogCount);
+}
+
+static bool sdTryMount() {
+#ifdef SD_CS
+    digitalWrite(SD_CS, HIGH);
+#ifdef EPD_CS
+    digitalWrite(EPD_CS, HIGH);
+#endif
+    if (SD.begin(SD_CS, SPI, 20000000)) {
+        g_sdMounted = true;
+        uint64_t used = SD.usedBytes();
+        uint64_t total = SD.totalBytes();
+        snprintf(g_sdStatus, sizeof(g_sdStatus), "OK %u/%u MB",
+                 (unsigned)(used / (1024 * 1024)), (unsigned)(total / (1024 * 1024)));
+        Serial.printf("[SD] mounted %s\n", g_sdStatus);
+        // Ensure CSV header exists
+        if (!SD.exists("/batlog.csv")) {
+            File f = SD.open("/batlog.csv", FILE_WRITE);
+            if (f) {
+                f.println("ms,mv,avgMa,pct,flags,chg,usb");
+                f.close();
+            }
+        }
+        return true;
+    }
+#endif
+    g_sdMounted = false;
+    strcpy(g_sdStatus, "mount fail");
+    Serial.println("[SD] mount failed");
+    return false;
+}
+
+static void sdUnmount() {
+    g_batLogSd = false;
+    if (g_sdMounted) {
+        SD.end();
+        g_sdMounted = false;
+    }
+    strcpy(g_sdStatus, "not mounted");
+    Serial.println("[SD] unmounted");
+}
 
 char g_destHex[17]   = "................";
 char g_loraStr[12]   = "off";
@@ -368,6 +487,9 @@ void draw_battery_nav_icon(int x, int y, int w, int h, int pct);
 void spiBusIdle() {
     pinMode(EPD_CS, OUTPUT); digitalWrite(EPD_CS, HIGH);
     pinMode(LORA_CS, OUTPUT); digitalWrite(LORA_CS, HIGH);
+#ifndef SD_CS
+#define SD_CS 48
+#endif
 #ifdef SD_CS
     pinMode(SD_CS, OUTPUT); digitalWrite(SD_CS, HIGH);
 #endif
@@ -1264,7 +1386,7 @@ constexpr int HOME_ANN_H     = 34;
 const char* tabLabel(ScreenId id) {
     switch (id) {
         case SCR_HOME:     return "Home";
-        case SCR_CHATS:    return "Msg Box";
+        case SCR_CHATS:    return "Inbox";
         case SCR_CONTACTS: return "Contact";
         case SCR_PEERS:    return "Peers";
         case SCR_SETTINGS: return "Settings";
@@ -1404,6 +1526,10 @@ bool handleTouchAt(int16_t x, int16_t y) {
             else if (g_settingsPage == SET_MANUAL_LOC) maxIdx = 2;
             else if (g_settingsPage == SET_IDENTITY) maxIdx = 2;
             else if (g_settingsPage == SET_IDLE_SECS) maxIdx = 1;
+            else if (g_settingsPage == SET_BATTERY) maxIdx = 7;
+            else if (g_settingsPage == SET_BAT_LOG) maxIdx = 4;
+            else if (g_settingsPage == SET_SD) maxIdx = 4;
+            else if (g_settingsPage == SET_STORAGE) maxIdx = 4;
             if (idx > maxIdx) idx = maxIdx;
             g_settingsSel = idx;
             Serial.printf("[SET] touch sel=%d y=%d top=%d\n", g_settingsSel, (int)y, listTop);
@@ -2184,9 +2310,16 @@ static void paintIdleContent() {
     // Three lines; template + value use fixed per-char slots so : stack
     char upVal[20];
     snprintf(upVal, sizeof(upVal), "%05u:%02u:%02u", days, hrs, mins);
-    draw_label_centered(0, 224, EPD_WIDTH, 16, "uptime", false);
-    draw_fixed_slots_centered(242, "DDDDD:HH:MM");
-    draw_fixed_slots_centered(260, upVal);
+    draw_label_centered(0, 210, EPD_WIDTH, 16, "uptime", false);
+    draw_fixed_slots_centered(226, "DDDDD:HH:MM");
+    draw_fixed_slots_centered(242, upVal);
+
+    // Contact / C.0 style name (local display name)
+    loadSelfName();
+    {
+        const char* nm = (g_selfName[0] ? g_selfName : "IDENTITY");
+        draw_label_centered(0, 262, EPD_WIDTH, 18, nm, true);
+    }
 
     // Bottom of splash — bold so it jumps out
     draw_label_centered(0, 292, EPD_WIDTH, 22, "press a KEY to wake", true);
@@ -2239,6 +2372,8 @@ void maybeHomeMinuteRedraw() {
 }
 
 void maybeBatteryPowerRedraw() {
+    batLogTick();
+
     // Poll gauge every ~0.8s so plug/unplug UI tracks within ~1-2s
     static uint32_t s_last = 0;
     static bool s_init = false;
@@ -2491,8 +2626,8 @@ static void draw_refresh_btn(int x, int y, int w, int h) {
 void draw_menu_overlay() {
     if (!g_menuOpen) return;
     // 1-wide x 5-tall column under MENU; top bar stays visible
-    static const char* kLab[5] = {"Home", "Settings", "Contacts", "Peers", "Msg Box"};
-    static const char kKey[5]  = {'H', 'S', 'C', 'P', 'M'};
+    static const char* kLab[5] = {"Home", "Settings", "Contacts", "Peers", "Inbox"};
+    static const char kKey[5]  = {'H', 'S', 'C', 'P', 'I'};
     for (int i = 0; i < MENU_ROWS; i++) {
         const int y = MENU_BOX_Y + i * MENU_ROW_H;
         const bool active =
@@ -2577,7 +2712,7 @@ void draw_nav() {
     draw_nav_box(sx + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "MENU", g_menuOpen, 'M');
 
     if (g_showHistory || g_nameEditMode) {
-        const char* back = g_nameEditMode ? "^ BACK UP TO CONTACTS" : "^ BACK UP TO MSG BOX";
+        const char* back = g_nameEditMode ? "^ BACK UP TO CONTACTS" : "^ BACK UP TO INBOX";
         draw_nav_box(0, BOT_TOP, EPD_WIDTH, BOT_H, back, true, '^');
         draw_menu_overlay();
         return;
@@ -2588,7 +2723,7 @@ void draw_nav() {
     x0 += BOT_CONTACT_W;
     draw_nav_box(x0, BOT_TOP, BOT_PEERS_W, BOT_H, "Peers", g_screen == SCR_PEERS, 'P');
     x0 += BOT_PEERS_W;
-    draw_nav_box(x0, BOT_TOP, BOT_MSGBOX_W, BOT_H, "Msg Box", g_screen == SCR_CHATS, 'M');
+    draw_nav_box(x0, BOT_TOP, BOT_MSGBOX_W, BOT_H, "Inbox", g_screen == SCR_CHATS, 'I');
     draw_menu_overlay();
 }
 
@@ -2680,27 +2815,37 @@ void draw_stat_boxes(int y, unsigned conv, unsigned neu, unsigned unread) {
 // Settings path under refresh icon, e.g. 7  7>1  7>3>2>4
 static void drawSettingsPath() {
     if (g_screen != SCR_SETTINGS) return;
-    char path[24] = "7";
+    char path[24] = "S";
+    const char* desc = "";
     switch (g_settingsPage) {
-        case SET_ROOT:      strcpy(path, "S"); break;
-        case SET_TIME:      strcpy(path, "S.1"); break;
-        case SET_MANUAL_TIME: strcpy(path, "S.1.1"); break;
-        case SET_TZ:        strcpy(path, "S>1>2"); break;
-        case SET_MANUAL_LOC: strcpy(path, "S>1>4"); break;
-        case SET_NETWORK:   strcpy(path, "S.2"); break;
-        case SET_SCREEN:    strcpy(path, "S.3"); break;
-        case SET_IDLE_MODE: strcpy(path, "S.3.2"); break;
-        case SET_IDLE_SECS: strcpy(path, "S.3.2.4"); break;
-        case SET_BATTERY:   strcpy(path, "S.4"); break;
-        case SET_IDENTITY:  strcpy(path, "S.5"); break;
-        case SET_LORA:      strcpy(path, "S.6"); break;
-        case SET_AUDIO:     strcpy(path, "S.7"); break;
-        case SET_DIAG:      strcpy(path, "S.8"); break;
-        case SET_STORAGE:   strcpy(path, "S.9"); break;
-        default:            strcpy(path, "S"); break;
+        case SET_ROOT:        strcpy(path, "S"); desc = "Settings"; break;
+        case SET_TIME:        strcpy(path, "S.1"); desc = "Time"; break;
+        case SET_MANUAL_TIME: strcpy(path, "S.1.1"); desc = "Set RTC"; break;
+        case SET_TZ:          strcpy(path, "S.1.2"); desc = "Time zone"; break;
+        case SET_MANUAL_LOC:  strcpy(path, "S.1.4"); desc = "Location"; break;
+        case SET_NETWORK:     strcpy(path, "S.2"); desc = "WiFi"; break;
+        case SET_SCREEN:      strcpy(path, "S.3"); desc = "Screen"; break;
+        case SET_IDLE_MODE:   strcpy(path, "S.3.2"); desc = "Idle"; break;
+        case SET_IDLE_SECS:   strcpy(path, "S.3.2.4"); desc = "Timeout"; break;
+        case SET_BATTERY:     strcpy(path, "S.4"); desc = "Battery"; break;
+        case SET_BAT_LOG:     strcpy(path, "S.4.8"); desc = "Bat log"; break;
+        case SET_IDENTITY:    strcpy(path, "S.5"); desc = "Identity"; break;
+        case SET_LORA:        strcpy(path, "S.6"); desc = "LoRa"; break;
+        case SET_AUDIO:       strcpy(path, "S.7"); desc = "Audio"; break;
+        case SET_DIAG:        strcpy(path, "S.8"); desc = "Diag"; break;
+        case SET_STORAGE:     strcpy(path, "S.9"); desc = "Storage"; break;
+        case SET_SD:          strcpy(path, "S.9.5"); desc = "SD card"; break;
+        default:              strcpy(path, "S"); desc = ""; break;
     }
-    // Just under refresh button (left)
     fat_label(g_root, path, 2, TOP_H + 1);
+    // Right-justified description on the same path line
+    if (desc && desc[0]) {
+        lv_coord_t tw = lv_txt_get_width(desc, strlen(desc), &lv_font_montserrat_16, 0, LV_TEXT_FLAG_NONE);
+        if (tw <= 0) tw = (lv_coord_t)(strlen(desc) * 8);
+        int lx = EPD_WIDTH - (int)tw - 4;
+        if (lx < 80) lx = 80;
+        fat_label(g_root, desc, lx, TOP_H + 1);
+    }
 }
 
 // Small up-chevron for Back (Shift) — drawn near path on settings sub-pages
@@ -3572,9 +3717,9 @@ void build_home() {
     int sy = gy + 2 * (th + gap) + 2;
     fat_label(g_root, "Listening for peers", 4, sy);
     char annAgo[28];
-    snprintf(annAgo, sizeof(annAgo), "Announced: %s", g_announceStr);
+    snprintf(annAgo, sizeof(annAgo), "ID chirp: %s", g_announceStr);
     fat_label(g_root, annAgo, 4, sy + 16);
-    draw_action_btn(0, sy + 34, EPD_WIDTH, HOME_ANN_H, "Announce");
+    draw_action_btn(0, sy + 34, EPD_WIDTH, HOME_ANN_H, "Announce ID");
 
     // Home: nav only — never compose/send strip (clock is in top header)
     draw_nav();
@@ -4021,6 +4166,21 @@ void settingsGoBack() {
             show_screen(SCR_SETTINGS);
             return;
         }
+        if (g_settingsPage == SET_BAT_LOG) {
+            g_settingsPage = SET_BATTERY;
+            g_settingsSel = 7;
+            g_settingsScroll = 0;
+            show_screen(SCR_SETTINGS);
+            return;
+        }
+        if (g_settingsPage == SET_SD) {
+            // Prefer back to bat log if we came from there; else storage
+            g_settingsPage = SET_BAT_LOG;
+            g_settingsSel = 4;
+            g_settingsScroll = 0;
+            show_screen(SCR_SETTINGS);
+            return;
+        }
         g_settingsPage = SET_ROOT;
         g_settingsSel = g_settingsRootSel;
         // Keep scroll so the remembered row stays visible
@@ -4235,10 +4395,86 @@ void settingsActivate() {
         }
         return;
     }
+    if (g_settingsPage == SET_BATTERY) {
+        if (g_settingsSel == 7) {
+            g_settingsPage = SET_BAT_LOG;
+            g_settingsSel = 0;
+            g_settingsScroll = 0;
+            show_screen(SCR_SETTINGS);
+        }
+        return;
+    }
+    if (g_settingsPage == SET_BAT_LOG) {
+        if (g_settingsSel == 0) {
+            g_batLogInternal = !g_batLogInternal;
+            Serial.printf("[BATLOG] internal %s
+", g_batLogInternal ? "ON" : "OFF");
+            if (g_batLogInternal) batLogSampleNow();
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 1) {
+            if (!g_batLogSd) {
+                if (!g_sdMounted && !sdTryMount()) {
+                    show_screen(SCR_SETTINGS);
+                    return;
+                }
+                g_batLogSd = true;
+                batLogSampleNow();
+                Serial.println("[BATLOG] SD ON -> /batlog.csv");
+            } else {
+                g_batLogSd = false;
+                Serial.println("[BATLOG] SD OFF");
+            }
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 2) {
+            batLogDumpSerial();
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 3) {
+            g_batLogCount = 0;
+            g_batLogHead = 0;
+            Serial.println("[BATLOG] internal cleared");
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 4) {
+            g_settingsPage = SET_SD;
+            g_settingsSel = 0;
+            g_settingsScroll = 0;
+            show_screen(SCR_SETTINGS);
+        }
+        return;
+    }
+    if (g_settingsPage == SET_SD) {
+        if (g_settingsSel == 1) {
+            sdTryMount();
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 2) {
+            sdUnmount();
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 3) {
+            // Format — destructive
+            if (!g_sdMounted && !sdTryMount()) {
+                show_screen(SCR_SETTINGS);
+                return;
+            }
+            Serial.println("[SD] formatting FAT...");
+            // ESP SD library: use SD.begin after format via FF
+            // Soft approach: delete batlog and recreate; full format needs sd_card formatter
+            SD.remove("/batlog.csv");
+            File f = SD.open("/batlog.csv", FILE_WRITE);
+            if (f) { f.println("ms,mv,avgMa,pct,flags,chg,usb"); f.close(); }
+            strcpy(g_sdStatus, "log reset");
+            Serial.println("[SD] batlog.csv reset (full FAT format TBD)");
+            show_screen(SCR_SETTINGS);
+        }
+        return;
+    }
     if (g_settingsPage == SET_STORAGE) {
         if (g_settingsSel == 3) {
             doAnnounce();
             if (g_featAudio) g_audio.playAnnounce();
+            show_screen(SCR_SETTINGS);
+        } else if (g_settingsSel == 4) {
+            g_settingsPage = SET_SD;
+            g_settingsSel = 0;
+            g_settingsScroll = 0;
             show_screen(SCR_SETTINGS);
         }
         return;
@@ -4480,9 +4716,44 @@ void build_settings() {
         else
             snprintf(a, sizeof(a), "battery only");
         row("7 : Info : Power source", a, 6);
-        totalRowsHint = 7;
+        {
+            const char* logSt = g_batLogInternal ? "INT on" : "off";
+            if (g_batLogSd) logSt = g_batLogInternal ? "INT+SD" : "SD on";
+            snprintf(a, sizeof(a), "%s", logSt);
+        }
+        row("8 : Menu : Battery log", a, 7);
+        totalRowsHint = 8;
         drawScrollHints();
-        draw_compose_or_hint("info only");
+        draw_compose_or_hint("8=log menu");
+        return;
+    }
+
+    if (g_settingsPage == SET_BAT_LOG) {
+        snprintf(a, sizeof(a), "%s (%u)", g_batLogInternal ? "ON" : "OFF",
+                 (unsigned)g_batLogCount);
+        row("1 : Toggle : Internal log", a, 0);
+        snprintf(a, sizeof(a), "%s", g_batLogSd ? (g_sdMounted ? "ON" : "need SD") : "OFF");
+        row("2 : Toggle : SD card log", a, 1);
+        row("3 : Action : Dump internal → USB", "Enter=Serial", 2);
+        row("4 : Action : Clear internal", g_batLogCount ? "Enter=clear" : "empty", 3);
+        snprintf(a, sizeof(a), "%s", g_sdStatus);
+        row("5 : Menu : SD card tools", a, 4);
+        totalRowsHint = 5;
+        drawScrollHints();
+        draw_compose_or_hint("log every 5s while ON");
+        return;
+    }
+
+    if (g_settingsPage == SET_SD) {
+        snprintf(a, sizeof(a), "%s", g_sdStatus);
+        row("1 : Info : Status", a, 0);
+        row("2 : Action : Mount SD", g_sdMounted ? "mounted" : "Enter=mount", 1);
+        row("3 : Action : Unmount SD", g_sdMounted ? "Enter=eject" : "-", 2);
+        row("4 : Action : Format FAT (erase!)", "hold Enter", 3);
+        row("5 : Info : Log file", "/batlog.csv", 4);
+        totalRowsHint = 5;
+        drawScrollHints();
+        draw_compose_or_hint("FAT32 card · eject before pull");
         return;
     }
 
@@ -4564,10 +4835,12 @@ void build_settings() {
         row("2 Free PSRAM", a, 1);
         row("3 Flash", "LittleFS", 2);
         snprintf(a, sizeof(a), "Ann %s", g_announceStr);
-        row("4 Send Announce", a, 3);
-        totalRowsHint = 4;
+        row("4 Send Announce ID", a, 3);
+        snprintf(a, sizeof(a), "%s", g_sdStatus);
+        row("5 : Menu : SD card", a, 4);
+        totalRowsHint = 5;
         drawScrollHints();
-        draw_compose_or_hint("Enter on Announce to send");
+        draw_compose_or_hint("4=chirp public ID  5=SD");
         return;
     }
 
@@ -4719,7 +4992,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
         if (ch == 's' || ch == 'S') { menuGo(SCR_SETTINGS); return true; }
         if (ch == 'c' || ch == 'C') { menuGo(SCR_CONTACTS); return true; }
         if (ch == 'p' || ch == 'P') { menuGo(SCR_PEERS); return true; }
-        if (ch == 'm' || ch == 'M') { menuGo(SCR_CHATS); return true; }
+        if (ch == 'i' || ch == 'I') { menuGo(SCR_CHATS); return true; }
         if (ch == 0x1b) { menuClose(); show_screen(g_screen); return true; }
         // other keys close overlay
         menuClose();
@@ -4744,13 +5017,15 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 else if (g_settingsPage == SET_TIME) maxNav = 4;
                 else if (g_settingsPage == SET_SCREEN) maxNav = 2;
                 else if (g_settingsPage == SET_NETWORK) maxNav = 4;
-                else if (g_settingsPage == SET_BATTERY) maxNav = 6;
+                else if (g_settingsPage == SET_BATTERY) maxNav = 7;
+                else if (g_settingsPage == SET_BAT_LOG) maxNav = 4;
+                else if (g_settingsPage == SET_SD) maxNav = 4;
                 else if (g_settingsPage == SET_TZ) maxNav = kTzCount - 1;
                 else if (g_settingsPage == SET_IDENTITY) maxNav = 2;
                 else if (g_settingsPage == SET_LORA) maxNav = 3;
                 else if (g_settingsPage == SET_AUDIO) maxNav = 2;
                 else if (g_settingsPage == SET_DIAG) maxNav = 2;
-                else if (g_settingsPage == SET_STORAGE) maxNav = 3;
+                else if (g_settingsPage == SET_STORAGE) maxNav = 4;
                 else if (g_settingsPage == SET_NETWORK) maxNav = 2;
                 if (maxNav >= 0) {
                     if (upKey && g_settingsSel > 0) g_settingsSel--;
@@ -5164,7 +5439,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
                         show_screen(SCR_HOME);
                         return true;
                     }
-                    if (ev.character == 'm' || ev.character == 'M') {
+                    if (ev.character == 'i' || ev.character == 'I') {
                         menuToggle();
                         show_screen(g_screen);
                         return true;
@@ -5197,7 +5472,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
                     show_screen(SCR_HOME);
                     return false;
                 }
-                if (ev.character == 'm' || ev.character == 'M') {
+                if (ev.character == 'i' || ev.character == 'I') {
                     g_showHistory = false;
                     menuToggle();
                     show_screen(g_screen);
@@ -5247,7 +5522,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.97");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.98");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
@@ -5493,7 +5768,7 @@ void loop() {
             } else if (p[0] == 'h' || p[0] == '1') {
                 g_showHistory = false;
                 show_screen(SCR_HOME);
-            } else if (p[0] == 'm' || p[0] == 'M' || p[0] == '2') {
+            } else if (p[0] == 'i' || p[0] == 'I' || p[0] == '2') {
                 g_showHistory = false;
                 show_screen(SCR_CHATS);
             } else if (p[0] == '3') {

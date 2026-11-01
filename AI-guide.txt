@@ -1,6 +1,6 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.93  (2026-10-25)
+Last: G1.98  (2026-11-01)
 ================================================================================
 Long-term backlog → Future_steps.txt (do not strip future items from there).
 
@@ -11,7 +11,7 @@ Status tags: [DONE] solid on hardware   [IN-PROGRESS] partial / next polish
              [TODO] not started
 
 --------------------------------------------------------------------------------
-CURRENT PHASE (G1.93)
+CURRENT PHASE (G1.98)
 --------------------------------------------------------------------------------
 TOP NAV
 [DONE] Layout: [↻ refresh] [battery box] [ date + time ] [ MENU ]
@@ -97,3 +97,13 @@ WHEN ADDING FEATURES
   Do not re-enable force-num except inside digit-entry boxes.
   Top MENU must never map through topTabScreen() to Home.
 ================================================================================
+
+
+G1.98 additions
+- Announce button: "Announce ID" (public ID chirp, NOT private key)
+- Bottom nav: Inbox (key I); MENU stays M
+- Settings path line: left S.x, right-justified name (e.g. Battery)
+- S.4.8 Battery log: internal ring + SD CSV every 5s
+- S.9.5 SD card tools: mount/unmount/reset log
+- How to get logs: USB Serial dump, or pull TF card /batlog.csv
+- Idle: local name above "press a KEY to wake"
