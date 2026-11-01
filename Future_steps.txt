@@ -54,6 +54,7 @@ UI / UX
 - DONE - add manual refresh button, for ghosting issues. Do full screen refresh. 
 - DONE - add GPS clock displayed on idle screen / header. 
 - DONE - add battery / charge indicator. Lighting bolt in the battery icon, or a plug icon? Something to say it's getting power over USB. 
+- incrase keypad refresh rate, currently often have to press keys like once a second as the max speed. 
 
 Audio / modes
 -------------
