@@ -4407,8 +4407,7 @@ void settingsActivate() {
     if (g_settingsPage == SET_BAT_LOG) {
         if (g_settingsSel == 0) {
             g_batLogInternal = !g_batLogInternal;
-            Serial.printf("[BATLOG] internal %s
-", g_batLogInternal ? "ON" : "OFF");
+            Serial.printf("[BATLOG] internal %s\n", g_batLogInternal ? "ON" : "OFF");
             if (g_batLogInternal) batLogSampleNow();
             show_screen(SCR_SETTINGS);
         } else if (g_settingsSel == 1) {
