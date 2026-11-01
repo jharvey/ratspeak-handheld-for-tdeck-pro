@@ -55,6 +55,7 @@ UI / UX
 - DONE - add GPS clock displayed on idle screen / header. 
 - DONE - add battery / charge indicator. Lighting bolt in the battery icon, or a plug icon? Something to say it's getting power over USB. 
 - incrase keypad refresh rate, currently often have to press keys like once a second as the max speed. 
+- add share contact option. If you click a contact, offer a share button, where you can share it with other contacts in your list. 
 
 Audio / modes
 -------------
