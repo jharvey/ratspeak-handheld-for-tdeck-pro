@@ -3994,13 +3994,16 @@ void build_contacts() {
             r.saved = true;
             r.unread = 0;
             memcpy(r.peer, loc, 16);
-            if (g_selfName[0])
-                snprintf(r.line1, sizeof(r.line1), "%.20s", g_selfName);
-            else
-                strcpy(r.line1, "THIS RADIO");
-            char hex[33];
-            peerToHex32(loc, hex);
-            snprintf(r.line2, sizeof(r.line2), "local %.16s", hex);
+            {
+                char hex[33];
+                peerToHex32(loc, hex);
+                // List shows "0 : MyID : ########" (title uses index + line1)
+                snprintf(r.line1, sizeof(r.line1), "MyID : %.10s", hex);
+                if (g_selfName[0])
+                    snprintf(r.line2, sizeof(r.line2), "%.20s", g_selfName);
+                else
+                    snprintf(r.line2, sizeof(r.line2), "local");
+            }
         }
     }
     for (int i = 1; i < g_msgRowCount; i++) {
@@ -4483,6 +4486,9 @@ void settingsActivate() {
 
 
 void build_settings() {
+    // List pages: letters for G/V nav; hold SYM for 1-9 row jump
+    if (!isNumEntryMode())
+        keyboardSetNumLayer(false);
     clear_screen();
     char a[40], b[36];
     int y = CONTENT_TOP + 2;
@@ -4858,6 +4864,7 @@ void show_screen(ScreenId id) {
         // Entering Settings from another tab → root list
         g_settingsPage = SET_ROOT;
         g_settingsSel = 0;
+        keyboardSetNumLayer(false);  // G/V letters; SYM required for 1-9
     }
     if (id != SCR_SETTINGS) {
         // Leaving settings clears sub-page so next visit starts clean
@@ -5034,6 +5041,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
                         g_settingsScroll = g_settingsSel - g_setMaxVis + 1;
                     if (g_settingsScroll < 0) g_settingsScroll = 0;
                     Serial.printf("[SET] G/V sel=%d\n", g_settingsSel);
+                    keyboardSetNumLayer(false);
                     show_screen(SCR_SETTINGS);
                     return true;
                 }
@@ -5357,6 +5365,7 @@ bool handleKeyEvent(const KeyEvent& ev) {
                     g_settingsSel = (int)(ev.character - '1');
                     if (g_settingsSel < g_settingsScroll) g_settingsScroll = g_settingsSel;
                     Serial.printf("[SET] key sel=%d\n", g_settingsSel);
+                    keyboardSetNumLayer(false);
                     if (g_settingsPage == SET_ROOT)
                         settingsActivate();
                     else
@@ -5398,6 +5407,18 @@ bool handleKeyEvent(const KeyEvent& ev) {
             // Msg Box list / Peers list: navigation only (no compose/send).
             // Type+send only inside thread (g_showHistory). Contacts = name edit.
             if (onMsgScreens) {
+                // MENU + Inbox on Contacts/Peers/Inbox list (not while editing name / thread)
+                if (!g_nameEditMode && !(g_screen == SCR_CHATS && g_showHistory)) {
+                    if (ev.character == 'm' || ev.character == 'M') {
+                        menuToggle();
+                        show_screen(g_screen);
+                        return true;
+                    }
+                    if (ev.character == 'i' || ev.character == 'I') {
+                        show_screen(SCR_CHATS);
+                        return true;
+                    }
+                }
                 if (ev.character == 'b' || ev.character == 'B') {
                     if (g_showHistory || g_nameEditMode) {
                         goBackFromMessage();
@@ -5438,9 +5459,13 @@ bool handleKeyEvent(const KeyEvent& ev) {
                         show_screen(SCR_HOME);
                         return true;
                     }
-                    if (ev.character == 'i' || ev.character == 'I') {
+                    if (ev.character == 'm' || ev.character == 'M') {
                         menuToggle();
                         show_screen(g_screen);
+                        return true;
+                    }
+                    if (ev.character == 'i' || ev.character == 'I') {
+                        show_screen(SCR_CHATS);
                         return true;
                     }
                     if (ev.character == 'c' || ev.character == 'C') {
@@ -5471,10 +5496,15 @@ bool handleKeyEvent(const KeyEvent& ev) {
                     show_screen(SCR_HOME);
                     return false;
                 }
-                if (ev.character == 'i' || ev.character == 'I') {
+                if (ev.character == 'm' || ev.character == 'M') {
                     g_showHistory = false;
                     menuToggle();
                     show_screen(g_screen);
+                    return true;
+                }
+                if (ev.character == 'i' || ev.character == 'I') {
+                    g_showHistory = false;
+                    show_screen(SCR_CHATS);
                     return true;
                 }
                 if (ev.character == 'c' || ev.character == 'C') {
@@ -5521,7 +5551,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.98");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.99");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
