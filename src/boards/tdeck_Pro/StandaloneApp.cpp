@@ -3799,6 +3799,26 @@ void build_list_body(const char* /*section*/, const char* emptyNote,
             else
                 sub[0] = 0;
             draw_menu_row(y, ROW_H, title, sub, i == g_selPeer);
+            // Inbox (withStats): right-justify per-row unread so remotes with mail stand out
+            if (withStats) {
+                char ub[14];
+                uint32_t u = g_msgRows[i].unread;
+                if (u > 99)
+                    snprintf(ub, sizeof(ub), "unrd +99");
+                else if (u > 0)
+                    snprintf(ub, sizeof(ub), "unrd %02u", (unsigned)u);
+                else
+                    snprintf(ub, sizeof(ub), "unrd 00");
+                const lv_font_t* font = &lv_font_montserrat_16;
+                lv_coord_t tw = lv_txt_get_width(ub, strlen(ub), font, 0, LV_TEXT_FLAG_NONE);
+                if (tw <= 0) tw = (lv_coord_t)(strlen(ub) * 7);
+                int ux = EPD_WIDTH - (int)tw - 10;
+                if (ux < 100) ux = 100;
+                // Title line of the row (same vertical band as name)
+                const bool hasSub = sub[0] != 0;
+                int uy = y + (hasSub ? 4 : (ROW_H - 16) / 2);
+                fat_label(g_root, ub, ux, uy);
+            }
             y += ROW_H;
             if (y > CONTENT_BOTTOM - 4) break;
         }
@@ -5633,7 +5653,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.105");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.106");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
