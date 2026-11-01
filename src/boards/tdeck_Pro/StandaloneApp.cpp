@@ -2168,7 +2168,7 @@ void draw_label_centered(int x, int y, int w, int h, const char* label, bool bol
 static void draw_fixed_slots_centered(int y, const char* s) {
     if (!s || !s[0]) return;
     const int n = (int)strlen(s);
-    const int cell = 12;  // px per character slot (balances wide D vs narrow 0)
+    const int cell = 16;  // px per slot so D/0 glyphs do not touch
     const int total = n * cell;
     int x0 = (EPD_WIDTH - total) / 2;
     if (x0 < 0) x0 = 0;
@@ -2717,7 +2717,12 @@ void draw_nav() {
         draw_label_centered(sx, 1, TOP_TAB_W, 16, dateSp[0] ? dateSp : "--", false);
         draw_label_centered(sx, 17, TOP_TAB_W, 16, timeSp[0] ? timeSp : "- - : - -", false);
     }
-    draw_nav_box(sx + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "MENU", g_menuOpen, 'M');
+    {
+        const bool typing = (g_composeLen > 0 || g_composeMode || g_nameEditMode ||
+                             g_timeEditMode || g_dateEditMode || g_idleSecsEditMode);
+        draw_nav_box(sx + TOP_TAB_W, 0, TOP_TAB_W, TOP_H, "MENU", g_menuOpen,
+                     typing ? (char)0 : 'M');
+    }
 
     if (g_showHistory || g_nameEditMode) {
         const char* back = g_nameEditMode ? "^ BACK UP TO CONTACTS" : "^ BACK UP TO INBOX";
@@ -5372,12 +5377,28 @@ bool handleKeyEvent(const KeyEvent& ev) {
                 if (ev.character >= '1' && ev.character <= '9') {
                     g_settingsSel = (int)(ev.character - '1');
                     if (g_settingsSel < g_settingsScroll) g_settingsScroll = g_settingsSel;
-                    Serial.printf("[SET] key sel=%d\n", g_settingsSel);
+                    Serial.printf("[SET] key jump+activate sel=%d\n", g_settingsSel);
                     keyboardSetNumLayer(false);
-                    if (g_settingsPage == SET_ROOT)
-                        settingsActivate();
-                    else
-                        show_screen(SCR_SETTINGS);
+                    {
+                        int maxNav = 8;
+                        if (g_settingsPage == SET_BATTERY) maxNav = 7;
+                        else if (g_settingsPage == SET_BAT_LOG) maxNav = 4;
+                        else if (g_settingsPage == SET_SD) maxNav = 4;
+                        else if (g_settingsPage == SET_TIME) maxNav = 4;
+                        else if (g_settingsPage == SET_SCREEN) maxNav = 2;
+                        else if (g_settingsPage == SET_NETWORK) maxNav = 4;
+                        else if (g_settingsPage == SET_STORAGE) maxNav = 4;
+                        else if (g_settingsPage == SET_LORA) maxNav = 3;
+                        else if (g_settingsPage == SET_AUDIO) maxNav = 2;
+                        else if (g_settingsPage == SET_DIAG) maxNav = 2;
+                        else if (g_settingsPage == SET_IDENTITY) maxNav = 2;
+                        else if (g_settingsPage == SET_TZ) maxNav = kTzCount - 1;
+                        else if (g_settingsPage == SET_MANUAL_TIME) maxNav = 5;
+                        else if (g_settingsPage == SET_MANUAL_LOC) maxNav = 2;
+                        else if (g_settingsPage == SET_IDLE_MODE) maxNav = 3;
+                        if (g_settingsSel > maxNav) g_settingsSel = maxNav;
+                    }
+                    settingsActivate();  // enter submenu / action on digit
                     return true;
                 }
             }
@@ -5417,7 +5438,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
             if (onMsgScreens) {
                 // MENU + Inbox on Contacts/Peers/Inbox list (not while editing name / thread)
                 if (!g_nameEditMode && !(g_screen == SCR_CHATS && g_showHistory)) {
-                    if (ev.character == 'm' || ev.character == 'M') {
+                    if ((ev.character == 'm' || ev.character == 'M') &&
+                        g_composeLen == 0 && !g_composeMode) {
                         menuToggle();
                         show_screen(g_screen);
                         return true;
@@ -5467,7 +5489,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
                         show_screen(SCR_HOME);
                         return true;
                     }
-                    if (ev.character == 'm' || ev.character == 'M') {
+                    if ((ev.character == 'm' || ev.character == 'M') &&
+                        g_composeLen == 0 && !g_composeMode) {
                         menuToggle();
                         show_screen(g_screen);
                         return true;
@@ -5504,7 +5527,8 @@ bool handleKeyEvent(const KeyEvent& ev) {
                     show_screen(SCR_HOME);
                     return false;
                 }
-                if (ev.character == 'm' || ev.character == 'M') {
+                if ((ev.character == 'm' || ev.character == 'M') &&
+                    g_composeLen == 0 && !g_composeMode) {
                     g_showHistory = false;
                     menuToggle();
                     show_screen(g_screen);
@@ -5559,7 +5583,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.101");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.102");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
