@@ -434,8 +434,8 @@ char g_compose[COMPOSE_CAP + 1] = "";
 size_t g_composeLen = 0;
 bool g_composeDirty = false;
 uint32_t g_lastComposeMs = 0;
-constexpr uint32_t COMPOSE_IDLE_MS = 120;   // G1.49: fast partial compose strip
-constexpr uint32_t COMPOSE_PARTIAL_MIN_MS = 80;
+constexpr uint32_t COMPOSE_IDLE_MS = 90;    // batch keys then refresh (~11/s max UI)
+constexpr uint32_t COMPOSE_PARTIAL_MIN_MS = 60;
 
 bool g_bootAnnDone = false;
 uint32_t g_bootAnnAt = 0;
@@ -5559,7 +5559,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.100");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.101");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
@@ -5692,15 +5692,21 @@ void loop() {
     maybeSaveRtcEpoch();
     maybeEnterIdle();
 
+    // Keyboard: drain up to 8 FIFO events per loop. Never discardPending()
+    // after a key — that flushed the TCA8418 FIFO and dropped fast typing
+    // (~1 char/s). 8 events ≈ 8 chars/s capture; compose UI still debounces
+    // redraw via maybeComposeRedraw (COMPOSE_IDLE_MS).
     if (g_kbOk) {
-        g_kb.update();
-        if (g_kb.hasEvent()) {
-            const KeyEvent& ev = g_kb.getEvent();
-            bool needRedraw = handleKeyEvent(ev);
-            g_kb.discardPending();
-            if (needRedraw)
-                show_screen(g_screen);
+        bool needRedraw = false;
+        for (int n = 0; n < 8; n++) {
+            g_kb.update();
+            if (!g_kb.hasEvent())
+                break;
+            if (handleKeyEvent(g_kb.getEvent()))
+                needRedraw = true;
         }
+        if (needRedraw)
+            show_screen(g_screen);
     }
 
     static int lastInt = HIGH;

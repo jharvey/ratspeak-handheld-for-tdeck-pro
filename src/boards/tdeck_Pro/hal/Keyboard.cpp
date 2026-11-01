@@ -521,7 +521,8 @@ void Keyboard::update()
     return;
   }
 
-  // Read one FIFO event per update.
+  // Read one FIFO event per update (caller may loop to drain).
+  // Do not flush the rest of the FIFO here — rapid typing queues events.
   uint8_t raw = tcaRead(REG_KEY_EVENT_A);
 
   // TCA8418 event code:
