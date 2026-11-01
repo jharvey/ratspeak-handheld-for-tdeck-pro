@@ -30,15 +30,15 @@ Hardware / platform
 - DONE - Partial e-ink refresh / ghosting control for lower energy
 - Deep sleep / light sleep between RX windows; wake on LoRa / key / touch
 - IN PROGRESS -Battery model accuracy + charge UI
-- SD card support (storage expansion, logs, optional assets)
+- DONE - SD card mount, eject, format card found under S.9.5
+- SD card support (storage expansion, maps, logs, optional assets)
 
 Boot / first impression
 -----------------------
 - DONE - Add Ratspeak Logo
 - DONE - Add TDeck Pro Version number 1.1
 - DONE - Add This firmware version number
-- DONE - Boot splash screen: show almost immediately on power-up, then transition to
-  Home only after protocol / radio / UI are ready
+- DONE - Boot splash screen: show almost immediately on power-up, then transition to Home only after protocol / radio / UI are ready
 - DONE - if it's in black background mode, splash screen should be in black mode. 
 
 UI / UX
@@ -46,7 +46,7 @@ UI / UX
 - DONE - Theme toggle: white paper (default) vs black ink background
 - Settings full parity with Plus (WiFi client, TCP, GPS time, identity create/erase)
 - DONE - Contacts rename closer to Plus (context menu: Save Contact / Message / Close)
-- Msg Box delivery status polish (queued / sent / delivered / fail)
+- DONE - Inbox delivery status polish (queued / sent / delivered / fail)
 - DONE - Scroll indicators on long lists (Contacts, Peers, Settings)
 - Optional fuller LVGL screens later (keep standalone build rules)
 - Geo maps on SD (offline map tiles / position display when GPS enabled)
