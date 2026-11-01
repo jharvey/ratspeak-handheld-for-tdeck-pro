@@ -575,31 +575,39 @@ bool readBattery(float& volts, int& pct) {
     if (!s_chg && avgMa <= 8 && (millis() - s_lastChargeMs) > 2500UL)
         s_usb = false;
     g_usbPower = s_usb;
-    static uint32_t s_lastLog = 0;
-    if (millis() - s_lastLog > 5000) {
-        s_lastLog = millis();
-        Serial.printf("[BAT] V=%.3f pct=%d avgMa=%d chg=%d usb=%d dsg=%d flags=0x%04x\n",
-                      volts, pct, (int)avgMa, (int)g_batCharging, (int)g_usbPower,
-                      (int)dsg, (unsigned)flags);
-    }
-
-    // Prefer BQ27220 StateOfCharge (chip). Do NOT force 100% just because USB
-    // is plugged in — that made the UI jump to 100% on charge.
+    // Prefer BQ27220 StateOfCharge. Log showed gauge stuck ~56% at 4.08–4.20V
+    // (unlearned pack) — blend toward voltage curve when far off.
     int gaugePct = (nSoc > 0) ? (int)(socSum / nSoc) : -1;
     int curvePct = lipoPctFromVolts(volts);
     if (gaugePct >= 0) {
-        // Only blend if gauge is wildly off vs open-circuit voltage curve
-        // (unlearned gauge). Never inflate to 100% on plug alone.
-        if (abs(gaugePct - curvePct) > 45)
-            pct = (gaugePct * 2 + curvePct) / 3;  // trust chip more
-        else
+        int err = abs(gaugePct - curvePct);
+        if (err > 25) {
+            // Unlearned gauge: while charging at high V, trust curve more
+            if (s_chg && volts >= 4.00f)
+                pct = (gaugePct + curvePct * 2) / 3;
+            else if (!s_chg && volts <= 3.55f && gaugePct > curvePct + 20)
+                pct = (gaugePct + curvePct * 2) / 3;  // high SOC claim on flat pack
+            else if (err > 45)
+                pct = (gaugePct + curvePct) / 2;
+            else
+                pct = (gaugePct * 2 + curvePct) / 3;
+        } else {
             pct = gaugePct;
+        }
     } else {
         pct = curvePct;
         Serial.println("[BAT] SOC reg fail — voltage curve");
     }
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
+
+    static uint32_t s_lastLog = 0;
+    if (millis() - s_lastLog > 5000) {
+        s_lastLog = millis();
+        Serial.printf("[BAT] V=%.3f pct=%d gauge=%d curve=%d avgMa=%d chg=%d usb=%d dsg=%d flags=0x%04x\n",
+                      volts, pct, gaugePct, curvePct, (int)avgMa,
+                      (int)g_batCharging, (int)g_usbPower, (int)dsg, (unsigned)flags);
+    }
     return true;
 }
 
@@ -4739,7 +4747,7 @@ void build_settings() {
         row("1 : Toggle : Internal log", a, 0);
         snprintf(a, sizeof(a), "%s", g_batLogSd ? (g_sdMounted ? "ON" : "need SD") : "OFF");
         row("2 : Toggle : SD card log", a, 1);
-        row("3 : Action : Dump internal → USB", "Enter=Serial", 2);
+        row("3 : Action : Dump internal -> USB", "Enter=Serial", 2);
         row("4 : Action : Clear internal", g_batLogCount ? "Enter=clear" : "empty", 3);
         snprintf(a, sizeof(a), "%s", g_sdStatus);
         row("5 : Menu : SD card tools", a, 4);
@@ -5551,7 +5559,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.99");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.100");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
