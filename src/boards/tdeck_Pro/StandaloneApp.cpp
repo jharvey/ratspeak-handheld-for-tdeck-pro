@@ -399,6 +399,17 @@ void loadSelfName() {
             snprintf(g_selfName, sizeof(g_selfName), "%.23s", s.c_str());
         prefs.end();
     }
+    // Factory / first-boot default — not "PRO COMn"
+    if (!g_selfName[0]) {
+        strncpy(g_selfName, "MyRatSpeakPro", sizeof(g_selfName) - 1);
+        g_selfName[sizeof(g_selfName) - 1] = '\0';
+        Preferences pw;
+        if (pw.begin("rs_self", false)) {
+            pw.putString("name", g_selfName);
+            pw.end();
+        }
+        Serial.println("[NAME] default -> MyRatSpeakPro");
+    }
 }
 
 void saveSelfName(const char* name) {
@@ -2324,7 +2335,7 @@ static void paintIdleContent() {
 
     loadSelfName();
     {
-        const char* nm = (g_selfName[0] ? g_selfName : "IDENTITY");
+        const char* nm = (g_selfName[0] ? g_selfName : "MyRatSpeakPro");
         draw_label_centered(0, y0 + 10 * step + 2, EPD_WIDTH, 18, nm, true);
     }
 
@@ -2735,7 +2746,7 @@ void draw_nav() {
                              g_timeEditMode || g_dateEditMode || g_idleSecsEditMode);
         if (!typing && g_screen != SCR_HOME) {
             loadSelfName();
-            const char* nm = g_selfName[0] ? g_selfName : "IDENTITY";
+            const char* nm = g_selfName[0] ? g_selfName : "MyRatSpeakPro";
             draw_label_centered(0, BOT_TOP - 38, EPD_WIDTH, 16, nm, true);
         }
     }
@@ -3748,7 +3759,7 @@ void build_home() {
     // Device name below Announce, clear of the button
     {
         loadSelfName();
-        const char* nm = g_selfName[0] ? g_selfName : "IDENTITY";
+        const char* nm = g_selfName[0] ? g_selfName : "MyRatSpeakPro";
         int ny = sy + 34 + HOME_ANN_H + 4;
         if (ny > BOT_TOP - 18) ny = BOT_TOP - 18;
         draw_label_centered(0, ny, EPD_WIDTH, 16, nm, true);
@@ -4936,6 +4947,7 @@ void next_screen() {
 }
 
 void maybeAutoRedrawMessages() {
+    if (g_idleActive) return;  // inbound must not leave idle (key wakes only)
     if (g_screen != SCR_CHATS || !g_storeReady) return;
     if (g_composeLen > 0) return;  // don't clobber while typing
     g_msgStore.poll();
@@ -4960,6 +4972,7 @@ void maybeAutoRedrawMessages() {
 // Never refresh per keypress - only when idle and dirty.
 // Peers screen: refresh when announce set grows; throttle full refresh to 30s
 void maybeAutoRedrawPeers() {
+    if (g_idleActive) return;
     if (g_screen != SCR_PEERS || g_composeLen > 0) return;
     size_t n = g_announceMgr.nodes().size();
     if (n == g_lastPeerCount && !g_peerDirty) return;
@@ -5620,7 +5633,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.104");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.105");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
