@@ -2730,6 +2730,16 @@ void draw_nav() {
         draw_menu_overlay();
         return;
     }
+    // Device name just above bottom nav (idle-like) unless typing/entry
+    {
+        const bool typing = (g_composeLen > 0 || g_composeMode || g_nameEditMode ||
+                             g_timeEditMode || g_dateEditMode || g_idleSecsEditMode);
+        if (!typing) {
+            loadSelfName();
+            const char* nm = g_selfName[0] ? g_selfName : "IDENTITY";
+            draw_label_centered(0, BOT_TOP - 38, EPD_WIDTH, 16, nm, true);  // above G/V footer
+        }
+    }
     // Bottom: Contact | Peers | Msg Box on every page
     int x0 = 0;
     draw_nav_box(x0, BOT_TOP, BOT_CONTACT_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, 'C');
@@ -2850,15 +2860,13 @@ static void drawSettingsPath() {
         case SET_SD:          strcpy(path, "S.9.5"); desc = "SD card"; break;
         default:              strcpy(path, "S"); desc = ""; break;
     }
-    fat_label(g_root, path, 2, TOP_H + 1);
-    // Right-justified description on the same path line
-    if (desc && desc[0]) {
-        lv_coord_t tw = lv_txt_get_width(desc, strlen(desc), &lv_font_montserrat_16, 0, LV_TEXT_FLAG_NONE);
-        if (tw <= 0) tw = (lv_coord_t)(strlen(desc) * 8);
-        int lx = EPD_WIDTH - (int)tw - 4;
-        if (lx < 80) lx = 80;
-        fat_label(g_root, desc, lx, TOP_H + 1);
-    }
+    // "S.4 Battery" — name immediately after path (left side, not right-justified)
+    char line[40];
+    if (desc && desc[0])
+        snprintf(line, sizeof(line), "%s %s", path, desc);
+    else
+        snprintf(line, sizeof(line), "%s", path);
+    fat_label(g_root, line, 2, TOP_H + 1);
 }
 
 // Small up-chevron for Back (Shift) — drawn near path on settings sub-pages
@@ -3683,14 +3691,13 @@ void build_home() {
         draw_label_centered(colX, y0 + 34, colW, 16, onWord, false);
     }
 
-    // Right: name + ids
-    fat_label(g_root, g_selfName[0] ? g_selfName : "IDENTITY", rightX, y0 + 2);
+    // Right: dest ids only (device name is bottom strip on all pages)
     char shortId[14];
     snprintf(shortId, sizeof(shortId), "%.10s", g_destHex);
-    fat_label(g_root, shortId, rightX, y0 + 18);
+    fat_label(g_root, shortId, rightX, y0 + 10);
     char lxmfLine[28];
     snprintf(lxmfLine, sizeof(lxmfLine), "LXMF %.10s", g_destHex);
-    fat_label(g_root, lxmfLine, rightX, y0 + 34);
+    fat_label(g_root, lxmfLine, rightX, y0 + 28);
 
     // 3x2 tiles - flush, 2px gaps only
     const int gx = 0;
@@ -4531,9 +4538,10 @@ void build_settings() {
         const int pathH = 18;
         if (moreUp) {
             // y = TOP_H-1 so top border does not double with nav bottom (less "bold")
+            // Same column as top-right MENU box
             lv_obj_t* b = lv_obj_create(g_root);
-            lv_obj_set_size(b, 68, pathH);
-            lv_obj_set_pos(b, EPD_WIDTH - 68, TOP_H - 1);
+            lv_obj_set_size(b, MENU_BOX_W, pathH);
+            lv_obj_set_pos(b, MENU_BOX_X, TOP_H - 1);
             lv_obj_set_style_radius(b, 0, 0);
             lv_obj_set_style_border_width(b, 1, 0);
             lv_obj_set_style_border_color(b, theme_fg(), 0);
@@ -4541,7 +4549,7 @@ void build_settings() {
             lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
             lv_obj_set_style_pad_all(b, 0, 0);
             lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
-            draw_label_centered(EPD_WIDTH - 68, TOP_H - 2, 68, pathH, "^ more", false);
+            draw_label_centered(MENU_BOX_X, TOP_H - 2, MENU_BOX_W, pathH, "^ more", false);
         }
     };
 
@@ -5437,15 +5445,31 @@ bool handleKeyEvent(const KeyEvent& ev) {
             // Type+send only inside thread (g_showHistory). Contacts = name edit.
             if (onMsgScreens) {
                 // MENU + Inbox on Contacts/Peers/Inbox list (not while editing name / thread)
-                if (!g_nameEditMode && !(g_screen == SCR_CHATS && g_showHistory)) {
-                    if ((ev.character == 'm' || ev.character == 'M') &&
-                        g_composeLen == 0 && !g_composeMode) {
+                if (!g_nameEditMode && !(g_screen == SCR_CHATS && g_showHistory) &&
+                    g_composeLen == 0 && !g_composeMode) {
+                    if (ev.character == 'm' || ev.character == 'M') {
                         menuToggle();
                         show_screen(g_screen);
                         return true;
                     }
                     if (ev.character == 'i' || ev.character == 'I') {
                         show_screen(SCR_CHATS);
+                        return true;
+                    }
+                    if (ev.character == 'p' || ev.character == 'P') {
+                        show_screen(SCR_PEERS);
+                        return true;
+                    }
+                    if (ev.character == 'c' || ev.character == 'C') {
+                        show_screen(SCR_CONTACTS);
+                        return true;
+                    }
+                    if (ev.character == 'h' || ev.character == 'H') {
+                        show_screen(SCR_HOME);
+                        return true;
+                    }
+                    if (ev.character == 's' || ev.character == 'S') {
+                        show_screen(SCR_SETTINGS);
                         return true;
                     }
                 }
@@ -5583,7 +5607,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.102");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.103");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
