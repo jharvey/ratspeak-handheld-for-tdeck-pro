@@ -311,7 +311,7 @@ static void sdUnmount() {
     Serial.println("[SD] unmounted");
 }
 
-char g_destHex[17]   = "................";
+char g_destHex[33]   = "................................";
 char g_loraStr[12]   = "off";
 char g_rssiStr[16]   = "-";
 char g_snrStr[12]    = "-";
@@ -630,7 +630,7 @@ bool fillDestFromNvs() {
         return false;
     }
     for (int i = 0; i < 16; i++) sprintf(g_destHex + i * 2, "%02x", dest[i]);
-    g_destHex[16] = '\0';
+    g_destHex[32] = '\0';
     rs_handheld_rns_shutdown(ctx);
     Serial.printf("[DEST] NVS %s\n", g_destHex);
     return true;
@@ -763,7 +763,7 @@ bool initStorageAndProto() {
         const uint8_t* dest = g_proto.localDestHash();
         if (dest) {
             for (int i = 0; i < 16; i++) sprintf(g_destHex + i * 2, "%02x", dest[i]);
-            g_destHex[16] = '\0';
+            g_destHex[32] = '\0';
             g_announceMgr.setLocalDestHash(rs::Bytes(dest, 16));
         }
         Serial.printf("[PROTO] up dest=%s free_int=%u\n", g_destHex,
@@ -2241,10 +2241,12 @@ static void paintIdleContent() {
     // Always full clear — prevents UP/% ghosts from partials
     clear_screen();
 
-    // Title
-    draw_label_centered(0, 78, EPD_WIDTH, 22, "RatSpeak", true);
+    // Even vertical rhythm (~20px steps) under logo
+    const int y0 = 76;
+    const int step = 20;
 
-    // Date + time on separate wider lines (easier to read)
+    draw_label_centered(0, y0, EPD_WIDTH, 20, "RatSpeak", true);
+
     char lt[12], ld[12];
     formatLocalTime(lt, sizeof(lt));
     formatLocalDate(ld, sizeof(ld));
@@ -2267,17 +2269,17 @@ static void paintIdleContent() {
         }
         timeLine[j] = 0;
     }
-    draw_label_centered(0, 102, EPD_WIDTH, 22, dateLine, true);
-    draw_label_centered(0, 124, EPD_WIDTH, 22, timeLine, true);
+    draw_label_centered(0, y0 + step, EPD_WIDTH, 20, dateLine, true);
+    draw_label_centered(0, y0 + 2 * step, EPD_WIDTH, 20, timeLine, true);
 
     int pct = -1;
     if (g_pctStr[0] && g_pctStr[0] != '-')
         pct = atoi(g_pctStr);
-    // Vertical battery (same as top-nav / home) + % to the right
+    // Battery block — centered in its step band
     {
         const int bw = 18, bh = 28;
         const int bx = EPD_WIDTH / 2 - bw / 2 - 14;
-        const int by = 148;
+        const int by = y0 + 3 * step + 2;
         draw_battery_nav_icon(bx, by, bw, bh, pct);
         char pctLab[8];
         if (pct >= 0)
@@ -2287,7 +2289,6 @@ static void paintIdleContent() {
         draw_label_centered(bx + bw + 2, by + 6, 40, 16, pctLab, false);
     }
 
-    // Cord / charge status under battery — normal weight
     {
         const char* cordLine = "unplugged";
         if (g_batCharging && g_usbPower)
@@ -2298,7 +2299,7 @@ static void paintIdleContent() {
             cordLine = "charging";
         else
             cordLine = "unplugged";
-        draw_label_centered(0, 180, EPD_WIDTH, 16, cordLine, false);
+        draw_label_centered(0, y0 + 5 * step, EPD_WIDTH, 18, cordLine, false);
     }
 
     unsigned unread = 0;
@@ -2309,27 +2310,25 @@ static void paintIdleContent() {
         snprintf(msgLine, sizeof(msgLine), "NEW messages: %u unread", unread);
     else
         snprintf(msgLine, sizeof(msgLine), "No new messages");
-    draw_label_centered(0, 198, EPD_WIDTH, 18, msgLine, unread > 0);
+    draw_label_centered(0, y0 + 6 * step, EPD_WIDTH, 18, msgLine, unread > 0);
 
     uint32_t sec = millis() / 1000UL;
     unsigned days = (unsigned)(sec / 86400UL);
     unsigned hrs  = (unsigned)((sec / 3600UL) % 24UL);
     unsigned mins = (unsigned)((sec / 60UL) % 60UL);
-    // Three lines; template + value use fixed per-char slots so : stack
     char upVal[20];
     snprintf(upVal, sizeof(upVal), "%05u:%02u:%02u", days, hrs, mins);
-    draw_label_centered(0, 210, EPD_WIDTH, 16, "uptime", false);
-    draw_fixed_slots_centered(226, "DDDDD:HH:MM");
-    draw_fixed_slots_centered(242, upVal);
+    draw_label_centered(0, y0 + 7 * step, EPD_WIDTH, 16, "uptime", false);
+    draw_fixed_slots_centered(y0 + 8 * step, "DDDDD:HH:MM");
+    draw_fixed_slots_centered(y0 + 9 * step, upVal);
 
-    // Contact / C.0 style name (local display name)
     loadSelfName();
     {
         const char* nm = (g_selfName[0] ? g_selfName : "IDENTITY");
-        draw_label_centered(0, 262, EPD_WIDTH, 18, nm, true);
+        draw_label_centered(0, y0 + 10 * step + 2, EPD_WIDTH, 18, nm, true);
     }
 
-    // Bottom of splash — bold so it jumps out
+    // Bottom wake prompt
     draw_label_centered(0, 292, EPD_WIDTH, 22, "press a KEY to wake", true);
 
     lv_refr_now(nullptr);
@@ -2730,14 +2729,14 @@ void draw_nav() {
         draw_menu_overlay();
         return;
     }
-    // Device name just above bottom nav (idle-like) unless typing/entry
+    // Device name just above bottom nav (idle-like) — not on Home (overlaps Announce)
     {
         const bool typing = (g_composeLen > 0 || g_composeMode || g_nameEditMode ||
                              g_timeEditMode || g_dateEditMode || g_idleSecsEditMode);
-        if (!typing) {
+        if (!typing && g_screen != SCR_HOME) {
             loadSelfName();
             const char* nm = g_selfName[0] ? g_selfName : "IDENTITY";
-            draw_label_centered(0, BOT_TOP - 38, EPD_WIDTH, 16, nm, true);  // above G/V footer
+            draw_label_centered(0, BOT_TOP - 38, EPD_WIDTH, 16, nm, true);
         }
     }
     // Bottom: Contact | Peers | Msg Box on every page
@@ -3691,13 +3690,19 @@ void build_home() {
         draw_label_centered(colX, y0 + 34, colW, 16, onWord, false);
     }
 
-    // Right: dest ids only (device name is bottom strip on all pages)
-    char shortId[14];
-    snprintf(shortId, sizeof(shortId), "%.10s", g_destHex);
-    fat_label(g_root, shortId, rightX, y0 + 10);
-    char lxmfLine[28];
-    snprintf(lxmfLine, sizeof(lxmfLine), "LXMF %.10s", g_destHex);
-    fat_label(g_root, lxmfLine, rightX, y0 + 28);
+    // Right: LXMF label + full destination hash (no redundant short id)
+    fat_label(g_root, "LXMF", rightX, y0 + 8);
+    {
+        char fullId[36];
+        snprintf(fullId, sizeof(fullId), "%.32s", g_destHex[0] ? g_destHex : "—");
+        // Two lines if long; montserrat ~7px/char → 16 chars per line in ~110px
+        char line1[20], line2[20];
+        snprintf(line1, sizeof(line1), "%.16s", fullId);
+        snprintf(line2, sizeof(line2), "%.16s", fullId + 16);
+        fat_label(g_root, line1, rightX, y0 + 24);
+        if (fullId[16])
+            fat_label(g_root, line2, rightX, y0 + 38);
+    }
 
     // 3x2 tiles - flush, 2px gaps only
     const int gx = 0;
@@ -3740,6 +3745,14 @@ void build_home() {
     snprintf(annAgo, sizeof(annAgo), "ID chirp: %s", g_announceStr);
     fat_label(g_root, annAgo, 4, sy + 16);
     draw_action_btn(0, sy + 34, EPD_WIDTH, HOME_ANN_H, "Announce ID");
+    // Device name below Announce, clear of the button
+    {
+        loadSelfName();
+        const char* nm = g_selfName[0] ? g_selfName : "IDENTITY";
+        int ny = sy + 34 + HOME_ANN_H + 4;
+        if (ny > BOT_TOP - 18) ny = BOT_TOP - 18;
+        draw_label_centered(0, ny, EPD_WIDTH, 16, nm, true);
+    }
 
     // Home: nav only — never compose/send strip (clock is in top header)
     draw_nav();
@@ -5607,7 +5620,7 @@ bool begin() {
     applyTimezoneEnv();
     ensureDefaultRtc();
     Serial.println("========================================");
-    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.103");
+    Serial.println(" RATSPEAK  T-Deck Pro  Phase G1.104");
     Serial.println(" Time first; type HHMM; home RTC only");
     Serial.println("========================================");
 
