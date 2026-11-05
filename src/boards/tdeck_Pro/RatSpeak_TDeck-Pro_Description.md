@@ -7,7 +7,7 @@
 
 Related code: `StandaloneApp.cpp`, `hal/Keyboard.cpp`, `hal/Power.cpp`, `AI-guide.txt`.
 
-**Wireframes:** schematic 240×320 e-ink layout. Selection = bold outline; MENU underline under **M** only; bottom underlines under **C / P / I**; refresh = dual-arrow cycle.
+**Figures:** RatSpeak UI on the LilyGo T-Deck Pro bezel and keyboard (`images/screen-*.png`). Display content is scaled to the panel only—layout is unchanged. Selection = bold outline; MENU underline under **M** only; bottom underlines under **C / P / I**.
 
 ---
 
@@ -62,41 +62,31 @@ A **second LoRa RatSpeak device** in range is required to verify messaging.
 
 **Status: TBD** — refine with your exact PlatformIO env and button labels if they differ.
 
-1. Plug in the **USB** cable (data-capable).  
-2. Enter download / bootloader mode:  
-   - **Press and hold** the **upper** button (often labeled *BOOT* / track toward top of unit).  
-   - **Press and release** the **lower** side button (*RST* / reset).  
-   - **Release** the upper button.  
-3. Host should see a serial port (e.g. `COMx` on Windows).  
-4. Send the firmware over USB, e.g.:
-
-```text
-pio run -e tdeck_pro_standalone -t upload --upload-port COMx
-```
-
-5. After reset, confirm boot splash → Home. Continue with **§1.3**.
-
-*Do not put a fixed COM port in `platformio.ini` for day-to-day flashes — use `--upload-port` so builds stay incremental.*
+1. Plug in USB, open the PlatformIO project.  
+2. Select env **`tdeck_pro_standalone`**.  
+3. Build and upload (`pio run -t upload --upload-port COMx`).  
+4. Open serial monitor at **115200** if needed.  
+5. Power-cycle and continue with §1.3.
 
 ---
 
 ## 2. Physical controls (summary)
 
-| Key | Browse mode | Entry mode (typing) |
-|-----|-------------|---------------------|
-| **I** | Inbox | Types letter / no jump |
-| **C** | Contacts | Types letter / no jump |
-| **P** | Peers | Types letter / no jump |
-| **M** | MENU overlay | No jump |
-| **S** | Via MENU: **M** then **S** | — |
-| **G** / **V** | Up / down lists | — |
-| **Enter** | Open / activate | Send / save |
-| **Alt** | — | Uppercase ↔ lowercase |
-| **SYM** | — | Digits on settings fields |
+| Key | Browse mode | Entry mode |
+|-----|-------------|------------|
+| **I** | Inbox | types letter (nav off) |
+| **C** | Contacts | types letter |
+| **P** | Peers | types letter |
+| **M** | MENU overlay | does **not** open menu |
+| **H** | Home | — |
+| **S** | Settings (or **M→S**) | — |
+| **G** / **V** | Up / down | — |
+| **Enter** | Activate / open | Send / save |
+| **Alt** | — | Case shift while typing |
+| **SYM** | — | Digits / symbols when needed |
 | **Shift /^** | Back | Back / dismiss |
 
-**Bottom tabs (almost always in browse mode):** Contact **C** · Peers **P** · Inbox **I**.  
-**Settings** is not a bottom tab → **M → S**.
+Touch is secondary: MENU tab, bottom tabs, list rows. Idle wake is **key only**.
 
 ---
 
@@ -109,68 +99,58 @@ pio run -e tdeck_pro_standalone -t upload --upload-port COMx
 
 ---
 
-## 4. Screen map & wireframes
+## 4. Screen map & figures
 
-### Wireframe conventions
+### 4.1 Idle splash
 
-- **Refresh** (top-left): dual arrows in a cycle (not a plain circle).
-- **MENU**: underline under **M** only.
-- **Bottom tabs**: underline under **C**, **P**, and **I**.
-- **Selection**: bold outline (not inverted fill).
-- **Device name**: under Announce on Home; just above G/V footer on list screens; **not** on Settings.
+![Idle splash](images/screen-idle.png)
 
-### 4.1 Home
+- RatSpeak logo, date/time, battery %, plug status, message line, uptime, device name.  
+- **press a KEY to wake** (touch does not wake).
 
-![Home screen](images/screen-home.svg)
+### 4.2 Home
 
-- Status tiles, **Announce ID**, device name below Announce.
+![Home screen](images/screen-home.png)
+
+- Status tiles, **Announce ID**, device name below Announce.  
 - Bottom **Contact | Peers | Inbox**.
 
-### 4.2 Home with MENU overlay
+### 4.3 Home with MENU overlay
 
-![Home with MENU overlay](images/screen-home-menu.svg)
+![Home with MENU overlay](images/screen-home-menu.png)
 
-- Same Home background as §4.1.
-- Overlay column under **MENU** covers the right side, including the **Announce** area.
-- Rows: **H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox.
-- Top bar stays visible. **M** again closes, or press a letter to jump.
-
-### 4.3 Idle splash
-
-![Idle splash](images/screen-idle.svg)
-
-- RatSpeak logo, date/time, battery %, plug status, message line, uptime, device name.
-- **press a KEY to wake** (touch does not wake).
+- Overlay column under **MENU**: **H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox.  
+- Overlay ends **above** the bottom tab bar. Top bar stays visible.
 
 ### 4.4 Contacts
 
-![Contacts](images/screen-contacts.svg)
+![Contacts](images/screen-contacts.png)
 
 - **0: MyID** = this radio. Selection = bold outline.
 
 ### 4.5 Inbox (list)
 
-![Inbox list](images/screen-inbox.svg)
+![Inbox list](images/screen-inbox.png)
+
+- Per-row **unrd ##** when unread. **v more** when the list continues.
 
 ### 4.6 Inbox thread (typing)
 
-![Inbox compose](images/screen-inbox-compose.svg)
+![Inbox compose](images/screen-inbox-compose.png)
 
-- Entry mode; footer **^ BACK UP TO INBOX**.
+- Entry mode; **M/C/P/I** nav off. Footer **^ BACK UP TO INBOX**.
 
 ### 4.7 Settings root (`S`)
 
-![Settings](images/screen-settings.svg)
+![Settings](images/screen-settings.png)
 
-- Open **M → S**. No device-name strip.
+- Open **M → S**. Numbered rows → **S.1 … S.9**.
 
 ### 4.8 Settings **S.3 Screen**
 
-![Settings S.3](images/screen-settings-s3.svg)
+![Settings S.3](images/screen-settings-s3.png)
 
 - Theme, Idle splash, Key backlight.
-- Bottom chrome matches other list screens (**V/G** footer + **C/P/I** tabs).
-
 
 ---
 
@@ -232,4 +212,4 @@ S     Settings          ← M then S
 
 | Ver | Notes |
 |-----|--------|
-| 0.1 | Initial draft: How-to first, screen wireframes (`images/screen-*.svg`), Settings tree, LoRa-first bring-up |
+| 0.1 | Initial draft: How-to first, device figures (`images/screen-*.png` with bezel/keyboard), Settings tree, LoRa-first bring-up |
