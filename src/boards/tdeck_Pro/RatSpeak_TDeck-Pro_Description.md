@@ -179,39 +179,64 @@ Settings and many lists are numbered **1 … n** on the left of each row.
 | **Settings** | Hierarchical **S.*** menus |
 | **MENU overlay** | Jump among main screens |
 
+### Wireframe conventions (all diagrams)
+
+- **Refresh** (top-left): two arrows in a circular refresh pattern (not a plain circle).
+- **MENU**: underline under the letter **M** only (not the whole word).
+- **Bottom tabs**: underline under **C**, **P**, and **I** only.
+- **Selection**: bold outline around the active row (not a filled/inverted black bar).
+- **Device name** (`MyRatSpeakPro`): on list screens sits just above the **G=up / V=Down** footer; on Home sits **below** Announce ID (no overlap). **Not shown on Settings.**
+
 ### 4.1 Home
 
 ![Home screen wireframe](images/screen-home.svg)
 
 - **Announce ID** = public identity over LoRa (not a private-key export).
-- Bottom: **Contact | Peers | Inbox** with **C / P / I** underlines.
-- Top-right **MENU** → **M**, then **S** for Settings or **H** for Home from elsewhere.
+- Device name is **under** the Announce button.
+- Bottom: **Contact | Peers | Inbox** with underlines on **C / P / I**.
+- Top-right **MENU** → press **M**, then **S** for Settings.
 
 ### 4.2 Contacts
 
 ![Contacts screen wireframe](images/screen-contacts.svg)
 
 - **0: MyID** is always this radio; set the display name here early.
-- Highlighted row (inverted) is the current selection; **Enter** opens / edits.
-- Footer **V=Down** / **G=up**; bottom tab **Contact** active.
+- Selected row uses a **bold outline** (not inverted fill).
+- Device name just above **G=up / V=Down**; underlines on **C / P / I**.
 
-### 4.3 Inbox
+### 4.3 Inbox (list)
 
 ![Inbox screen wireframe](images/screen-inbox.svg)
 
 - **Unread** summary at top; each row can show **unrd ##** on the right.
-- **I** selects this screen from browse mode on other pages.
-- **v more** when additional conversations sit below the fold.
+- Device name just above the **G=up** footer row (not mid-screen).
+- **v more** when more conversations exist below.
 
-### 4.4 Settings (root `S`)
+### 4.4 Inbox thread (typing a message)
+
+![Inbox compose / thread wireframe](images/screen-inbox-compose.svg)
+
+- Message bubbles above; **compose box** at bottom.
+- **Entry mode:** letter keys type text; **Alt** toggles case; **M / C / P / I** do not navigate (no underlines on those).
+- Footer becomes **^ BACK UP TO INBOX** (not the C/P/I tabs) while the thread is open with compose.
+
+### 4.5 Settings (root `S`)
 
 ![Settings root wireframe](images/screen-settings.svg)
 
 - Open with **M** then **S**.
-- Path line: **`S Settings`** (deeper: **`S.4 Battery`**, etc.).
-- Numbered rows **1–9**; **v more** when the list continues (e.g. Diagnostics, Storage).
+- Path: **`S Settings`**. **No** device-name strip on Settings.
+- Numbered rows; **v more** when the list continues.
 
-### 4.5 Idle notes
+### 4.6 Settings submenu example — **S.3 Screen**
+
+![Settings S.3 Screen wireframe](images/screen-settings-s3.svg)
+
+- Path line: **`S.3 Screen`**.
+- Example rows: Theme, Idle splash, Key backlight.
+- Reach with **M → S → 3**. **Enter** opens a child (e.g. Idle); **^** returns toward **S**.
+
+### 4.7 Idle notes
 
 - Timeout: **S.3.2** / **S.3.2.4**.
 - RX may update unread on the splash **without** leaving idle.
@@ -359,3 +384,4 @@ Changing **I / C / M / P** is a breaking UX change (docs, underlines, muscle mem
 |---------|--------|
 | 0.1 | Initial draft: key-first nav, LoRa-first bring-up, stable **I/C/M/P** |
 | 0.2 | Clarify always-on **C/P/I**, Settings via **M→S**, **Alt** case toggle; add Home / Contacts / Inbox / Settings wireframes |
+| 0.3 | Wireframe fixes: M underline, refresh arrows, bold-outline selection, name placement; add Inbox compose + S.3 diagrams |

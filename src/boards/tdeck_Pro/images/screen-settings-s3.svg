@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="320" viewBox="0 0 240 320" font-family="DejaVu Sans, Arial, sans-serif">
+  <rect width="240" height="320" fill="#f4f1e8"/>
+  <rect x="0" y="0" width="28" height="36" fill="none" stroke="#111"/>
+  <g transform="translate(14,18)" fill="none" stroke="#111" stroke-width="1.5" stroke-linecap="round">
+    <path d="M -5,-3 A 6,6 0 1,1 -5,3"/><path d="M -5,-3 L -7,-1 M -5,-3 L -3,-1"/>
+    <path d="M 5,3 A 6,6 0 1,1 5,-3"/><path d="M 5,3 L 7,1 M 5,3 L 3,1"/>
+  </g>
+  <rect x="28" y="0" width="28" height="36" fill="none" stroke="#111"/>
+  <rect x="35" y="8" width="14" height="22" rx="1" fill="none" stroke="#111" stroke-width="1.5"/>
+  <rect x="37" y="20" width="10" height="8" fill="#111"/>
+  <rect x="56" y="0" width="92" height="36" fill="none" stroke="#111"/>
+  <text x="102" y="15" text-anchor="middle" font-size="10" fill="#111">01/09</text>
+  <text x="102" y="28" text-anchor="middle" font-size="11" fill="#111">14:08</text>
+  <rect x="148" y="0" width="92" height="36" fill="none" stroke="#111" stroke-width="1.5"/>
+  <text x="168" y="23" font-size="12" font-weight="700" fill="#111">M</text>
+  <line x1="168" y1="26" x2="178" y2="26" stroke="#111" stroke-width="1.5"/>
+  <text x="180" y="23" font-size="12" font-weight="700" fill="#111">ENU</text>
+  <text x="8" y="52" font-size="12" font-weight="700" fill="#111">S.3 Screen</text>
+  <g font-size="11" fill="#111">
+    <rect x="0" y="58" width="240" height="36" fill="none" stroke="#111"/>
+    <text x="8" y="74">1 : Toggle : Theme</text>
+    <text x="8" y="88" font-size="10">White paper</text>
+    <rect x="1" y="95" width="238" height="34" fill="none" stroke="#111" stroke-width="3"/>
+    <text x="8" y="111">2 : Menu : Idle splash</text>
+    <text x="8" y="125" font-size="10">No password</text>
+    <rect x="0" y="132" width="240" height="36" fill="none" stroke="#111"/>
+    <text x="8" y="148">3 : Toggle : Key backlight</text>
+    <text x="8" y="162" font-size="10">ON</text>
+  </g>
+  <text x="8" y="200" font-size="10" fill="#111">Path: M → S → 3</text>
+  <text x="8" y="214" font-size="10" fill="#111">Enter opens Idle; ^ back to S</text>
+  <rect x="0" y="256" width="80" height="24" fill="none" stroke="#111"/>
+  <text x="40" y="272" text-anchor="middle" font-size="10" fill="#111">V=Down</text>
+  <rect x="80" y="256" width="64" height="24" fill="none" stroke="#111"/>
+  <text x="112" y="272" text-anchor="middle" font-size="10" fill="#111">G=up</text>
+  <rect x="144" y="256" width="96" height="24" fill="none" stroke="#111"/>
+  <rect x="0" y="280" width="80" height="40" fill="none" stroke="#111"/>
+  <text x="28" y="304" font-size="12" fill="#111">C</text>
+  <line x1="28" y1="307" x2="36" y2="307" stroke="#111" stroke-width="1.5"/>
+  <text x="38" y="304" font-size="12" fill="#111">ontact</text>
+  <rect x="80" y="280" width="64" height="40" fill="none" stroke="#111"/>
+  <text x="96" y="304" font-size="12" fill="#111">P</text>
+  <line x1="96" y1="307" x2="104" y2="307" stroke="#111" stroke-width="1.5"/>
+  <text x="106" y="304" font-size="12" fill="#111">eers</text>
+  <rect x="144" y="280" width="96" height="40" fill="none" stroke="#111"/>
+  <text x="172" y="304" font-size="12" fill="#111">I</text>
+  <line x1="172" y1="307" x2="178" y2="307" stroke="#111" stroke-width="1.5"/>
+  <text x="180" y="304" font-size="12" fill="#111">nbox</text>
+</svg>
