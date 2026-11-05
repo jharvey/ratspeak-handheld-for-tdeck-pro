@@ -3,234 +3,351 @@
 **Audience:** operators holding the device, and developers implementing or reworking UI.  
 **Input priority:** **keyboard first**; touch is secondary where the panel works.  
 **Radio priority:** **LoRa mesh / LXMF first**. WiFi is reserved for later (see TBD).  
-**Stable hotkeys:** **I**, **C**, **M**, **P** (do not reassign lightly).
+**Stable hotkeys (do not reassign without a deliberate UX break):** **I**, **C**, **M**, **P**.
 
-Related code: `StandaloneApp.cpp`, `hal/Keyboard.cpp`, `hal/Power.cpp`, `AI-guide.txt`.
+Related code (implementers):
 
-**Wireframes:** schematic 240×320 e-ink layout. Selection = bold outline; MENU underline under **M** only; bottom underlines under **C / P / I**; refresh = dual-arrow cycle.
-
----
-
-## 1. How to
-
-### 1.1 Typical send a message
-
-1. Wake if idle → any key.  
-2. **I** → Inbox *(skip if already on Inbox or in the right thread)*.  
-3. Select contact via **touch** or a **number**, then **Enter**.  
-4. Type message (**Alt** for case). Nav underlines off.  
-5. **Enter** to send.  
-6. Optional **^** back to list.
-
-```text
-I  →  select  →  type  →  Enter  →  ^ (optional)
-```
-
-### 1.2 Add a contact / name a contact
-
-**Discover first (two radios):** on each device, Home → **Announce ID**, then open **Peers** (**P**) and confirm the other appears.
-
-**Name them:**
-
-1. **C** → Contacts *(or **P** Peers if they are not saved yet)*.  
-2. Select the new device (touch, **V**/**G**, or digit).  
-3. **Enter** to open name edit.  
-4. Type the display name (**Alt** for case).  
-5. **Enter** to save.
-
-```text
-C  →  select new device  →  type name  →  Enter
-```
-
-Row **0** is always **this** device (**MyID**). Rename it the same way to set the local display name (default may be **MyRatSpeakPro**).
-
-### 1.3 First-boot setup
-
-Do this on each newly programmed radio before relying on messaging.
-
-| Step | What | How |
-|------|------|-----|
-| 1 | **Configure time** | **M → S → 1** (Time & Location) → set RTC (**S.1.1**) and timezone (**S.1.2**) |
-| 2 | **Display theme** | **M → S → 3** (Screen) → **1** Theme → toggle **White paper** vs **Black ink** |
-| 3 | **Name this device** | **C** → row **0 MyID** → type name → **Enter** |
-| 4 | **WiFi** | **M → S → 2** — **TBD** (not required for LoRa messaging) |
-| 5 | **Meet the other radio** | Announce ID both sides → **P** → name contact (§1.2) → test send (§1.1) |
-
-A **second LoRa RatSpeak device** in range is required to verify messaging.
-
-### 1.4 Install on a fresh T-Deck Pro
-
-**Status: TBD** — refine with your exact PlatformIO env and button labels if they differ.
-
-1. Plug in the **USB** cable (data-capable).  
-2. Enter download / bootloader mode:  
-   - **Press and hold** the **upper** button (often labeled *BOOT* / track toward top of unit).  
-   - **Press and release** the **lower** side button (*RST* / reset).  
-   - **Release** the upper button.  
-3. Host should see a serial port (e.g. `COMx` on Windows).  
-4. Send the firmware over USB, e.g.:
-
-```text
-pio run -e tdeck_pro_standalone -t upload --upload-port COMx
-```
-
-5. After reset, confirm boot splash → Home. Continue with **§1.3**.
-
-*Do not put a fixed COM port in `platformio.ini` for day-to-day flashes — use `--upload-port` so builds stay incremental.*
+- UI / nav: `src/boards/tdeck_Pro/StandaloneApp.cpp`
+- Keyboard HAL: `src/boards/tdeck_Pro/hal/Keyboard.cpp`
+- Power / battery: `src/boards/tdeck_Pro/hal/Power.cpp`
+- Board notes: `AI-guide.txt` (repo root)
 
 ---
 
-## 2. Physical controls (summary)
+## 1. Purpose
 
-| Key | Browse mode | Entry mode (typing) |
-|-----|-------------|---------------------|
-| **I** | Inbox | Types letter / no jump |
-| **C** | Contacts | Types letter / no jump |
-| **P** | Peers | Types letter / no jump |
-| **M** | MENU overlay | No jump |
-| **S** | Via MENU: **M** then **S** | — |
-| **G** / **V** | Up / down lists | — |
-| **Enter** | Open / activate | Send / save |
-| **Alt** | — | Uppercase ↔ lowercase |
-| **SYM** | — | Digits on settings fields |
-| **Shift /^** | Back | Back / dismiss |
+This document describes:
 
-**Bottom tabs (almost always in browse mode):** Contact **C** · Peers **P** · Inbox **I**.  
-**Settings** is not a bottom tab → **M → S**.
+1. How you move around the device with **keys** (and touch).
+2. When navigation shortcuts **disappear** (text entry and similar modes).
+3. The **screen map** and **Settings `S.*` tree**.
+4. A **typical** “send a message” path.
+5. A **first-start** path with **two LoRa devices** (required for a real test).
+
+It is not a pinout or protocol spec. HAL and low-level bring-up stay in `hal/` and `AI-guide.txt`.
+
+---
+
+## 2. Physical controls
+
+### 2.1 Keyboard (primary)
+
+| Control | Typical role |
+|--------|----------------|
+| Letter keys | Navigation hotkeys when **not** typing; text when **in entry mode** |
+| **I** | Inbox (stable) |
+| **C** | Contacts (stable) |
+| **P** | Peers (stable) |
+| **M** | MENU overlay (stable) — **only when not composing** |
+| **H** | Home |
+| **S** | Settings |
+| **G** | Move selection **up** (lists) |
+| **V** | Move selection **down** (lists) |
+| **Enter** | Activate / open / send / save |
+| **Del / Backspace** | Delete character in entry mode |
+| **Shift** (shown as **^** in some footers) | Back up one level / dismiss |
+| **SYM** | Digit / symbol layer when typing numbers in settings fields |
+
+Underlined characters on screen are the keyboard shortcuts for the current **browse** mode.
+
+### 2.2 Touch (secondary)
+
+Where the touch controller works:
+
+- Top **MENU** tab toggles the menu overlay.
+- Bottom tabs: **Contact** / **Peers** / **Inbox**.
+- List rows and Settings rows can be tapped to select/activate.
+- On **idle splash**, touch is ignored; a **physical key** wakes the device.
+
+Prefer documenting and testing **keys** first so the product works if touch is flaky.
+
+### 2.3 Top chrome (most screens)
+
+Approximate layout:
+
+| Zone | Content |
+|------|---------|
+| Left | Refresh control, battery icon |
+| Center | Clock / date |
+| Right | **MENU** (opens overlay) |
+
+### 2.4 Bottom chrome (most screens)
+
+| Tab | Key | Screen |
+|-----|-----|--------|
+| Contact | **C** | Contacts |
+| Peers | **P** | Peers |
+| Inbox | **I** | Inbox (message list) |
+
+List screens may show a thin footer above these tabs: **V=Down**, **G=up**, and **v more** when more rows exist below the viewport.
 
 ---
 
 ## 3. Navigation model
 
-**Browse:** hotkeys and underlines active; **G/V** move; digits select (Settings often activates).  
-**Entry:** compose or field focused — **M/C/P/I** do not navigate; **Alt** changes case.  
-**MENU overlay:** **M** opens column under MENU (**H/S/C/P/I**); top bar stays visible.  
-**Scroll:** **v more** / **^ more** only when more rows exist.
+Navigation is **mode-dependent**. The same key does different things in browse vs entry.
+
+### 3.1 Browse mode
+
+**Where:** Home, Contacts list, Peers list, Inbox list, Settings lists, open MENU overlay (with no text field focused).
+
+**You can:**
+
+- Jump screens with **I / C / P / M / H / S** (and underlined labels).
+- Move the highlight with **G** (up) and **V** (down).
+- Open the highlighted row with **Enter**.
+- On many lists, press **1–9** to jump to that row (and on Settings, activate it).
+- Use bottom tabs or MENU by key or touch.
+
+**Scroll hints:**
+
+- **v more** — more rows below; keep pressing **V** (or scroll) to reach them.
+- **^ more** — more rows above (Settings and similar); aligns under the MENU column when shown.
+- When there is nothing above or below, the corresponding hint is **hidden** (empty footer cell or no `^ more` box).
+
+### 3.2 Entry mode (nav shortcuts suppressed)
+
+**Where:**
+
+- Typing a message in an Inbox **thread**
+- Renaming a contact / editing display name
+- Typing Settings values (timeout seconds, manual time fields, lat/lon, etc.)
+
+**While entry mode is active:**
+
+- Letter keys **insert text** (or digits when SYM/num layer is on).
+- **M / C / P / I** do **not** jump screens (no underlined nav on those letters for chrome).
+- **Enter** confirms (send message, save name, apply field).
+- **Del** edits the draft.
+- **Shift / ^** backs out without treating the draft as a hotkey destination.
+
+**Rule of thumb:** if you are looking at a compose box or a blinking field, you are in entry mode until you save, send, or explicitly go back.
+
+### 3.3 MENU overlay mode
+
+Press **M** (browse mode only) or the **MENU** tab.
+
+- Overlay lists destinations (Home, Settings, Contacts, Peers, Inbox).
+- Press the underlined letter or tap a row to go there.
+- **M** again (or back) closes the overlay without changing screen when appropriate.
+
+### 3.4 Digits and submenus
+
+Settings and many lists are numbered **1 … n** on the left of each row.
+
+- **Implication:** item **4** on the root Settings list is the path segment **S.4**; opening it and choosing item **8** leads toward **S.4.8**, and so on.
+- Path label under the top bar looks like **`S.4 Battery`** or **`S.9.5 SD card`** (path + short name).
+- On Settings, pressing a digit typically **selects and activates** that row (no extra Enter), so `M` → Settings → `4` → `8` can reach battery log quickly.
+- On Inbox / Contacts / Peers, digits usually **select** the row; **Enter** opens it.
+
+Numbers **0–9** on screen are the user’s map of depth; implementers should keep numbering stable when adding items (append or document breaks).
 
 ---
 
-## 4. Screen map & wireframes
+## 4. Screen map
 
-### Wireframe conventions
+Screen figures are **240×320 e-ink style** (no bezel/keyboard). Logo matches the RatSpeak mark (speech-bubble + mouse).
 
-- **Refresh** (top-left): dual arrows in a cycle (not a plain circle).
-- **MENU**: underline under **M** only.
-- **Bottom tabs**: underline under **C**, **P**, and **I**.
-- **Selection**: bold outline (not inverted fill).
-- **Device name**: under Announce on Home; just above G/V footer on list screens; **not** on Settings.
+### Idle splash
 
-### 4.1 Home
+![Idle splash — RatSpeak logo, clock, battery, uptime, device name, press a KEY to wake](images/screen-idle.png)
 
-![Home screen](images/screen-home.svg)
+*Idle: key-only wake. Unread line may update on RX without leaving this screen.*
 
-- Status tiles, **Announce ID**, device name below Announce.
-- Bottom **Contact | Peers | Inbox**.
+### Home with MENU open
 
-### 4.2 Home with MENU overlay
+![Home with MENU overlay — five menu rows end above bottom tabs; underlined H/S/C/P/I](images/screen-home-menu.png)
 
-![Home with MENU overlay](images/screen-home-menu.svg)
+*Home browse mode + MENU overlay. Overlay **Inbox** sits above the bottom tab bar (not flush to the bottom of the panel). Bottom tabs: **C** Contact, **P** Peers, **I** Inbox.*
 
-- Same Home background as §4.1.
-- Overlay column under **MENU** covers the right side, including the **Announce** area.
-- Rows: **H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox.
-- Top bar stays visible. **M** again closes, or press a letter to jump.
+| Screen | Role |
+|--------|------|
+| **Home** | Status tiles (LoRa, peers, audio, …), **Announce ID**, identity summary, battery shorthand |
+| **Idle splash** | Low-distraction clock, battery, uptime, unread hint, device name; **press a key to wake** |
+| **Contacts** | Trusted / named destinations; row **0** is **this device (MyID)** |
+| **Peers** | Recently heard announces (and related discoveries); start of “add a name” |
+| **Inbox** | Conversation list; per-row **unrd ##** on the right when implemented |
+| **Thread** | Messages with one peer; compose at bottom; Enter sends |
+| **Settings** | Hierarchical **S.*** menus |
+| **MENU overlay** | Quick jump between main screens |
 
-### 4.3 Idle splash
+### 4.1 Home notes
 
-![Idle splash](images/screen-idle.svg)
+- **Announce ID** broadcasts this radio’s **public** identity over LoRa so others can see it in Peers. It is **not** a private-key dump.
+- Device display name appears near the bottom on most screens; on Home it sits under Announce so it does not cover the button.
 
-- RatSpeak logo, time, battery, **NEW messages: 3 unread** (example), uptime, name.
-- **press a KEY to wake** (touch does not wake).
+### 4.2 Idle notes
 
-### 4.4 Contacts
-
-![Contacts](images/screen-contacts.svg)
-
-- **0: MyID** = this radio. Selection = bold outline.
-
-### 4.5 Inbox (list)
-
-![Inbox list](images/screen-inbox.svg)
-
-### 4.6 Inbox thread (typing)
-
-![Inbox compose](images/screen-inbox-compose.svg)
-
-- Entry mode; footer **^ BACK UP TO INBOX**.
-
-### 4.7 Settings root (`S`)
-
-![Settings](images/screen-settings.svg)
-
-- Open **M → S**. No device-name strip.
-
-### 4.8 Settings **S.3 Screen**
-
-![Settings S.3](images/screen-settings-s3.svg)
-
-- Theme, Idle splash, Key backlight.
-- Bottom chrome matches other list screens (**V/G** footer + **C/P/I** tabs).
-
+- Entered after **idle timeout** (see **S.3.2**).
+- **Inbound messages** may update the unread line on the splash **without** leaving idle.
+- Only a **physical key** exits idle (touch does not wake).
+- Leaving idle returns to the screen you were on before idle.
 
 ---
 
 ## 5. Settings tree (`S.*`)
 
+Root path **`S`**. Each numbered row is a segment. Names below match on-device path labels where possible.
+
 ```
-S     Settings          ← M then S
+S     Settings
 ├── S.1     Time & Location
-│   ├── S.1.1   Set RTC
+│   ├── S.1.1   Set RTC (manual clock/date fields, then apply)
 │   ├── S.1.2   Time zone
-│   ├── S.1.3   Enable GPS
-│   ├── S.1.4   Manual location
-│   └── …       Sync GPS now
-├── S.2     WiFi                    [TBD]
+│   ├── S.1.3   Enable GPS (toggle; row index may vary slightly by build)
+│   ├── S.1.4   Manual location (lat,lon when no GPS)
+│   └── S.1.x   Sync GPS now (when fix available)
+├── S.2     WiFi                          [TBD — not required for first LoRa use]
 ├── S.3     Screen & I/O
-│   ├── S.3.1   Theme (white / black)
-│   ├── S.3.2   Idle splash (+ S.3.2.4 timeout)
+│   ├── S.3.1   Theme (white paper / black ink)
+│   ├── S.3.2   Idle splash
+│   │   ├── S.3.2.1  No idle screen
+│   │   ├── S.3.2.2  Idle, no password
+│   │   ├── S.3.2.3  Idle + password (TBD)
+│   │   └── S.3.2.4  Timeout (seconds)
 │   └── S.3.3   Key backlight
-├── S.4     Battery (+ S.4.8 bat log)
-├── S.5     Identity
-├── S.6     LoRa
-├── S.7     Alerts
-├── S.8     Diagnostics
-└── S.9     Storage (+ S.9.5 SD)
+├── S.4     Battery
+│   ├── S.4.1 … S.4.7  Voltage / status / gauge fields (see on-device rows)
+│   └── S.4.8   Bat log
+│       ├── S.4.8.1  Internal logging
+│       └── S.4.8.2  SD card logging
+├── S.5     Identity (destination hash, display name, LXMF)
+├── S.6     LoRa (freq / enable summary)
+├── S.7     Alerts (audio / vibrate)
+├── S.8     Diagnostics (paths, links, RSSI, LXMF queue)
+└── S.9     Storage
+    ├── S.9.1…  Heap / PSRAM / flash summaries
+    ├── S.9.4   Send Announce ID (same idea as Home)
+    └── S.9.5   SD card tools (mount / format-related; see on-device)
 ```
+
+**Back:** from a sub-page, **^** / Shift returns toward **S** (and previous segments). Path text under the header always shows where you are.
+
+**WiFi (S.2):** placeholder for a later revision. First-mile product path is **LoRa only**; leave S.2 documented as **TBD** until station mode / credentials UX is defined.
 
 ---
 
-## 6. Idle & notifications
+## 6. Typical user sequence (send a message)
+
+Goal: from a powered device, reach “message on the air” with few keys.
+
+Assumes contacts already exist (see §7 if not).
+
+1. **Wake** if on idle splash → press any key.
+2. **Inbox** → press **I** (or MENU → Inbox, or bottom Inbox tab).
+3. **Select peer** → **V** / **G** or digit **1–9**, then **Enter** (opens thread).
+4. **Type** message (entry mode: nav underlines off).
+5. **Enter** to send.
+6. Optional: **^** / back to return to the Inbox list.
+
+**Fast path muscle memory:** `I` → digit → `Enter` → type → `Enter`.
+
+If already in the correct thread, skip to step 4. New inbound messages should refresh the list/thread while preserving an in-progress draft when the UI auto-redraws.
+
+---
+
+## 7. First-start sequence (two devices required)
+
+A single radio can boot and show UI, but **messaging is only meaningful with a second LoRa RatSpeak device** (or compatible peer) in range.
+
+Call them **Pro A** and **Pro B**.
+
+### 7.1 After programming (each device)
+
+1. Power on; wait through boot splash to **Home** (or wake from idle).
+2. **Set time** (recommended so logs and UI clocks make sense):
+   - **M** or **S** → Settings → **1** Time & Location → set RTC / timezone as needed (**S.1.1**, **S.1.2**).
+3. **Name this device** (contact **0 / MyID**):
+   - Open **Contacts** (**C**).
+   - Row **0** is local identity (e.g. `0:MyID:…`).
+   - Open / edit name and save (Enter).  
+   - Default factory-style name may be **MyRatSpeakPro** until changed.
+4. Confirm **LoRa** looks alive on Home (RSSI / online / peer tiles as implemented).
+
+### 7.2 Discover each other over LoRa
+
+1. On **Pro A** Home → activate **Announce ID** (button or Settings storage announce row).
+2. On **Pro B** Home → **Announce ID** as well.
+3. Open **Peers** (**P**) on each device.
+4. Confirm the other radio appears (hash and/or temporary name, RSSI if shown).
+
+**Announce ID** = chirp **public** identity for discovery. It does not replace careful handling of secrets; naming is local metadata on top of the destination hash.
+
+### 7.3 Save a contact with a human name
+
+1. On **Pro A**, in **Peers**, highlight **Pro B**’s row → **Enter** (or follow on-screen open/save flow).
+2. Assign a display name (e.g. `PRO-B` or a person name) → **Enter** to save.
+3. Repeat on **Pro B** for **Pro A**.
+4. Check **Contacts** (**C**): named peers should appear for later Inbox use.
+
+Row indices on Contacts are **0 = this device**, then **1, 2, 3…** for saved others.
+
+### 7.4 First test message
+
+1. On **Pro A**: **I** → select **Pro B** → **Enter** → type `test` → **Enter**.
+2. On **Pro B**: idle may show unread; or open **I** and confirm the thread.
+3. Reply from **Pro B** so **Pro A** sees a return path.
+
+If nothing appears:
+
+- Re-announce both sides.
+- Move closer / check antenna and **S.6** LoRa summary.
+- Confirm both builds are standalone T-Deck Pro LoRa images.
+
+### 7.5 WiFi
+
+**TBD.** Not required for the sequence above. Future work: credentials, enable toggle under **S.2**, and how WiFi transport interacts with LoRa-first messaging.
+
+---
+
+## 8. Idle & notifications
 
 | Topic | Behavior |
 |-------|----------|
 | Timeout | **S.3.2** / **S.3.2.4** |
-| Wake | Any **key** |
+| Wake | Physical **key** only |
 | Unread on splash | May update on RX without leaving idle |
-| Beep / vibe | **S.7** when enabled |
+| Beep / vibe | Optional alerts (**S.7**) on inbound when enabled |
 
 ---
 
-## 7. Stable hotkey policy
+## 9. Stable hotkey policy
 
-**I / C / M / P** must stay. **S** is reached via **M → S**. **Alt** = case in entry mode.
+| Key | Meaning in browse mode | Must remain |
+|-----|------------------------|-------------|
+| **I** | Inbox | Yes |
+| **C** | Contacts | Yes |
+| **P** | Peers | Yes |
+| **M** | MENU overlay (not while composing) | Yes |
+| **H** | Home | Preferred stable |
+| **S** | Settings | Preferred stable |
+| **G** / **V** | Up / down in lists | Preferred stable |
 
----
-
-## 8. Implementer checklist
-
-1. Browse vs entry gates **I/C/M/P**.  
-2. Underlines only when the action works.  
-3. Bottom **C/P/I** in browse mode on main screens.  
-4. Settings: **M → S**.  
-5. Idle: key wake only.  
-6. Announce never implies private-key export.  
-7. HAL detail: `hal/` + `AI-guide.txt`.
+Changing **I/C/M/P** requires updating this document, on-screen underlines, and muscle memory—treat as a breaking UX change.
 
 ---
 
-## 9. Document history
+## 10. Implementer checklist (programming from scratch)
 
-| Ver | Notes |
-|-----|--------|
-| 0.1 | Initial draft: How-to first, screen wireframes, Settings tree, LoRa-first bring-up |
+When rebuilding UI behavior:
+
+1. **Browse vs entry:** clear flag (compose length, name-edit, settings field edit) gates hotkeys.
+2. **Underlines** only for actions that work *now*.
+3. **Scroll hints** hide when `scroll == 0` or no remaining rows.
+4. **Settings path string** matches tree segment (`S.4.8` + label).
+5. **Digits** on Settings activate; lists select consistently.
+6. **Idle** ignores touch; RX must not call the same path as “user woke device.”
+7. **Announce** copy never implies private key export.
+8. **HAL** stays out of this doc—board pins, BQ27220, TCA8418, e-ink, radio wiring belong under `hal/` + `AI-guide.txt`.
+
+---
+
+## 11. Document history
+
+| Version | Notes |
+|---------|--------|
+| 0.1 | Initial draft from standalone T-Deck Pro behavior: key-first nav, LoRa-first bring-up, stable **I/C/M/P**, Settings tree, two-device first message |
+| 0.2 | Added full-device reference photos (idle splash, Home+MENU) with bezel and keyboard |
+| 0.3 | Composited RatSpeak UI onto LilyGo product bezel/keyboard graphic; larger figures |
+| 0.4 | Clean screen graphics: updated logo; MENU overlay Inbox raised above bottom tabs |
 
