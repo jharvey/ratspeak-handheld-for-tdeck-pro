@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="320" viewBox="0 0 240 320" font-family="DejaVu Sans, Arial, sans-serif">
+  <rect width="240" height="320" fill="#f4f1e8"/>
+  <rect x="0" y="0" width="28" height="36" fill="none" stroke="#111"/>
+  <circle cx="14" cy="18" r="8" fill="none" stroke="#111" stroke-width="1.5"/>
+  <rect x="28" y="0" width="28" height="36" fill="none" stroke="#111"/>
+  <rect x="34" y="10" width="14" height="20" fill="none" stroke="#111" stroke-width="1.5"/>
+  <rect x="36" y="12" width="10" height="14" fill="#111"/>
+  <rect x="56" y="0" width="92" height="36" fill="none" stroke="#111"/>
+  <text x="102" y="15" text-anchor="middle" font-size="10" fill="#111">01/09</text>
+  <text x="102" y="28" text-anchor="middle" font-size="11" fill="#111">14:08</text>
+  <rect x="148" y="0" width="92" height="36" fill="none" stroke="#111" stroke-width="1.5"/>
+  <text x="194" y="23" text-anchor="middle" font-size="12" font-weight="700" fill="#111">MENU</text>
+  <line x1="164" y1="26" x2="172" y2="26" stroke="#111" stroke-width="1.5"/>
+  <rect x="0" y="38" width="124" height="20" fill="none" stroke="#111"/>
+  <text x="8" y="52" font-size="12" fill="#111">Unread 02</text>
+  <rect x="0" y="62" width="240" height="44" fill="#111"/>
+  <text x="8" y="80" font-size="12" fill="#f4f1e8">&gt;1 : PRO1</text>
+  <text x="8" y="96" font-size="10" fill="#f4f1e8">8b9f25a6b395b51017bd…</text>
+  <text x="188" y="80" font-size="11" fill="#f4f1e8">unrd 02</text>
+  <rect x="0" y="106" width="240" height="44" fill="none" stroke="#111"/>
+  <text x="8" y="124" font-size="12" fill="#111"> 2 : 3bb4b09700e7</text>
+  <text x="8" y="140" font-size="10" fill="#111">3bb4b09700e7c1d5a7c5…</text>
+  <text x="188" y="124" font-size="11" fill="#111">unrd 00</text>
+  <rect x="0" y="150" width="240" height="44" fill="none" stroke="#111"/>
+  <text x="8" y="168" font-size="12" fill="#111"> 3 : FieldUnit</text>
+  <text x="8" y="184" font-size="10" fill="#111">659bd85395781c525d…</text>
+  <text x="188" y="168" font-size="11" fill="#111">unrd 00</text>
+  <text x="120" y="220" text-anchor="middle" font-size="12" font-weight="700" fill="#111">MyRatSpeakPro</text>
+  <rect x="0" y="256" width="80" height="24" fill="none" stroke="#111"/>
+  <text x="40" y="272" text-anchor="middle" font-size="11" fill="#111">V=Down</text>
+  <rect x="80" y="256" width="64" height="24" fill="none" stroke="#111"/>
+  <text x="112" y="272" text-anchor="middle" font-size="11" fill="#111">G=up</text>
+  <rect x="144" y="256" width="96" height="24" fill="none" stroke="#111"/>
+  <text x="192" y="272" text-anchor="middle" font-size="11" fill="#111">v more</text>
+  <rect x="0" y="280" width="80" height="40" fill="none" stroke="#111"/>
+  <text x="40" y="304" text-anchor="middle" font-size="12" fill="#111">Contact</text>
+  <line x1="22" y1="308" x2="30" y2="308" stroke="#111" stroke-width="1.5"/>
+  <rect x="80" y="280" width="64" height="40" fill="none" stroke="#111"/>
+  <text x="112" y="304" text-anchor="middle" font-size="12" fill="#111">Peers</text>
+  <line x1="100" y1="308" x2="108" y2="308" stroke="#111" stroke-width="1.5"/>
+  <rect x="144" y="280" width="96" height="40" fill="#111"/>
+  <text x="192" y="304" text-anchor="middle" font-size="12" fill="#f4f1e8">Inbox</text>
+  <line x1="178" y1="308" x2="186" y2="308" stroke="#f4f1e8" stroke-width="1.5"/>
+</svg>
