@@ -187,6 +187,22 @@ Settings and many lists are numbered **1 … n** on the left of each row.
 - **Selection**: bold outline around the active row (not a filled/inverted black bar).
 - **Device name** (`MyRatSpeakPro`): on list screens sits just above the **G=up / V=Down** footer; on Home sits **below** Announce ID (no overlap). **Not shown on Settings.**
 
+### 4.0 Idle splash
+
+![Idle splash wireframe](images/screen-idle.svg)
+
+- Example shows **NEW messages: 3 unread**.
+- **press a KEY to wake** — touch does not exit idle.
+- Unread count can update on RX while still idle.
+
+### 4.0b Home with MENU overlay
+
+![Home with MENU overlay](images/screen-home-menu.svg)
+
+- Top bar (clock + **MENU**) stays visible.
+- Column under MENU: **H**ome, **S**ettings, **C**ontacts, **P**eers, **I**nbox (underlines on hotkeys).
+- **M** again closes, or press a letter to jump.
+
 ### 4.1 Home
 
 ![Home screen wireframe](images/screen-home.svg)
@@ -285,16 +301,21 @@ S     Settings
 
 ## 6. Typical user sequence (send a message)
 
-1. Wake if idle → any key.  
-2. **I** → Inbox (bottom tab / hotkey; always present in browse mode).  
-3. Select peer → **V** / **G** or digit → **Enter**.  
-4. Type message (**Alt** for case). Nav underlines off.  
-5. **Enter** to send.  
+Goal: from a powered device, reach “message on the air” with few keys.
+
+Assumes contacts already exist (see §7 if not).
+
+1. **Wake** if idle → any key.
+2. **I** → Inbox *(skip if you are already on Inbox or in the right thread)*.
+3. **Select contact** via **touch** or a **number**, then **Enter**.
+4. **Type** message (**Alt** for case). Nav underlines off.
+5. **Enter** to send.
 6. Optional **^** back to list.
 
-**Muscle memory:** `I` → digit → `Enter` → type → `Enter`.
+If already in the correct thread, start at step 4. New inbound messages should refresh the list/thread while preserving an in-progress draft when the UI auto-redraws.
 
 **Settings mid-flow:** `M` → `S` → digits…
+
 
 ---
 
@@ -385,3 +406,4 @@ Changing **I / C / M / P** is a breaking UX change (docs, underlines, muscle mem
 | 0.1 | Initial draft: key-first nav, LoRa-first bring-up, stable **I/C/M/P** |
 | 0.2 | Clarify always-on **C/P/I**, Settings via **M→S**, **Alt** case toggle; add Home / Contacts / Inbox / Settings wireframes |
 | 0.3 | Wireframe fixes: M underline, refresh arrows, bold-outline selection, name placement; add Inbox compose + S.3 diagrams |
+| 0.4 | Idle (3 unread) + Home MENU overlay diagrams; typical send sequence updated |
