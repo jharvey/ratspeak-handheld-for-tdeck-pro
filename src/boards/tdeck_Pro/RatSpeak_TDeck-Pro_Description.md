@@ -111,31 +111,42 @@ pio run -e tdeck_pro_standalone -t upload --upload-port COMx
 
 ## 4. Screen map & wireframes
 
-### 4.1 Home (with MENU overlay)
+### Wireframe conventions
 
-Same Home layout as day-to-day use; **M** opens the overlay column under **MENU** without hiding the top bar.
+- **Refresh** (top-left): dual arrows in a cycle (not a plain circle).
+- **MENU**: underline under **M** only.
+- **Bottom tabs**: underline under **C**, **P**, and **I**.
+- **Selection**: bold outline (not inverted fill).
+- **Device name**: under Announce on Home; just above G/V footer on list screens; **not** on Settings.
+
+### 4.1 Home
+
+![Home screen](images/screen-home.svg)
+
+- Status tiles, **Announce ID**, device name below Announce.
+- Bottom **Contact | Peers | Inbox**.
+
+### 4.2 Home with MENU overlay
 
 ![Home with MENU overlay](images/screen-home-menu.svg)
 
-- Overlay rows: **H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox  
-- **M** again closes, or press a letter to jump  
-- **Announce ID** = public LoRa identity (not a private key)
-
-### 4.2 Home (MENU closed)
-
-![Home screen](images/screen-home.svg)
+- Same Home background as §4.1.
+- Overlay column under **MENU** covers the right side, including the **Announce** area.
+- Rows: **H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox.
+- Top bar stays visible. **M** again closes, or press a letter to jump.
 
 ### 4.3 Idle splash
 
 ![Idle splash](images/screen-idle.svg)
 
-Example: **3 unread**. Wake with **any key** (not touch).
+- RatSpeak logo, time, battery, **NEW messages: 3 unread** (example), uptime, name.
+- **press a KEY to wake** (touch does not wake).
 
 ### 4.4 Contacts
 
 ![Contacts](images/screen-contacts.svg)
 
-**0: MyID** = this radio. Selection = bold outline.
+- **0: MyID** = this radio. Selection = bold outline.
 
 ### 4.5 Inbox (list)
 
@@ -145,19 +156,21 @@ Example: **3 unread**. Wake with **any key** (not touch).
 
 ![Inbox compose](images/screen-inbox-compose.svg)
 
-Entry mode; footer **^ BACK UP TO INBOX**.
+- Entry mode; footer **^ BACK UP TO INBOX**.
 
 ### 4.7 Settings root (`S`)
 
 ![Settings](images/screen-settings.svg)
 
-Open **M → S**. No device-name strip on Settings.
+- Open **M → S**. No device-name strip.
 
 ### 4.8 Settings **S.3 Screen**
 
 ![Settings S.3](images/screen-settings-s3.svg)
 
-Theme, Idle splash, Key backlight. **M → S → 3**.
+- Theme, Idle splash, Key backlight.
+- Bottom chrome matches other list screens (**V/G** footer + **C/P/I** tabs).
+
 
 ---
 
@@ -219,6 +232,5 @@ S     Settings          ← M then S
 
 | Ver | Notes |
 |-----|--------|
-| 0.1–0.3 | Nav model, wireframe conventions, compose + S.3 |
-| 0.4 | Idle + MENU overlay diagrams; send sequence tweak |
-| 0.5 | **How to** section first (send, contact, first boot, install TBD); Home+MENU wireframe matches full Home |
+| 0.1 | Initial draft: How-to first, screen wireframes, Settings tree, LoRa-first bring-up |
+

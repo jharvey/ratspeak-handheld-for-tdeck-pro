@@ -17,22 +17,20 @@
   <text x="180" y="23" font-size="12" font-weight="700" fill="#111">ENU</text>
   <text x="8" y="52" font-size="12" font-weight="700" fill="#111">S.3 Screen</text>
   <g font-size="11" fill="#111">
-    <rect x="0" y="58" width="240" height="36" fill="none" stroke="#111"/>
-    <text x="8" y="74">1 : Toggle : Theme</text>
-    <text x="8" y="88" font-size="10">White paper</text>
-    <rect x="1" y="95" width="238" height="34" fill="none" stroke="#111" stroke-width="3"/>
-    <text x="8" y="111">2 : Menu : Idle splash</text>
-    <text x="8" y="125" font-size="10">No password</text>
-    <rect x="0" y="132" width="240" height="36" fill="none" stroke="#111"/>
-    <text x="8" y="148">3 : Toggle : Key backlight</text>
-    <text x="8" y="162" font-size="10">ON</text>
+    <rect x="0" y="58" width="240" height="40" fill="none" stroke="#111"/>
+    <text x="8" y="76">1 : Toggle : Theme</text>
+    <text x="8" y="90" font-size="10">White paper</text>
+    <rect x="1" y="99" width="238" height="38" fill="none" stroke="#111" stroke-width="3"/>
+    <text x="8" y="117">2 : Menu : Idle splash</text>
+    <text x="8" y="131" font-size="10">No password</text>
+    <rect x="0" y="140" width="240" height="40" fill="none" stroke="#111"/>
+    <text x="8" y="158">3 : Toggle : Key backlight</text>
+    <text x="8" y="172" font-size="10">ON</text>
   </g>
-  <text x="8" y="200" font-size="10" fill="#111">Path: M → S → 3</text>
-  <text x="8" y="214" font-size="10" fill="#111">Enter opens Idle; ^ back to S</text>
   <rect x="0" y="256" width="80" height="24" fill="none" stroke="#111"/>
-  <text x="40" y="272" text-anchor="middle" font-size="10" fill="#111">V=Down</text>
+  <text x="40" y="272" text-anchor="middle" font-size="11" fill="#111">V=Down</text>
   <rect x="80" y="256" width="64" height="24" fill="none" stroke="#111"/>
-  <text x="112" y="272" text-anchor="middle" font-size="10" fill="#111">G=up</text>
+  <text x="112" y="272" text-anchor="middle" font-size="11" fill="#111">G=up</text>
   <rect x="144" y="256" width="96" height="24" fill="none" stroke="#111"/>
   <rect x="0" y="280" width="80" height="40" fill="none" stroke="#111"/>
   <text x="28" y="304" font-size="12" fill="#111">C</text>
