@@ -2583,7 +2583,7 @@ void browseKey(const KeyEvent& ev) {
         case 'V': moveSelection(+1); break;
         case 'M': openMenu(); break;
         case 'H': goScreen(SCR_HOME); break;
-        case 'S': goScreen(SCR_SETTINGS); break;
+        // 'S' is intentionally absent: Settings is reached only via M -> S (guide §7).
         case 'C': goScreen(SCR_CONTACTS); break;
         case 'P': goScreen(SCR_PEERS); break;
         case 'I': goScreen(SCR_INBOX); break;
