@@ -25,6 +25,7 @@ public:
     void pressKey(const QString& name, bool down);
     void touch(int x, int y);                    // tap at panel coordinates
     QSize sizeHint() const override;
+    void setFooter(const QString& text) { footer_ = text; update(); }   // replaces the panel timing line
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -48,6 +49,7 @@ private:
     uint32_t panelVersion_ = ~0u;
     uint32_t lastRefreshMs_ = 0;
     bool lastFull_ = false;
+    QString footer_;
     bool backlight_ = false;
     bool vibrating_ = false;
     uint32_t beepSeen_ = 0, beepFlashUntil_ = 0;

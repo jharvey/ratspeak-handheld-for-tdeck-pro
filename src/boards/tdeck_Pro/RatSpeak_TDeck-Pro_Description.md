@@ -68,6 +68,14 @@ A **second LoRa RatSpeak device** in range is required to verify messaging.
 4. Open serial monitor at **115200** if needed.  
 5. Power-cycle and continue with §1.3.
 
+### 1.5 Live screen on a PC (USB remote)
+
+The desktop simulator (`sim/`) can show this device's real screen and drive it from the
+PC keyboard and mouse: `simun-live.bat COM8`. It is off on the device until a PC asks
+for it over the USB serial console and stops by itself 6 s after the PC goes away. The
+`@` console lines it uses (`@M`, `@K`, `@T` in; `@HELLO`, `@FB`, `@ST` out) are described
+in `remote/ScreenMirror.h`.
+
 ---
 
 ## 2. Physical controls (summary)

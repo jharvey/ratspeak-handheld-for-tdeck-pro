@@ -15,7 +15,8 @@ const QRectF kScreen(20, 40, 240, 320);
 const QRectF kBezel(10, 28, 260, 344);
 constexpr double kKbY = 390, kKeyW = 23, kKeyH = 30, kGap = 3, kPitch = 36;
 
-const QColor kBody(0x2a, 0x2c, 0x30), kBodyEdge(0x45, 0x48, 0x4e), kBezelC(0x0e, 0x0f, 0x11);
+const QColor kBody(0x2a, 0x2c, 0x30), kBodyEdge(0x45, 0x48, 0x4e);
+const QColor kBezelC(0xf3, 0xf2, 0xee), kBezelEdge(0xc9, 0xc8, 0xc2);   // white-ish, like the device
 const QColor kPaper(0xe9, 0xe7, 0xdf), kInk(0x1c, 0x1c, 0x1c);
 const QColor kCap(0x3b, 0x3e, 0x44), kCapDown(0x6a, 0x6f, 0x78), kLegend(0xf2, 0xf2, 0xf2);
 const QColor kSym(0xf0, 0xa0, 0x40), kGlow(0x9f, 0xd4, 0xff);
@@ -146,6 +147,9 @@ void DeviceWidget::paintEvent(QPaintEvent*) {
     p.setBrush(kBezelC);
     p.drawRoundedRect(kBezel, 8, 8);
     p.drawImage(kScreen, panel_);
+    p.setPen(QPen(kBezelEdge, 0.8));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(kScreen.adjusted(-0.5, -0.5, 0.5, 0.5));   // panel edge against the light bezel
 
     // Keyboard
     QFont f = font();
@@ -168,7 +172,8 @@ void DeviceWidget::paintEvent(QPaintEvent*) {
     f.setPixelSize(7); f.setBold(false); p.setFont(f);
     p.setPen(QColor(0x80, 0x84, 0x8a));
     p.drawText(QRectF(0, kDevH - 18, kDevW, 10), Qt::AlignCenter,
-               QString("panel %1 %2 ms").arg(lastFull_ ? "full" : "partial").arg(lastRefreshMs_));
+               !footer_.isEmpty() ? footer_
+                                  : QString("panel %1 %2 ms").arg(lastFull_ ? "full" : "partial").arg(lastRefreshMs_));
 }
 
 QImage DeviceWidget::screenImage(int scale) const {

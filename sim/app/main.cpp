@@ -1,5 +1,6 @@
 // RatSpeak T-Deck Pro simulator.
 //   ratspeak-sim [--name device1] [--data DIR] [--fast] [--script FILE [--quit]] [--shots DIR]
+//                [--serial-tcp PORT] [--live COM8 | --live tcp:127.0.0.1:PORT]
 // Run two with different --name values to message between simulated devices.
 #include <QApplication>
 #include <QCommandLineParser>
@@ -10,6 +11,7 @@
 #include <unistd.h>
 
 #include "app/FirmwareRunner.h"
+#include "app/LiveLink.h"
 #include "app/MainWindow.h"
 #include "hw/SimHw.h"
 
@@ -26,7 +28,13 @@ int main(int argc, char** argv) {
     QCommandLineOption script("script", "Run a key/screenshot script (see sim/README.md).", "file");
     QCommandLineOption quit("quit", "Exit when the script ends (exit code 1 on a failed expect).");
     QCommandLineOption shots("shots", "Folder for screenshots. Default: <data>/shots.", "dir");
-    p.addOptions({name, data, fast, script, quit, shots});
+    QCommandLineOption live("live", "Live-device mode: mirror a real T-Deck Pro on a USB serial port "
+                                    "(COM8) or tcp:host:port, and send it the keys. No firmware runs here.",
+                            "port");
+    QCommandLineOption serialTcp("serial-tcp", "Expose this simulator's firmware USB serial on "
+                                               "127.0.0.1:<port> (a second simulator can --live to it).",
+                                 "port");
+    p.addOptions({name, data, fast, script, quit, shots, live, serialTcp});
     p.process(app);
 
     SimOptions opt;
@@ -38,6 +46,8 @@ int main(int argc, char** argv) {
     opt.script = p.value(script);
     opt.quitAfterScript = p.isSet(quit);
     opt.shotDir = p.value(shots);
+    opt.live = p.value(live);
+    opt.serialTcp = (quint16)p.value(serialTcp).toUInt();
     QDir().mkpath(opt.dataDir);
 
     {
@@ -51,7 +61,12 @@ int main(int argc, char** argv) {
     w.show();
 
     FirmwareRunner fw;
-    fw.start();
+    SerialTcpBridge* bridge = nullptr;
+    if (opt.live.isEmpty()) {
+        if (opt.serialTcp) bridge = new SerialTcpBridge(opt.serialTcp, &w);
+        fw.start();
+    }
+    (void)bridge;
     const int rc = app.exec();
     // The firmware thread never returns (like the ESP32 loop task): leave without
     // running static destructors underneath it.

@@ -515,15 +515,21 @@ void Keyboard::update()
   _hasEvent = false;
   _event = {};
 
-  uint8_t eventCount = tcaRead(REG_KEY_LCK_EC) & 0x0F;
+  uint8_t raw;
+  if (_injectTail != _injectHead) {
+    raw = _inject[_injectTail];
+    _injectTail = (uint8_t)((_injectTail + 1) % kInjectCap);
+  } else {
+    uint8_t eventCount = tcaRead(REG_KEY_LCK_EC) & 0x0F;
 
-  if (eventCount == 0) {
-    return;
+    if (eventCount == 0) {
+      return;
+    }
+
+    // Read one FIFO event per update (caller may loop to drain).
+    // Do not flush the rest of the FIFO here — rapid typing queues events.
+    raw = tcaRead(REG_KEY_EVENT_A);
   }
-
-  // Read one FIFO event per update (caller may loop to drain).
-  // Do not flush the rest of the FIFO here — rapid typing queues events.
-  uint8_t raw = tcaRead(REG_KEY_EVENT_A);
 
   // TCA8418 event code:
   //
@@ -547,6 +553,14 @@ void Keyboard::update()
   uint8_t col = idx % 10;
 
   mapKey(row, col, pressed);
+}
+
+void Keyboard::injectRaw(uint8_t raw)
+{
+  const uint8_t next = (uint8_t)((_injectHead + 1) % kInjectCap);
+  if (next == _injectTail) return;   // full: drop
+  _inject[_injectHead] = raw;
+  _injectHead = next;
 }
 
 // -----------------------------------------------------------------------------

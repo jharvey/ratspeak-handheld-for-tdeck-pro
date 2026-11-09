@@ -189,7 +189,7 @@ size_t HardwareSerial::write(const uint8_t* b, size_t n) {
         { std::lock_guard<std::mutex> l(sim::hw().mu); out = sim::hw().serialOut; }
         for (auto& s : lines) {
             if (out) out(s);
-            fprintf(stdout, "%s\n", s.c_str());
+            if (s.rfind("@FB ", 0) != 0) fprintf(stdout, "%s\n", s.c_str());   // no mirror frames on stdout
         }
         fflush(stdout);
     }

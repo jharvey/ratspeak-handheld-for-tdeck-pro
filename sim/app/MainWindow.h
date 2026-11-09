@@ -9,6 +9,8 @@ class QLabel;
 class QSlider;
 class QCheckBox;
 class QTimer;
+class QGroupBox;
+class LiveLink;
 
 struct SimOptions {
     QString name = "device1";
@@ -17,6 +19,8 @@ struct SimOptions {
     QString shotDir;            // where "shot" writes PNGs (default: <data>/shots)
     bool fast = false;          // no e-ink refresh delay
     bool quitAfterScript = false;
+    QString live;               // live-device mode: "COM8" or "tcp:host:port" (no firmware here)
+    quint16 serialTcp = 0;      // expose this firmware's USB serial on 127.0.0.1:<port>
 };
 
 class MainWindow : public QMainWindow {
@@ -44,6 +48,10 @@ private:
     QCheckBox* gps_ = nullptr;
     QCheckBox* realistic_ = nullptr;
     QLabel* status_ = nullptr;
+    QLabel* liveInfo_ = nullptr;
+    QGroupBox* powerBox_ = nullptr;
+    QGroupBox* envBox_ = nullptr;
+    LiveLink* live_ = nullptr;
 
     QStringList script_;
     int scriptPos_ = 0;

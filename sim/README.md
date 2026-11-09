@@ -74,6 +74,44 @@ The side panel has battery level, USB / charge-done, GPS fix, real e-ink timing 
 the WiFi access points (with their passwords), screenshot buttons and the USB serial
 console (type a firmware serial command at the bottom).
 
+## Live-device mode (real T-Deck Pro over USB)
+
+```bat
+simun-live.bat COM8
+```
+
+The same window, but no firmware runs on the PC: it opens the device's USB serial port,
+asks the device to mirror its screen, and shows the device's real e-ink contents in the
+drawing (like a VNC viewer). Keys and mouse clicks on the drawing, the PC keyboard and the
+console box at the bottom all go to the real device, and its serial log appears in the
+console. The status line shows the device's live battery reading. Scripts work here too,
+so `key`/`type`/`shot`/`expect` can drive the real hardware for tutorials:
+
+```bat
+buildatspeak-sim.exe --name tut --live COM8 --script my-tutorial.txt
+```
+
+* The device needs firmware with `src/boards/tdeck_Pro/remote/ScreenMirror.cpp`.
+* Close PuTTY or the PlatformIO monitor first: only one program can open the port. The
+  link reconnects by itself after a replug or a device reset.
+* The device mirrors only while a PC sends its 2 s heartbeat and stops 6 s after the
+  last one. Keys are sent as raw TCA8418 events, so caps, SYM, ALT and lone-Shift = Back
+  behave exactly as on the keyboard.
+* The protocol is plain text lines (`@M on|off|sync`, `@K <raw>`, `@T <x> <y>` to the
+  device; `@HELLO`, `@FB <y> <rows> <crc16> <base64>`, `@ST ...` back), described in
+  `remote/ScreenMirror.h`.
+* The power and environment controls in the side panel are greyed out: the hardware is real.
+
+**Without hardware:** a simulator can stand in for the device. Start one with its USB
+serial on a local TCP port, then attach a second one in live mode:
+
+```bat
+buildatspeak-sim.exe --name livedev --serial-tcp 5577
+buildatspeak-sim.exe --name live --live tcp:127.0.0.1:5577 --script scripts\live_tcp.txt --quit
+```
+
+`scripts/live_tcp.txt` checks that the screen mirror, keys and console all go through.
+
 ## Scripts (automated checks and tutorial screenshots)
 
 ```bat
@@ -99,7 +137,7 @@ to `build\simdata\<name>\shots\`. One command per line, `#` for comments:
 
 Included: `scripts/smoke.txt` (boot and menus), `scripts/wifi.txt` (scan, join with
 password, saved + encrypted), `scripts/announce_a.txt` + `announce_b.txt` (two devices
-discover each other; run both at once).
+discover each other; run both at once), `scripts/live_tcp.txt` (live-device mode, see above).
 
 ## Limits
 

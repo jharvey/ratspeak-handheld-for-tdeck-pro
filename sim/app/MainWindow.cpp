@@ -19,9 +19,11 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <mutex>
 
 #include "app/DeviceWidget.h"
+#include "app/LiveLink.h"
 #include "hw/SimHw.h"
 
 namespace {
@@ -39,10 +41,16 @@ int socToMv(int soc) {
         }
     return 4180;
 }
+
+// Screen-mirror protocol lines (remote/ScreenMirror.h) are not shown in the console.
+bool isMirrorLine(const QString& s) {
+    return s.startsWith("@FB ") || s.startsWith("@ST ") || s.startsWith("@HELLO ");
+}
 }  // namespace
 
 MainWindow::MainWindow(const SimOptions& opt, QWidget* parent) : QMainWindow(parent), opt_(opt) {
-    setWindowTitle(QString("RatSpeak T-Deck Pro simulator - %1").arg(opt.name));
+    setWindowTitle(opt.live.isEmpty() ? QString("RatSpeak T-Deck Pro simulator - %1").arg(opt.name)
+                                      : QString("RatSpeak T-Deck Pro - LIVE device on %1").arg(opt.live));
     {
         std::lock_guard<std::mutex> l(sim::hw().mu);
         sim::hw().serialOut = [](const std::string& line) {
@@ -64,6 +72,18 @@ MainWindow::MainWindow(const SimOptions& opt, QWidget* parent) : QMainWindow(par
     status_->setText(QString("data: %1").arg(opt.dataDir));
     resize(1100, 920);
 
+    if (!opt.live.isEmpty()) {
+        powerBox_->setEnabled(false);
+        envBox_->setEnabled(false);
+        liveInfo_->setVisible(true);
+        device_->setFooter("live: " + opt.live);
+        live_ = new LiveLink(opt.live, this);
+        connect(live_, &LiveLink::stateChanged, this, [this](const QString& s) {
+            liveInfo_->setText(s);
+            status_->setText(s);
+        });
+    }
+
     auto* t = new QTimer(this);
     connect(t, &QTimer::timeout, this, &MainWindow::drainSerial);
     t->start(50);
@@ -75,7 +95,14 @@ MainWindow::MainWindow(const SimOptions& opt, QWidget* parent) : QMainWindow(par
 void MainWindow::buildPanel(QWidget* panel) {
     auto* v = new QVBoxLayout(panel);
 
+    liveInfo_ = new QLabel("LIVE: connecting");
+    liveInfo_->setWordWrap(true);
+    liveInfo_->setStyleSheet("QLabel { background: #fff4d6; color: #5a4000; padding: 6px; border-radius: 4px; }");
+    liveInfo_->setVisible(false);
+    v->addWidget(liveInfo_);
+
     auto* power = new QGroupBox("Power (BQ27220 gauge / BQ25896 charger)");
+    powerBox_ = power;
     auto* pf = new QFormLayout(power);
     soc_ = new QSlider(Qt::Horizontal);
     soc_->setRange(0, 100);
@@ -95,6 +122,7 @@ void MainWindow::buildPanel(QWidget* panel) {
     v->addWidget(power);
 
     auto* env = new QGroupBox("Environment");
+    envBox_ = env;
     auto* ef = new QVBoxLayout(env);
     gps_ = new QCheckBox("GPS fix");
     gps_->setChecked(true);
@@ -177,6 +205,7 @@ void MainWindow::applyBattery() {
 void MainWindow::drainSerial() {
     QStringList lines;
     { std::lock_guard<std::mutex> g(g_logMu); lines.swap(g_logQueue); }
+    lines.erase(std::remove_if(lines.begin(), lines.end(), isMirrorLine), lines.end());
     if (lines.isEmpty()) return;
     for (const auto& s : lines) log_->appendPlainText(s);
     lastLines_ += lines.join('\n') + '\n';

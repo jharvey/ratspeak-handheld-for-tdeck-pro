@@ -20,7 +20,7 @@ set(AJSON_DIR ${LIBDEPS}/ArduinoJson CACHE PATH "ArduinoJson 7 source")
 set(RUST_LIB ${REPO}/protocol/target/release/libratspeak_protocol.a CACHE FILEPATH
     "Host build of the Rust protocol (cargo build --release --lib in protocol/)")
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network SerialPort)
 
 # ---- Firmware-side compile settings (shared) -------------------------------------
 set(FW_DEFS
@@ -60,7 +60,8 @@ set(FW_SRCS
     ${BOARD}/hal/Keyboard.cpp
     ${BOARD}/Eink/LvglPort.cpp
     ${BOARD}/Eink/LvglStubs.cpp
-    ${BOARD}/security/SecretVault.cpp)
+    ${BOARD}/security/SecretVault.cpp
+    ${BOARD}/remote/ScreenMirror.cpp)
 file(GLOB CORE_SRCS CONFIGURE_DEPENDS
     ${SRC}/core/storage/*.cpp
     ${SRC}/core/reticulum/*.cpp
@@ -91,9 +92,10 @@ add_executable(ratspeak-sim
     app/main.cpp
     app/DeviceWidget.cpp app/DeviceWidget.h
     app/MainWindow.cpp app/MainWindow.h
-    app/FirmwareRunner.cpp app/FirmwareRunner.h)
+    app/FirmwareRunner.cpp app/FirmwareRunner.h
+    app/LiveLink.cpp app/LiveLink.h)
 # LVGL calls back into the firmware (custom allocator, failure hook, font), so the
 # two archives are linked as a group.
 target_link_libraries(ratspeak-sim PRIVATE "$<LINK_GROUP:RESCAN,sim_firmware,sim_lvgl>"
-    Qt6::Widgets Qt6::Network)
+    Qt6::Widgets Qt6::Network Qt6::SerialPort)
 target_include_directories(ratspeak-sim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

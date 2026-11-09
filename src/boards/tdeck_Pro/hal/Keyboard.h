@@ -12,6 +12,10 @@ public:
   void update();
   void discardPending();
 
+  // Queue a raw TCA8418 event byte from another source (USB remote control). It is
+  // decoded exactly like a hardware event, before the chip's FIFO is read.
+  void injectRaw(uint8_t raw);
+
   InputMode getMode() const { return _mode; }
   void setMode(InputMode mode) { _mode = mode; }
 
@@ -54,6 +58,10 @@ private:
   unsigned long _lastShiftPressMs = 0;
 
   static constexpr unsigned long SHIFT_DOUBLE_TAP_MS = 400;
+
+  static constexpr uint8_t kInjectCap = 32;
+  uint8_t _inject[kInjectCap] = {};
+  uint8_t _injectHead = 0, _injectTail = 0;
 
   static int _debugCount;
 };

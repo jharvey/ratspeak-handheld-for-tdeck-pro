@@ -53,6 +53,7 @@
 #include "transport/LoRaInterface.h"
 #include "transport/WiFiInterface.h"
 #include "security/SecretVault.h"
+#include "remote/ScreenMirror.h"
 #include <WiFi.h>
 #include "protocol/ProtocolRuntime.h"
 #include "protocol/OutgoingContract.h"
@@ -3209,9 +3210,34 @@ void pollTouch() {
 }
 
 // ---- Serial console (debug) --------------------------------------------------------
+// "@..." lines come from the desktop simulator's live-device mode (remote/ScreenMirror.h):
+// screen mirror control, raw key events and touches.
+void handleRemoteLine(const char* p) {
+    if (p[0] == 'M' && p[1] == ' ') {
+        mirror::hostCommand(p + 2);
+    } else if (p[0] == 'K' && p[1] == ' ') {
+        const int raw = atoi(p + 2);
+        if (raw > 0 && raw < 256 && g_kbOk) g_kb.injectRaw((uint8_t)raw);
+    } else if (p[0] == 'T' && p[1] == ' ') {
+        int x = 0, y = 0;
+        if (sscanf(p + 2, "%d %d", &x, &y) == 2 && x >= 0 && y >= 0 && x < EPD_WIDTH && y < EPD_HEIGHT)
+            handleTouch((int16_t)x, (int16_t)y);
+    }
+}
+
+void mirrorTick() {
+    if (!mirror::active()) return;
+    char st[96];
+    snprintf(st, sizeof(st), "bat=%d mv=%d ma=%d chg=%d usb=%d full=%d idle=%d", g_bat.pct,
+             (int)(g_bat.volts * 1000 + 0.5f), (int)g_bat.avgMa, g_bat.charging, g_bat.usb, g_bat.full,
+             g_idleActive);
+    mirror::tick(g_display.framebuffer(), g_display.width(), g_display.height(), st);
+}
+
 void handleSerialLine(char* p) {
     while (*p == ' ') p++;
     if (!*p) return;
+    if (p[0] == '@') { handleRemoteLine(p + 1); return; }
     if ((p[0] == 't' || p[0] == 'T') && p[1] == ':') {
         if (!g_threadOpen) { Serial.println("[CMD] open a thread first"); return; }
         if (sendMessage(g_threadPeer, p + 2)) loadHistory(g_threadPeer);
@@ -3438,6 +3464,7 @@ void loop() {
             render();
         }
     }
+    mirrorTick();
     if (!g_redraw) delay(2);
 }
 

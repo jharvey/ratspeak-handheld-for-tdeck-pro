@@ -1,0 +1,26 @@
+# Live-device mode test without hardware. Start the "device" first:
+#   ratspeak-sim --name livedev --serial-tcp 5577
+# then run this in live mode against it:
+#   ratspeak-sim --name live --live tcp:127.0.0.1:5577 --script scripts\live_tcp.txt --quit
+# The device's log reaches us over the link, the screen is mirrored, and keys,
+# a touch and a console command go back to it.
+wait 7000
+shot live-01-home.png
+key M
+wait 1500
+shot live-02-menu.png
+key S
+wait 1500
+shot live-03-settings.png
+key 2
+wait 1500
+shot live-04-wifi.png
+key BACK
+wait 800
+key BACK
+wait 800
+serial ?
+expect 4000 [CMD] t:<msg>
+wait 500
+devshot live-05-device.png
+quit
