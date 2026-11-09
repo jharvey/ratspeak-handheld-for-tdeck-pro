@@ -52,6 +52,7 @@
 #include "reticulum/AnnounceManager.h"
 #include "transport/LoRaInterface.h"
 #include "transport/WiFiInterface.h"
+#include "security/SecretVault.h"
 #include <WiFi.h>
 #include "protocol/ProtocolRuntime.h"
 #include "protocol/OutgoingContract.h"
@@ -1301,7 +1302,7 @@ constexpr uint32_t WIFI_JOIN_MS  = 20000;
 constexpr uint32_t WIFI_RETRY_MS = 180000;
 constexpr size_t WIFI_PASS_MAX = 63;
 
-struct WifiCred { char ssid[33]; char pass[65]; bool autoJoin; };
+struct WifiCred { char ssid[33]; char pass[65]; bool autoJoin; bool passBad; };  // passBad: stored password unreadable
 struct WifiSeen { char ssid[33]; int16_t rssi; bool secure; };
 enum class WifiSt : uint8_t { Off, Connecting, Connected, Failed };
 
@@ -1340,8 +1341,37 @@ void wifiUiChanged() {
     if (g_page == PG_ROOT || isWifiPage(g_page)) requestRedraw();
 }
 
+// Overwrite a String's bytes before it is freed (best effort for heap copies of secrets).
+void wipeString(String& s) {
+    for (size_t i = 0; i < s.length(); i++) s.setCharAt(i, 0);
+}
+
+// Passwords are stored sealed by the SecretVault (AES-256-GCM, AAD = SSID), never
+// as plaintext. They are plaintext only in RAM, where WiFi.begin() needs them.
+void wifiSaveAll() {
+    Preferences p;
+    if (!p.begin("rs_wifi", false)) return;
+    p.clear();
+    p.putUChar("n", (uint8_t)g_wifiSavedCount);
+    for (int i = 0; i < g_wifiSavedCount; i++) {
+        const WifiCred& c = g_wifiSaved[i];
+        char k[4];
+        snprintf(k, sizeof(k), "s%d", i); p.putString(k, c.ssid);
+        String sealed;
+        if (c.pass[0] && !vault::seal(c.pass, c.ssid, sealed)) {
+            Serial.printf("[WIFI] can't encrypt \"%s\" (vault %s); password not stored\n",
+                          c.ssid, vault::status());
+            sealed = "";                         // never fall back to plaintext
+        }
+        snprintf(k, sizeof(k), "p%d", i); p.putString(k, sealed);
+        snprintf(k, sizeof(k), "a%d", i); p.putUChar(k, c.autoJoin ? 1 : 0);
+    }
+    p.end();
+}
+
 void wifiLoad() {
     Preferences p;
+    bool legacy = false;
     g_wifiSavedCount = 0;
     if (!p.begin("rs_wifi", true)) return;
     int n = p.getUChar("n", 0);
@@ -1354,27 +1384,27 @@ void wifiLoad() {
         if (s.isEmpty()) continue;
         strlcpy(c.ssid, s.c_str(), sizeof(c.ssid));
         snprintf(k, sizeof(k), "p%d", i);
-        strlcpy(c.pass, p.getString(k, "").c_str(), sizeof(c.pass));
+        String stored = p.getString(k, "");
+        c.passBad = false;
+        if (vault::isSealed(stored.c_str())) {
+            if (!vault::unseal(stored.c_str(), c.ssid, c.pass, sizeof(c.pass))) {
+                c.pass[0] = 0;
+                c.passBad = true;                // vault reset / locked: user must re-type it
+                Serial.printf("[WIFI] password for \"%s\" unreadable\n", c.ssid);
+            }
+        } else {
+            strlcpy(c.pass, stored.c_str(), sizeof(c.pass));
+            if (c.pass[0]) legacy = true;        // pre-vault plaintext: re-saved sealed below
+        }
+        wipeString(stored);
         snprintf(k, sizeof(k), "a%d", i);
         c.autoJoin = p.getUChar(k, 1) != 0;
         g_wifiSavedCount++;
     }
     p.end();
-    Serial.printf("[WIFI] %d saved network(s)\n", g_wifiSavedCount);
-}
-
-void wifiSaveAll() {
-    Preferences p;
-    if (!p.begin("rs_wifi", false)) return;
-    p.clear();
-    p.putUChar("n", (uint8_t)g_wifiSavedCount);
-    for (int i = 0; i < g_wifiSavedCount; i++) {
-        char k[4];
-        snprintf(k, sizeof(k), "s%d", i); p.putString(k, g_wifiSaved[i].ssid);
-        snprintf(k, sizeof(k), "p%d", i); p.putString(k, g_wifiSaved[i].pass);
-        snprintf(k, sizeof(k), "a%d", i); p.putUChar(k, g_wifiSaved[i].autoJoin ? 1 : 0);
-    }
-    p.end();
+    Serial.printf("[WIFI] %d saved network(s)%s\n", g_wifiSavedCount,
+                  legacy ? ", encrypting old plaintext" : "");
+    if (legacy) wifiSaveAll();
 }
 
 int wifiFindSaved(const char* ssid) {
@@ -1395,6 +1425,7 @@ void wifiRemember(const char* ssid, const char* pass, bool autoJoin) {
         strlcpy(g_wifiSaved[i].ssid, ssid, sizeof(g_wifiSaved[i].ssid));
     }
     strlcpy(g_wifiSaved[i].pass, pass, sizeof(g_wifiSaved[i].pass));
+    g_wifiSaved[i].passBad = false;
     g_wifiSaved[i].autoJoin = autoJoin;
     wifiSaveAll();
 }
@@ -1407,7 +1438,8 @@ void wifiForget(int i) {
 }
 
 bool wifiHasAutoCreds() {
-    for (int i = 0; i < g_wifiSavedCount; i++) if (g_wifiSaved[i].autoJoin) return true;
+    for (int i = 0; i < g_wifiSavedCount; i++)
+        if (g_wifiSaved[i].autoJoin && !g_wifiSaved[i].passBad) return true;
     return false;
 }
 
@@ -1502,7 +1534,7 @@ void wifiFinishScan() {
         int best = -1;                           // results are strongest first
         for (int i = 0; i < g_wifiSeenCount && best < 0; i++) {
             int k = wifiFindSaved(g_wifiSeen[i].ssid);
-            if (k >= 0 && g_wifiSaved[k].autoJoin) best = k;
+            if (k >= 0 && g_wifiSaved[k].autoJoin && !g_wifiSaved[k].passBad) best = k;
         }
         if (best >= 0) {
             wifiConnect(g_wifiSaved[best].ssid, g_wifiSaved[best].pass, false, true);
@@ -1916,8 +1948,8 @@ void buildSettingsRows(Page p) {
         srow(RK_INFO, "IP address", "%s", wifiConnected() ? WiFi.localIP().toString().c_str() : "-");
         srow(RK_MENU, "Scan networks", g_wifiScanning ? "scanning..."
                                        : g_wifiScanned ? "%d found" : "Enter = scan", g_wifiSeenCount);
-        srow(RK_MENU, "Saved networks", "%d saved%s", g_wifiSavedCount,
-             wifiHasAutoCreds() ? ", auto-connect" : "");
+        srow(RK_MENU, "Saved networks", "%d saved, encrypted%s", g_wifiSavedCount,
+             wifiHasAutoCreds() ? ", auto" : "");
         srow(RK_ACTION, "Disconnect", g_wifiSt == WifiSt::Off ? "-" : "Enter = off (pause auto)");
         break;
 
@@ -1950,7 +1982,8 @@ void buildSettingsRows(Page p) {
         srow(RK_TOGGLE, "Auto-connect", "%s", c.autoJoin ? "ON" : "OFF");
         e = editingSub(Entry::WifiPass);
         if (e) srow(RK_ENTRY, "Password", "%s", e);
-        else   srow(RK_ENTRY, "Password", c.pass[0] ? "%u chars, Enter = change" : "none (open)",
+        else if (c.passBad) srow(RK_ENTRY, "Password", "unreadable, Enter = re-type");
+        else   srow(RK_ENTRY, "Password", c.pass[0] ? "%u chars, encrypted" : "none (open)",
                     (unsigned)strlen(c.pass));
         srow(RK_ACTION, "Forget network", "Enter = forget");
         break;
@@ -1975,7 +2008,7 @@ void buildSettingsRows(Page p) {
     case PG_IDLE:
         srow(RK_PICK, "Off", "%s", g_cfg.idleMode == 0 ? "(current)" : "");
         srow(RK_PICK, "On, no password", "%s", g_cfg.idleMode == 1 ? "(current)" : "");
-        srow(RK_INFO, "On + password", "TBD");
+        srow(RK_INFO, "On + password", "TBD (key: %s)", vault::status());
         e = editingSub(Entry::IdleSecs);
         if (e) srow(RK_ENTRY, "Timeout (10-99999 s)", "%s", e);
         else   srow(RK_ENTRY, "Timeout (10-99999 s)", "%u s", (unsigned)g_cfg.idleSecs);
@@ -2052,6 +2085,7 @@ void buildSettingsRows(Page p) {
              g_storeReady ? (unsigned)g_msgStore.totalConversations() : 0u,
              g_storeReady ? g_msgStore.totalUnreadCount() : 0);
         srow(RK_MENU, "SD card", "%s", g_sdStatus);
+        srow(RK_INFO, "Secrets key", "%s (AES-256)", vault::status());
         break;
 
     case PG_SD:
@@ -2170,7 +2204,7 @@ void activateSetting(int idx) {
         const WifiSeen& s = g_wifiSeen[idx - 1];
         const int k = wifiFindSaved(s.ssid);
         if (wifiConnected() && strcmp(s.ssid, g_wifiTarget) == 0) { toast("Already connected"); break; }
-        if (k >= 0) {                            // known: join with the stored password
+        if (k >= 0 && !g_wifiSaved[k].passBad) { // known: join with the stored password
             wifiConnect(g_wifiSaved[k].ssid, g_wifiSaved[k].pass, false, g_wifiSaved[k].autoJoin);
             popPage();
             toast("Joining %.16s", s.ssid);
@@ -2179,7 +2213,7 @@ void activateSetting(int idx) {
         strlcpy(g_joinSsid, s.ssid, sizeof(g_joinSsid));
         g_joinPass[0] = 0;
         g_joinSecure = s.secure;
-        g_joinAuto = true;                       // default: auto-connect once credentials exist
+        g_joinAuto = k >= 0 ? g_wifiSaved[k].autoJoin : true;   // default: auto-connect
         if (s.secure) { pushPage(PG_WIFI_JOIN, 1); startEntry(Entry::WifiPass); }
         else          pushPage(PG_WIFI_JOIN, 3);
         break;
@@ -2194,6 +2228,7 @@ void activateSetting(int idx) {
         WifiCred& c = g_wifiSaved[g_wifiNetIdx];
         if (idx == 1) {
             if (wifiConnected() && strcmp(c.ssid, g_wifiTarget) == 0) { toast("Already connected"); break; }
+            if (c.passBad) { startEntry(Entry::WifiPass); toast("Re-type the password"); break; }
             wifiConnect(c.ssid, c.pass, false, c.autoJoin);
             toast("Joining %.16s", c.ssid);
         } else if (idx == 2) {
@@ -2955,6 +2990,7 @@ void commitEntry() {
             if (!g_bufLen) { endEntry(); toast("Password unchanged"); return; }
             WifiCred& c = g_wifiSaved[g_wifiNetIdx];
             strlcpy(c.pass, g_buf, sizeof(c.pass));
+            c.passBad = false;
             wifiSaveAll();
             endEntry();
             toast("Password saved");
@@ -3358,6 +3394,7 @@ bool begin() {
     gpsApplyPower();
     loadBatteryCal();
     readBattery();
+    vault::begin();                       // default password, applied automatically for now
     wifiLoad();
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
     noteInput();

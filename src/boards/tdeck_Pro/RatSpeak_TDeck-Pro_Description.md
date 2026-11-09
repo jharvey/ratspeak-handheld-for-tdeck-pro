@@ -167,7 +167,7 @@ S     Settings          ← M then S
 ├── S.2     WiFi                    (status, IP)
 │   ├── S.2.3   Scan networks       pick → saved: join; new locked: type password (8-63, Alt+key = case)
 │   │   └── …   Join WiFi           Password · Auto-connect (default ON) · Join (saves on success)
-│   ├── S.2.4   Saved networks      up to 8, stored in NVS rs_wifi
+│   ├── S.2.4   Saved networks      up to 8, NVS rs_wifi; passwords AES-256-GCM sealed (see Secrets)
 │   │   └── …   Saved network       Connect now · Auto-connect · Password · Forget
 │   └── S.2.5   Disconnect          radio off, auto-connect paused until next manual join
 ├── S.3     Screen & I/O
@@ -218,3 +218,20 @@ S     Settings          ← M then S
 | Ver | Notes |
 |-----|--------|
 | 0.1 | Initial draft: How-to first, device figures (`images/screen-*.png` with bezel/keyboard), Settings tree, LoRa-first bring-up |
+
+## Secrets at rest (SecretVault)
+
+Saved secrets (today: WiFi passwords) are never written to flash as plaintext.
+`security/SecretVault` derives a key with PBKDF2-HMAC-SHA256 (10 000 rounds) from
+**password + chip MAC + a random per-device salt** (NVS `rs_vault`), then seals each
+secret with AES-256-GCM (random nonce, SSID as associated data).
+
+- **Now:** the password is a built-in default, applied automatically at boot (no
+  prompt). This stops a flash dump or copied NVS from being read on a PC, but not
+  someone who has the device itself, because the firmware unlocks itself.
+- **Planned:** the idle-screen password (S.3.2 "On + password") becomes the vault
+  password. Setting it: decrypt all secrets, `vault::setPassword(pw)`, re-save them.
+  At boot the vault is then locked until the password is typed, so WiFi
+  auto-connect waits for unlock.
+- **Strongest option (not enabled):** ESP32-S3 flash encryption + NVS encryption.
+  This burns eFuses and can't be undone, so it is a deliberate per-device decision.
