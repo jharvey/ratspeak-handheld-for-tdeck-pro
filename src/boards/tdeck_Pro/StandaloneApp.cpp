@@ -354,14 +354,13 @@ bool readBattery() {
     int nOk = 0, nSoc = 0, nCur = 0;
     int32_t curSum = 0;
     uint16_t flags = 0;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 2; i++) {     // 2 samples, no sleeps: keeps the input loop snappy
         uint16_t mv = 0, soc = 0, cur = 0, fl = 0;
         if (!bqReadU16(0x08, mv) || mv < 2500 || mv > 4500) continue;
         mvSum += mv; nOk++;
         if (bqReadU16(0x2C, soc) && soc <= 100) { socSum += soc; nSoc++; }
         if (bqReadU16(0x14, cur)) { curSum += (int16_t)cur; nCur++; }
         if (bqReadU16(0x0A, fl)) flags = fl;
-        delay(2);
     }
     if (nOk == 0) { g_bat.valid = false; return false; }
     uint16_t rem = 0, fcc = 0;
@@ -1253,7 +1252,6 @@ bool     g_idleActive = false;
 uint32_t g_lastInputMs = 0;
 
 void requestRedraw() { g_redraw = true; }
-void requestRedrawSoon(uint32_t ms = 120) { g_redrawAt = millis() + ms; if (!g_redrawAt) g_redrawAt = 1; }
 
 void toast(const char* fmt, ...) {
     va_list ap;
@@ -2210,6 +2208,7 @@ void drawMenuOverlay() {
 }
 
 void render() {
+    const uint32_t t0 = millis();
     clearRoot();
     if (g_threadOpen)                  renderThread();
     else if (g_entry == Entry::Name)   renderRename();
@@ -2222,11 +2221,15 @@ void render() {
     drawBottomBar();
     drawMenuOverlay();
     lv_refr_now(nullptr);
-    if (g_fullRefreshReq) { g_fullRefreshReq = false; g_display.fullRefresh(); }
-    else g_display.refreshIfDirty();
+    const uint32_t t1 = millis();
+    // Clear the request first: keys queued during the panel refresh may ask again.
     g_redraw = false;
     g_redrawAt = 0;
+    if (g_fullRefreshReq) { g_fullRefreshReq = false; g_display.fullRefresh(); }
+    else g_display.refreshIfDirty();
     syncNumLayer();
+    Serial.printf("[UI] frame %ums (build %u, panel %u)\n", (unsigned)(millis() - t0),
+                  (unsigned)(t1 - t0), (unsigned)g_display.lastRefreshMs());
 }
 
 // ---- Idle splash -----------------------------------------------------------------
@@ -2270,9 +2273,10 @@ void paintIdle() {
     label(0, y0 + 6 * step, W, 18, line, unread > 0);
 
     uint32_t s = millis() / 1000UL;
-    snprintf(line, sizeof(line), "uptime %lud %02lu:%02lu", (unsigned long)(s / 86400UL),
+    label(0, y0 + 7 * step, W, 16, "uptime");
+    snprintf(line, sizeof(line), "%05luD : %02luH : %02luM", (unsigned long)(s / 86400UL),
              (unsigned long)((s / 3600UL) % 24UL), (unsigned long)((s / 60UL) % 60UL));
-    label(0, y0 + 7 * step + 4, W, 16, line);
+    label(0, y0 + 8 * step, W, 16, line);
     label(0, y0 + 9 * step, W, 18, g_selfName, true);
     label(0, 292, W, 22, "press a KEY to wake", true);
 
@@ -2530,7 +2534,7 @@ void entryKey(const KeyEvent& ev) {
     if (ev.enter) { commitEntry(); return; }
     if (ev.del) {
         if (g_bufLen) g_buf[--g_bufLen] = 0;
-        requestRedrawSoon();
+        requestRedraw();
         return;
     }
     char c = 0;
@@ -2554,7 +2558,9 @@ void entryKey(const KeyEvent& ev) {
     }
     if (g_entry == Entry::Name && g_bufLen >= 23) { toast("Max 23 chars"); return; }
     bufAppend(c);
-    requestRedrawSoon(g_entry == Entry::Message ? 250 : 120);   // batch fast typing
+    // Show it on the next frame. Keys typed while that frame is on the panel are
+    // queued by onPanelBusy() and land together in the frame after.
+    requestRedraw();
 }
 
 void menuKey(const KeyEvent& ev) {
@@ -2603,6 +2609,45 @@ void handleKey(const KeyEvent& ev) {
     if (entryActive()) { entryKey(ev); return; }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
     browseKey(ev);
+}
+
+// ---- Key queue --------------------------------------------------------------------
+// The TCA8418 FIFO holds only 10 events (5 key presses). A partial e-ink refresh
+// blocks ~0.7 s, so the keyboard is also read from the panel's busy-wait callback
+// into this queue; nothing is dropped and keys are handled right after the frame.
+constexpr uint8_t KEYQ_CAP = 48;
+KeyEvent g_keyq[KEYQ_CAP];
+uint8_t  g_keyqHead = 0, g_keyqTail = 0;
+
+void readKeyboardIntoQueue() {
+    if (!g_kbOk) return;
+    for (int n = 0; n < 10; n++) {
+        g_kb.update();
+        if (!g_kb.hasEvent()) break;
+        uint8_t next = (uint8_t)((g_keyqHead + 1) % KEYQ_CAP);
+        if (next == g_keyqTail) break;                  // queue full: leave rest in FIFO
+        g_keyq[g_keyqHead] = g_kb.getEvent();
+        g_keyqHead = next;
+    }
+}
+
+void processKeys() {
+    readKeyboardIntoQueue();
+    while (g_keyqTail != g_keyqHead) {
+        KeyEvent ev = g_keyq[g_keyqTail];
+        g_keyqTail = (uint8_t)((g_keyqTail + 1) % KEYQ_CAP);
+        handleKey(ev);
+    }
+}
+
+// Runs while the panel is busy refreshing. Must only read input, never draw.
+void onPanelBusy(const void*) {
+    static uint32_t last = 0;
+    if (millis() - last >= 8) {
+        last = millis();
+        readKeyboardIntoQueue();
+    }
+    delay(1);
 }
 
 // ---- Touch (secondary) --------------------------------------------------------------
@@ -2838,6 +2883,7 @@ bool begin() {
     spiBusIdle();
     if (!g_display.begin()) { Serial.println("[BOOT] display failed"); return false; }
     if (!LvglPort::begin(g_display)) { Serial.println("[BOOT] LVGL failed"); return false; }
+    g_display.setBusyCallback(onPanelBusy);
     drawBootSplash();
 
     g_kbOk = g_kb.begin();
@@ -2867,6 +2913,7 @@ bool begin() {
 }
 
 void loop() {
+    processKeys();          // input first: lowest latency to the next render
     pumpOnce();
     g_announceMgr.loop();
     g_audio.loop();
@@ -2886,23 +2933,19 @@ void loop() {
     watchPeers();
     watchClockAndToast();
 
-    // Drain up to 8 key events per pass (fast typing queues in the TCA8418 FIFO).
-    if (g_kbOk) {
-        for (int n = 0; n < 8; n++) {
-            g_kb.update();
-            if (!g_kb.hasEvent()) break;
-            handleKey(g_kb.getEvent());
-        }
-    }
+    processKeys();          // again, in case a watcher above took a while
     pollTouch();
     pollSerial();
     watchIdle();
 
     if (!g_idleActive) {
         const bool debounced = g_redrawAt && (int32_t)(millis() - g_redrawAt) >= 0;
-        if (g_redraw || debounced) render();
+        if (g_redraw || debounced) {
+            processKeys();  // fold any just-arrived keys into this frame
+            render();
+        }
     }
-    delay(5);
+    if (!g_redraw) delay(2);
 }
 
 }  // namespace standalone
