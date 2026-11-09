@@ -2,7 +2,7 @@
 
 **Audience:** operators holding the device, and developers implementing or reworking UI.  
 **Input priority:** **keyboard first**; touch is secondary where the panel works.  
-**Radio priority:** **LoRa mesh / LXMF first**. WiFi is reserved for later (see TBD).  
+**Radio priority:** **LoRa mesh / LXMF first**. WiFi (station) is optional: scan, join, saved passwords, auto-connect (S.2).  
 **Stable hotkeys:** **I**, **C**, **M**, **P** (do not reassign lightly).
 
 Related code: `StandaloneApp.cpp`, `hal/Keyboard.cpp`, `hal/Power.cpp`, `AI-guide.txt`.
@@ -53,7 +53,7 @@ Do this on each newly programmed radio before relying on messaging.
 | 1 | **Configure time** | **M → S → 1** (Time & Location) → set RTC (**S.1.1**) and timezone (**S.1.2**) |
 | 2 | **Display theme** | **M → S → 3** (Screen) → **1** Theme → toggle **White paper** vs **Black ink** |
 | 3 | **Name this device** | **C** → row **0 MyID** → type name → **Enter** |
-| 4 | **WiFi** | **M → S → 2** — **TBD** (not required for LoRa messaging) |
+| 4 | **WiFi** | **M → S → 2** — scan, join with password, saved networks, auto-connect (not required for LoRa messaging) |
 | 5 | **Meet the other radio** | Announce ID both sides → **P** → name contact (§1.2) → test send (§1.1) |
 
 A **second LoRa RatSpeak device** in range is required to verify messaging.
@@ -164,7 +164,12 @@ S     Settings          ← M then S
 │   ├── S.1.3   Enable GPS
 │   ├── S.1.4   Manual location
 │   └── …       Sync GPS now
-├── S.2     WiFi                    [TBD]
+├── S.2     WiFi                    (status, IP)
+│   ├── S.2.3   Scan networks       pick → saved: join; new locked: type password (8-63, Alt+key = case)
+│   │   └── …   Join WiFi           Password · Auto-connect (default ON) · Join (saves on success)
+│   ├── S.2.4   Saved networks      up to 8, stored in NVS rs_wifi
+│   │   └── …   Saved network       Connect now · Auto-connect · Password · Forget
+│   └── S.2.5   Disconnect          radio off, auto-connect paused until next manual join
 ├── S.3     Screen & I/O
 │   ├── S.3.1   Theme (white / black)
 │   ├── S.3.2   Idle splash (+ S.3.2.4 timeout)

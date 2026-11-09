@@ -51,6 +51,8 @@
 #include "reticulum/IdentityManager.h"
 #include "reticulum/AnnounceManager.h"
 #include "transport/LoRaInterface.h"
+#include "transport/WiFiInterface.h"
+#include <WiFi.h>
 #include "protocol/ProtocolRuntime.h"
 #include "protocol/OutgoingContract.h"
 #include "runtime/TaskOwner.h"
@@ -1214,7 +1216,7 @@ bool    g_threadOpen = false;
 uint8_t g_threadPeer[16];
 
 // Entry mode: one text buffer, one owner.
-enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, Longitude };
+enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, Longitude, WifiPass };
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -1232,7 +1234,8 @@ bool entryNumeric() {
 // Settings
 enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
-    PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD
+    PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
+    PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -1286,6 +1289,301 @@ void endEntry() {
     bufClear();
     syncNumLayer();
     requestRedraw();
+}
+
+// ---- WiFi (station) ----------------------------------------------------------------
+// Saved networks live in NVS "rs_wifi" (n, s<i>, p<i>, a<i>). The radio stays off
+// unless the user scans/joins or a saved network has auto-connect on. Auto-connect
+// scans, joins the strongest saved network in range, and retries every few minutes.
+constexpr int WIFI_MAX_SAVED = 8;
+constexpr int WIFI_MAX_SEEN  = 11;               // + "Rescan" row = 12 settings rows
+constexpr uint32_t WIFI_JOIN_MS  = 20000;
+constexpr uint32_t WIFI_RETRY_MS = 180000;
+constexpr size_t WIFI_PASS_MAX = 63;
+
+struct WifiCred { char ssid[33]; char pass[65]; bool autoJoin; };
+struct WifiSeen { char ssid[33]; int16_t rssi; bool secure; };
+enum class WifiSt : uint8_t { Off, Connecting, Connected, Failed };
+
+WifiCred g_wifiSaved[WIFI_MAX_SAVED];
+int      g_wifiSavedCount = 0;
+WifiSeen g_wifiSeen[WIFI_MAX_SEEN];
+int      g_wifiSeenCount = 0;
+bool     g_wifiScanned = false;
+bool     g_wifiScanning = false;
+bool     g_wifiScanForAuto = false;
+WifiSt   g_wifiSt = WifiSt::Off;
+bool     g_wifiUserOff = false;                  // "Disconnect" pauses auto-connect until a manual join
+uint32_t g_wifiDeadline = 0;
+uint32_t g_wifiNextAuto = 0;
+char     g_wifiMsg[28] = "off";
+// Current / pending join
+char     g_wifiTarget[33] = "";
+char     g_wifiTargetPass[65] = "";
+bool     g_wifiTargetAuto = true;
+bool     g_wifiSaveOnOk = false;
+bool     g_wifiJoinAfterScan = false;
+// Settings page staging
+int      g_wifiNetIdx = 0;                       // PG_WIFI_NET
+char     g_joinSsid[33] = "";                    // PG_WIFI_JOIN
+char     g_joinPass[65] = "";
+bool     g_joinSecure = true;
+bool     g_joinAuto = true;
+
+bool isWifiPage(Page p) {
+    return p == PG_WIFI || p == PG_WIFI_SCAN || p == PG_WIFI_SAVED ||
+           p == PG_WIFI_NET || p == PG_WIFI_JOIN;
+}
+
+void wifiUiChanged() {
+    if (g_idleActive || g_screen != SCR_SETTINGS) return;
+    if (g_page == PG_ROOT || isWifiPage(g_page)) requestRedraw();
+}
+
+void wifiLoad() {
+    Preferences p;
+    g_wifiSavedCount = 0;
+    if (!p.begin("rs_wifi", true)) return;
+    int n = p.getUChar("n", 0);
+    if (n > WIFI_MAX_SAVED) n = WIFI_MAX_SAVED;
+    for (int i = 0; i < n; i++) {
+        char k[4];
+        WifiCred& c = g_wifiSaved[g_wifiSavedCount];
+        snprintf(k, sizeof(k), "s%d", i);
+        String s = p.getString(k, "");
+        if (s.isEmpty()) continue;
+        strlcpy(c.ssid, s.c_str(), sizeof(c.ssid));
+        snprintf(k, sizeof(k), "p%d", i);
+        strlcpy(c.pass, p.getString(k, "").c_str(), sizeof(c.pass));
+        snprintf(k, sizeof(k), "a%d", i);
+        c.autoJoin = p.getUChar(k, 1) != 0;
+        g_wifiSavedCount++;
+    }
+    p.end();
+    Serial.printf("[WIFI] %d saved network(s)\n", g_wifiSavedCount);
+}
+
+void wifiSaveAll() {
+    Preferences p;
+    if (!p.begin("rs_wifi", false)) return;
+    p.clear();
+    p.putUChar("n", (uint8_t)g_wifiSavedCount);
+    for (int i = 0; i < g_wifiSavedCount; i++) {
+        char k[4];
+        snprintf(k, sizeof(k), "s%d", i); p.putString(k, g_wifiSaved[i].ssid);
+        snprintf(k, sizeof(k), "p%d", i); p.putString(k, g_wifiSaved[i].pass);
+        snprintf(k, sizeof(k), "a%d", i); p.putUChar(k, g_wifiSaved[i].autoJoin ? 1 : 0);
+    }
+    p.end();
+}
+
+int wifiFindSaved(const char* ssid) {
+    for (int i = 0; i < g_wifiSavedCount; i++)
+        if (strcmp(g_wifiSaved[i].ssid, ssid) == 0) return i;
+    return -1;
+}
+
+// Add or update; the newest network goes last, the oldest is dropped when full.
+void wifiRemember(const char* ssid, const char* pass, bool autoJoin) {
+    int i = wifiFindSaved(ssid);
+    if (i < 0) {
+        if (g_wifiSavedCount >= WIFI_MAX_SAVED) {
+            memmove(&g_wifiSaved[0], &g_wifiSaved[1], sizeof(WifiCred) * (WIFI_MAX_SAVED - 1));
+            g_wifiSavedCount--;
+        }
+        i = g_wifiSavedCount++;
+        strlcpy(g_wifiSaved[i].ssid, ssid, sizeof(g_wifiSaved[i].ssid));
+    }
+    strlcpy(g_wifiSaved[i].pass, pass, sizeof(g_wifiSaved[i].pass));
+    g_wifiSaved[i].autoJoin = autoJoin;
+    wifiSaveAll();
+}
+
+void wifiForget(int i) {
+    if (i < 0 || i >= g_wifiSavedCount) return;
+    memmove(&g_wifiSaved[i], &g_wifiSaved[i + 1], sizeof(WifiCred) * (g_wifiSavedCount - i - 1));
+    g_wifiSavedCount--;
+    wifiSaveAll();
+}
+
+bool wifiHasAutoCreds() {
+    for (int i = 0; i < g_wifiSavedCount; i++) if (g_wifiSaved[i].autoJoin) return true;
+    return false;
+}
+
+bool wifiConnected() { return g_wifiSt == WifiSt::Connected && WiFi.status() == WL_CONNECTED; }
+
+void wifiRadioOn() {
+    if (WiFi.getMode() != WIFI_OFF) return;
+    WiFi.persistent(false);                      // credentials are ours (rs_wifi), not the SDK's
+    WiFi.setHostname("ratspeak-tdeck");
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    Serial.printf("[WIFI] radio on (heap %u, int %u)\n", (unsigned)ESP.getFreeHeap(),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+}
+
+void wifiRadioOff() {
+    if (WiFi.getMode() == WIFI_OFF) return;
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    Serial.println("[WIFI] radio off");
+}
+
+void wifiBeginJoin() {
+    wifiRadioOn();
+    if (WiFi.status() == WL_CONNECTED) WiFi.disconnect(false);
+    WiFi.begin(g_wifiTarget, g_wifiTargetPass[0] ? g_wifiTargetPass : nullptr);
+    g_wifiSt = WifiSt::Connecting;
+    g_wifiDeadline = millis() + WIFI_JOIN_MS;
+    snprintf(g_wifiMsg, sizeof(g_wifiMsg), "joining %.18s", g_wifiTarget);
+    Serial.printf("[WIFI] joining \"%s\"\n", g_wifiTarget);
+    wifiUiChanged();
+}
+
+// save: store the credentials once the join succeeds.
+void wifiConnect(const char* ssid, const char* pass, bool save, bool autoJoin) {
+    strlcpy(g_wifiTarget, ssid, sizeof(g_wifiTarget));
+    strlcpy(g_wifiTargetPass, pass ? pass : "", sizeof(g_wifiTargetPass));
+    g_wifiTargetAuto = autoJoin;
+    g_wifiSaveOnOk = save;
+    g_wifiUserOff = false;
+    if (g_wifiScanning) {                        // the radio can't join mid-scan
+        g_wifiJoinAfterScan = true;
+        snprintf(g_wifiMsg, sizeof(g_wifiMsg), "joining %.18s", g_wifiTarget);
+        g_wifiSt = WifiSt::Connecting;
+        g_wifiDeadline = millis() + WIFI_JOIN_MS + 15000;
+        wifiUiChanged();
+        return;
+    }
+    wifiBeginJoin();
+}
+
+void wifiStartScan(bool forAuto) {
+    if (g_wifiScanning) return;
+    wifiRadioOn();
+    if (!WiFiInterface::startAsyncScan()) {
+        strlcpy(g_wifiMsg, "scan failed", sizeof(g_wifiMsg));
+        wifiUiChanged();
+        return;
+    }
+    g_wifiScanning = true;
+    g_wifiScanForAuto = forAuto;
+    wifiUiChanged();
+}
+
+void wifiDisconnect() {
+    g_wifiUserOff = true;
+    g_wifiJoinAfterScan = false;
+    wifiRadioOff();
+    g_wifiScanning = false;
+    g_wifiSt = WifiSt::Off;
+    strlcpy(g_wifiMsg, "off (auto paused)", sizeof(g_wifiMsg));
+    wifiUiChanged();
+}
+
+void wifiFinishScan() {
+    auto res = WiFiInterface::getScanResults(WIFI_MAX_SEEN);
+    WiFi.scanDelete();
+    g_wifiScanning = false;
+    g_wifiScanned = true;
+    g_wifiSeenCount = 0;
+    for (auto& r : res) {
+        if (g_wifiSeenCount >= WIFI_MAX_SEEN) break;
+        WifiSeen& s = g_wifiSeen[g_wifiSeenCount++];
+        strlcpy(s.ssid, r.ssid.c_str(), sizeof(s.ssid));
+        s.rssi = (int16_t)r.rssi;
+        s.secure = r.encrypted;
+    }
+    if (g_wifiJoinAfterScan) {
+        g_wifiJoinAfterScan = false;
+        wifiBeginJoin();
+    } else if (g_wifiScanForAuto && g_wifiSt != WifiSt::Connected) {
+        int best = -1;                           // results are strongest first
+        for (int i = 0; i < g_wifiSeenCount && best < 0; i++) {
+            int k = wifiFindSaved(g_wifiSeen[i].ssid);
+            if (k >= 0 && g_wifiSaved[k].autoJoin) best = k;
+        }
+        if (best >= 0) {
+            wifiConnect(g_wifiSaved[best].ssid, g_wifiSaved[best].pass, false, true);
+        } else {
+            strlcpy(g_wifiMsg, "no saved net in range", sizeof(g_wifiMsg));
+            g_wifiNextAuto = millis() + WIFI_RETRY_MS;
+            if (!(g_screen == SCR_SETTINGS && isWifiPage(g_page))) wifiRadioOff();
+        }
+    }
+    g_wifiScanForAuto = false;
+    wifiUiChanged();
+}
+
+void watchWifi() {
+    static uint32_t last = 0;
+    if (millis() - last < 250) return;
+    last = millis();
+
+    if (g_wifiScanning && WiFiInterface::isScanComplete()) wifiFinishScan();
+
+    const wl_status_t s = WiFi.getMode() == WIFI_OFF ? WL_DISCONNECTED : WiFi.status();
+    if (g_wifiSt == WifiSt::Connecting && !g_wifiJoinAfterScan) {
+        const uint32_t started = g_wifiDeadline - WIFI_JOIN_MS;
+        if (s == WL_CONNECTED) {
+            g_wifiSt = WifiSt::Connected;
+            snprintf(g_wifiMsg, sizeof(g_wifiMsg), "%.18s", g_wifiTarget);
+            Serial.printf("[WIFI] connected \"%s\" ip %s rssi %d\n", g_wifiTarget,
+                          WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+            if (g_wifiSaveOnOk) wifiRemember(g_wifiTarget, g_wifiTargetPass, g_wifiTargetAuto);
+            g_wifiSaveOnOk = false;
+            toast("WiFi: %.18s", g_wifiTarget);
+            wifiUiChanged();
+        } else {
+            const bool hardFail = (s == WL_CONNECT_FAILED || s == WL_NO_SSID_AVAIL) &&
+                                  millis() - started > 4000;
+            if (hardFail || (int32_t)(millis() - g_wifiDeadline) >= 0) {
+                const char* why = s == WL_NO_SSID_AVAIL ? "not found"
+                                : s == WL_CONNECT_FAILED ? "wrong password?" : "timed out";
+                Serial.printf("[WIFI] join \"%s\" failed: %s (status %d)\n", g_wifiTarget, why, (int)s);
+                WiFi.disconnect(false);          // stop the SDK retrying a bad password
+                g_wifiSt = WifiSt::Failed;
+                g_wifiSaveOnOk = false;
+                snprintf(g_wifiMsg, sizeof(g_wifiMsg), "failed: %s", why);
+                toast("WiFi %s", g_wifiMsg);
+                g_wifiNextAuto = millis() + WIFI_RETRY_MS;
+                wifiUiChanged();
+            }
+        }
+    } else if (g_wifiSt == WifiSt::Connected && s != WL_CONNECTED) {
+        Serial.println("[WIFI] link lost, reconnecting");
+        g_wifiSt = WifiSt::Connecting;           // SDK auto-reconnect gets one join window
+        g_wifiDeadline = millis() + WIFI_JOIN_MS;
+        g_wifiSaveOnOk = false;
+        snprintf(g_wifiMsg, sizeof(g_wifiMsg), "rejoining %.16s", g_wifiTarget);
+        wifiUiChanged();
+    } else if (g_wifiSt == WifiSt::Connected) {
+        static uint32_t lastRssi = 0;            // keep the dBm on the WiFi page fresh
+        if (millis() - lastRssi > 10000) { lastRssi = millis(); if (g_page == PG_WIFI) wifiUiChanged(); }
+    }
+
+    // Auto-connect: only when idle, not paused by the user, and not while the user
+    // is looking at the scan list (a background scan would reshuffle it).
+    const bool idle = g_wifiSt == WifiSt::Off || g_wifiSt == WifiSt::Failed;
+    const bool onWifiPage = g_screen == SCR_SETTINGS && isWifiPage(g_page);
+    if (idle && !g_wifiScanning && !onWifiPage && WiFi.getMode() != WIFI_OFF) wifiRadioOff();
+    if (idle && !g_wifiUserOff && !g_wifiScanning && wifiHasAutoCreds() &&
+        (int32_t)(millis() - g_wifiNextAuto) >= 0 &&
+        !(g_screen == SCR_SETTINGS && (g_page == PG_WIFI_SCAN || g_page == PG_WIFI_JOIN))) {
+        g_wifiNextAuto = millis() + WIFI_RETRY_MS;
+        Serial.println("[WIFI] auto-connect scan");
+        wifiStartScan(true);
+    }
+}
+
+void wifiStatusLine(char* out, size_t n) {
+    if (wifiConnected())
+        snprintf(out, n, "%.18s %d dBm", g_wifiTarget, (int)WiFi.RSSI());
+    else if (g_wifiScanning && g_wifiSt != WifiSt::Connecting)
+        snprintf(out, n, "scanning...");
+    else
+        snprintf(out, n, "%s", g_wifiMsg);
 }
 
 // =============================================================================
@@ -1534,6 +1832,10 @@ const char* pageTitle(Page p) {
         case PG_DIAG:     return "Diagnostics";
         case PG_STORAGE:  return "Storage";
         case PG_SD:       return "SD card";
+        case PG_WIFI_SCAN:  return "Networks";
+        case PG_WIFI_SAVED: return "Saved WiFi";
+        case PG_WIFI_NET:   return "Saved network";
+        case PG_WIFI_JOIN:  return "Join WiFi";
     }
     return "";
 }
@@ -1542,7 +1844,9 @@ const char* pageTitle(Page p) {
 const char* editingSub(Entry kind, int arg = 0) {
     static char s[34];
     if (g_entry != kind || (kind == Entry::RtcField && g_entryArg != arg)) return nullptr;
-    snprintf(s, sizeof(s), ">%.28s_", g_buf);
+    constexpr size_t kShow = 27;                 // keep the cursor end visible
+    if (g_bufLen > kShow) snprintf(s, sizeof(s), ">..%s_", g_buf + g_bufLen - (kShow - 2));
+    else                  snprintf(s, sizeof(s), ">%s_", g_buf);
     return s;
 }
 
@@ -1554,7 +1858,8 @@ void buildSettingsRows(Page p) {
     case PG_ROOT:
         fmtTime(a, sizeof(a));
         srow(RK_MENU, "Time & Location", "%s %s", a, tzCur().name);
-        srow(RK_MENU, "WiFi", "TBD (LoRa only)");
+        wifiStatusLine(a, sizeof(a));
+        srow(RK_MENU, "WiFi", "%s", a);
         srow(RK_MENU, "Screen & I/O", "%s, keys %s", g_cfg.dark ? "Black ink" : "White paper",
              g_cfg.kbLight ? "lit" : "dark");
         if (g_bat.valid) srow(RK_MENU, "Battery", "%.2f V  %d%%", g_bat.volts, g_bat.pct);
@@ -1606,8 +1911,59 @@ void buildSettingsRows(Page p) {
         break;
 
     case PG_WIFI:
-        srow(RK_INFO, "Status", "TBD - not implemented");
-        srow(RK_INFO, "Messaging", "uses LoRa mesh");
+        wifiStatusLine(a, sizeof(a));
+        srow(RK_INFO, "Status", "%s", a);
+        srow(RK_INFO, "IP address", "%s", wifiConnected() ? WiFi.localIP().toString().c_str() : "-");
+        srow(RK_MENU, "Scan networks", g_wifiScanning ? "scanning..."
+                                       : g_wifiScanned ? "%d found" : "Enter = scan", g_wifiSeenCount);
+        srow(RK_MENU, "Saved networks", "%d saved%s", g_wifiSavedCount,
+             wifiHasAutoCreds() ? ", auto-connect" : "");
+        srow(RK_ACTION, "Disconnect", g_wifiSt == WifiSt::Off ? "-" : "Enter = off (pause auto)");
+        break;
+
+    case PG_WIFI_SCAN:
+        srow(RK_ACTION, "Rescan", g_wifiScanning ? "scanning..." : g_wifiSeenCount ? "Enter = scan again"
+                                  : g_wifiScanned ? "none found, Enter = scan" : "Enter = scan");
+        for (int i = 0; i < g_wifiSeenCount; i++) {
+            const WifiSeen& s = g_wifiSeen[i];
+            const bool cur = wifiConnected() && strcmp(s.ssid, g_wifiTarget) == 0;
+            srow(RK_PICK, s.ssid, "%d dBm %s%s%s", (int)s.rssi, s.secure ? "locked" : "open",
+                 wifiFindSaved(s.ssid) >= 0 ? " saved" : "", cur ? " (on)" : "");
+        }
+        break;
+
+    case PG_WIFI_SAVED:
+        if (!g_wifiSavedCount) srow(RK_INFO, "No saved networks", "use Scan networks");
+        for (int i = 0; i < g_wifiSavedCount; i++) {
+            const bool cur = wifiConnected() && strcmp(g_wifiSaved[i].ssid, g_wifiTarget) == 0;
+            srow(RK_MENU, g_wifiSaved[i].ssid, "auto %s%s", g_wifiSaved[i].autoJoin ? "ON" : "OFF",
+                 cur ? "  (connected)" : "");
+        }
+        break;
+
+    case PG_WIFI_NET: {
+        if (g_wifiNetIdx < 0 || g_wifiNetIdx >= g_wifiSavedCount) break;
+        const WifiCred& c = g_wifiSaved[g_wifiNetIdx];
+        const bool cur = wifiConnected() && strcmp(c.ssid, g_wifiTarget) == 0;
+        srow(RK_INFO, "Network", "%s", c.ssid);
+        srow(RK_ACTION, "Connect now", cur ? "connected" : "Enter = join");
+        srow(RK_TOGGLE, "Auto-connect", "%s", c.autoJoin ? "ON" : "OFF");
+        e = editingSub(Entry::WifiPass);
+        if (e) srow(RK_ENTRY, "Password", "%s", e);
+        else   srow(RK_ENTRY, "Password", c.pass[0] ? "%u chars, Enter = change" : "none (open)",
+                    (unsigned)strlen(c.pass));
+        srow(RK_ACTION, "Forget network", "Enter = forget");
+        break;
+    }
+
+    case PG_WIFI_JOIN:
+        srow(RK_INFO, "Network", "%s", g_joinSsid);
+        e = editingSub(Entry::WifiPass);
+        if (e) srow(RK_ENTRY, "Password", "%s", e);
+        else   srow(RK_ENTRY, "Password", g_joinPass[0] ? "%u chars" : "Enter = type",
+                    (unsigned)strlen(g_joinPass));
+        srow(RK_TOGGLE, "Auto-connect", "%s", g_joinAuto ? "ON" : "OFF");
+        srow(RK_ACTION, "Join", "Enter = connect + save");
         break;
 
     case PG_SCREEN:
@@ -1802,6 +2158,79 @@ void activateSetting(int idx) {
         break;
     }
 
+    case PG_WIFI:
+        if (idx == 2) { if (!g_wifiScanned || !g_wifiSeenCount) wifiStartScan(false); pushPage(PG_WIFI_SCAN); }
+        else if (idx == 3) pushPage(PG_WIFI_SAVED);
+        else if (idx == 4 && g_wifiSt != WifiSt::Off) { wifiDisconnect(); toast("WiFi off"); }
+        break;
+
+    case PG_WIFI_SCAN: {
+        if (idx == 0) { wifiStartScan(false); break; }
+        if (idx < 1 || idx > g_wifiSeenCount) break;
+        const WifiSeen& s = g_wifiSeen[idx - 1];
+        const int k = wifiFindSaved(s.ssid);
+        if (wifiConnected() && strcmp(s.ssid, g_wifiTarget) == 0) { toast("Already connected"); break; }
+        if (k >= 0) {                            // known: join with the stored password
+            wifiConnect(g_wifiSaved[k].ssid, g_wifiSaved[k].pass, false, g_wifiSaved[k].autoJoin);
+            popPage();
+            toast("Joining %.16s", s.ssid);
+            break;
+        }
+        strlcpy(g_joinSsid, s.ssid, sizeof(g_joinSsid));
+        g_joinPass[0] = 0;
+        g_joinSecure = s.secure;
+        g_joinAuto = true;                       // default: auto-connect once credentials exist
+        if (s.secure) { pushPage(PG_WIFI_JOIN, 1); startEntry(Entry::WifiPass); }
+        else          pushPage(PG_WIFI_JOIN, 3);
+        break;
+    }
+
+    case PG_WIFI_SAVED:
+        if (idx >= 0 && idx < g_wifiSavedCount) { g_wifiNetIdx = idx; pushPage(PG_WIFI_NET); }
+        break;
+
+    case PG_WIFI_NET: {
+        if (g_wifiNetIdx < 0 || g_wifiNetIdx >= g_wifiSavedCount) { popPage(); break; }
+        WifiCred& c = g_wifiSaved[g_wifiNetIdx];
+        if (idx == 1) {
+            if (wifiConnected() && strcmp(c.ssid, g_wifiTarget) == 0) { toast("Already connected"); break; }
+            wifiConnect(c.ssid, c.pass, false, c.autoJoin);
+            toast("Joining %.16s", c.ssid);
+        } else if (idx == 2) {
+            c.autoJoin = !c.autoJoin;
+            if (strcmp(c.ssid, g_wifiTarget) == 0) g_wifiTargetAuto = c.autoJoin;
+            wifiSaveAll();
+            if (c.autoJoin) g_wifiNextAuto = millis();
+            requestRedraw();
+        } else if (idx == 3) {
+            startEntry(Entry::WifiPass);
+        } else if (idx == 4) {
+            char name[33];
+            strlcpy(name, c.ssid, sizeof(name));
+            if (strcmp(name, g_wifiTarget) == 0 && g_wifiSt != WifiSt::Off) {
+                wifiRadioOff();
+                g_wifiSt = WifiSt::Off;
+                strlcpy(g_wifiMsg, "off", sizeof(g_wifiMsg));
+            }
+            wifiForget(g_wifiNetIdx);
+            popPage();
+            toast("Forgot %.18s", name);
+        }
+        break;
+    }
+
+    case PG_WIFI_JOIN:
+        if (idx == 1) startEntry(Entry::WifiPass, g_joinPass);
+        else if (idx == 2) { g_joinAuto = !g_joinAuto; requestRedraw(); }
+        else if (idx == 3) {
+            if (g_joinSecure && strlen(g_joinPass) < 8) { toast("Password: 8+ chars"); break; }
+            wifiConnect(g_joinSsid, g_joinPass, true, g_joinAuto);
+            popPage();                           // Join -> Networks
+            popPage();                           // Networks -> WiFi (shows status)
+            toast("Joining %.16s", g_joinSsid);
+        }
+        break;
+
     case PG_SCREEN:
         if (idx == 0) {
             g_cfg.dark = !g_cfg.dark;
@@ -1939,6 +2368,7 @@ void drawFooter() {
     if (!browseMode()) {
         const char* hint = "Enter=set  ^=cancel";
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) hint = "SPC=.  SYM+U=-";
+        else if (g_entry == Entry::WifiPass) hint = "Alt+key=case  Enter=ok";
         box(0, FOOT_Y, W, FOOT_H, 1);
         label(0, FOOT_Y - 1, W, FOOT_H, third[0] ? third : hint);
         return;
@@ -2518,6 +2948,28 @@ void commitEntry() {
         endEntry();
         return;
     }
+    case Entry::WifiPass: {
+        if (g_bufLen > 0 && g_bufLen < 8) { toast("Password: 8+ chars"); return; }
+        if (g_bufLen > WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
+        if (g_page == PG_WIFI_NET && g_wifiNetIdx >= 0 && g_wifiNetIdx < g_wifiSavedCount) {
+            if (!g_bufLen) { endEntry(); toast("Password unchanged"); return; }
+            WifiCred& c = g_wifiSaved[g_wifiNetIdx];
+            strlcpy(c.pass, g_buf, sizeof(c.pass));
+            wifiSaveAll();
+            endEntry();
+            toast("Password saved");
+            return;
+        }
+        if (g_page == PG_WIFI_JOIN) {
+            if (!g_bufLen && g_joinSecure) { toast("Type the password"); return; }
+            strlcpy(g_joinPass, g_buf, sizeof(g_joinPass));
+            endEntry();
+            activateSetting(3);                  // Enter after the password = Join
+            return;
+        }
+        endEntry();
+        return;
+    }
     default:
         endEntry();
         return;
@@ -2540,7 +2992,7 @@ void entryKey(const KeyEvent& ev) {
     char c = 0;
     if (ev.space) {
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) c = '.';
-        else if (g_entry == Entry::Message || g_entry == Entry::Name) c = ' ';
+        else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass) c = ' ';
     } else if (ev.fn) {
         if (entryNumeric()) c = '0';          // MIC (+SYM) types 0 in number fields
     } else {
@@ -2557,6 +3009,7 @@ void entryKey(const KeyEvent& ev) {
         c = isupper((unsigned char)c) ? (char)tolower(c) : (char)toupper(c);   // Alt = case
     }
     if (g_entry == Entry::Name && g_bufLen >= 23) { toast("Max 23 chars"); return; }
+    if (g_entry == Entry::WifiPass && g_bufLen >= WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
     bufAppend(c);
     // Show it on the next frame. Keys typed while that frame is on the panel are
     // queued by onPanelBusy() and land together in the frame after.
@@ -2905,6 +3358,8 @@ bool begin() {
     gpsApplyPower();
     loadBatteryCal();
     readBattery();
+    wifiLoad();
+    g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
     noteInput();
     goScreen(SCR_HOME);
     render();
@@ -2932,8 +3387,9 @@ void loop() {
     watchMessages();
     watchPeers();
     watchClockAndToast();
+    watchWifi();
 
-    processKeys();          // again, in case a watcher above took a while
+    processKeys();         // again, in case a watcher above took a while
     pollTouch();
     pollSerial();
     watchIdle();
