@@ -3650,7 +3650,12 @@ bool begin() {
     pinMode(BOARD_1V8_EN, OUTPUT);
     pinMode(BOARD_LORA_EN, OUTPUT);
     digitalWrite(BOARD_1V8_EN, HIGH);
+#if defined(RS_NO_RADIO) && RS_NO_RADIO
+    // Bench build (antenna off): the LoRa chip stays unpowered, so it can never transmit.
+    digitalWrite(BOARD_LORA_EN, LOW);
+#else
     digitalWrite(BOARD_LORA_EN, HIGH);
+#endif
     delay(30);
 
     pinMode(TOUCH_RST, OUTPUT);
@@ -3663,7 +3668,11 @@ bool begin() {
     spiBusIdle();
     logPsram();
 
+#if defined(RS_NO_RADIO) && RS_NO_RADIO
+    Serial.println("[BOOT] radio DISABLED (RS_NO_RADIO build) - LoRa powered off, no transmit");
+#else
     if (!initRadio()) Serial.println("[BOOT] radio failed");
+#endif
     initStorageAndProto();
 
     // Finish LXMF outbound recovery while internal heap is still large.
