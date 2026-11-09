@@ -116,6 +116,7 @@ public:
     void end() {}
     void setRxBufferSize(size_t) {}
     void setTxBufferSize(size_t) {}
+    void updateBaudRate(unsigned long) {}
     int available() override;
     int read() override;
     size_t write(uint8_t c) override;

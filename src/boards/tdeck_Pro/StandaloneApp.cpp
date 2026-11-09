@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <ctype.h>
 #include <string>
 #include <sys/time.h>
 #include <esp_heap_caps.h>
@@ -595,6 +596,46 @@ bool    g_gpsUtcValid = false;
 bool    g_gpsSyncedOnce = false;
 uint32_t g_gpsLastSyncMs = 0;
 
+// What the receiver hears (from GSV), per constellation talker, plus link health.
+struct GpsSky { char talker[3]; uint8_t inView, heard, heardAcc, bestSnr, bestAcc; uint32_t atMs; };
+GpsSky   g_gpsSky[6] = {};
+uint32_t g_gpsBytes = 0, g_gpsGood = 0, g_gpsBad = 0;
+char     g_gpsLastGga[96] = "", g_gpsLastRmc[96] = "";
+
+// Link recovery: a u-blox M10 keeps its settings in battery-backed RAM, so a config saved
+// by other firmware (NMEA off, power save, another baud) survives power cycles and the
+// receiver says nothing. When no valid sentence has arrived for a while, cycle the baud
+// rate and send the vendor's "clear saved config + load defaults" (UBX-CFG-CFG), like
+// LilyGo's own GPS_Recovery(). An L76K (9600 baud) simply ignores the UBX frames.
+uint32_t g_gpsLastGoodMs = 0, g_gpsStepAt = 0, g_gpsBaud = GPS_BAUD;
+uint8_t  g_gpsStep = 0;
+// "CANNOT USE BBR -> NO GNSS OPERATION": the receiver will not navigate because its backup
+// domain (V_BCKP, fed by the small MS621FE cell J6 through D8 + R15) is not usable. The
+// cell recharges only while the device is on, so keep power-cycling the receiver now and
+// then until it starts navigating.
+bool     g_gpsBbrFault = false;
+uint32_t g_gpsBbrFaultCount = 0, g_gpsPowerOffAt = 0, g_gpsNextCycleAt = 0;
+
+GpsSky* gpsSkyFor(const char* talker) {
+    GpsSky* freeSlot = nullptr;
+    for (auto& k : g_gpsSky) {
+        if (k.talker[0] == talker[0] && k.talker[1] == talker[1]) return &k;
+        if (!k.talker[0] && !freeSlot) freeSlot = &k;
+    }
+    if (freeSlot) { freeSlot->talker[0] = talker[0]; freeSlot->talker[1] = talker[1]; }
+    return freeSlot;
+}
+
+// Satellites in view / heard (SNR > 0) / best SNR over the last 5 s, all constellations.
+void gpsSkySummary(int& inView, int& heard, int& best) {
+    inView = heard = best = 0;
+    for (auto& k : g_gpsSky) {
+        if (!k.talker[0] || millis() - k.atMs > 5000) continue;
+        inView += k.inView; heard += k.heard;
+        if (k.bestSnr > best) best = k.bestSnr;
+    }
+}
+
 void gpsApplyPower() {
 #if defined(HAS_GPS) && HAS_GPS
     pinMode(GPS_EN, OUTPUT);
@@ -608,13 +649,135 @@ void gpsApplyPower() {
     digitalWrite(GPS_EN, HIGH);
     delay(30);
     static HardwareSerial gpsPort(1);
+    // 38400 baud = ~3.8 KB/s; a full e-ink refresh blocks ~1.6 s, so give the UART room.
+    gpsPort.setRxBufferSize(4096);
     gpsPort.begin(GPS_BAUD, SERIAL_8N1, GPS_RX, GPS_TX);
     g_gpsSerial = &gpsPort;
+    g_gpsBaud = GPS_BAUD;
+    g_gpsStep = 0;
+    g_gpsLastGoodMs = g_gpsStepAt = millis();
     snprintf(g_gpsStatus, sizeof(g_gpsStatus), "searching");
     Serial.printf("[GPS] on RX=%d TX=%d baud=%d\n", GPS_RX, GPS_TX, GPS_BAUD);
 #else
     snprintf(g_gpsStatus, sizeof(g_gpsStatus), "n/a");
 #endif
+}
+
+void ubxSend(uint8_t cls, uint8_t id, const uint8_t* payload, uint16_t len) {
+    uint8_t hdr[6] = {0xB5, 0x62, cls, id, (uint8_t)len, (uint8_t)(len >> 8)};
+    uint8_t a = 0, b = 0;
+    for (int i = 2; i < 6; i++) { a += hdr[i]; b += a; }
+    for (uint16_t i = 0; i < len; i++) { a += payload[i]; b += a; }
+    g_gpsSerial->write(hdr, 6);
+    if (len) g_gpsSerial->write(payload, len);
+    const uint8_t ck[2] = {a, b};
+    g_gpsSerial->write(ck, 2);
+}
+
+// Log the receiver's binary replies: ACK/NAK of our commands and the MON-VER strings.
+void gpsHandleUbx(uint8_t cls, uint8_t id, const uint8_t* p, uint16_t len) {
+    if (cls == 0x05 && len >= 2) {
+        Serial.printf("[GPS] UBX %s for %02X-%02X\n", id == 0x01 ? "ACK" : "NAK", p[0], p[1]);
+    } else if (cls == 0x0A && id == 0x04 && len >= 40) {
+        char sw[31] = {0}, hw[11] = {0};
+        memcpy(sw, p, 30); memcpy(hw, p + 30, 10);
+        Serial.printf("[GPS] receiver sw=%s hw=%s\n", sw, hw);
+        for (uint16_t o = 40; o + 30 <= len; o += 30) {
+            char ext[31] = {0};
+            memcpy(ext, p + o, 30);
+            Serial.printf("[GPS]   %s\n", ext);
+        }
+    } else {
+        Serial.printf("[GPS] UBX %02X-%02X len %u\n", cls, id, len);
+    }
+}
+
+void gpsSendDefaults() {
+    static const uint8_t wake[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    static const uint8_t clearFlash[] = {0xB5, 0x62, 0x06, 0x09, 0x0D, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                         0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x1C, 0xA2};
+    static const uint8_t clearBbr[] = {0xB5, 0x62, 0x06, 0x09, 0x0D, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                       0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x1B, 0xA1};
+    static const uint8_t loadDefaults[] = {0xB5, 0x62, 0x06, 0x09, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                                           0x00, 0xFF, 0xFF, 0x00, 0x00, 0x03, 0x1D, 0xB3};
+    g_gpsSerial->write(wake, sizeof(wake));          // UART activity wakes a sleeping receiver
+    delay(20);
+    g_gpsSerial->write(clearFlash, sizeof(clearFlash));
+    g_gpsSerial->write(clearBbr, sizeof(clearBbr));
+    g_gpsSerial->write(loadDefaults, sizeof(loadDefaults));
+    delay(50);
+
+    // u-blox M10 configuration (CFG-VALSET, RAM + BBR): NMEA out on UART1 with GGA, RMC
+    // and GSV every fix, and full-power operation (no power-save mode).
+    struct KV { uint32_t key; uint8_t val; };
+    static const KV kv[] = {
+        {0x10740002, 1},   // CFG-UART1OUTPROT-NMEA
+        {0x209100bb, 1},   // CFG-MSGOUT-NMEA_ID_GGA_UART1
+        {0x209100ac, 1},   // CFG-MSGOUT-NMEA_ID_RMC_UART1
+        {0x209100c5, 1},   // CFG-MSGOUT-NMEA_ID_GSV_UART1
+        {0x20d00001, 0},   // CFG-PM-OPERATEMODE = FULL
+    };
+    uint8_t pl[4 + sizeof(kv) / sizeof(kv[0]) * 5];
+    size_t n = 0;
+    pl[n++] = 0; pl[n++] = 0x01; pl[n++] = 0; pl[n++] = 0;   // version 0, layer RAM
+    for (const auto& e : kv) {
+        for (int i = 0; i < 4; i++) pl[n++] = (uint8_t)(e.key >> (8 * i));
+        pl[n++] = e.val;
+    }
+    ubxSend(0x06, 0x8A, pl, (uint16_t)n);             // UBX-CFG-VALSET
+    delay(50);
+    ubxSend(0x0A, 0x04, nullptr, 0);                  // UBX-MON-VER poll: which receiver is this?
+    delay(150);
+    // UBX-CFG-RST: cold start, controlled software reset (receiver restarts and navigates).
+    static const uint8_t rst[] = {0xFF, 0xFF, 0x01, 0x00};
+    ubxSend(0x06, 0x04, rst, sizeof(rst));
+}
+
+// Switch the receiver's supply (GPS_EN -> GPS_VDD = VCC + V_IO) off for 2 s and back on.
+void gpsPowerCycle(const char* why) {
+    if (!g_gpsSerial || g_gpsPowerOffAt) return;
+    Serial.printf("[GPS] power-cycling receiver (%s)\n", why);
+    digitalWrite(GPS_EN, LOW);
+    g_gpsPowerOffAt = millis() ? millis() : 1;
+}
+
+void gpsHardReset() {
+    if (!g_gpsSerial) return;
+    static const uint8_t rst[] = {0xFF, 0xFF, 0x00, 0x00};   // cold start, hardware (watchdog) reset
+    ubxSend(0x06, 0x04, rst, sizeof(rst));
+    Serial.println("[GPS] hardware reset sent");
+}
+
+void gpsWatchLink() {
+    if (!g_gpsSerial) return;
+    const uint32_t now = millis();
+    if (g_gpsPowerOffAt) {                             // finishing a power cycle
+        if (now - g_gpsPowerOffAt >= 2000) {
+            digitalWrite(GPS_EN, HIGH);
+            g_gpsPowerOffAt = 0;
+            g_gpsBbrFault = false;                     // re-detected from the boot banner if still bad
+            g_gpsLastGoodMs = g_gpsStepAt = now;
+        }
+        return;
+    }
+    if (g_gpsBbrFault) {                               // only a power cycle can help; not too often
+        if ((int32_t)(now - g_gpsNextCycleAt) >= 0) {
+            g_gpsNextCycleAt = now + (g_gpsBbrFaultCount < 10 ? 60000 : 300000);   // then every 5 min
+            gpsPowerCycle("backup supply fault");
+        }
+        return;
+    }
+    if (now - g_gpsLastGoodMs < 3000) return;         // navigation sentences are arriving
+    const uint32_t wait = g_gpsStep < 6 ? 2500 : 20000;
+    if (now - g_gpsStepAt < wait) return;
+    g_gpsStepAt = now;
+    static const uint32_t bauds[] = {38400, 9600, 115200};
+    g_gpsBaud = bauds[g_gpsStep % 3];
+    g_gpsSerial->updateBaudRate(g_gpsBaud);
+    gpsSendDefaults();
+    Serial.printf("[GPS] no NMEA (%lu bytes so far) - reset receiver config, listening at %lu baud\n",
+                  (unsigned long)g_gpsBytes, (unsigned long)g_gpsBaud);
+    if (g_gpsStep < 255) g_gpsStep++;
 }
 
 bool gpsSyncClock() {
@@ -629,12 +792,63 @@ bool gpsSyncClock() {
 
 int twoDigits(const char* s) { return (s[0] - '0') * 10 + (s[1] - '0'); }
 
+bool nmeaChecksumOk(char* line) {
+    char* star = strchr(line, '*');
+    if (!star || !isxdigit((unsigned char)star[1]) || !isxdigit((unsigned char)star[2])) return false;
+    uint8_t x = 0;
+    for (char* p = line + 1; p < star; p++) x ^= (uint8_t)*p;
+    const bool ok = x == (uint8_t)strtoul(star + 1, nullptr, 16);
+    *star = 0;                                   // fields end before the checksum
+    return ok;
+}
+
 void gpsHandleSentence(char* line) {
-    char* fld[16] = {};
+    if (!nmeaChecksumOk(line)) { g_gpsBad++; return; }
+    g_gpsGood++;
+    if (!strncmp(line + 3, "TXT", 3)) {          // receiver notices: antenna status, firmware...
+        Serial.printf("[GPS] %s\n", line);
+        if (strstr(line, "CANNOT USE BBR")) {
+            if (!g_gpsBbrFault) {
+                g_gpsBbrFault = true;
+                g_gpsBbrFaultCount++;
+                g_gpsNextCycleAt = millis() + 60000;
+                snprintf(g_gpsStatus, sizeof(g_gpsStatus), "backup low");
+                Serial.println("[GPS] receiver refuses to navigate: backup supply (V_BCKP) not usable."
+                               " Retrying while the device is on (backup cell charges).");
+            }
+        }
+        return;
+    }
+    if ((g_gpsStep || g_gpsBbrFault) && millis() - g_gpsLastGoodMs >= 3000) Serial.printf("[GPS] receiving NMEA at %lu baud\n", (unsigned long)g_gpsBaud);
+    g_gpsLastGoodMs = millis();
+    g_gpsStep = 0;
+    g_gpsBbrFault = false;
+    if (!strncmp(line + 3, "GGA", 3)) snprintf(g_gpsLastGga, sizeof(g_gpsLastGga), "%s", line);
+    if (!strncmp(line + 3, "RMC", 3)) snprintf(g_gpsLastRmc, sizeof(g_gpsLastRmc), "%s", line);
+    char* fld[24] = {};
     int n = 0;
     fld[n++] = line;
-    for (char* p = line; *p && n < 16; p++)
+    for (char* p = line; *p && n < 24; p++)
         if (*p == ',') { *p = 0; fld[n++] = p + 1; }
+
+    if (!strncmp(fld[0] + 3, "GSV", 3) && n >= 4) {
+        // $xxGSV,numMsgs,msgNum,inView,(id,elev,az,snr)x4[,signalId]
+        GpsSky* k = gpsSkyFor(fld[0] + 1);
+        if (!k) return;
+        const int msgNum = atoi(fld[2]), numMsgs = atoi(fld[1]);
+        if (msgNum == 1) { k->heardAcc = 0; k->bestAcc = 0; }
+        for (int i = 7; i < n; i += 4) {
+            const int snr = fld[i][0] ? atoi(fld[i]) : 0;
+            if (snr > 0) { k->heardAcc++; if (snr > k->bestAcc) k->bestAcc = (uint8_t)snr; }
+        }
+        if (msgNum >= numMsgs) {
+            k->inView = (uint8_t)atoi(fld[3]);
+            k->heard = k->heardAcc;
+            k->bestSnr = k->bestAcc;
+            k->atMs = millis();
+        }
+        return;
+    }
 
     const bool rmc = !strncmp(fld[0], "$GPRMC", 6) || !strncmp(fld[0], "$GNRMC", 6);
     const bool gga = !strncmp(fld[0], "$GPGGA", 6) || !strncmp(fld[0], "$GNGGA", 6);
@@ -656,7 +870,7 @@ void gpsHandleSentence(char* line) {
     } else {
         return;
     }
-    snprintf(g_gpsStatus, sizeof(g_gpsStatus), "%s", g_gpsFix ? "fix" : "searching");
+    snprintf(g_gpsStatus, sizeof(g_gpsStatus), "%s", g_gpsFix ? "fix" : g_gpsBbrFault ? "backup low" : "searching");
 
     // Auto sync: once after boot, then daily.
     if (g_cfg.gpsAutoSync && g_gpsFix && g_gpsUtcValid) {
@@ -665,12 +879,56 @@ void gpsHandleSentence(char* line) {
     }
 }
 
+void gpsDump() {
+    int inView, heard, best;
+    gpsSkySummary(inView, heard, best);
+    Serial.printf("[GPS] %s  power=%s  baud=%lu  fix=%d sats=%u  bytes=%lu ok=%lu badsum=%lu\n", g_gpsStatus,
+                  g_cfg.gpsOn ? "on" : "off", (unsigned long)g_gpsBaud, g_gpsFix, g_gpsSats,
+                  (unsigned long)g_gpsBytes, (unsigned long)g_gpsGood, (unsigned long)g_gpsBad);
+    Serial.printf("[GPS] sky: %d in view, %d heard, best %d dB-Hz\n", inView, heard, best);
+    Serial.printf("[GPS] backup supply fault: %s (seen %lu times)\n", g_gpsBbrFault ? "YES" : "no",
+                  (unsigned long)g_gpsBbrFaultCount);
+    for (auto& k : g_gpsSky)
+        if (k.talker[0])
+            Serial.printf("[GPS]   %s: %u in view, %u heard, best %u (%lus ago)\n", k.talker, k.inView, k.heard,
+                          k.bestSnr, (unsigned long)((millis() - k.atMs) / 1000));
+    Serial.printf("[GPS] GGA %s\n[GPS] RMC %s\n", g_gpsLastGga, g_gpsLastRmc);
+}
+
 void gpsPoll() {
     if (!g_gpsSerial) return;
     static char line[100];
     static size_t len = 0;
+    // UBX frames (B5 62 cls id len16 payload ck_a ck_b) are taken out before NMEA parsing.
+    static uint8_t ust = 0, ucls = 0, uid = 0, ubuf[260];
+    static uint16_t ulen = 0, upos = 0;
     while (g_gpsSerial->available()) {
-        char c = (char)g_gpsSerial->read();
+        const int raw = g_gpsSerial->read();
+        if (raw < 0) break;
+        const uint8_t u = (uint8_t)raw;
+        g_gpsBytes++;
+        if (ust == 0 && u == 0xB5) { ust = 1; continue; }
+        if (ust == 1) {
+            if (u == 0x62) { ust = 2; continue; }
+            ust = 0;
+        }
+        if (ust >= 2) {
+            switch (ust) {
+                case 2: ucls = u; ust = 3; break;
+                case 3: uid = u; ust = 4; break;
+                case 4: ulen = u; ust = 5; break;
+                case 5: ulen |= (uint16_t)(u << 8); upos = 0; ust = 6; break;
+                default:
+                    if (upos < sizeof(ubuf)) ubuf[upos] = u;
+                    if (++upos >= ulen + 2) {             // payload + 2 checksum bytes
+                        if (ulen + 2 <= (int)sizeof(ubuf)) gpsHandleUbx(ucls, uid, ubuf, ulen);
+                        ust = 0;
+                    }
+                    break;
+            }
+            continue;
+        }
+        const char c = (char)u;
         if (c == '\r') continue;
         if (c == '\n') {
             line[len] = 0;
@@ -1910,7 +2168,16 @@ void buildSettingsRows(Page p) {
         fmtTime(a, sizeof(a)); fmtDate(b, sizeof(b));
         srow(RK_MENU, "Set RTC", "%s %s", a, b);
         srow(RK_MENU, "Time zone", "%s %s", tzCur().name, tzCur().label);
-        srow(RK_TOGGLE, "Enable GPS", "%s  %s  %u sats", g_cfg.gpsOn ? "ON" : "OFF", g_gpsStatus, g_gpsSats);
+        {
+            int inView, heard, best;
+            gpsSkySummary(inView, heard, best);
+            if (g_cfg.gpsOn && g_gpsBbrFault)
+                srow(RK_TOGGLE, "Enable GPS", "ON  backup cell low");
+            else if (g_gpsFix || !g_cfg.gpsOn)
+                srow(RK_TOGGLE, "Enable GPS", "%s  %s  %u sats", g_cfg.gpsOn ? "ON" : "OFF", g_gpsStatus, g_gpsSats);
+            else
+                srow(RK_TOGGLE, "Enable GPS", "ON  %d/%d heard  %ddB", heard, inView, best);
+        }
         if (g_cfg.hasPos) srow(RK_MENU, "Manual location", "%.4f, %.4f", g_cfg.lat, g_cfg.lon);
         else              srow(RK_MENU, "Manual location", "not set");
         srow(RK_ACTION, "Sync GPS now", g_gpsFix ? "Enter = sync" : "needs GPS fix");
@@ -3136,6 +3403,7 @@ void onPanelBusy(const void*) {
     if (millis() - last >= 8) {
         last = millis();
         readKeyboardIntoQueue();
+        gpsPoll();                  // drain NMEA too, so no sentences are lost to a refresh
     }
     delay(1);
 }
@@ -3252,6 +3520,12 @@ void handleSerialLine(char* p) {
         goScreen(map[strchr(keys, p[0]) - keys]);
     } else if (!strcmp(p, "d")) {
         batLogDump();
+    } else if (!strcmp(p, "g")) {
+        gpsDump();
+    } else if (!strcmp(p, "gp")) {
+        gpsPowerCycle("console");
+    } else if (!strcmp(p, "gr")) {
+        gpsHardReset();
     } else if (!strcmp(p, "L")) {
         g_cfg.kbLight = !g_cfg.kbLight;
         if (g_cfg.kbLight) g_kb.backlightOn(); else g_kb.backlightOff();
@@ -3259,7 +3533,7 @@ void handleSerialLine(char* p) {
     } else if (!strcmp(p, "FORMAT")) {
         Serial.println(recoverCorruptLittleFS() ? "[FLASH] formatted - reboot now" : "[FLASH] format failed");
     } else {
-        Serial.println("[CMD] t:<msg> a h i c p s d L FORMAT");
+        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr L FORMAT");
     }
 }
 
@@ -3436,6 +3710,7 @@ void loop() {
     g_announceMgr.loop();
     g_audio.loop();
     gpsPoll();
+    gpsWatchLink();
 
     static uint32_t bootAnnounceAt = millis() + 3000;
     if (bootAnnounceAt && (int32_t)(millis() - bootAnnounceAt) >= 0) {
