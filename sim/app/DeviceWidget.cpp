@@ -10,16 +10,19 @@
 
 namespace {
 // Device drawing units: 1 unit = 1 panel pixel.
-constexpr double kDevW = 280, kDevH = 560;
+constexpr double kDevW = 280, kDevH = 600;
 const QRectF kScreen(20, 40, 240, 320);
 const QRectF kBezel(10, 28, 260, 344);
 constexpr double kKbY = 390, kKeyW = 23, kKeyH = 30, kGap = 3, kPitch = 36;
 
-const QColor kBody(0x2a, 0x2c, 0x30), kBodyEdge(0x45, 0x48, 0x4e);
-const QColor kBezelC(0xf3, 0xf2, 0xee), kBezelEdge(0xc9, 0xc8, 0xc2);   // white-ish, like the device
+// Colours from the device photo: frosted light-grey case, light screen surround,
+// black keys with white legends.
+const QColor kBody(0xd3, 0xd6, 0xd9), kBodyEdge(0xa9, 0xad, 0xb2), kBodyShine(0xec, 0xee, 0xf0);
+const QColor kBezelC(0xe4, 0xe6, 0xe8), kBezelEdge(0xb4, 0xb8, 0xbc), kGlassEdge(0x9a, 0x9e, 0xa3);
+const QColor kPlate(0xbf, 0xc3, 0xc7), kTrace(0x9c, 0xa1, 0xa7);
 const QColor kPaper(0xe9, 0xe7, 0xdf), kInk(0x1c, 0x1c, 0x1c);
-const QColor kCap(0x3b, 0x3e, 0x44), kCapDown(0x6a, 0x6f, 0x78), kLegend(0xf2, 0xf2, 0xf2);
-const QColor kSym(0xf0, 0xa0, 0x40), kGlow(0x9f, 0xd4, 0xff);
+const QColor kCap(0x17, 0x18, 0x1a), kCapDown(0x50, 0x53, 0x58), kLegend(0xf4, 0xf4, 0xf4);
+const QColor kSym(0xc8, 0xcb, 0xcf), kGlow(0x9f, 0xd4, 0xff);
 
 struct KeyDef { const char* label; const char* sym; };
 // Left-to-right as printed on the device; matrix column = 9 - position (firmware kMap).
@@ -27,7 +30,7 @@ const KeyDef kRow0[10] = {{"Q", "#"}, {"W", "1"}, {"E", "2"}, {"R", "3"}, {"T", 
                           {"Y", ")"}, {"U", "-"}, {"I", "_"}, {"O", "+"}, {"P", "@"}};
 const KeyDef kRow1[10] = {{"A", "*"}, {"S", "4"}, {"D", "5"}, {"F", "6"}, {"G", "/"},
                           {"H", ":"}, {"J", ";"}, {"K", "'"}, {"L", "\""}, {"⌫", ""}};
-const KeyDef kRow2[10] = {{"ALT", ""}, {"Z", "7"}, {"X", "8"}, {"C", "9"}, {"V", "?"},
+const KeyDef kRow2[10] = {{"alt", ""}, {"Z", "7"}, {"X", "8"}, {"C", "9"}, {"V", "?"},
                           {"B", "!"}, {"N", "'"}, {"M", "`"}, {"$", "$"}, {"↵", ""}};
 
 // PC characters typed via the SYM layer: char -> device letter.
@@ -44,7 +47,7 @@ QString symLetterFor(QChar c) {
 
 DeviceWidget::DeviceWidget(QWidget* parent) : QWidget(parent) {
     setFocusPolicy(Qt::StrongFocus);
-    setMinimumSize(280, 560);
+    setMinimumSize(280, 600);
     auto addRow = [&](const KeyDef* defs, int row, double y) {
         const double x0 = (kDevW - (10 * kKeyW + 9 * kGap)) / 2;
         for (int i = 0; i < 10; i++)
@@ -58,12 +61,12 @@ DeviceWidget::DeviceWidget(QWidget* parent) : QWidget(parent) {
     const double y3 = kKbY + 3 * kPitch, x0 = (kDevW - (10 * kKeyW + 9 * kGap)) / 2;
     const double mod = 36, space = (10 * kKeyW + 9 * kGap) - 4 * mod - 4 * kGap;
     double x = x0;
-    auto add3 = [&](uint8_t col, const char* label, double w) {
-        keys_.push_back({3, col, QString::fromUtf8(label), QString(), QRectF(x, y3, w, kKeyH)});
+    auto add3 = [&](uint8_t col, const char* label, double w, const char* sym = "") {
+        keys_.push_back({3, col, QString::fromUtf8(label), QString::fromUtf8(sym), QRectF(x, y3, w, kKeyH)});
         x += w + kGap;
     };
     add3(4, "⇧", mod);
-    add3(3, "MIC", mod);
+    add3(3, "MIC", mod, "0");
     add3(2, "SPACE", space);
     add3(1, "SYM", mod);
     add3(0, "⇧", mod);
@@ -72,7 +75,7 @@ DeviceWidget::DeviceWidget(QWidget* parent) : QWidget(parent) {
     startTimer(30);
 }
 
-QSize DeviceWidget::sizeHint() const { return QSize(448, 896); }
+QSize DeviceWidget::sizeHint() const { return QSize(448, 960); }
 
 QTransform DeviceWidget::devToWidget() const {
     const double s = std::min(width() / kDevW, height() / kDevH);
@@ -131,47 +134,79 @@ void DeviceWidget::paintEvent(QPaintEvent*) {
     if (vibrating_) t.translate((sim::nowMs() / 16 % 2) ? 1.2 : -1.2, 0);
     p.setTransform(t);
 
-    // Body
-    p.setPen(QPen(kBodyEdge, 2));
-    p.setBrush(kBody);
-    p.drawRoundedRect(QRectF(2, 2, kDevW - 4, kDevH - 4), 22, 22);
-    // Speaker slot + status LEDs
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0x18, 0x19, 0x1b));
-    p.drawRoundedRect(QRectF(kDevW / 2 - 28, 12, 56, 6), 3, 3);
-    if ((int32_t)(beepFlashUntil_ - sim::nowMs()) > 0) {
-        p.setBrush(QColor(0x60, 0xd0, 0x80));
-        p.drawEllipse(QPointF(kDevW / 2 + 40, 15), 3, 3);
-    }
-    // Bezel + screen
-    p.setBrush(kBezelC);
-    p.drawRoundedRect(kBezel, 8, 8);
-    p.drawImage(kScreen, panel_);
+    // Body: frosted light-grey case with a soft top highlight
+    QLinearGradient bodyGrad(0, 0, 0, kDevH);
+    bodyGrad.setColorAt(0, kBodyShine);
+    bodyGrad.setColorAt(0.08, kBody);
+    bodyGrad.setColorAt(1, kBody.darker(104));
+    p.setPen(QPen(kBodyEdge, 1.6));
+    p.setBrush(bodyGrad);
+    p.drawRoundedRect(QRectF(2, 2, kDevW - 4, kDevH - 4), 24, 24);
+    // Screen module: a lighter raised surround
     p.setPen(QPen(kBezelEdge, 0.8));
-    p.setBrush(Qt::NoBrush);
-    p.drawRect(kScreen.adjusted(-0.5, -0.5, 0.5, 0.5));   // panel edge against the light bezel
+    p.setBrush(kBezelC);
+    p.drawRoundedRect(QRectF(8, 10, kDevW - 16, 368), 18, 18);
+    // Beep indicator
+    p.setPen(Qt::NoPen);
+    if ((int32_t)(beepFlashUntil_ - sim::nowMs()) > 0) {
+        p.setBrush(QColor(0x40, 0xb0, 0x60));
+        p.drawEllipse(QPointF(kDevW / 2, 24), 3, 3);
+    }
+    // E-ink glass + panel
+    p.setPen(QPen(kGlassEdge, 1.0));
+    p.setBrush(kPaper);
+    p.drawRect(kScreen.adjusted(-1.5, -1.5, 1.5, 1.5));
+    p.drawImage(kScreen, panel_);
+
+    // Keyboard plate (frosted, darker) and the circuit-trace decoration below it
+    p.setPen(Qt::NoPen);
+    p.setBrush(kPlate);
+    p.drawRoundedRect(QRectF(8, kKbY - 8, kDevW - 16, 4 * kPitch + 6), 10, 10);
+    {
+        const double yb = kKbY + 4 * kPitch + 14;      // band under the keys
+        QPen tp(kTrace, 0.9);
+        p.setPen(tp);
+        p.setBrush(Qt::NoBrush);
+        QPainterPath tr;
+        tr.moveTo(18, yb + 2); tr.lineTo(18, yb + 26); tr.lineTo(30, yb + 34); tr.lineTo(kDevW - 30, yb + 34);
+        tr.lineTo(kDevW - 18, yb + 26); tr.lineTo(kDevW - 18, yb + 2);
+        p.drawPath(tr);
+        p.setBrush(kTrace);
+        for (double x : {18.0, kDevW - 18.0}) p.drawEllipse(QPointF(x, yb + 2), 1.6, 1.6);
+        p.setPen(QPen(kTrace, 2.2));
+        for (int i = 0; i < 4; i++) {                     // chevron stripes, left and right
+            p.drawLine(QPointF(30 + i * 7, yb + 24), QPointF(35 + i * 7, yb + 18));
+            p.drawLine(QPointF(kDevW - 30 - i * 7, yb + 24), QPointF(kDevW - 35 - i * 7, yb + 18));
+        }
+    }
 
     // Keyboard
     QFont f = font();
     for (const auto& k : keys_) {
-        p.setPen(Qt::NoPen);
+        p.setPen(QPen(QColor(0x05, 0x05, 0x06), 0.6));
         p.setBrush(k.held ? kCapDown : kCap);
-        p.drawRoundedRect(k.rect, 5, 5);
+        p.drawRoundedRect(k.rect, 6, 6);
+        p.setPen(QPen(QColor(0x3a, 0x3c, 0x40), 0.6));   // top-edge sheen of a glossy cap
+        p.drawLine(k.rect.topLeft() + QPointF(5, 1), k.rect.topRight() + QPointF(-5, 1));
         const bool wide = k.label.size() > 2;
-        f.setPixelSize(wide ? 8 : 12);
+        f.setPixelSize(wide ? 7 : 12);
         f.setBold(!wide);
         p.setFont(f);
         p.setPen(backlight_ ? kGlow : kLegend);
-        p.drawText(k.rect.adjusted(0, k.sym.isEmpty() ? 0 : 4, 0, 0), Qt::AlignCenter, k.label);
+        p.drawText(k.rect.adjusted(0, k.sym.isEmpty() ? 0 : 6, 0, 0), Qt::AlignCenter, k.label.toLower() == "space" ? QString() : (wide ? k.label.toLower() : k.label));
+        if (k.label.toLower() == "space") {                 // space bar: a bar glyph like the cap
+            p.drawLine(QPointF(k.rect.center().x() - 12, k.rect.center().y() + 2),
+                       QPointF(k.rect.center().x() + 12, k.rect.center().y() + 2));
+        }
         if (!k.sym.isEmpty()) {
             f.setPixelSize(7); f.setBold(false); p.setFont(f);
-            p.setPen(kSym);
-            p.drawText(k.rect.adjusted(2, 1, -2, 0), Qt::AlignRight | Qt::AlignTop, k.sym);
+            p.setPen(backlight_ ? kGlow : kSym);
+            p.drawText(k.rect.adjusted(3, 1, -2, 0), Qt::AlignLeft | Qt::AlignTop, k.sym);
         }
     }
     f.setPixelSize(7); f.setBold(false); p.setFont(f);
-    p.setPen(QColor(0x80, 0x84, 0x8a));
-    p.drawText(QRectF(0, kDevH - 18, kDevW, 10), Qt::AlignCenter,
+    p.setPen(QColor(0x5c, 0x61, 0x67));
+    p.drawText(QRectF(0, kKbY + 4 * kPitch + 30, kDevW, 10), Qt::AlignCenter,
                !footer_.isEmpty() ? footer_
                                   : QString("panel %1 %2 ms").arg(lastFull_ ? "full" : "partial").arg(lastRefreshMs_));
 }
