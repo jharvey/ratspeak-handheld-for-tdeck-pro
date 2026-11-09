@@ -12,6 +12,11 @@ public:
   void update();
   void discardPending();
 
+  // Acknowledge the chip's key interrupt (INT_STAT.K_INT) so the INT line (KB_INT,
+  // active low) goes high again; it re-asserts when the next key event arrives. Used
+  // before light sleep, where a low INT line is a wake-up source.
+  void clearInterrupt();
+
   // Queue a raw TCA8418 event byte from another source (USB remote control). It is
   // decoded exactly like a hardware event, before the chip's FIFO is read.
   void injectRaw(uint8_t raw);

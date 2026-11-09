@@ -555,6 +555,11 @@ void Keyboard::update()
   mapKey(row, col, pressed);
 }
 
+void Keyboard::clearInterrupt()
+{
+  tcaWrite(REG_INT_STAT, 0x1F);   // write-1-to-clear: K_INT, GPI_INT, K_LCK, OVR_FLOW, CAD
+}
+
 void Keyboard::injectRaw(uint8_t raw)
 {
   const uint8_t next = (uint8_t)((_injectHead + 1) % kInjectCap);

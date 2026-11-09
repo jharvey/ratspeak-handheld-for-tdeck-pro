@@ -55,6 +55,8 @@
 #include "transport/WiFiInterface.h"
 #include "security/SecretVault.h"
 #include "remote/ScreenMirror.h"
+#include "power/PowerModes.h"
+#include "power/LightSleep.h"
 #include <WiFi.h>
 #include "protocol/ProtocolRuntime.h"
 #include "protocol/OutgoingContract.h"
@@ -107,6 +109,17 @@ struct Config {
     float    lon         = 0.0f;
 };
 Config g_cfg;
+
+// ---- Energy modes (Settings > Power; power/PowerModes.h) ----------------------
+power::Settings g_pw;                 // chosen mode, USB rule, custom knobs (NVS rs_power)
+power::Profile  g_pwEff = power::preset(power::MODE_FULL);   // profile in force now
+bool     g_pwOnUsb = false;           // effective profile was forced to Full by USB power
+bool     g_gpsAllowed = true;         // power scheduler lets the GPS receiver be powered
+// Sleep statistics (decayed every 10 min so they describe the recent past).
+uint32_t g_pwAwakeMs = 0, g_pwSleepMs = 0, g_pwSleeps = 0, g_pwWakes[6] = {};
+uint32_t g_benchUntil = 0;            // bench: charger input off, run from battery (console)
+void powerApply(bool force);
+bool chargerSetHiz(bool on);
 
 char g_selfName[24] = "";
 uint8_t g_selfHash[16] = {0};
@@ -271,6 +284,7 @@ struct Battery {
     uint16_t flags    = 0;
     uint16_t remMah   = 0;       // RemainingCapacity
     uint16_t fccMah   = 0;       // FullChargeCapacity
+    uint16_t tteMin   = 0xFFFF;  // TimeToEmpty (min), 0xFFFF = not discharging
     uint8_t  chrgStat = 0xFF;    // BQ25896 CHRG_STAT, 0xFF = unreadable
     bool     charging = false;
     bool     usb      = false;
@@ -371,6 +385,8 @@ bool readBattery() {
     uint16_t rem = 0, fcc = 0;
     bqReadU16(0x10, rem);
     bqReadU16(0x12, fcc);
+    uint16_t tte = 0xFFFF;
+    bqReadU16(0x16, tte);
 
     const float volts = (mvSum / (float)nOk) / 1000.0f;
     const int16_t avgMa = nCur ? (int16_t)(curSum / nCur) : 0;
@@ -423,6 +439,7 @@ bool readBattery() {
     g_bat.flags = flags;
     g_bat.remMah = rem;
     g_bat.fccMah = fcc;
+    g_bat.tteMin = tte;
     g_bat.chrgStat = chargerOk ? chrg : 0xFF;
     g_bat.charging = charging;
     g_bat.usb = usb;
@@ -639,11 +656,12 @@ void gpsSkySummary(int& inView, int& heard, int& best) {
 void gpsApplyPower() {
 #if defined(HAS_GPS) && HAS_GPS
     pinMode(GPS_EN, OUTPUT);
-    if (!g_cfg.gpsOn) {
+    if (!g_cfg.gpsOn || !g_gpsAllowed) {
         digitalWrite(GPS_EN, LOW);
         g_gpsSerial = nullptr;
         g_gpsFix = false; g_gpsSats = 0; g_gpsUtcValid = false;
-        snprintf(g_gpsStatus, sizeof(g_gpsStatus), "off");
+        snprintf(g_gpsStatus, sizeof(g_gpsStatus), g_cfg.gpsOn ? "resting" : "off");
+        if (g_cfg.gpsOn) Serial.println("[GPS] off (power mode schedule)");
         return;
     }
     digitalWrite(GPS_EN, HIGH);
@@ -1104,6 +1122,12 @@ void doAnnounce() {
     Serial.printf("[ANN] %s dest=%s\n", g_announceStr, g_destHex);
 }
 
+// Key backlight = user setting AND allowed by the power mode.
+void applyKeyLight() {
+    if (!g_kbOk) return;
+    if (g_cfg.kbLight && g_pwEff.keyLight) g_kb.backlightOn(); else g_kb.backlightOff();
+}
+
 void vibrate(uint16_t ms) {
 #if defined(BOARD_MOTOR_PIN) && (BOARD_MOTOR_PIN >= 0)
     pinMode(BOARD_MOTOR_PIN, OUTPUT);
@@ -1495,7 +1519,7 @@ bool entryNumeric() {
 enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
-    PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN
+    PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -1734,6 +1758,7 @@ void wifiBeginJoin() {
 
 // save: store the credentials once the join succeeds.
 void wifiConnect(const char* ssid, const char* pass, bool save, bool autoJoin) {
+    if (!g_pwEff.wifi) { toast("WiFi off in %s mode", power::modeName(g_pw.mode)); return; }
     strlcpy(g_wifiTarget, ssid, sizeof(g_wifiTarget));
     strlcpy(g_wifiTargetPass, pass ? pass : "", sizeof(g_wifiTargetPass));
     g_wifiTargetAuto = autoJoin;
@@ -1752,6 +1777,10 @@ void wifiConnect(const char* ssid, const char* pass, bool save, bool autoJoin) {
 
 void wifiStartScan(bool forAuto) {
     if (g_wifiScanning) return;
+    if (!g_pwEff.wifi) {
+        if (!forAuto) toast("WiFi off in %s mode", power::modeName(g_pw.mode));
+        return;
+    }
     wifiRadioOn();
     if (!WiFiInterface::startAsyncScan()) {
         strlcpy(g_wifiMsg, "scan failed", sizeof(g_wifiMsg));
@@ -1859,7 +1888,7 @@ void watchWifi() {
     const bool idle = g_wifiSt == WifiSt::Off || g_wifiSt == WifiSt::Failed;
     const bool onWifiPage = g_screen == SCR_SETTINGS && isWifiPage(g_page);
     if (idle && !g_wifiScanning && !onWifiPage && WiFi.getMode() != WIFI_OFF) wifiRadioOff();
-    if (idle && !g_wifiUserOff && !g_wifiScanning && wifiHasAutoCreds() &&
+    if (idle && g_pwEff.wifi && !g_wifiUserOff && !g_wifiScanning && wifiHasAutoCreds() &&
         (int32_t)(millis() - g_wifiNextAuto) >= 0 &&
         !(g_screen == SCR_SETTINGS && (g_page == PG_WIFI_SCAN || g_page == PG_WIFI_JOIN))) {
         g_wifiNextAuto = millis() + WIFI_RETRY_MS;
@@ -2127,6 +2156,8 @@ const char* pageTitle(Page p) {
         case PG_WIFI_SAVED: return "Saved WiFi";
         case PG_WIFI_NET:   return "Saved network";
         case PG_WIFI_JOIN:  return "Join WiFi";
+        case PG_POWER:        return "Power";
+        case PG_POWER_CUSTOM: return "Custom power";
     }
     return "";
 }
@@ -2153,6 +2184,7 @@ void buildSettingsRows(Page p) {
         srow(RK_MENU, "WiFi", "%s", a);
         srow(RK_MENU, "Screen & I/O", "%s, keys %s", g_cfg.dark ? "Black ink" : "White paper",
              g_cfg.kbLight ? "lit" : "dark");
+        srow(RK_MENU, "Power", "%s%s", power::modeName(g_pw.mode), g_pwOnUsb ? " (USB: Full)" : "");
         if (g_bat.valid) srow(RK_MENU, "Battery", "%.2f V  %d%%", g_bat.volts, g_bat.pct);
         else             srow(RK_MENU, "Battery", "gauge n/a");
         srow(RK_MENU, "Identity", "%s", g_selfName);
@@ -2171,7 +2203,9 @@ void buildSettingsRows(Page p) {
         {
             int inView, heard, best;
             gpsSkySummary(inView, heard, best);
-            if (g_cfg.gpsOn && g_gpsBbrFault)
+            if (g_cfg.gpsOn && !g_gpsAllowed)
+                srow(RK_TOGGLE, "Enable GPS", "ON  resting (%s)", power::gpsName(g_pwEff.gps));
+            else if (g_cfg.gpsOn && g_gpsBbrFault)
                 srow(RK_TOGGLE, "Enable GPS", "ON  backup cell low");
             else if (g_gpsFix || !g_cfg.gpsOn)
                 srow(RK_TOGGLE, "Enable GPS", "%s  %s  %u sats", g_cfg.gpsOn ? "ON" : "OFF", g_gpsStatus, g_gpsSats);
@@ -2266,6 +2300,39 @@ void buildSettingsRows(Page p) {
         srow(RK_TOGGLE, "Auto-connect", "%s", g_joinAuto ? "ON" : "OFF");
         srow(RK_ACTION, "Join", "Enter = connect + save");
         break;
+
+    case PG_POWER: {
+        for (uint8_t m = power::MODE_FULL; m < power::MODE_CUSTOM; m++)
+            srow(RK_PICK, power::modeName(m), "%s%s", g_pw.mode == m ? "ON " : "", power::modeBlurb(m));
+        srow(RK_MENU, "Custom", "%s", g_pw.mode == power::MODE_CUSTOM ? "ON  your own settings" : "set your own");
+        srow(RK_TOGGLE, "Full power on USB", "%s", g_pw.fullOnUsb ? "ON" : "OFF");
+        const uint32_t tot = g_pwAwakeMs + g_pwSleepMs;
+        if (g_pwOnUsb)               srow(RK_INFO, "Now", "Full (USB power)");
+        else if (!g_pwEff.wakeSecs)  srow(RK_INFO, "Now", "%u MHz, never sleeps", (unsigned)g_pwEff.cpuMhz);
+        else srow(RK_INFO, "Now", "%u MHz, asleep %u%%", (unsigned)g_pwEff.cpuMhz,
+                  tot ? (unsigned)((uint64_t)g_pwSleepMs * 100 / tot) : 0u);
+        if (!g_bat.valid)                          srow(RK_INFO, "Battery draw", "gauge n/a");
+        else if (g_bat.usb && !g_benchUntil)       srow(RK_INFO, "Battery draw", "on USB (%+d mA)", (int)g_bat.avgMa);
+        else if (g_bat.tteMin && g_bat.tteMin != 0xFFFF)
+            srow(RK_INFO, "Battery draw", "%d mA, %u h %02u m left", (int)-g_bat.avgMa,
+                 (unsigned)(g_bat.tteMin / 60), (unsigned)(g_bat.tteMin % 60));
+        else                                       srow(RK_INFO, "Battery draw", "%d mA", (int)-g_bat.avgMa);
+        break;
+    }
+
+    case PG_POWER_CUSTOM: {
+        const power::Profile& c = g_pw.custom;
+        srow(RK_PICK, "CPU speed", "%u MHz", (unsigned)c.cpuMhz);
+        power::fmtWake(a, sizeof(a), c.wakeSecs);
+        srow(RK_PICK, "Sleep, wake every", "%s", a);
+        srow(RK_PICK, "Awake after key", c.wakeSecs ? "%u s" : "%u s (no sleep)", (unsigned)c.awakeSecs);
+        srow(RK_TOGGLE, "LoRa radio", "%s", c.lora ? "ON (messages)" : "OFF (no messages)");
+        srow(RK_PICK, "GPS", "%s%s", power::gpsName(c.gps), g_cfg.gpsOn ? "" : " (GPS disabled)");
+        srow(RK_TOGGLE, "WiFi", "%s", c.wifi ? "allowed" : "OFF");
+        srow(RK_TOGGLE, "Key backlight", "%s", c.keyLight ? "allowed" : "OFF");
+        srow(RK_ACTION, "Reset to Balanced", "Enter = reset");
+        break;
+    }
 
     case PG_SCREEN:
         srow(RK_TOGGLE, "Theme", "%s", g_cfg.dark ? "Black ink" : "White paper");
@@ -2415,9 +2482,9 @@ void startNameEntry(const uint8_t peer[16]);
 void activateSetting(int idx) {
     switch (g_page) {
     case PG_ROOT: {
-        static const Page kSub[9] = {PG_TIME, PG_WIFI, PG_SCREEN, PG_BATTERY, PG_IDENTITY,
-                                     PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE};
-        if (idx >= 0 && idx < 9) pushPage(kSub[idx]);
+        static const Page kSub[10] = {PG_TIME, PG_WIFI, PG_SCREEN, PG_POWER, PG_BATTERY, PG_IDENTITY,
+                                      PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE};
+        if (idx >= 0 && idx < 10) pushPage(kSub[idx], idx == 3 ? g_pw.mode : 0);
         break;
     }
     case PG_TIME:
@@ -2534,6 +2601,50 @@ void activateSetting(int idx) {
         }
         break;
 
+    case PG_POWER:
+        if (idx >= power::MODE_FULL && idx < power::MODE_CUSTOM) {
+            g_pw.mode = (uint8_t)idx;
+            power::save(g_pw);
+            powerApply(true);
+            toast("Power: %s", power::modeName(g_pw.mode));
+        } else if (idx == 3) {
+            if (!g_pw.customSet) {                 // start from the mode in use
+                g_pw.custom = power::selected(g_pw);
+                g_pw.customSet = true;
+            }
+            g_pw.mode = power::MODE_CUSTOM;
+            power::save(g_pw);
+            powerApply(true);
+            pushPage(PG_POWER_CUSTOM);
+        } else if (idx == 4) {
+            g_pw.fullOnUsb = !g_pw.fullOnUsb;
+            power::save(g_pw);
+            powerApply(true);
+            requestRedraw();
+        }
+        break;
+
+    case PG_POWER_CUSTOM: {
+        power::Profile& c = g_pw.custom;
+        switch (idx) {
+            case 0: c.cpuMhz = power::nextCpu(c.cpuMhz); break;
+            case 1: c.wakeSecs = power::nextWake(c.wakeSecs); break;
+            case 2: c.awakeSecs = power::nextAwake(c.awakeSecs); break;
+            case 3: c.lora = !c.lora; break;
+            case 4: c.gps = (uint8_t)((c.gps + 1) % power::GPS_COUNT); break;
+            case 5: c.wifi = !c.wifi; break;
+            case 6: c.keyLight = !c.keyLight; break;
+            case 7: c = power::preset(power::MODE_BALANCED); toast("Custom = Balanced"); break;
+            default: return;
+        }
+        g_pw.mode = power::MODE_CUSTOM;
+        g_pw.customSet = true;
+        power::save(g_pw);
+        powerApply(true);
+        requestRedraw();
+        break;
+    }
+
     case PG_SCREEN:
         if (idx == 0) {
             g_cfg.dark = !g_cfg.dark;
@@ -2544,7 +2655,8 @@ void activateSetting(int idx) {
             pushPage(PG_IDLE, g_cfg.idleMode);
         } else if (idx == 2) {
             g_cfg.kbLight = !g_cfg.kbLight;
-            if (g_cfg.kbLight) g_kb.backlightOn(); else g_kb.backlightOff();
+            applyKeyLight();
+            if (g_cfg.kbLight && !g_pwEff.keyLight) toast("Key light off in %s mode", power::modeName(g_pw.mode));
             saveConfig();
             requestRedraw();
         }
@@ -3151,7 +3263,7 @@ void activateCurrent() {
 // Digits: lists select (Enter activates); Settings select + activate.
 void digitPressed(int d) {
     if (g_screen == SCR_SETTINGS) {
-        int idx = d - 1;
+        int idx = d == 0 ? 9 : d - 1;           // 1..9 = rows 1..9, 0 = row 10
         int n = settingsRowCount();
         if (idx < 0 || idx >= n) return;           // no clamping to "nearest" row
         g_sel = idx;
@@ -3477,6 +3589,217 @@ void pollTouch() {
     lastInt = v;
 }
 
+// ---- Energy modes: apply, GPS schedule, light sleep -----------------------------------
+// The effective profile (power/PowerModes.h) is re-evaluated every second; changes are
+// applied to the hardware here and nowhere else.
+
+// BQ25896 REG00 bit 7 EN_HIZ: input off, the system runs from the battery although USB
+// is plugged in. Bench use only (console "bench"), so the gauge shows the real draw.
+bool chargerSetHiz(bool on) {
+    Wire.beginTransmission(BQ25896_I2C_ADDR);
+    Wire.write((uint8_t)0x00);
+    if (Wire.endTransmission(false) != 0) return false;
+    if (Wire.requestFrom((int)BQ25896_I2C_ADDR, 1) != 1) return false;
+    uint8_t r = Wire.read();
+    r = on ? (r | 0x80) : (r & 0x7F);
+    Wire.beginTransmission(BQ25896_I2C_ADDR);
+    Wire.write((uint8_t)0x00);
+    Wire.write(r);
+    return Wire.endTransmission() == 0;
+}
+
+uint32_t g_gpsVisitStart = 0, g_gpsNextVisit = 0;   // periodic GPS schedule (powerGpsTick)
+
+bool powerUsbPowered() { return g_bat.usb && !g_benchUntil; }
+
+void powerApply(bool force) {
+    const bool usb = powerUsbPowered();
+    const power::Profile& want = power::effective(g_pw, usb);
+    const bool onUsb = usb && g_pw.fullOnUsb && g_pw.mode != power::MODE_FULL;
+    if (!force && power::sameProfile(want, g_pwEff) && onUsb == g_pwOnUsb) return;
+    const power::Profile old = g_pwEff;
+    g_pwEff = want;
+    g_pwOnUsb = onUsb;
+
+#if !defined(SIMULATOR)
+    if (getCpuFrequencyMhz() != g_pwEff.cpuMhz) setCpuFrequencyMhz(g_pwEff.cpuMhz);
+#endif
+    if (g_loraIf && g_radio) {
+        if (g_pwEff.lora && !g_loraIf->isOnline()) {
+            if (g_loraIf->start()) Serial.println("[POWER] LoRa receiver on");
+        } else if (!g_pwEff.lora && g_loraIf->isOnline()) {
+            g_loraIf->stop();
+            g_radio->sleep();
+            Serial.println("[POWER] LoRa radio asleep (no messages)");
+        }
+    }
+    if (!g_pwEff.wifi && (g_wifiSt != WifiSt::Off || g_wifiScanning || WiFi.getMode() != WIFI_OFF)) {
+        g_wifiJoinAfterScan = false;
+        wifiRadioOff();
+        g_wifiScanning = false;
+        g_wifiSt = WifiSt::Off;
+        strlcpy(g_wifiMsg, "off (power mode)", sizeof(g_wifiMsg));
+        wifiUiChanged();
+    } else if (g_pwEff.wifi && !old.wifi) {
+        strlcpy(g_wifiMsg, "off", sizeof(g_wifiMsg));
+        g_wifiNextAuto = millis() + 2000;
+    }
+    applyKeyLight();
+    if (old.gps != g_pwEff.gps || force) {
+        g_gpsVisitStart = 0;
+        g_gpsNextVisit = 0;                      // periodic: first visit now
+    }
+    char w[16];
+    power::fmtWake(w, sizeof(w), g_pwEff.wakeSecs);
+    Serial.printf("[POWER] %s%s: cpu %u MHz, sleep %s, awake %us, lora %s, gps %s, wifi %s, keylight %s\n",
+                  power::modeName(g_pw.mode), g_pwOnUsb ? " (USB -> Full)" : "", (unsigned)g_pwEff.cpuMhz, w,
+                  (unsigned)g_pwEff.awakeSecs, g_pwEff.lora ? "on" : "off", power::gpsName(g_pwEff.gps),
+                  g_pwEff.wifi ? "allowed" : "off", g_pwEff.keyLight ? "allowed" : "off");
+    if (g_screen == SCR_SETTINGS) requestRedraw();
+}
+
+// Periodic GPS: power the receiver for a visit (until a fix has held 20 s, or 3 min),
+// then rest until the next interval. The backup cell keeps ephemeris, so visits after
+// the first are usually hot starts of a few seconds.
+
+void powerGpsTick() {
+    const uint32_t now = millis();
+    const uint32_t ivl = power::gpsIntervalMs(g_pwEff.gps);
+    bool want;
+    if (!g_cfg.gpsOn || g_pwEff.gps == power::GPS_OFF) {
+        want = false;
+    } else if (!ivl) {
+        want = true;
+    } else if (g_gpsVisitStart) {
+        static uint32_t fixSince = 0;
+        if (!g_gpsFix) fixSince = 0;
+        else if (!fixSince) fixSince = now ? now : 1;
+        const bool done = (fixSince && now - fixSince >= 20000) || now - g_gpsVisitStart >= power::kGpsWindowMs;
+        if (done) {
+            Serial.printf("[GPS] visit done after %lus (%s), next in %lu min\n",
+                          (unsigned long)((now - g_gpsVisitStart) / 1000), g_gpsFix ? "fix" : "no fix",
+                          (unsigned long)(ivl / 60000));
+            g_gpsVisitStart = 0;
+            fixSince = 0;
+            g_gpsNextVisit = now + ivl;
+            want = false;
+        } else {
+            want = true;
+        }
+    } else if (!g_gpsNextVisit || (int32_t)(now - g_gpsNextVisit) >= 0) {
+        g_gpsVisitStart = now ? now : 1;
+        Serial.println("[GPS] scheduled visit: receiver on");
+        want = true;
+    } else {
+        want = false;
+    }
+    if (want != g_gpsAllowed) {
+        g_gpsAllowed = want;
+        gpsApplyPower();
+        if (g_screen == SCR_SETTINGS && g_page == PG_TIME) requestRedraw();
+    }
+}
+
+void powerTick() {
+    static uint32_t last = 0;
+    if (millis() - last < 1000) return;
+    last = millis();
+    if (g_benchUntil) {
+        static uint32_t lastHiz = 0;
+        if ((int32_t)(millis() - g_benchUntil) >= 0 || !g_bat.valid || g_bat.volts < 3.55f) {
+            chargerSetHiz(false);
+            g_benchUntil = 0;
+            Serial.println("[BENCH] done - charger input back on");
+        } else {
+            if (millis() - lastHiz >= 5000) { lastHiz = millis(); chargerSetHiz(true); }
+            Serial.printf("[BENCH] %s cpu=%u ma=%d mv=%u tte=%u\n", power::modeName(g_pw.mode),
+                          (unsigned)g_pwEff.cpuMhz, (int)g_bat.avgMa, (unsigned)(g_bat.volts * 1000 + 0.5f),
+                          (unsigned)g_bat.tteMin);
+        }
+    }
+    static uint32_t decayAt = 0;
+    if (millis() - decayAt >= 600000UL) {          // statistics describe the last ~10-20 min
+        decayAt = millis();
+        g_pwAwakeMs /= 2; g_pwSleepMs /= 2;
+    }
+    powerApply(false);
+    powerGpsTick();
+}
+
+// Why the CPU must stay awake right now (nullptr = it may sleep).
+const char* powerSleepBlocker() {
+    const uint32_t now = millis();
+    if (!g_pwEff.wakeSecs) return "mode";
+    if (now < 15000) return "boot";
+    if (now - g_lastInputMs < (uint32_t)g_pwEff.awakeSecs * 1000UL) return "recent input";
+    if (g_redraw || g_redrawAt) return "redraw";
+    if (g_keyqTail != g_keyqHead) return "keys";
+    if (HWCDC::isPlugged()) return "usb host";   // USB-Serial-JTAG + light sleep = chip reset
+    if (mirror::active()) return "mirror";
+    if (g_wifiSt != WifiSt::Off || g_wifiScanning || WiFi.getMode() != WIFI_OFF) return "wifi";
+    if (g_gpsSerial) return "gps";
+    if (g_protoReady && g_proto.lxmfQueuedCount() > 0) return "lxmf queue";
+    if (g_radio && (g_radio->packetAvailable || g_radio->isTxBusy())) return "lora busy";
+    return nullptr;
+}
+
+// End of each loop pass: either a short idle delay or a light sleep until the next
+// wake-up (timer, key, touch or LoRa packet).
+void powerIdle() {
+    if (g_redraw) return;
+    static uint32_t accountedAt = 0;
+    const char* why = powerSleepBlocker();
+    if (why) { delay(g_pwEff.cpuMhz >= 240 ? 2 : 5); return; }
+
+    uint32_t ms = (uint32_t)g_pwEff.wakeSecs * 1000UL;
+    const time_t t = time(nullptr);
+    if (t > 100000 && g_pwEff.wakeSecs >= 60) {        // land on the minute: the clock stays right
+        const uint32_t toMinute = (uint32_t)(60 - t % 60) * 1000UL + 250;
+        if (toMinute < ms) ms = toMinute;
+    }
+    if (g_toast[0]) {
+        const int32_t left = (int32_t)(g_toastUntil - millis());
+        ms = left <= 0 ? 1 : ((uint32_t)left < ms ? (uint32_t)left : ms);
+    }
+
+    // Acknowledge the keyboard interrupt; if the line stays low a key is waiting.
+    if (g_kbOk) g_kb.clearInterrupt();
+    if (digitalRead(KB_INT) == LOW) { delay(2); return; }
+
+    power::WakePins pins;
+    pins.key = KB_INT;
+    pins.touch = g_idleActive ? -1 : TOUCH_INT;     // idle splash: key-only wake
+    pins.lora = (g_radio && g_loraIf && g_loraIf->isOnline()) ? LORA_IRQ : -1;
+
+    if (accountedAt) g_pwAwakeMs += millis() - accountedAt;
+    uint32_t slept = 0;
+    const power::Wake w = power::lightSleep(ms, pins, slept);
+    accountedAt = millis();
+    g_pwSleepMs += slept;
+    g_pwSleeps++;
+    if (w < 6) g_pwWakes[w]++;
+    if (g_radio && pins.lora >= 0 && digitalRead(LORA_IRQ) == HIGH) g_radio->packetAvailable = true;
+}
+
+void powerStatus() {
+    const uint32_t tot = g_pwAwakeMs + g_pwSleepMs;
+    char w[16];
+    power::fmtWake(w, sizeof(w), g_pwEff.wakeSecs);
+    const char* why = powerSleepBlocker();
+    Serial.printf("[POWER] mode=%s%s cpu=%u MHz sleep=%s awake=%us lora=%s gps=%s(%s) wifi=%s keylight=%s\n",
+                  power::modeName(g_pw.mode), g_pwOnUsb ? " (USB->Full)" : "", (unsigned)g_pwEff.cpuMhz, w,
+                  (unsigned)g_pwEff.awakeSecs, g_pwEff.lora ? "on" : "off", power::gpsName(g_pwEff.gps),
+                  g_gpsSerial ? "powered" : "resting", g_pwEff.wifi ? "allowed" : "off",
+                  g_pwEff.keyLight ? "allowed" : "off");
+    Serial.printf("[POWER] asleep %u%% (%lu sleeps; wakes timer %lu key %lu touch %lu lora %lu other %lu) blocker=%s\n",
+                  tot ? (unsigned)((uint64_t)g_pwSleepMs * 100 / tot) : 0u, (unsigned long)g_pwSleeps,
+                  (unsigned long)g_pwWakes[power::WAKE_TIMER], (unsigned long)g_pwWakes[power::WAKE_KEY],
+                  (unsigned long)g_pwWakes[power::WAKE_TOUCH], (unsigned long)g_pwWakes[power::WAKE_LORA],
+                  (unsigned long)g_pwWakes[power::WAKE_OTHER], why ? why : "none");
+    Serial.printf("[POWER] battery %.3f V %+d mA tte=%u min usb=%d bench=%d\n", g_bat.volts, (int)g_bat.avgMa,
+                  (unsigned)g_bat.tteMin, g_bat.usb, g_benchUntil != 0);
+}
+
 // ---- Serial console (debug) --------------------------------------------------------
 // "@..." lines come from the desktop simulator's live-device mode (remote/ScreenMirror.h):
 // screen mirror control, raw key events and touches.
@@ -3526,14 +3849,58 @@ void handleSerialLine(char* p) {
         gpsPowerCycle("console");
     } else if (!strcmp(p, "gr")) {
         gpsHardReset();
+    } else if (!strcmp(p, "pw")) {
+        powerStatus();
+    } else if (p[0] == 'p' && p[1] == 'm' && (p[2] == ' ' || isdigit((unsigned char)p[2]))) {
+        const int m = atoi(p + 2);
+        if (m >= 0 && m < power::MODE_COUNT) {
+            if (m == power::MODE_CUSTOM && !g_pw.customSet) { g_pw.custom = power::selected(g_pw); g_pw.customSet = true; }
+            g_pw.mode = (uint8_t)m;
+            power::save(g_pw);
+            powerApply(true);
+        }
+    } else if (!strncmp(p, "pset ", 5)) {
+        // Custom-mode knob from the console: pset cpu|wake|awake|lora|gps|wifi|kbl <value>
+        char k[8] = "";
+        int v = -1;
+        if (sscanf(p + 5, "%7s %d", k, &v) == 2 && v >= 0) {
+            if (!g_pw.customSet) { g_pw.custom = power::selected(g_pw); g_pw.customSet = true; }
+            power::Profile& c = g_pw.custom;
+            if (!strcmp(k, "cpu") && (v == 80 || v == 160 || v == 240)) c.cpuMhz = (uint16_t)v;
+            else if (!strcmp(k, "wake") && v <= 3600) c.wakeSecs = (uint16_t)v;
+            else if (!strcmp(k, "awake") && v >= 1 && v <= 600) c.awakeSecs = (uint16_t)v;
+            else if (!strcmp(k, "lora")) c.lora = v != 0;
+            else if (!strcmp(k, "gps") && v < power::GPS_COUNT) c.gps = (uint8_t)v;
+            else if (!strcmp(k, "wifi")) c.wifi = v != 0;
+            else if (!strcmp(k, "kbl")) c.keyLight = v != 0;
+            else { Serial.println("[POWER] pset: bad knob/value"); return; }
+            g_pw.mode = power::MODE_CUSTOM;
+            power::save(g_pw);
+            powerApply(true);
+        } else {
+            Serial.println("[POWER] pset cpu 80|160|240, wake <s>, awake <s>, lora 0|1, gps 0-3 (on,15m,1h,off), wifi 0|1, kbl 0|1");
+        }
+    } else if (!strncmp(p, "bench", 5)) {
+        const int secs = p[5] ? atoi(p + 5) : 120;
+        if (secs <= 0) { if (g_benchUntil) { g_benchUntil = 1; Serial.println("[BENCH] stopping"); } }
+        else if (!g_bat.valid || g_bat.volts < 3.7f) Serial.println("[BENCH] refused: battery missing or below 3.70 V");
+        else if (!chargerSetHiz(true)) Serial.println("[BENCH] charger not responding");
+        else {
+            g_benchUntil = millis() + (uint32_t)(secs > 1800 ? 1800 : secs) * 1000UL;
+            Serial.printf("[BENCH] charger input off for %d s - running from battery\n", secs > 1800 ? 1800 : secs);
+        }
+    } else if (!strncmp(p, "blog", 4)) {
+        g_batLogInternal = atoi(p + 4) != 0;
+        if (g_batLogInternal) batLogSample();
+        Serial.printf("[BATLOG] internal log %s (%u samples)\n", g_batLogInternal ? "on" : "off", (unsigned)g_batLogCount);
     } else if (!strcmp(p, "L")) {
         g_cfg.kbLight = !g_cfg.kbLight;
-        if (g_cfg.kbLight) g_kb.backlightOn(); else g_kb.backlightOff();
+        applyKeyLight();
         requestRedraw();
     } else if (!strcmp(p, "FORMAT")) {
         Serial.println(recoverCorruptLittleFS() ? "[FLASH] formatted - reboot now" : "[FLASH] format failed");
     } else {
-        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr L FORMAT");
+        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> L FORMAT");
     }
 }
 
@@ -3641,6 +4008,7 @@ bool begin() {
     Serial.println(" RatSpeak T-Deck Pro - standalone");
     Serial.println("========================================");
     loadConfig();
+    power::load(g_pw);
     applyTz();
     ensureClockSeeded();
     loadSelfName();
@@ -3665,6 +4033,12 @@ bool begin() {
 
     Wire.begin(I2C_SDA, I2C_SCL);
     Wire.setClock(I2C_FREQUENCY);
+    // A reset during a bench run would leave the charger input off (EN_HIZ survives an
+    // ESP32 reset, and the charger's watchdog does not clear it): always switch it back on.
+    chargerSetHiz(false);
+#if !defined(SIMULATOR)
+    Serial.printf("[BOOT] reset reason %d\n", (int)esp_reset_reason());
+#endif
     spiBusIdle();
     logPsram();
 
@@ -3685,7 +4059,7 @@ bool begin() {
     drawBootSplash();
 
     g_kbOk = g_kb.begin();
-    if (g_kbOk && g_cfg.kbLight) g_kb.backlightOn();
+    applyKeyLight();
     keyboardSetNumLayer(false);
 
     g_audio.begin();
@@ -3700,9 +4074,12 @@ bool begin() {
     g_touchOk = Wire.endTransmission() == 0;
     Serial.printf("[TOUCH] CST328 %s\n", g_touchOk ? "ok" : "absent");
 
-    gpsApplyPower();
+    pinMode(KB_INT, INPUT_PULLUP);
     loadBatteryCal();
     readBattery();
+    powerApply(true);                     // CPU clock, LoRa, WiFi, key light for the mode
+    powerGpsTick();                       // decides whether the GPS starts powered
+    gpsApplyPower();
     vault::begin();                       // default password, applied automatically for now
     wifiLoad();
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
@@ -3740,6 +4117,7 @@ void loop() {
     pollTouch();
     pollSerial();
     watchIdle();
+    powerTick();
 
     if (!g_idleActive) {
         const bool debounced = g_redrawAt && (int32_t)(millis() - g_redrawAt) >= 0;
@@ -3749,7 +4127,7 @@ void loop() {
         }
     }
     mirrorTick();
-    if (!g_redraw) delay(2);
+    powerIdle();
 }
 
 }  // namespace standalone

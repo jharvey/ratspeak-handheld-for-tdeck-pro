@@ -61,7 +61,9 @@ set(FW_SRCS
     ${BOARD}/Eink/LvglPort.cpp
     ${BOARD}/Eink/LvglStubs.cpp
     ${BOARD}/security/SecretVault.cpp
-    ${BOARD}/remote/ScreenMirror.cpp)
+    ${BOARD}/remote/ScreenMirror.cpp
+    ${BOARD}/power/PowerModes.cpp
+    ${BOARD}/power/LightSleep.cpp)
 file(GLOB CORE_SRCS CONFIGURE_DEPENDS
     ${SRC}/core/storage/*.cpp
     ${SRC}/core/reticulum/*.cpp

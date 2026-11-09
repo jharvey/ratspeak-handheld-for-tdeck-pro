@@ -36,7 +36,9 @@ void yield() { std::this_thread::yield(); }
 
 // ---- GPIO: remembered levels; a few pins have meaning in the simulator ------------
 static int g_pins[64];
-void pinMode(int, int) {}
+void pinMode(int pin, int mode) {
+    if (mode == INPUT_PULLUP && pin >= 0 && pin < 64) g_pins[pin] = HIGH;   // e.g. KB_INT idles high
+}
 void digitalWrite(int pin, int v) {
     if (pin < 0 || pin >= 64) return;
     g_pins[pin] = v;

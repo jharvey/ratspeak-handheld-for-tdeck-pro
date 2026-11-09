@@ -137,7 +137,11 @@ to `build\simdata\<name>\shots\`. One command per line, `#` for comments:
 
 Included: `scripts/smoke.txt` (boot and menus), `scripts/wifi.txt` (scan, join with
 password, saved + encrypted), `scripts/announce_a.txt` + `announce_b.txt` (two devices
-discover each other; run both at once), `scripts/live_tcp.txt` (live-device mode, see above).
+discover each other; run both at once), `scripts/live_tcp.txt` (live-device mode, see above),
+`scripts/power.txt` (Settings > Power: Saver, sleep statistics, USB forces Full, Custom knobs).
+
+The energy modes run their real logic here; light sleep is a 20 ms pause, and the
+console command `pw` shows the mode, knobs and percent of time asleep.
 
 ## Limits
 

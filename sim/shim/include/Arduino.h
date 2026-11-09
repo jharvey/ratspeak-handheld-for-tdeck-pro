@@ -128,7 +128,13 @@ private:
     int port_;
 };
 
-class HWCDC : public HardwareSerial { public: HWCDC() : HardwareSerial(0) {} };
+class HWCDC : public HardwareSerial {
+public:
+    HWCDC() : HardwareSerial(0) {}
+    static bool isPlugged() { return false; }   // simulator: no USB host, sleep path runs
+};
+inline bool setCpuFrequencyMhz(uint32_t) { return true; }
+inline uint32_t getCpuFrequencyMhz() { return 240; }
 
 extern HardwareSerial Serial;     // USB console -> simulator log pane
 extern HardwareSerial Serial1;    // GPS UART   -> simulated NMEA source
