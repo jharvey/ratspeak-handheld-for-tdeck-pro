@@ -1,0 +1,158 @@
+// NVS (Preferences) shim: <data>/nvs/<namespace>.nvs, one "key<TAB>type<TAB>hex" per line.
+#include "Preferences.h"
+
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <map>
+#include <mutex>
+#include <sstream>
+#include <vector>
+
+namespace fsx = std::filesystem;
+namespace sim { std::string dataRoot(); }
+
+namespace {
+struct Entry { PreferenceType type; std::vector<uint8_t> data; };
+using Ns = std::map<std::string, Entry>;
+std::mutex g_mu;
+std::map<std::string, Ns> g_cache;
+
+std::string nsPath(const std::string& ns) { return (fsx::path(sim::dataRoot()) / "nvs" / (ns + ".nvs")).string(); }
+
+Ns& load(const std::string& ns) {   // caller holds g_mu
+    auto it = g_cache.find(ns);
+    if (it != g_cache.end()) return it->second;
+    Ns& m = g_cache[ns];
+    std::ifstream in(nsPath(ns));
+    std::string line;
+    while (std::getline(in, line)) {
+        std::istringstream ss(line);
+        std::string key, hex; int t;
+        if (!std::getline(ss, key, '\t') || !(ss >> t)) continue;
+        ss.get();
+        std::getline(ss, hex);
+        Entry e{(PreferenceType)t, {}};
+        for (size_t i = 0; i + 1 < hex.size(); i += 2) e.data.push_back((uint8_t)std::stoi(hex.substr(i, 2), nullptr, 16));
+        m[key] = std::move(e);
+    }
+    return m;
+}
+void save(const std::string& ns) {   // caller holds g_mu
+    std::error_code ec;
+    fsx::create_directories(fsx::path(nsPath(ns)).parent_path(), ec);
+    const std::string tmp = nsPath(ns) + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        static const char* hx = "0123456789abcdef";
+        for (auto& [k, e] : g_cache[ns]) {
+            out << k << '\t' << (int)e.type << '\t';
+            for (uint8_t b : e.data) out << hx[b >> 4] << hx[b & 15];
+            out << '\n';
+        }
+    }
+    fsx::rename(tmp, nsPath(ns), ec);
+}
+}  // namespace
+
+bool Preferences::begin(const char* name, bool readOnly, const char*) {
+    if (!name || strlen(name) > 15) return false;     // NVS namespace limit
+    std::lock_guard<std::mutex> l(g_mu);
+    ns_ = name; ro_ = readOnly; started_ = true;
+    load(ns_);
+    return true;
+}
+void Preferences::end() { started_ = false; }
+bool Preferences::clear() {
+    if (!started_ || ro_) return false;
+    std::lock_guard<std::mutex> l(g_mu);
+    load(ns_).clear(); save(ns_);
+    return true;
+}
+bool Preferences::remove(const char* key) {
+    if (!started_ || ro_) return false;
+    std::lock_guard<std::mutex> l(g_mu);
+    const bool had = load(ns_).erase(key) > 0;
+    if (had) save(ns_);
+    return had;
+}
+bool Preferences::isKey(const char* key) {
+    if (!started_) return false;
+    std::lock_guard<std::mutex> l(g_mu);
+    return load(ns_).count(key) > 0;
+}
+PreferenceType Preferences::getType(const char* key) {
+    if (!started_) return PT_INVALID;
+    std::lock_guard<std::mutex> l(g_mu);
+    auto& m = load(ns_);
+    auto it = m.find(key);
+    return it == m.end() ? PT_INVALID : it->second.type;
+}
+
+size_t Preferences::putNum(const char* k, PreferenceType t, int64_t v, size_t sz) {
+    if (!started_ || ro_ || !k || strlen(k) > 15) return 0;   // NVS key limit
+    std::lock_guard<std::mutex> l(g_mu);
+    Entry e{t, std::vector<uint8_t>((const uint8_t*)&v, (const uint8_t*)&v + 8)};
+    load(ns_)[k] = e;
+    save(ns_);
+    return sz;
+}
+int64_t Preferences::getNum(const char* k, int64_t d) {
+    if (!started_) return d;
+    std::lock_guard<std::mutex> l(g_mu);
+    auto& m = load(ns_);
+    auto it = m.find(k);
+    if (it == m.end() || it->second.type >= PT_STR || it->second.data.size() < 8) return d;
+    int64_t v; memcpy(&v, it->second.data.data(), 8);
+    return v;
+}
+size_t Preferences::putFloat(const char* k, float v) { return putBytes(k, &v, sizeof(v)) ? sizeof(v) : 0; }
+size_t Preferences::putDouble(const char* k, double v) { return putBytes(k, &v, sizeof(v)) ? sizeof(v) : 0; }
+float Preferences::getFloat(const char* k, float d) { float v; return getBytes(k, &v, sizeof(v)) == sizeof(v) ? v : d; }
+double Preferences::getDouble(const char* k, double d) { double v; return getBytes(k, &v, sizeof(v)) == sizeof(v) ? v : d; }
+
+size_t Preferences::putString(const char* k, const char* v) {
+    if (!started_ || ro_ || !k || !v || strlen(k) > 15) return 0;
+    std::lock_guard<std::mutex> l(g_mu);
+    load(ns_)[k] = Entry{PT_STR, std::vector<uint8_t>(v, v + strlen(v))};
+    save(ns_);
+    return strlen(v);
+}
+size_t Preferences::putBytes(const char* k, const void* v, size_t n) {
+    if (!started_ || ro_ || !k || (!v && n) || strlen(k) > 15) return 0;
+    std::lock_guard<std::mutex> l(g_mu);
+    load(ns_)[k] = Entry{PT_BLOB, std::vector<uint8_t>((const uint8_t*)v, (const uint8_t*)v + n)};
+    save(ns_);
+    return n;
+}
+size_t Preferences::getString(const char* k, char* out, size_t max) {
+    String s = getString(k, String());
+    if (!out || !max) return s.length() + 1;
+    size_t n = std::min(max - 1, s.length());
+    memcpy(out, s.c_str(), n); out[n] = 0;
+    return n + 1;
+}
+String Preferences::getString(const char* k, const String& d) {
+    if (!started_) return d;
+    std::lock_guard<std::mutex> l(g_mu);
+    auto& m = load(ns_);
+    auto it = m.find(k);
+    if (it == m.end() || it->second.type != PT_STR) return d;
+    return String((const char*)it->second.data.data(), it->second.data.size());
+}
+size_t Preferences::getBytesLength(const char* k) {
+    if (!started_) return 0;
+    std::lock_guard<std::mutex> l(g_mu);
+    auto& m = load(ns_);
+    auto it = m.find(k);
+    return it == m.end() || it->second.type != PT_BLOB ? 0 : it->second.data.size();
+}
+size_t Preferences::getBytes(const char* k, void* out, size_t max) {
+    if (!started_) return 0;
+    std::lock_guard<std::mutex> l(g_mu);
+    auto& m = load(ns_);
+    auto it = m.find(k);
+    if (it == m.end() || it->second.type != PT_BLOB || it->second.data.size() > max) return 0;
+    memcpy(out, it->second.data.data(), it->second.data.size());
+    return it->second.data.size();
+}

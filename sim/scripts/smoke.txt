@@ -1,0 +1,13 @@
+# Boot, show Home, open the menu, open Settings > WiFi.
+wait 7000
+shot 01-home.png
+key M
+wait 1500
+shot 02-menu.png
+key S
+wait 1500
+shot 03-settings.png
+key 2
+wait 1500
+shot 04-wifi.png
+quit

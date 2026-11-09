@@ -1,0 +1,7 @@
+wait 5000
+expect 30000 [ANN]
+wait 3000
+key P
+wait 1500
+shot peers-b.png
+quit

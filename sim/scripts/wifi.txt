@@ -1,0 +1,26 @@
+# WiFi: scan, join HomeNet with a typed password, check it saved + encrypted.
+wait 6000
+key M
+wait 800
+key S
+wait 800
+key 2
+wait 800
+shot wifi-01-page.png
+key 3
+expect 8000 Async scan: 3 networks found
+wait 800
+shot wifi-02-scan.png
+key 2
+wait 800
+type password123
+wait 800
+shot wifi-03-password.png
+key ENTER
+expect 10000 [WIFI] connected "HomeNet"
+wait 1000
+shot wifi-04-connected.png
+key 4
+wait 800
+shot wifi-05-saved.png
+quit

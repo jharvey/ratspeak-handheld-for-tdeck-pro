@@ -1,0 +1,6 @@
+wait 9000
+key A
+wait 6000
+devshot device-a.png
+wait 8000
+quit

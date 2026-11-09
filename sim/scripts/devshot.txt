@@ -1,0 +1,5 @@
+wait 6000
+key M
+wait 1000
+devshot device-menu.png
+quit
