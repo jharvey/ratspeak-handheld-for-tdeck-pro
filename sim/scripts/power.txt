@@ -17,8 +17,7 @@ shot power-02-saver.png
 # Light sleep is a 20 ms pause in the simulator.
 wait 30000
 serial pw
-# Light sleep is compiled out for now (it resets the real board): RS_LIGHT_SLEEP.
-expect 3000 blocker=light sleep disabled
+expect 3000 blocker=none
 # USB power in -> Full, out -> back to Saver.
 usb on
 expect 5000 [POWER] Saver (USB -> Full): cpu 240 MHz

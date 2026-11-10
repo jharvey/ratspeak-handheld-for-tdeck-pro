@@ -84,6 +84,10 @@ void dump() {
         }
         if (e.mv == 0)
             Serial.printf("[RTCLOG] %s BOOT reset reason %d\n", when, (int)e.ma);
+        else if (e.mv == 3 || e.mv == 4)   // older diagnostic entries
+            Serial.printf("[RTCLOG] %s up %lu %s 0x%08lx 0x%08lx\n", when, (unsigned long)e.upS,
+                          e.mv == 3 ? "PROBE stack/core" : "SAVED-PC core0/core1",
+                          (unsigned long)e.sleeps, (unsigned long)e.sleptS);
         else
             Serial.printf("[RTCLOG] %s up %lu %u mV %+d mA usb %u sleeps %lu slept %lu\n", when,
                           (unsigned long)e.upS, (unsigned)e.mv, (int)e.ma, (unsigned)e.usb,

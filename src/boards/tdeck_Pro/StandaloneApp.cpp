@@ -119,6 +119,7 @@ bool     g_gpsAllowed = true;         // power scheduler lets the GPS receiver b
 // Sleep statistics (decayed every 10 min so they describe the recent past).
 uint32_t g_pwAwakeMs = 0, g_pwSleepMs = 0, g_pwSleeps = 0, g_pwWakes[6] = {};
 uint32_t g_pwSleepTotalMs = 0;       // since boot (not decayed), for the RTC log
+uint32_t g_usbSleepUntil = 0;       // console "usbsleep": allow light sleep with a USB host
 uint32_t g_benchUntil = 0;            // bench: charger input off, run from battery (console)
 void powerApply(bool force);
 bool chargerSetHiz(bool on);
@@ -963,6 +964,20 @@ void gpsPoll() {
 }
 
 // ---- Radio ---------------------------------------------------------------------
+// Transmit power (dBm, -9..22), saved in NVS rs_radio/txp. Bench units on one table can run
+// at minimum power, which is also safe for a radio whose antenna is not fitted.
+int loraTxPower() {
+#if defined(RS_BENCH_TX_DBM)
+    const int def = RS_BENCH_TX_DBM;           // bench build: low power unless set otherwise
+#else
+    const int def = LORA_DEFAULT_TX_POWER;
+#endif
+    Preferences p;
+    int v = def;
+    if (p.begin("rs_radio", true)) { v = p.getChar("txp", (int8_t)def); p.end(); }
+    return v < -9 ? -9 : (v > 22 ? 22 : v);
+}
+
 bool initRadio() {
     spiBusIdle();
     SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
@@ -978,7 +993,7 @@ bool initRadio() {
     g_radio->setSpreadingFactor(LORA_DEFAULT_SF);
     g_radio->setSignalBandwidth(LORA_DEFAULT_BW);
     g_radio->setCodingRate4(LORA_DEFAULT_CR);
-    g_radio->setTxPower(LORA_DEFAULT_TX_POWER);
+    g_radio->setTxPower(loraTxPower());
     g_radio->setPreambleLength(LORA_DEFAULT_PREAMBLE);
     g_radio->receive();
     g_loraIf = new LoRaInterface(g_radio, "LoRa");
@@ -1142,6 +1157,7 @@ void vibrate(uint16_t ms) {
 }
 
 void notifyInbound() {
+    Serial.printf("[MSG] inbound message at uptime %lu ms\n", (unsigned long)millis());
     if (g_cfg.beep) g_audio.requestMessage();
     if (g_cfg.vibe) vibrate(40);
 }
@@ -3595,19 +3611,26 @@ void pollTouch() {
 // The effective profile (power/PowerModes.h) is re-evaluated every second; changes are
 // applied to the hardware here and nowhere else.
 
-// BQ25896 REG00 bit 7 EN_HIZ: input off, the system runs from the battery although USB
-// is plugged in. Bench use only (console "bench"), so the gauge shows the real draw.
-bool chargerSetHiz(bool on) {
+bool chargerUpdateReg(uint8_t reg, uint8_t mask, uint8_t value) {
     Wire.beginTransmission(BQ25896_I2C_ADDR);
-    Wire.write((uint8_t)0x00);
+    Wire.write(reg);
     if (Wire.endTransmission(false) != 0) return false;
     if (Wire.requestFrom((int)BQ25896_I2C_ADDR, 1) != 1) return false;
-    uint8_t r = Wire.read();
-    r = on ? (r | 0x80) : (r & 0x7F);
+    const uint8_t r = (uint8_t)((Wire.read() & ~mask) | (value & mask));
     Wire.beginTransmission(BQ25896_I2C_ADDR);
-    Wire.write((uint8_t)0x00);
+    Wire.write(reg);
     Wire.write(r);
     return Wire.endTransmission() == 0;
+}
+
+// BQ25896 REG00 bit 7 EN_HIZ: input off, the system runs from the battery although USB
+// is plugged in. Bench use only (console "bench"), so the gauge shows the real draw.
+// The charger's I2C watchdog (REG07 bits 5:4, default 40 s) puts EN_HIZ back to 0 when it
+// expires, which happens while the ESP32 light-sleeps, so it is off during a bench run and
+// restored (40 s) when the run ends and at every boot.
+bool chargerSetHiz(bool on) {
+    chargerUpdateReg(0x07, 0x30, on ? 0x00 : 0x10);
+    return chargerUpdateReg(0x00, 0x80, on ? 0x80 : 0x00);
 }
 
 uint32_t g_gpsVisitStart = 0, g_gpsNextVisit = 0;   // periodic GPS schedule (powerGpsTick)
@@ -3706,6 +3729,7 @@ void powerTick() {
     static uint32_t last = 0;
     if (millis() - last < 1000) return;
     last = millis();
+    if (g_usbSleepUntil && (int32_t)(millis() - g_usbSleepUntil) >= 0) g_usbSleepUntil = 0;
     if (g_benchUntil) {
         static uint32_t lastHiz = 0;
         if ((int32_t)(millis() - g_benchUntil) >= 0 || !g_bat.valid || g_bat.volts < 3.55f) {
@@ -3739,17 +3763,14 @@ void powerTick() {
 const char* powerSleepBlocker() {
     const uint32_t now = millis();
     if (!g_pwEff.wakeSecs) return "mode";
-#if !defined(RS_LIGHT_SLEEP) || !RS_LIGHT_SLEEP
-    // Light sleep resets this board (watchdog reset, reason 7) within a moment of the
-    // first sleep, with or without USB (COM8, 2026-11-09). Off until that is solved;
-    // build with -DRS_LIGHT_SLEEP=1 to test it.
+#if defined(RS_LIGHT_SLEEP) && !RS_LIGHT_SLEEP
     return "light sleep disabled";
 #endif
     if (now < 15000) return "boot";
     if (now - g_lastInputMs < (uint32_t)g_pwEff.awakeSecs * 1000UL) return "recent input";
     if (g_redraw || g_redrawAt) return "redraw";
     if (g_keyqTail != g_keyqHead) return "keys";
-    if (HWCDC::isPlugged()) return "usb host";   // USB-Serial-JTAG + light sleep = chip reset
+    if (HWCDC::isPlugged() && !g_usbSleepUntil) return "usb host";   // console drops while asleep
     if (mirror::active()) return "mirror";
     if (g_wifiSt != WifiSt::Off || g_wifiScanning || WiFi.getMode() != WIFI_OFF) return "wifi";
     if (g_gpsSerial) return "gps";
@@ -3814,6 +3835,9 @@ void powerStatus() {
                   (unsigned long)g_pwWakes[power::WAKE_OTHER], why ? why : "none");
     Serial.printf("[POWER] battery %.3f V %+d mA tte=%u min usb=%d bench=%d\n", g_bat.volts, (int)g_bat.avgMa,
                   (unsigned)g_bat.tteMin, g_bat.usb, g_benchUntil != 0);
+    Serial.printf("[POWER] messages unread=%d lxmf_queue=%d uptime=%lu s\n",
+                  g_storeReady ? g_msgStore.totalUnreadCount() : -1, g_protoReady ? g_proto.lxmfQueuedCount() : -1,
+                  (unsigned long)(millis() / 1000));
 }
 
 // ---- Serial console (debug) --------------------------------------------------------
@@ -3902,21 +3926,75 @@ void handleSerialLine(char* p) {
         else if (!g_bat.valid || g_bat.volts < 3.7f) Serial.println("[BENCH] refused: battery missing or below 3.70 V");
         else if (!chargerSetHiz(true)) Serial.println("[BENCH] charger not responding");
         else {
-            g_benchUntil = millis() + (uint32_t)(secs > 1800 ? 1800 : secs) * 1000UL;
-            Serial.printf("[BENCH] charger input off for %d s - running from battery\n", secs > 1800 ? 1800 : secs);
+            g_benchUntil = millis() + (uint32_t)(secs > 14400 ? 14400 : secs) * 1000UL;
+            Serial.printf("[BENCH] charger input off for %d s - running from battery\n", secs > 14400 ? 14400 : secs);
         }
     } else if (!strncmp(p, "sleeptest ", 10)) {
         // Diagnostic: one timer-only light sleep. "sleeptest <ms> 0" skips the watchdog guard.
         int ms = 0, guard = 1;
-        sscanf(p + 10, "%d %d", &ms, &guard);
-        if (ms < 10 || ms > 60000) { Serial.println("[SLEEPTEST] sleeptest <10-60000 ms> [guard 0|1]"); return; }
-        Serial.printf("[SLEEPTEST] sleeping %d ms, guard %d\n", ms, guard);
+        // Third argument: what to stop first (bits): 1 audio I2S, 2 GPS UART + receiver, 4 LoRa.
+        int stop = 0;
+        sscanf(p + 10, "%d %d %d", &ms, &guard, &stop);
+        if (ms < 10 || ms > 60000) { Serial.println("[SLEEPTEST] sleeptest <10-60000 ms> [guard 0|1] [stop bits 1 audio 2 gps 4 lora]"); return; }
+        Serial.printf("[SLEEPTEST] sleeping %d ms, guard %d, stop %d\n", ms, guard, stop);
         Serial.flush();
+        if (stop & 1) g_audio.pause();
+        if (stop & 2) { g_gpsAllowed = false; gpsApplyPower(); }
+        if ((stop & 4) && g_loraIf && g_radio) { g_loraIf->stop(); g_radio->sleep(); }
         delay(50);
         uint32_t slept = 0;
         const power::Wake w = power::lightSleep((uint32_t)ms, power::WakePins{}, slept, guard != 0);
+        if (stop & 1) g_audio.resume();
+        if (stop & 2) { g_gpsAllowed = true; gpsApplyPower(); }
+        if ((stop & 4) && g_loraIf) g_loraIf->start();
+        rtclog::sample(1, (int16_t)stop, false, 1, slept / 1000);   // marks a survived sleep
         Serial.printf("[SLEEPTEST] woke (%s) after %lu ms, uptime %lu s\n", power::wakeName(w),
                       (unsigned long)slept, (unsigned long)(millis() / 1000));
+    } else if (!strncmp(p, "msg ", 4) && strlen(p) > 4 + 32 + 1) {
+        // Send a message to a destination hash: msg <32 hex> <text>
+        uint8_t dest[16];
+        bool ok = true;
+        for (int i = 0; i < 16 && ok; i++) {
+            char h[3] = {p[4 + i * 2], p[5 + i * 2], 0};
+            char* end = nullptr;
+            dest[i] = (uint8_t)strtoul(h, &end, 16);
+            ok = end == h + 2;
+        }
+        if (!ok) { Serial.println("[CMD] msg <32 hex dest> <text>"); return; }
+        const bool sent = sendMessage(dest, p + 4 + 32 + 1);
+        Serial.printf("[MSG] send %s at uptime %lu ms: %s\n", sent ? "queued" : "failed",
+                      (unsigned long)millis(), g_txStr);
+    } else if (!strncmp(p, "gpio ", 5)) {
+        // Bench: drive an output pin (power-rail experiments): gpio <pin> <0|1>
+        int pin = -1, v = -1;
+        if (sscanf(p + 5, "%d %d", &pin, &v) == 2 && pin >= 0 && pin <= 48 && (v == 0 || v == 1)) {
+            pinMode(pin, OUTPUT);
+            digitalWrite(pin, v);
+            Serial.printf("[GPIO] %d -> %d\n", pin, v);
+        } else {
+            Serial.println("[CMD] gpio <pin> <0|1>");
+        }
+    } else if (!strncmp(p, "audio ", 6)) {
+        // Bench: audio path off (I2S stopped, GPIO 41 rail low) or back on.
+        if (atoi(p + 6)) { digitalWrite(BOARD_6609_EN, HIGH); delay(20); g_audio.resume(); }
+        else             { g_audio.pause(); digitalWrite(BOARD_6609_EN, LOW); }
+        Serial.printf("[AUDIO] path %s\n", atoi(p + 6) ? "on" : "off (I2S stopped, rail 41 low)");
+    } else if (!strcmp(p, "id")) {
+        Serial.printf("[ID] dest=%s name=%s\n", g_destHex, g_selfName);
+    } else if (!strncmp(p, "txp", 3) && (p[3] == ' ' || p[3] == 0)) {
+        if (p[3]) {
+            int v = atoi(p + 4);
+            v = v < -9 ? -9 : (v > 22 ? 22 : v);
+            Preferences pr;
+            if (pr.begin("rs_radio", false)) { pr.putChar("txp", (int8_t)v); pr.end(); }
+            if (g_radio) g_radio->setTxPower(v);
+        }
+        Serial.printf("[LORA] tx power %d dBm (saved)\n", loraTxPower());
+    } else if (!strncmp(p, "usbsleep", 8)) {
+        const int secs = p[8] ? atoi(p + 8) : 600;
+        g_usbSleepUntil = secs > 0 ? millis() + (uint32_t)(secs > 7200 ? 7200 : secs) * 1000UL : 0;
+        Serial.printf("[POWER] light sleep with USB host %s for %d s (console drops while asleep)\n",
+                      secs > 0 ? "allowed" : "blocked", secs);
     } else if (!strcmp(p, "rl")) {
         rtclog::dump();
     } else if (!strcmp(p, "rl 0")) {
@@ -3933,7 +4011,7 @@ void handleSerialLine(char* p) {
     } else if (!strcmp(p, "FORMAT")) {
         Serial.println(recoverCorruptLittleFS() ? "[FLASH] formatted - reboot now" : "[FLASH] format failed");
     } else {
-        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> rl sleeptest L FORMAT");
+        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> usbsleep<s> txp<dBm> msg id rl sleeptest L FORMAT");
     }
 }
 

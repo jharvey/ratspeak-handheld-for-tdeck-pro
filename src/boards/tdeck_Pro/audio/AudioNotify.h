@@ -27,6 +27,11 @@ public:
 
     bool isReady() const { return _i2sReady; }
 
+    // Stop / restart the I2S clocks and DMA around a light sleep. With tx_desc_auto_clear
+    // the DMA runs continuously, even when silent.
+    void pause();
+    void resume();
+
 private:
     bool _enabled = true;
     bool _i2sReady = false;

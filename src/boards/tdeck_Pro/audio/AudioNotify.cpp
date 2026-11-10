@@ -68,6 +68,16 @@ void AudioNotify::end() {
     }
 }
 
+void AudioNotify::pause() {
+    if (_i2sReady) i2s_stop(I2S_PORT);
+}
+
+void AudioNotify::resume() {
+    if (!_i2sReady) return;
+    i2s_zero_dma_buffer(I2S_PORT);
+    i2s_start(I2S_PORT);
+}
+
 void AudioNotify::writeTone(uint16_t freq, uint16_t durationMs) {
     if (!_enabled || !_i2sReady) return;
 

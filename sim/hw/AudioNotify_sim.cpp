@@ -18,3 +18,5 @@ void AudioNotify::requestMessage() { _messagePending = true; }
 void AudioNotify::loop() { if (_messagePending) { _messagePending = false; playMessage(); } }
 void AudioNotify::writeTone(uint16_t, uint16_t) {}
 void AudioNotify::writeSilence(uint16_t) {}
+void AudioNotify::pause() {}
+void AudioNotify::resume() {}
