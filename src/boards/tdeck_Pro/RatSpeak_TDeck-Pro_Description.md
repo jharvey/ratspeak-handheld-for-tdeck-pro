@@ -232,14 +232,17 @@ messages are immediate in every mode**, because they wake the processor directly
 
 | | **Full power** | **Balanced** | **Saver** | **Custom** |
 |---|---|---|---|---|
-| CPU clock (awake) | 240 MHz | 160 MHz | 80 MHz | your choice |
+| CPU clock (awake) | 240 MHz | 240 MHz | 240 MHz | your choice |
 | Light sleep between wake-ups | never | wake every **1 s** | wake every **60 s** (on the minute) | your choice |
 | Stay awake after a key | — | 15 s | 5 s | your choice |
 | LoRa receiver | on | on | on | on / off |
 | GPS | always on | every 15 min | every hour | your choice |
 | WiFi | allowed | allowed | **off** | allowed / off |
 | Key backlight | allowed | allowed | **off** | allowed / off |
-| Feels like | always responsive | same, minus constant GPS | clock, battery and GPS update slowly | — |
+| Touch | on | on | **1 min after a key** | your choice |
+| Battery draw (measured) | ~90–120 mA | ~9–10 mA asleep | **~7 mA asleep** | — |
+| Runtime (~1450 mAh) | ~12 h | ~5–6 days | ~6–8 days | shown on S.4 |
+| Feels like | always responsive | same, minus constant GPS | clock / battery update once a minute | — |
 
 **Full power on USB** (S.4.5, default ON): whenever USB power is present the device
 runs **Full**, whatever mode is chosen, and goes back to the chosen mode when unplugged.
@@ -261,7 +264,8 @@ one knob (Enter steps to the next value):
 | 5 | GPS | Always on · Every 15 min · Every hour · Off |
 | 6 | WiFi | allowed / OFF |
 | 7 | Key backlight | allowed / OFF |
-| 8 | Reset to Balanced | |
+| 8 | Touch | always on / 1 min after a key |
+| 9 | Reset to Balanced | |
 
 Example: GPS off but snappy UI → Custom, CPU 240, sleep "never", GPS Off.
 
@@ -292,6 +296,18 @@ Example: GPS off but snappy UI → Custom, CPU 240, sleep "never", GPS Off.
   waiting to be sent; **WiFi on**; **GPS powered** (its serial data would be lost);
   screen mirror active; **a USB host attached** (unless `usbsleep` — the USB console
   disconnects while asleep and reconnects on wake).
+- **Messages while asleep:** a LoRa packet wakes the CPU at once; it then stays awake while
+  the LoRa interface has frames queued, for 3 s after the wake, while **received messages
+  are still being written to flash** (the delivery proof is sent only after the write, and
+  the write-queue task is frozen in light sleep), and it wakes for the protocol's next
+  scheduled reply (path response). With these, a sleeping receiver delivered 14/14
+  messages at 1.3 sender frames per message, as well as an always-awake one.
+- **GPS rail off → UART TX held low:** with the GPS unpowered, an idle-high UART TX line
+  back-powered the receiver through its RX pin (+18 mA, the old "27 mA floor"). The UART
+  is released and TX driven low whenever the GPS rail is off.
+- **Touch** is held in reset while the idle splash shows (every mode: key-only wake, no
+  accidental touches) and, with "Touch: 1 min after a key" (Saver), except for 60 s after
+  the last key or touch. Saves ~2 mA.
 - **Before each sleep** the e-ink power stage is switched off (GxEPD2 leaves it on after a
   refresh; the next refresh powers it again, ~50 ms).
 - **Audio is power-gated in every mode:** the DAC/amplifier rail (GPIO 41) and the I2S
@@ -323,41 +339,47 @@ Example: GPS off but snappy UI → Custom, CPU 240, sleep "never", GPS Off.
 - `pset <knob> <value>` sets one Custom knob; `epdoff 0|1`, `audio 0|1`, `gpio <pin> <0|1>`
   and `txp <dBm>` are bench switches.
 
-Measured 2026-11-09/10 (gauge average current, battery 4.0–4.2 V, USB attached with the
-charger input off; GPS off unless noted):
+Measured 2026-11-10 (gauge average current, battery 4.1–4.2 V, USB attached with the
+charger input off — identical to an unplugged run on COM9):
 
 | Configuration | Asleep | Battery draw |
 |---|---|---|
-| 240 MHz, never sleeps, LoRa on (COM8) | 0% | ~99 mA |
-| 80 MHz, never sleeps, LoRa on | 0% | ~87 mA |
+| 240 MHz, never sleeps, LoRa on (Full, GPS off) | 0% | ~99 mA |
 | 80 MHz, never sleeps, LoRa off | 0% | ~79 mA |
-| 80 MHz, wake every 1 s, LoRa on | 79% | ~52 mA |
-| 80 MHz, wake every 60 s, LoRa on (Saver-like) | 97% | ~48 mA |
-| 80 MHz, wake every 60 s, LoRa off | 98% | ~27 mA |
-| same + audio path off + GPIO 38 low | 98% | ~25 mA |
-| Saver-like receiver on a busy channel (2 senders, 1 h) | 70% | ~49 mA |
+| Saver preset, between GPS visits | 98% | **~7 mA** |
+| wake every 1 s, LoRa listening (Balanced-like) | 87% | ~9 mA |
+| wake every 60 s, LoRa off, touch on | 98% | ~8 mA |
+| before the GPS UART fix, same config | 98% | ~26 mA |
+| board alone, ESP32 in deep sleep, every rail off (tools/sleepcheck floor) | — | ~5 mA |
+| board alone, ESP32 in light sleep | — | ~7 mA |
 
-With the CPU asleep and the radio asleep the board still draws **~27 mA**. The ESP32-S3
-itself should be ~1–2 mA in light sleep, so most of this floor is elsewhere — the USB
-connection used for these measurements, the touch/keyboard/sensor-hub chips, regulators
-or an indicator LED. It needs an unplugged run (RTC log) to tell the USB part apart.
+So asleep: ~5 mA is board hardware the firmware does not switch (sensor hub, keyboard and
+e-ink controllers, mic, SD card, regulators), ~1.5–2 mA the ESP32 + PSRAM in light sleep,
+~2 mA the touch controller unless gated, ~1–2 mA the LoRa receiver. A GPS visit costs
+~68 mA while it lasts (ends after a 20 s fix, after 3 min, or after 60 s with no satellite
+heard).
 
-**LoRa stress test** (receiver COM6 in a Saver-like mode on battery, COM3 + COM5 sending
-a message every 60–120 s each, all at −9 dBm on one table):
+Mistakes this measuring caught: cutting the LoRa rail with SPI lines driven back-powers the
+SX1262 (+20 mA); an idle-high GPS UART line back-powers the GPS (+18 mA); GPIO 45 (front
+light on v1.1) was driven high as "touch reset" (+2 mA).
 
-| Firmware | Messages | Delivered | Sender frames / message | Resets |
-|---|---|---|---|---|
-| before the LoRa-reply fix (2 h) | 161 | 72 (45%) | ~9.3 | 0 |
-| after it (1 h) | 82 | 45 (55%) | ~7.4 | 0 |
+**LoRa stress tests** (receiver in a sleeping mode on battery, senders at −9 dBm on one table):
 
-The receiver woke on every packet (657 LoRa wakes in 2 h) and never reset.
+| Receiver firmware / setup | Messages | Delivered | Sender frames / message |
+|---|---|---|---|
+| sleeping, before the reply fixes (2 h, 2 senders) | 161 | 45% | ~9.3 |
+| never sleeping, 240 MHz (control) | 42 | 100% | ~1.1 |
+| sleeping, all fixes, fresh store (1 sender, 20 min) | 14 | **100%** | **~1.3** |
+
+A message store bloated by thousands of test messages slows every write (and boot, to ~2
+minutes); that also delays proofs. Separate storage issue, tracked in Future_steps.txt.
 
 ### 6.5 Next
 
-- **Delivery rate:** compare with a never-sleeping receiver (control run) to separate
-  channel/protocol losses from sleep-related ones; then look at the proof/path traffic.
-- **Unplugged measurement** of the ~27 mA floor, then find the remaining rails (touch
-  controller, BHI260 sensor hub, keyboard controller, power LED).
+- **Lower the ~5 mA board floor:** BHI260AP sensor hub into its low-power state, keyboard
+  controller sleep; check the SD card's share (remove it on one unit).
+- **Message store performance** with many messages (slow writes and boot).
+- **Energy monitor:** hourly per-subsystem estimate vs gauge, trend graph on the display.
 - **LoRa receive duty cycle** (SX1262 RX duty-cycle with preamble detection) — the
   receiver costs ~10–20 mA of the sleeping draw; RNode-style 18-symbol preambles allow it.
 - **Deep sleep "storage" mode:** would need the deep-sleep backports, which break light

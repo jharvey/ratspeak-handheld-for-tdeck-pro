@@ -127,6 +127,7 @@ uint32_t g_pwSleepTotalMs = 0;       // since boot (not decayed), for the RTC lo
 uint32_t g_usbSleepUntil = 0;       // console "usbsleep": allow light sleep with a USB host
 uint32_t g_benchUntil = 0;            // bench: charger input off, run from battery (console)
 void powerApply(bool force);
+void powerTouchTick();
 bool chargerSetHiz(bool on);
 
 char g_selfName[24] = "";
@@ -671,9 +672,18 @@ void gpsSkySummary(int& inView, int& heard, int& best) {
 
 void gpsApplyPower() {
 #if defined(HAS_GPS) && HAS_GPS
+    static HardwareSerial gpsPort(1);
+    static bool portOpen = false;
     pinMode(GPS_EN, OUTPUT);
     if (!g_cfg.gpsOn || !g_gpsAllowed) {
         digitalWrite(GPS_EN, LOW);
+        // With the receiver unpowered, an idle-high UART TX line back-powers it through its
+        // RX pin: measured +18 mA on the sleeping floor (26 -> 8 mA). Release the UART and
+        // hold TX low (RX as plain input) whenever the GPS rail is off.
+        if (portOpen) { gpsPort.end(); portOpen = false; }
+        pinMode(GPS_TX, OUTPUT);
+        digitalWrite(GPS_TX, LOW);
+        pinMode(GPS_RX, INPUT);
         g_gpsSerial = nullptr;
         g_gpsFix = false; g_gpsSats = 0; g_gpsUtcValid = false;
         snprintf(g_gpsStatus, sizeof(g_gpsStatus), g_cfg.gpsOn ? "resting" : "off");
@@ -682,10 +692,10 @@ void gpsApplyPower() {
     }
     digitalWrite(GPS_EN, HIGH);
     delay(30);
-    static HardwareSerial gpsPort(1);
     // 38400 baud = ~3.8 KB/s; a full e-ink refresh blocks ~1.6 s, so give the UART room.
-    gpsPort.setRxBufferSize(4096);
+    if (!portOpen) gpsPort.setRxBufferSize(4096);
     gpsPort.begin(GPS_BAUD, SERIAL_8N1, GPS_RX, GPS_TX);
+    portOpen = true;
     g_gpsSerial = &gpsPort;
     g_gpsBaud = GPS_BAUD;
     g_gpsStep = 0;
@@ -2335,7 +2345,7 @@ void buildSettingsRows(Page p) {
     case PG_POWER: {
         // Estimated runtime on a full battery (gauge FullChargeCapacity, else ~1450 mAh).
         const uint16_t cap = (g_bat.valid && g_bat.fccMah >= 500 && g_bat.fccMah <= 6000) ? g_bat.fccMah : 1450;
-        static const char* kNote[3] = {"always awake", "wakes each 1s", "may miss msgs"};
+        static const char* kNote[3] = {"always awake", "wakes each 1s", "wakes each 60s"};
         char rt[16];
         for (uint8_t m = power::MODE_FULL; m < power::MODE_CUSTOM; m++) {
             power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(power::preset(m)));
@@ -2372,6 +2382,7 @@ void buildSettingsRows(Page p) {
         srow(RK_PICK, "GPS", "%s%s", power::gpsName(c.gps), g_cfg.gpsOn ? "" : " (GPS disabled)");
         srow(RK_TOGGLE, "WiFi", "%s", c.wifi ? "allowed" : "OFF");
         srow(RK_TOGGLE, "Key backlight", "%s", c.keyLight ? "allowed" : "OFF");
+        srow(RK_TOGGLE, "Touch", "%s", c.touchOnKey ? "1 min after a key" : "always on");
         srow(RK_ACTION, "Reset to Balanced", "Enter = reset");
         break;
     }
@@ -2676,7 +2687,8 @@ void activateSetting(int idx) {
             case 4: c.gps = (uint8_t)((c.gps + 1) % power::GPS_COUNT); break;
             case 5: c.wifi = !c.wifi; break;
             case 6: c.keyLight = !c.keyLight; break;
-            case 7: c = power::preset(power::MODE_BALANCED); toast("Custom = Balanced"); break;
+            case 7: c.touchOnKey = !c.touchOnKey; break;
+            case 8: c = power::preset(power::MODE_BALANCED); toast("Custom = Balanced"); break;
             default: return;
         }
         g_pw.mode = power::MODE_CUSTOM;
@@ -3723,7 +3735,13 @@ void powerGpsTick() {
         static uint32_t fixSince = 0;
         if (!g_gpsFix) fixSince = 0;
         else if (!fixSince) fixSince = now ? now : 1;
-        const bool done = (fixSince && now - fixSince >= 20000) || now - g_gpsVisitStart >= power::kGpsWindowMs;
+        // A visit ends after a fix has held 20 s, after 3 min, or early when nothing can work:
+        // no satellite heard within 60 s (indoors) or a receiver backup-supply fault.
+        int inView = 0, heard = 0, best = 0;
+        gpsSkySummary(inView, heard, best);
+        const bool hopeless = g_gpsBbrFault || (now - g_gpsVisitStart >= 60000 && heard == 0 && !g_gpsFix);
+        const bool done = (fixSince && now - fixSince >= 20000) || now - g_gpsVisitStart >= power::kGpsWindowMs ||
+                          hopeless;
         if (done) {
             Serial.printf("[GPS] visit done after %lus (%s), next in %lu min\n",
                           (unsigned long)((now - g_gpsVisitStart) / 1000), g_gpsFix ? "fix" : "no fix",
@@ -3774,6 +3792,7 @@ void powerTick() {
     }
     powerApply(false);
     powerGpsTick();
+    powerTouchTick();
     static uint32_t rtcAt = 0;
     if (!rtcAt || millis() - rtcAt >= 10000) {     // RTC log: one entry per ~10 s awake or per wake
         rtcAt = millis() ? millis() : 1;
@@ -3781,6 +3800,18 @@ void powerTick() {
             rtclog::sample((uint16_t)(g_bat.volts * 1000 + 0.5f), g_bat.avgMa, g_bat.usb, g_pwSleeps,
                            g_pwSleepTotalMs / 1000);
     }
+}
+
+// Touch gating: the CST328 is held in reset (TOUCH_RST low) while the idle splash shows and,
+// with touchOnKey, except for 60 s after a key or touch; a key brings it back (~50 ms).
+bool g_touchGated = false;
+void powerTouchTick() {
+    // Idle splash: touch is off in every mode (key-only wake, no accidental touches).
+    const bool want = !g_idleActive && (!g_pwEff.touchOnKey || millis() - g_lastInputMs < 60000UL);
+    if (want == !g_touchGated) return;
+    g_touchGated = !want;
+    digitalWrite(TOUCH_RST, want ? HIGH : LOW);
+    Serial.printf("[TOUCH] %s\n", want ? "on" : "off until a key is pressed");
 }
 
 // Why the CPU must stay awake right now (nullptr = it may sleep).
@@ -3803,6 +3834,10 @@ const char* powerSleepBlocker() {
     if (g_protoReady && g_proto.lxmfQueuedCount() > 0) return "lxmf queue";
     if (g_radio && (g_radio->packetAvailable || g_radio->isTxBusy())) return "lora busy";
     if (g_loraIf && !g_loraIf->txIdle()) return "lora tx queue";
+    // A received message is proven only after it is durably stored, and the write queue's
+    // worker task is frozen in light sleep: stay awake until pending writes are done (sleeping
+    // in short slices starved the worker and no proofs went out).
+    if (g_storeReady && g_msgStore.writeQueue().drainCount() > 0) return "storage write";
     if (g_pwLoraWakeMs && now - g_pwLoraWakeMs < 3000) return "lora exchange";   // let replies go out
     return nullptr;
 }
@@ -3837,7 +3872,7 @@ void powerIdle() {
 
     power::WakePins pins;
     pins.key = KB_INT;
-    pins.touch = g_idleActive ? -1 : TOUCH_INT;     // idle splash: key-only wake
+    pins.touch = (g_idleActive || g_touchGated) ? -1 : TOUCH_INT;   // idle / gated: key-only wake
     pins.lora = (g_radio && g_loraIf && g_loraIf->isOnline()) ? LORA_IRQ : -1;
 
     if (g_epdOffInSleep == 2) g_display.hibernate();     // controller deep sleep; re-init on next refresh
@@ -3875,6 +3910,7 @@ void powerStatus() {
                                (unsigned long)g_radio->rxOk, (unsigned long)g_radio->rxCrcFail,
                                (unsigned long)g_radio->txStarted, (unsigned long)g_radio->txDone,
                                (unsigned long)g_radio->txTimeout);
+    if (g_storeReady) Serial.printf("[POWER] storage writes pending=%d\n", g_msgStore.writeQueue().drainCount());
     Serial.printf("[POWER] messages unread=%d lxmf_queue=%d uptime=%lu s\n",
                   g_storeReady ? g_msgStore.totalUnreadCount() : -1, g_protoReady ? g_proto.lxmfQueuedCount() : -1,
                   (unsigned long)(millis() / 1000));
@@ -3953,6 +3989,7 @@ void handleSerialLine(char* p) {
             else if (!strcmp(k, "gps") && v < power::GPS_COUNT) c.gps = (uint8_t)v;
             else if (!strcmp(k, "wifi")) c.wifi = v != 0;
             else if (!strcmp(k, "kbl")) c.keyLight = v != 0;
+            else if (!strcmp(k, "touch")) c.touchOnKey = v != 0;
             else { Serial.println("[POWER] pset: bad knob/value"); return; }
             g_pw.mode = power::MODE_CUSTOM;
             power::save(g_pw);

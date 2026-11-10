@@ -17,7 +17,7 @@ constexpr int kCap = 120;
 
 // Outputs driven low for the measurement: LoRa EN 46, GPS EN 39, audio rail 41, IO38 (T-RST
 // on v1.1), IO45 (EPD front light on v1.1), key light 42, motor 2, LoRa CS 3 stays high.
-const int kLowPins[] = {46, 39, 41, 38, 45, 42, 2};
+const int kLowPins[] = {46, 39, 41, 38, 45, 42, 2, 43, 44};   // 43/44 = GPS UART (back-powers the GPS if high)
 
 struct Sample { uint16_t mv; int16_t ma; uint8_t mode; uint8_t pad; uint16_t cycle; };
 

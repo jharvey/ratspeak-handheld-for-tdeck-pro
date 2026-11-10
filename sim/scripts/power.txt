@@ -10,7 +10,7 @@ key 4
 wait 1200
 shot power-01-page.png
 key 3
-expect 3000 [POWER] Saver: cpu 80 MHz
+expect 3000 [POWER] Saver: cpu 240 MHz
 wait 1200
 shot power-02-saver.png
 # Saver sleeps 5 s after input once its first GPS visit is done (sim fix ~20 s).
@@ -22,16 +22,16 @@ expect 3000 blocker=none
 usb on
 expect 5000 [POWER] Saver (USB -> Full): cpu 240 MHz
 usb off
-expect 5000 [POWER] Saver: cpu 80 MHz
+expect 5000 [POWER] Saver: cpu 240 MHz
 # The idle splash (30 s) is up by now: the first key only wakes it.
 key G
 wait 1500
-# Custom: copies Saver, then CPU speed steps 80 -> 240.
+# Custom: copies Saver, then CPU speed steps 240 -> 160.
 key 4
 wait 1200
 shot power-03-custom.png
 key 1
-expect 3000 [POWER] Custom: cpu 240 MHz
+expect 3000 [POWER] Custom: cpu 160 MHz
 wait 1200
 shot power-04-custom-cpu.png
 quit

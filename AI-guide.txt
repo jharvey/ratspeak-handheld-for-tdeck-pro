@@ -32,17 +32,22 @@ ENERGY MODES  (Settings S.4 Power; power/PowerModes.*, power/LightSleep.*)
 [DONE] Audio power-gated (GPIO 41 rail + I2S stop after 3 s silence)
 [DONE] E-ink power stage off before each sleep (DisplayEink::powerOff)
 [DONE] GPS periodic visits (on until 20 s fix or 3 min, then off)
-[IN-PROGRESS] LoRa delivery to a SLEEPING receiver: 39–55% on a crowded bench
-       (100% when the receiver never sleeps at 240 MHz; 61% awake at 80 MHz).
-       Frame counters added (pw: "lora rx ok/crc_fail") to find where they go.
-[IN-PROGRESS] ~27 mA floor with CPU + LoRa asleep (measured on USB, charger
-       input off). Unplugged run on COM9 started 2026-11-10 05:37.
+[DONE] LoRa delivery to a SLEEPING receiver: 14/14 at 1.3 frames/msg. Fixes: stay
+       awake while LoRaInterface has TX queued, 3 s after a LoRa wake, while message
+       writes are pending (proof is sent after the write), wake for scheduled path
+       responses (ProtocolRuntime::msUntilScheduledTx).
+[DONE] Floor 26 -> 8 mA: GPS UART TX idle-high back-powered the unpowered GPS; UART is
+       released and TX held low whenever the GPS rail is off. Saver now ~7 mA asleep.
+[DONE] Touch held in reset on the idle splash (all modes) and, in Saver, except 1 min
+       after a key. Presets run 240 MHz while awake (sleep dominates the average).
+[IN-PROGRESS] ~5 mA board floor (ESP32 off): BHI260 / keyboard sleep, SD share.
 [TODO] LoRa RX duty cycle; GPS M10 power-save; idle-password lock
 
 MEASURED (gauge avg, battery 4.0–4.2 V)
        awake 240 MHz ~99 mA · 80 MHz ~87 · 80 MHz LoRa off ~79
-       asleep, wake 60 s, LoRa on ~48 · LoRa off ~27 · + audio off / IO38 low ~25
-       cutting LoRa rail (GPIO 46) RAISES draw (back-power via SPI) — don't
+       asleep: Saver ~7 · wake 1 s + LoRa ~9 · LoRa off, touch on ~8
+       board alone: ESP32 deep sleep ~5, light sleep ~7 (tools/sleepcheck floor)
+       never hold a line high into an unpowered chip: LoRa SPI (+20 mA), GPS UART (+18)
 
 GPS
 [DONE] u-blox MIA-M10Q diag: NMEA/UBX parse, sky summary, link recovery,
@@ -110,6 +115,7 @@ WHEN ADDING FEATURES
   Full files preferred. Keep cooperative green.
   Hardware power changes go through powerApply() only.
   Anything that must finish before sleeping → add a powerSleepBlocker() reason.
+  Switching a chip's rail off → also park every signal line to it LOW (back-power).
   Never cut the LoRa rail with SPI lines driven; LoRa "off" = radio sleep.
   Do not re-enable force-num except inside digit-entry boxes.
   Top MENU must never map through topTabScreen() to Home.

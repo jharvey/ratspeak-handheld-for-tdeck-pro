@@ -7,10 +7,10 @@
 namespace power {
 namespace {
 
-//                         cpu  wake awake  lora  gps         wifi   keyLight
-const Profile kFull     = {240,   0,   0,  true, GPS_ON,     true,  true};
-const Profile kBalanced = {160,   1,  15,  true, GPS_15MIN,  true,  true};
-const Profile kSaver    = { 80,  60,   5,  true, GPS_HOURLY, false, false};
+//                         cpu  wake awake  lora  gps         wifi   keyLight touchOnKey
+const Profile kFull     = {240,   0,   0,  true, GPS_ON,     true,  true,    false};
+const Profile kBalanced = {240,   1,  15,  true, GPS_15MIN,  true,  true,    false};
+const Profile kSaver    = {240,  60,   5,  true, GPS_HOURLY, false, false,   true};
 
 const uint16_t kCpuSteps[]   = {240, 160, 80};
 const uint16_t kWakeSteps[]  = {0, 1, 5, 10, 30, 60, 300};
@@ -61,8 +61,8 @@ const char* modeName(uint8_t mode) {
 const char* modeBlurb(uint8_t mode) {
     switch (mode) {
         case MODE_FULL:     return "always awake, all on";
-        case MODE_BALANCED: return "160MHz wake 1s GPS 15m";
-        case MODE_SAVER:    return "80MHz wake 60s GPS 1h";
+        case MODE_BALANCED: return "wake 1s, GPS 15m";
+        case MODE_SAVER:    return "wake 60s, GPS 1h";
         case MODE_CUSTOM:   return "your own settings";
         default:            return "";
     }
@@ -98,23 +98,25 @@ void fmtWake(char* out, unsigned n, uint16_t secs) {
 
 bool sameProfile(const Profile& a, const Profile& b) {
     return a.cpuMhz == b.cpuMhz && a.wakeSecs == b.wakeSecs && a.awakeSecs == b.awakeSecs &&
-           a.lora == b.lora && a.gps == b.gps && a.wifi == b.wifi && a.keyLight == b.keyLight;
+           a.lora == b.lora && a.gps == b.gps && a.wifi == b.wifi && a.keyLight == b.keyLight &&
+           a.touchOnKey == b.touchOnKey;
 }
 
 uint16_t estimateMa(const Profile& p) {
-    // Measured: awake 80 MHz LoRa off ~79 mA (board + CPU), +12 mA at 240 MHz, LoRa
-    // receiver ~8 mA awake; asleep (wake 60 s) ~27 mA LoRa off, ~48 mA LoRa on; wake
-    // every 1 s ~+4 mA. GPS ~25 mA while powered (a powered GPS also keeps the CPU awake).
+    // Measured 2026-11-10 (after the GPS UART back-power fix): awake 80 MHz LoRa off ~79 mA,
+    // +12 mA at 240 MHz, LoRa receiver ~8 mA awake. Asleep: ~8 mA floor with touch on, LoRa
+    // listening ~+1-2 mA, waking every 1 s ~+1 mA; touch held in reset saves ~2 mA. GPS ~15 mA
+    // while powered (a powered GPS also keeps the CPU awake).
     const bool sleeps = p.wakeSecs > 0 && p.gps != GPS_ON;
     uint32_t ma;
     if (!sleeps) {
         ma = 79 + (p.cpuMhz >= 240 ? 12 : p.cpuMhz >= 160 ? 6 : 0) + (p.lora ? 8 : 0);
     } else {
-        ma = 27 + (p.lora ? 21 : 0) + (p.wakeSecs <= 1 ? 4 : p.wakeSecs <= 10 ? 2 : 0);
+        ma = 6 + (p.touchOnKey ? 0 : 2) + (p.lora ? 2 : 0) + (p.wakeSecs <= 1 ? 1 : 0);
     }
     switch (p.gps) {
-        case GPS_ON:     ma += 25; break;
-        case GPS_15MIN:  ma += 2; break;     // ~1 min visits every 15 min
+        case GPS_ON:     ma += 15; break;
+        case GPS_15MIN:  ma += 1; break;     // ~1 min visits every 15 min
         case GPS_HOURLY: ma += 1; break;
         default: break;
     }
@@ -145,6 +147,7 @@ void load(Settings& s) {
     c.gps       = p.getUChar("cGps", kBalanced.gps);
     c.wifi      = p.getBool("cWifi", kBalanced.wifi);
     c.keyLight  = p.getBool("cKbl", kBalanced.keyLight);
+    c.touchOnKey = p.getBool("cTouch", kBalanced.touchOnKey);
     p.end();
     if (s.mode >= MODE_COUNT) s.mode = MODE_FULL;
     if (!inSteps(kCpuSteps, c.cpuMhz))      c.cpuMhz = kBalanced.cpuMhz;
@@ -167,6 +170,7 @@ void save(const Settings& s) {
     p.putUChar("cGps", c.gps);
     p.putBool("cWifi", c.wifi);
     p.putBool("cKbl", c.keyLight);
+    p.putBool("cTouch", c.touchOnKey);
     p.end();
 }
 

@@ -26,6 +26,7 @@ struct Profile {
     uint8_t  gps;         // GpsUse (only if GPS is enabled in Time & Location)
     bool     wifi;        // WiFi allowed (a connected WiFi keeps the CPU awake)
     bool     keyLight;    // key backlight allowed
+    bool     touchOnKey;  // touch held in reset; a key press enables it for 1 min (~2 mA)
 };
 
 struct Settings {
