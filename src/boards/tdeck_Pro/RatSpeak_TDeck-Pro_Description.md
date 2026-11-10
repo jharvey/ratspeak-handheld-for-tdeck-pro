@@ -172,9 +172,9 @@ Per-row **unrd ##** when unread.
 ### 4.8 Settings S.3 Screen & I/O
 ![Settings S.3](images/screen-settings-s3.png)
 
-### 4.9 Settings S.4 Power and S.4.4 Custom
+### 4.9 Settings S.4 Power, S.4.7 Custom and S.4.8 Check-in schedule
 ![Settings S.4 Power](images/screen-settings-power.png)
-![Settings S.4.4 Custom](images/screen-settings-power-custom.png)
+![Settings S.4.7 Custom](images/screen-settings-power-custom.png)
 
 Simulator screenshots (`sim/scripts/power.txt`): Saver selected; Custom with CPU set to 240 MHz.
 
@@ -203,13 +203,17 @@ S     Settings                      ← M then S
 │   └── S.3.3  Key backlight        (a power mode may hold it off)
 ├── S.4   Power                     energy modes (§6)
 │   ├── S.4.1  Full power
-│   ├── S.4.2  Balanced
+│   ├── S.4.2  Balanced             (default)
 │   ├── S.4.3  Saver
-│   ├── S.4.4  Custom               → S.4.4.1–9 knobs (§6.2)
-│   ├── S.4.5  Full power on USB    ON (default) / OFF
-│   ├── S.4.6  Now                  CPU MHz and % of time asleep
-│   ├── S.4.7  Battery draw         mA and estimated time left (gauge)
-│   └── S.4.8  Energy monitor       per-part mAh vs gauge, trend graph (§6.5)
+│   ├── S.4.4  Ultra-low            LoRa listening only
+│   ├── S.4.5  On demand            LoRa 2 min after a key
+│   ├── S.4.6  Check-in             LoRa only in scheduled windows (§6.7)
+│   ├── S.4.7  Custom               → S.4.7.1–9 knobs (§6.2)
+│   ├── S.4.8  Check-in schedule    minute · every · next · waiting · clock (§6.7)
+│   ├── S.4.9  Energy monitor       per-part mAh vs gauge, trend graph (§6.5)
+│   ├── S.4.10 Full power on USB    ON (default) / OFF
+│   ├── S.4.11 Now                  CPU MHz and % of time asleep
+│   └── S.4.12 Battery draw         mA and estimated time left (gauge)
 ├── S.5   Battery                   volts, %, current, charger status, capacity
 │   ├── S.5.8  Battery log          internal RAM ring / SD CSV, dump to USB
 │   └── S.5.10 Reset calibration
@@ -229,29 +233,32 @@ GPS adds ~20–30 mA, the LoRa receiver ~10 mA, the audio path ~15–20 mA while
 The energy modes trade background responsiveness for runtime. **Keys and incoming LoRa
 messages are immediate in every mode**, because they wake the processor directly.
 
-### 6.1 The four modes
+### 6.1 The modes
 
-| | **Full power** | **Balanced** | **Saver** | **Custom** |
-|---|---|---|---|---|
-| CPU clock (awake) | 240 MHz | 240 MHz | 240 MHz | your choice |
-| Light sleep between wake-ups | never | wake every **1 s** | wake every **60 s** (on the minute) | your choice |
-| Stay awake after a key | — | 15 s | 5 s | your choice |
-| LoRa receiver | on | on | on | on / off |
-| GPS | always on | every 15 min | every hour | your choice |
-| WiFi | allowed | allowed | **off** | allowed / off |
-| Key backlight | allowed | allowed | **off** | allowed / off |
-| Touch | on | on | **1 min after a key** | your choice |
-| Battery draw (measured) | ~48 mA, ~67 with GPS | ~9–10 mA asleep | **~7 mA asleep** | — |
-| Runtime (~1450 mAh) | ~21–30 h | ~5–6 days | ~6–8 days | shown on S.4 |
-| Feels like | always responsive | same, minus constant GPS | clock / battery update once a minute | — |
+| | **Full power** | **Balanced** (default) | **Saver** | **Ultra-low** | **On demand** | **Check-in** |
+|---|---|---|---|---|---|---|
+| CPU clock (awake) | 240 MHz | 240 MHz | 240 MHz | 240 MHz | 240 MHz | 240 MHz |
+| Light sleep, wake every | never | **1 s** | **60 s** (on the minute) | **5 min** | **5 min** | **5 min** |
+| Stay awake after a key | — | 15 s | 5 s | 5 s | 10 s | 10 s |
+| LoRa receiver | on | on | on | on | **2 min after a key** | **in the windows** (§6.7) |
+| GPS | always on | every 15 min | every hour | off | one fix on a key (≤ every 15 min) | same |
+| WiFi / key backlight | allowed | allowed | off | off | off | off |
+| Touch | on | on | 1 min after a key | 1 min after a key | 1 min after a key | 1 min after a key |
+| Battery draw | ~48 mA, ~67 with GPS | ~9–10 mA | ~7 mA | ~7 mA (est.) | ~6 mA (est.) | ~6 mA (est.) |
+| Runtime (~1450 mAh) | ~21–30 h | ~5–6 days | ~6–8 days | ~8 days | ~10 days | ~10 days |
+| Messages in | immediate | immediate | immediate | immediate | only while LoRa is on | only in a window |
 
-**Full power on USB** (S.4.5, default ON): whenever USB power is present the device
+Plus **Custom** (your own knobs, §6.2). Runtimes on S.4 come from these bench numbers.
+Ultra-low, On demand and Check-in all sit on the **~4 mA board floor** (§6.6): parts
+that stay powered whatever the ESP32 does. A month (~2 mA) needs that floor lowered first.
+
+**Full power on USB** (S.4.10, default ON): whenever USB power is present the device
 runs **Full**, whatever mode is chosen, and goes back to the chosen mode when unplugged.
 The Power row on the Settings root then reads e.g. `Saver (USB: Full)`.
 
 Modes are stored in NVS namespace `rs_power` and survive reboots.
 
-### 6.2 Custom knobs (S.4.4)
+### 6.2 Custom knobs (S.4.7)
 
 Choosing **Custom** the first time copies the mode you were in, then each row changes
 one knob (Enter steps to the next value):
@@ -261,8 +268,8 @@ one knob (Enter steps to the next value):
 | 1 | CPU speed | 240 · 160 · 80 MHz |
 | 2 | Sleep, wake every | never · 1 s · 5 s · 10 s · 30 s · 1 min · 5 min |
 | 3 | Awake after key | 3 · 5 · 10 · 15 · 30 · 60 s |
-| 4 | LoRa radio | ON (messages) / OFF (no messages in or out — the radio chip sleeps) |
-| 5 | GPS | Always on · Every 15 min · Every hour · Off |
+| 4 | LoRa radio | ON (messages) · 2 min after a key · OFF (no messages in or out — the radio chip sleeps) |
+| 5 | GPS | Always on · Every 15 min · Every hour · Off · When used |
 | 6 | WiFi | allowed / OFF |
 | 7 | Key backlight | allowed / OFF |
 | 8 | Touch | always on / 1 min after a key |
@@ -377,7 +384,7 @@ light on v1.1) was driven high as "touch reset" (+2 mA).
 A message store bloated by thousands of test messages slows every write (and boot, to ~2
 minutes); that also delays proofs. Separate storage issue, tracked in Future_steps.txt.
 
-### 6.5 Energy monitor (S.4.8)
+### 6.5 Energy monitor (S.4.9)
 
 **Settings → Power → Energy monitor** shows where the battery charge goes. The board has one
 current sensor (the gauge, total only), so the split is an **estimate**: the time each part
@@ -403,10 +410,51 @@ partial ones to stop afterimages building up; partial refreshes do not wear the 
 RatSpeak does a full refresh whenever the idle splash appears and on wake, and MIC forces
 one at any time.
 
-### 6.6 Next
+### 6.6 Board floor (2026-11-10)
 
-- **Lower the ~5 mA board floor:** BHI260AP sensor hub into its low-power state, keyboard
-  controller sleep; check the SD card's share (remove it on one unit).
+`tools/sleepcheck` (`floor d 14`: ESP32 in deep sleep, all switchable rails and pins low,
+charger input off) measures **~4 mA** (gauge 3–5 mA; its average filter lags for minutes).
+That is what is left with the ESP32 effectively off: the always-on 3.3 V buck and 1.8 V
+LDO, gauge, charger, keyboard controller, SD card, e-ink controller, sensor hub.
+
+- **BHI260AP sensor hub ruled out:** boot status 0x18 (host interface ready, no firmware
+  loaded), so it sits idle in its boot ROM; a soft reset changed nothing.
+- **Next suspect: the microSD card** (1–3 mA idle is common for SD cards that are not put
+  to sleep). Test: remove it on one unit and rerun `floor d 14`.
+
+### 6.7 Check-in mode (S.4.6, S.4.8)
+
+All devices set to the same schedule (e.g. every hour at :30) keep LoRa **off** except
+in a short window around each check-in:
+
+```
+ :29:00  LoRa on (1 min early: clocks may differ)
+ :30:05  announce (peers learn the path; a GPS-synchronized clock gives its time)
+ :30:20  send the messages written since the last window (one every ~3.5 s)
+ :31:30  announce again (reaches a peer whose clock is up to ~1.5 min late)
+ :33:00  LoRa off until :29 next hour
+```
+
+- **Writing a message outside a window** queues it ("Queued for 14:30 check-in", up to 8,
+  kept in RAM through light sleep); the console `msg` command queues the same way.
+- **Clock sync, no protocol change.** Reticulum announces carry the sender's time (the
+  low 5 bytes of the announce `random_hash`) when its clock is GPS/NTP synchronized, and
+  LXMF messages carry their creation time. A device whose own clock is not synchronized
+  this boot adopts an announce time outright, and moves forward to a message time (never
+  backward, at most 15 min, so a late retry can't pull it back): unsynced devices
+  converge on the fastest clock, synchronized ones give true time. A GPS fix now also
+  marks the clock synchronized for the protocol (it did not before), so announces carry
+  real time.
+- **S.4.8** sets the minute (Enter = +5) and the period (15 min … 24 h) and shows the next
+  check-in, messages waiting, and where the clock came from.
+- Clocks must start within ~1 minute (set the clock, or one GPS fix); each window then
+  resyncs them. A clock far off (an hour) misses the windows entirely.
+- Console: `checkin` (status), `checkin <minute> [every-min]` (bench: any period ≥ 5 min),
+  `epoch [secs]` (show / set the clock).
+
+### 6.8 Next
+
+- **Lower the ~4 mA board floor** (§6.6): SD card share first, then keyboard controller sleep.
 - **Message store performance** with many messages (slow writes and boot).
 - **LoRa receive duty cycle** (SX1262 RX duty-cycle with preamble detection) — the
   receiver costs ~10–20 mA of the sleeping draw; RNode-style 18-symbol preambles allow it.
@@ -538,6 +586,8 @@ the device does not light-sleep.
 | `txp <dBm>` | LoRa transmit power, −9…22, saved (bench builds with `RS_BENCH_TX_DBM` default to it) |
 | `epdoff 0\|1` / `audio 0\|1` / `gpio <pin> <0\|1>` | bench switches: e-ink off before sleep, audio path, raw output pin |
 | `energy` / `energy period <s>` / `energy clear` | energy monitor: per-period measured and estimated mAh by part (§6.5) |
+| `checkin [min [every]]` / `epoch [secs]` | check-in schedule and status; show / set the clock (§6.7) |
+| `pm0`…`pm6` | Full, Balanced, Saver, Ultra-low, On demand, Check-in, Custom |
 | `L` | toggle key backlight |
 | `FORMAT` | erase and format the data partition |
 | `@…` | screen-mirror protocol (§10.3) |

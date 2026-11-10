@@ -63,6 +63,8 @@
 #include "power/LightSleep.h"
 #include "power/RtcLog.h"
 #include "power/EnergyMonitor.h"
+#include "hal/PeerClock.h"
+#include "hal/ClockConfidence.h"
 #include <WiFi.h>
 #include "protocol/ProtocolRuntime.h"
 #include "protocol/OutgoingContract.h"
@@ -835,6 +837,8 @@ bool gpsSyncClock() {
         return false;
     g_gpsSyncedOnce = true;
     g_gpsLastSyncMs = millis() ? millis() : 1;
+    // Real time now: the protocol may use it (announces carry it; check-in peers adopt it).
+    handheld::ClockConfidence::markSynchronized(time(nullptr));
     Serial.println("[RTC] synced from GPS");
     return true;
 }
@@ -1500,6 +1504,60 @@ bool sendMessage(const uint8_t dest[16], const char* text) {
     return false;
 }
 
+// ---- Check-in mode: schedule, outbox, peer clock --------------------------------------
+// Where the local clock is in the check-in cycle (power::checkinPhase).
+power::CheckinPhase checkinNow() {
+    struct tm t;
+    uint32_t sod = 0;
+    if (localNow(t)) sod = (uint32_t)(t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec);
+    return power::checkinPhase(g_pw, sod);
+}
+
+// Messages written outside a check-in window wait here (RAM: light sleep keeps it) and go
+// out kCheckinSendS after the check-in time, when every device should be listening.
+struct OutboxItem { uint8_t dest[16]; char text[161]; };
+constexpr int kOutboxCap = 8;
+OutboxItem g_outbox[kOutboxCap];
+int g_outboxCount = 0;
+
+bool outboxAdd(const uint8_t dest[16], const char* text) {
+    if (g_outboxCount >= kOutboxCap) return false;
+    OutboxItem& o = g_outbox[g_outboxCount++];
+    memcpy(o.dest, dest, 16);
+    strlcpy(o.text, text, sizeof(o.text));
+    Serial.printf("[CHECKIN] queued \"%s\" (%d waiting)\n", o.text, g_outboxCount);
+    return true;
+}
+
+// Peer clock adoption (check-in mode, clock not GPS/NTP synchronized this boot):
+//   announce time  - the sender is synchronized: take it (either direction, within a day)
+//   message time   - the sender may not be: only move forward, by at most 15 min (a late
+//                    retry can only look older), so unsynced devices converge on the fastest
+uint32_t g_clkSeq = 0;
+int32_t  g_clkLastOff = 0;
+time_t   g_clkLastAt = 0;
+uint8_t  g_clkLastSrc = peerclock::NONE;
+
+void peerClockTick() {
+    peerclock::Sample s;
+    if (!peerclock::take(g_clkSeq, s)) return;
+    if (!g_pwEff.checkin || handheld::ClockConfidence::synchronized()) return;
+    const time_t now = time(nullptr);
+    if (now < 1700000000) return;
+    const int64_t est = (int64_t)s.senderSecs + (int64_t)((millis() - s.atMs) / 1000) + 1;   // +airtime
+    const int64_t off = est - (int64_t)now;
+    const bool ok = s.source == peerclock::ANNOUNCE ? (off >= 2 || off <= -2) && off < 86400 && off > -86400
+                                                    : off >= 2 && off <= 900;
+    Serial.printf("[CLOCK] peer %s time %+lld s%s\n", s.source == peerclock::ANNOUNCE ? "announce" : "message",
+                  (long long)off, ok ? " -> adopted" : "");
+    if (!ok) return;
+    struct timeval tv = { .tv_sec = (time_t)est, .tv_usec = 0 };
+    settimeofday(&tv, nullptr);
+    g_clkLastOff = (int32_t)off;
+    g_clkLastAt = (time_t)est;
+    g_clkLastSrc = s.source;
+}
+
 void saveContactName(const uint8_t peer[16], const char* name) {
     if (isSelf(peer)) { saveSelfName(name); return; }
     char hex[33];
@@ -1565,7 +1623,8 @@ bool entryNumeric() {
 enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
-    PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH
+    PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
+    PG_CHECKIN
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -2206,6 +2265,7 @@ const char* pageTitle(Page p) {
         case PG_POWER_CUSTOM: return "Custom power";
         case PG_ENERGY:       return "Energy monitor";
         case PG_ENERGY_GRAPH: return "Energy trend";
+        case PG_CHECKIN:      return "Check-in schedule";
     }
     return "";
 }
@@ -2352,11 +2412,14 @@ void buildSettingsRows(Page p) {
     case PG_POWER: {
         // Estimated runtime on a full battery (gauge FullChargeCapacity, else ~1450 mAh).
         const uint16_t cap = (g_bat.valid && g_bat.fccMah >= 500 && g_bat.fccMah <= 6000) ? g_bat.fccMah : 1450;
-        static const char* kNote[3] = {"always awake", "wakes each 1s", "wakes each 60s"};
-        char rt[16];
+        static const char* kNote[power::MODE_CUSTOM] = {"always awake", "wakes each 1s", "wakes each 60s",
+                                                        "LoRa only", "LoRa on key", ""};
+        char rt[16], ci[20];
+        snprintf(ci, sizeof(ci), "LoRa at :%02u", (unsigned)g_pw.checkinMin);
         for (uint8_t m = power::MODE_FULL; m < power::MODE_CUSTOM; m++) {
             power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(power::preset(m)));
-            srow(RK_PICK, power::modeName(m), "%s%s, %s", g_pw.mode == m ? "ON " : "", rt, kNote[m]);
+            srow(RK_PICK, power::modeName(m), "%s%s, %s", g_pw.mode == m ? "ON " : "", rt,
+                 m == power::MODE_CHECKIN ? ci : kNote[m]);
         }
         if (g_pw.customSet || g_pw.mode == power::MODE_CUSTOM) {
             power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(g_pw.custom));
@@ -2364,6 +2427,9 @@ void buildSettingsRows(Page p) {
         } else {
             srow(RK_MENU, "Custom", "set your own");
         }
+        srow(RK_MENU, "Check-in schedule", ":%02u every %u min%s", (unsigned)g_pw.checkinMin,
+             (unsigned)g_pw.checkinEvery, g_outboxCount ? ", msgs waiting" : "");
+        srow(RK_MENU, "Energy monitor", "what uses the battery");
         srow(RK_TOGGLE, "Full power on USB", "%s", g_pw.fullOnUsb ? "ON" : "OFF");
         const uint32_t tot = g_pwAwakeMs + g_pwSleepMs;
         if (g_pwOnUsb)               srow(RK_INFO, "Now", "Full (USB power)");
@@ -2376,7 +2442,36 @@ void buildSettingsRows(Page p) {
             srow(RK_INFO, "Battery draw", "%d mA, %u h %02u m left", (int)-g_bat.avgMa,
                  (unsigned)(g_bat.tteMin / 60), (unsigned)(g_bat.tteMin % 60));
         else                                       srow(RK_INFO, "Battery draw", "%d mA", (int)-g_bat.avgMa);
-        srow(RK_MENU, "Energy monitor", "what uses the battery");
+        break;
+    }
+
+    case PG_CHECKIN: {
+        const power::CheckinPhase ph = checkinNow();
+        srow(RK_PICK, "Check-in minute", ":%02u (Enter = +5)", (unsigned)g_pw.checkinMin);
+        if (g_pw.checkinEvery % 60) srow(RK_PICK, "Every", "%u min", (unsigned)g_pw.checkinEvery);
+        else                        srow(RK_PICK, "Every", "%u h", (unsigned)(g_pw.checkinEvery / 60));
+        if (ph.inWindow) {
+            srow(RK_INFO, "Now", "window open, LoRa on");
+        } else {
+            const time_t at = time(nullptr) + ph.toNextS;
+            struct tm lt;
+            applyTz();
+            localtime_r(&at, &lt);
+            srow(RK_INFO, "Next check-in", "%02d:%02d (in %lu min)", lt.tm_hour, lt.tm_min,
+                 (unsigned long)(ph.toNextS / 60));
+        }
+        srow(RK_INFO, "Messages waiting", "%d", g_outboxCount);
+        if (handheld::ClockConfidence::synchronized()) {
+            srow(RK_INFO, "Clock", "GPS / network time");
+        } else if (g_clkLastAt) {
+            struct tm lt;
+            applyTz();
+            localtime_r(&g_clkLastAt, &lt);
+            srow(RK_INFO, "Clock", "from peer %02d:%02d (%+ld s)", lt.tm_hour, lt.tm_min, (long)g_clkLastOff);
+        } else {
+            srow(RK_INFO, "Clock", "own (not synced yet)");
+        }
+        srow(RK_INFO, "How it works", "LoRa on 1 min early, 3 min after");
         break;
     }
 
@@ -2427,7 +2522,7 @@ void buildSettingsRows(Page p) {
         power::fmtWake(a, sizeof(a), c.wakeSecs);
         srow(RK_PICK, "Sleep, wake every", "%s", a);
         srow(RK_PICK, "Awake after key", c.wakeSecs ? "%u s" : "%u s (no sleep)", (unsigned)c.awakeSecs);
-        srow(RK_TOGGLE, "LoRa radio", "%s", c.lora ? "ON (messages)" : "OFF (no messages)");
+        srow(RK_PICK, "LoRa radio", "%s", c.lora ? "ON (messages)" : c.loraOnUse ? "2 min after a key" : "OFF (no messages)");
         srow(RK_PICK, "GPS", "%s%s", power::gpsName(c.gps), g_cfg.gpsOn ? "" : " (GPS disabled)");
         srow(RK_TOGGLE, "WiFi", "%s", c.wifi ? "allowed" : "OFF");
         srow(RK_TOGGLE, "Key backlight", "%s", c.keyLight ? "allowed" : "OFF");
@@ -2709,7 +2804,7 @@ void activateSetting(int idx) {
             power::save(g_pw);
             powerApply(true);
             toast("Power: %s", power::modeName(g_pw.mode));
-        } else if (idx == 3) {
+        } else if (idx == power::MODE_CUSTOM) {
             if (!g_pw.customSet) {                 // start from the mode in use
                 g_pw.custom = power::selected(g_pw);
                 g_pw.customSet = true;
@@ -2718,15 +2813,26 @@ void activateSetting(int idx) {
             power::save(g_pw);
             powerApply(true);
             pushPage(PG_POWER_CUSTOM);
-        } else if (idx == 4) {
+        } else if (idx == power::MODE_CUSTOM + 1) {
+            pushPage(PG_CHECKIN);
+        } else if (idx == power::MODE_CUSTOM + 2) {
+            g_energyShowCurrent = false;
+            pushPage(PG_ENERGY);
+        } else if (idx == power::MODE_CUSTOM + 3) {
             g_pw.fullOnUsb = !g_pw.fullOnUsb;
             power::save(g_pw);
             powerApply(true);
             requestRedraw();
-        } else if (idx == 7) {
-            g_energyShowCurrent = false;
-            pushPage(PG_ENERGY);
         }
+        break;
+
+    case PG_CHECKIN:
+        if (idx == 0) g_pw.checkinMin = power::nextCheckinMin(g_pw.checkinMin);
+        else if (idx == 1) g_pw.checkinEvery = power::nextCheckinEvery(g_pw.checkinEvery);
+        else break;
+        power::save(g_pw);
+        powerApply(true);
+        requestRedraw();
         break;
 
     case PG_ENERGY:
@@ -2740,7 +2846,11 @@ void activateSetting(int idx) {
             case 0: c.cpuMhz = power::nextCpu(c.cpuMhz); break;
             case 1: c.wakeSecs = power::nextWake(c.wakeSecs); break;
             case 2: c.awakeSecs = power::nextAwake(c.awakeSecs); break;
-            case 3: c.lora = !c.lora; break;
+            case 3:                                    // on -> on use -> off
+                if (c.lora) { c.lora = false; c.loraOnUse = true; }
+                else if (c.loraOnUse) c.loraOnUse = false;
+                else c.lora = true;
+                break;
             case 4: c.gps = (uint8_t)((c.gps + 1) % power::GPS_COUNT); break;
             case 5: c.wifi = !c.wifi; break;
             case 6: c.keyLight = !c.keyLight; break;
@@ -3497,7 +3607,19 @@ void commitEntry() {
         if (!g_bufLen) return;
         char body[BUF_CAP + 1];
         memcpy(body, g_buf, g_bufLen + 1);
-        if (sendMessage(g_threadPeer, body)) {
+        const power::CheckinPhase ph = checkinNow();
+        if (g_pwEff.checkin && !(ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS)) {
+            if (outboxAdd(g_threadPeer, body)) {
+                bufClear();
+                const time_t at = time(nullptr) + ph.toNextS;
+                struct tm lt;
+                applyTz();
+                localtime_r(&at, &lt);
+                toast("Queued for %02d:%02d check-in", lt.tm_hour, lt.tm_min);
+            } else {
+                toast("Outbox full (%d)", kOutboxCap);
+            }
+        } else if (sendMessage(g_threadPeer, body)) {
             bufClear();
             if (g_cfg.beep) g_audio.playMessage();
         } else {
@@ -3806,7 +3928,11 @@ bool powerUsbPowered() { return g_bat.usb && !g_benchUntil; }
 
 void powerApply(bool force) {
     const bool usb = powerUsbPowered();
-    const power::Profile& want = power::effective(g_pw, usb);
+    power::Profile want = power::effective(g_pw, usb);
+    if (!want.lora && want.loraOnUse && (millis() < power::kLoraOnUseMs ||
+                                         (g_lastInputMs && millis() - g_lastInputMs < power::kLoraOnUseMs)))
+        want.lora = true;                        // on demand: LoRa on for 2 min after a key
+    if (want.checkin && !want.lora && checkinNow().inWindow) want.lora = true;   // check-in window
     const bool onUsb = usb && g_pw.fullOnUsb && g_pw.mode != power::MODE_FULL;
     if (!force && power::sameProfile(want, g_pwEff) && onUsb == g_pwOnUsb) return;
     const power::Profile old = g_pwEff;
@@ -3884,7 +4010,8 @@ void powerGpsTick() {
         } else {
             want = true;
         }
-    } else if (!g_gpsNextVisit || (int32_t)(now - g_gpsNextVisit) >= 0) {
+    } else if ((!g_gpsNextVisit || (int32_t)(now - g_gpsNextVisit) >= 0) &&
+               (g_pwEff.gps != power::GPS_ON_USE || (g_lastInputMs && now - g_lastInputMs < 10000))) {
         g_gpsVisitStart = now ? now : 1;
         Serial.println("[GPS] scheduled visit: receiver on");
         want = true;
@@ -3896,6 +4023,41 @@ void powerGpsTick() {
         gpsApplyPower();
         if (g_screen == SCR_SETTINGS && g_page == PG_TIME) requestRedraw();
     }
+}
+
+// Check-in window work: announce at +5 s (peers learn paths and, if synchronized, give
+// their time), then send the outbox from +kCheckinSendS, one message per ~3.5 s.
+void checkinTick() {
+    static bool wasIn = false;
+    static uint8_t announced = 0;
+    static uint32_t lastTry = 0;
+    if (!g_pwEff.checkin) { wasIn = false; return; }
+    const power::CheckinPhase ph = checkinNow();
+    if (ph.inWindow != wasIn) {
+        wasIn = ph.inWindow;
+        announced = 0;
+        Serial.printf("[CHECKIN] window %s (%d queued)\n", ph.inWindow ? "open" : "closed", g_outboxCount);
+    }
+    if (!ph.inWindow) return;
+    // Announce at +5 s and again at +90 s: a peer whose clock is up to ~1.5 min late still
+    // hears one (and, if this clock is synchronized, takes its time from it).
+    const uint8_t due = ph.sinceS >= 90 ? 2 : ph.sinceS >= 5 ? 1 : 0;
+    if (announced < due && g_loraIf && g_loraIf->isOnline()) {
+        announced = due;
+        doAnnounce();
+    }
+    if (!g_outboxCount || ph.sinceS < (int32_t)power::kCheckinSendS || millis() - lastTry < 3500) return;
+    lastTry = millis();
+    OutboxItem& o = g_outbox[0];
+    const bool sent = sendMessage(o.dest, o.text);
+    const bool hopeless = !sent && (!strncmp(g_txStr, "rejected", 8) || !strcmp(g_txStr, "invalid") ||
+                                    !strcmp(g_txStr, "pick remote"));
+    Serial.printf("[CHECKIN] outbox \"%s\": %s\n", o.text, sent ? "sent" : g_txStr);
+    if (sent || hopeless) {
+        memmove(&g_outbox[0], &g_outbox[1], sizeof(OutboxItem) * (size_t)(g_outboxCount - 1));
+        g_outboxCount--;
+    }
+    requestRedraw();                             // sendMessage cleared the widget tree
 }
 
 void powerTick() {
@@ -3922,6 +4084,8 @@ void powerTick() {
         g_pwAwakeMs /= 2; g_pwSleepMs /= 2;
     }
     powerApply(false);
+    checkinTick();
+    peerClockTick();
     powerGpsTick();
     powerTouchTick();
     energyAccountAwake();
@@ -4004,6 +4168,10 @@ const char* powerSleepBlocker() {
     // key anyway and must not keep the CPU awake.
     if (!g_idleActive && (g_redraw || g_redrawAt)) return "redraw";
     if (g_keyqTail != g_keyqHead) return "keys";
+    if (g_pwEff.checkin && g_outboxCount) {
+        const power::CheckinPhase ph = checkinNow();
+        if (ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS) return "check-in send";
+    }
     if (HWCDC::isPlugged() && !g_usbSleepUntil) return "usb host";   // console drops while asleep
     if (mirror::active()) return "mirror";
     if (g_wifiSt != WifiSt::Off || g_wifiScanning || WiFi.getMode() != WIFI_OFF) return "wifi";
@@ -4029,9 +4197,25 @@ void powerIdle() {
 
     uint32_t ms = (uint32_t)g_pwEff.wakeSecs * 1000UL;
     const time_t t = time(nullptr);
-    if (t > 100000 && g_pwEff.wakeSecs >= 60) {        // land on the minute: the clock stays right
-        const uint32_t toMinute = (uint32_t)(60 - t % 60) * 1000UL + 250;
+    if (t > 100000 && g_pwEff.wakeSecs >= 60) {        // land on the minute (5 min): the clock stays right
+        const uint32_t step = g_pwEff.wakeSecs >= 300 ? 300 : 60;
+        const uint32_t toMinute = (uint32_t)(step - t % step) * 1000UL + 250;
         if (toMinute < ms) ms = toMinute;
+    }
+    if (g_pwEff.checkin) {                             // check-in: wake at the window edges
+        const power::CheckinPhase ph = checkinNow();
+        uint32_t s = ph.toChangeS;
+        if (ph.inWindow && ph.sinceS < 5) s = (uint32_t)(5 - ph.sinceS);   // announce at +5 s
+        else if (ph.inWindow && ph.sinceS < 90 && s > (uint32_t)(90 - ph.sinceS)) s = (uint32_t)(90 - ph.sinceS);
+        else if (ph.inWindow && g_outboxCount && ph.sinceS < (int32_t)power::kCheckinSendS)
+            s = (uint32_t)(power::kCheckinSendS - ph.sinceS);
+        const uint32_t cap = s * 1000UL + 300;
+        if (cap < ms) ms = cap;
+    }
+    if (g_pwEff.loraOnUse && g_pwEff.lora && g_lastInputMs) {   // on demand: wake to turn LoRa off
+        const uint32_t on = millis() - g_lastInputMs;
+        const uint32_t left = on < power::kLoraOnUseMs ? power::kLoraOnUseMs - on + 100 : 100;
+        if (left < ms) ms = left;
     }
     if (g_toast[0]) {
         const int32_t left = (int32_t)(g_toastUntil - millis());
@@ -4146,6 +4330,29 @@ void handleSerialLine(char* p) {
         gpsHardReset();
     } else if (!strcmp(p, "pw")) {
         powerStatus();
+    } else if (!strncmp(p, "epoch", 5)) {
+        // epoch            print the clock (Unix seconds)
+        // epoch <secs>     set it (bench: e.g. a clock a little off, to test check-in sync)
+        long long v = 0;
+        if (sscanf(p + 5, "%lld", &v) == 1 && v > 1700000000LL) setEpoch((time_t)v);
+        Serial.printf("[CLOCK] epoch %lld (%s)\n", (long long)time(nullptr),
+                      handheld::ClockConfidence::synchronized() ? "synchronized" : "not synchronized");
+    } else if (!strncmp(p, "checkin", 7)) {
+        int m = -1, e = -1;
+        if (sscanf(p + 7, "%d %d", &m, &e) >= 1 && m >= 0 && m <= 59) {
+            g_pw.checkinMin = (uint8_t)m;
+            if (e >= 5 && e <= 1440) g_pw.checkinEvery = (uint16_t)e;   // any >= 5 for bench tests
+            power::save(g_pw);
+            powerApply(true);
+        }
+        const power::CheckinPhase ph = checkinNow();
+        struct tm nt;
+        localNow(nt);
+        Serial.printf("[CHECKIN] now %02d:%02d:%02d at :%02u every %u min; %s, change in %lu s, next in %lu s; %d queued; clock %s\n",
+                      nt.tm_hour, nt.tm_min, nt.tm_sec, (unsigned)g_pw.checkinMin, (unsigned)g_pw.checkinEvery,
+                      ph.inWindow ? "window open" : "closed",
+                      (unsigned long)ph.toChangeS, (unsigned long)ph.toNextS, g_outboxCount,
+                      handheld::ClockConfidence::synchronized() ? "synced" : g_clkLastAt ? "from peer" : "own");
     } else if (p[0] == 'p' && p[1] == 'm' && (p[2] == ' ' || isdigit((unsigned char)p[2]))) {
         const int m = atoi(p + 2);
         if (m >= 0 && m < power::MODE_COUNT) {
@@ -4164,7 +4371,7 @@ void handleSerialLine(char* p) {
             if (!strcmp(k, "cpu") && (v == 80 || v == 160 || v == 240)) c.cpuMhz = (uint16_t)v;
             else if (!strcmp(k, "wake") && v <= 3600) c.wakeSecs = (uint16_t)v;
             else if (!strcmp(k, "awake") && v >= 1 && v <= 600) c.awakeSecs = (uint16_t)v;
-            else if (!strcmp(k, "lora")) c.lora = v != 0;
+            else if (!strcmp(k, "lora")) { c.lora = v == 1; c.loraOnUse = v == 2; }
             else if (!strcmp(k, "gps") && v < power::GPS_COUNT) c.gps = (uint8_t)v;
             else if (!strcmp(k, "wifi")) c.wifi = v != 0;
             else if (!strcmp(k, "kbl")) c.keyLight = v != 0;
@@ -4174,7 +4381,7 @@ void handleSerialLine(char* p) {
             power::save(g_pw);
             powerApply(true);
         } else {
-            Serial.println("[POWER] pset cpu 80|160|240, wake <s>, awake <s>, lora 0|1, gps 0-3 (on,15m,1h,off), wifi 0|1, kbl 0|1");
+            Serial.println("[POWER] pset cpu 80|160|240, wake <s>, awake <s>, lora 0|1|2(on use), gps 0-4 (on,15m,1h,off,on use), wifi 0|1, kbl 0|1");
         }
     } else if (!strncmp(p, "bench", 5)) {
         const int secs = p[5] ? atoi(p + 5) : 120;
@@ -4217,6 +4424,11 @@ void handleSerialLine(char* p) {
             ok = end == h + 2;
         }
         if (!ok) { Serial.println("[CMD] msg <32 hex dest> <text>"); return; }
+        const power::CheckinPhase ph = checkinNow();
+        if (g_pwEff.checkin && !(ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS)) {
+            Serial.printf("[MSG] outbox %s\n", outboxAdd(dest, p + 4 + 32 + 1) ? "queued for check-in" : "full");
+            return;
+        }
         const bool sent = sendMessage(dest, p + 4 + 32 + 1);
         Serial.printf("[MSG] send %s at uptime %lu ms: %s\n", sent ? "queued" : "failed",
                       (unsigned long)millis(), g_txStr);

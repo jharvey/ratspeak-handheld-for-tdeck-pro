@@ -40,9 +40,24 @@ ENERGY MODES  (Settings S.4 Power; power/PowerModes.*, power/LightSleep.*)
        released and TX held low whenever the GPS rail is off. Saver now ~7 mA asleep.
 [DONE] Touch held in reset on the idle splash (all modes) and, in Saver, except 1 min
        after a key. Presets run 240 MHz while awake (sleep dominates the average).
-[IN-PROGRESS] ~5 mA board floor (ESP32 off): BHI260 / keyboard sleep, SD share.
+[IN-PROGRESS] ~4 mA board floor (ESP32 in deep sleep, tools/sleepcheck floor d 14).
+       BHI260 ruled out (boot status 0x18 = boot ROM idle, no firmware). Next: SD card
+       share (pull the card on one unit), keyboard controller sleep.
+[DONE] Mode ladder (power/PowerModes.*): Full, Balanced (DEFAULT), Saver, Ultra-low
+       (LoRa only, 5 min wakes), On demand (Profile.loraOnUse: LoRa 2 min after a key;
+       GPS_ON_USE one fix per key, <= every 15 min), Check-in, Custom. NVS key "mode2"
+       holds the new numbering (old "mode" 3 = Custom is migrated). pm0..pm6.
+[DONE] Check-in mode (Profile.checkin; Settings.checkinMin/checkinEvery, NVS ciMin/
+       ciEvery): LoRa only from 1 min before to 3 min after each check-in; announce at
+       +5 s and +90 s; outbox (8, RAM) sent from +20 s; sleep capped to window edges.
+       Peer clock: hal/PeerClock.h samples announce wire time (raw LoRa frame, hops 0,
+       random_hash low 5 bytes) and LXMF message timestamps; unsynced devices adopt
+       announce time, move forward only to message time (<= 15 min). gpsSyncClock now
+       calls ClockConfidence::markSynchronized. Verified COM9 (40 s slow) + COM5 (GPS):
+       adopted +38 s, queued message delivered in the window.
+       Console: checkin [min [every]], epoch [secs].
 [DONE] Energy monitor (power/EnergyMonitor.*): state-time x bench currents + TX airtime +
-       e-ink refresh time, vs gauge integral; hourly 48-entry RTC ring; S.4.8 table +
+       e-ink refresh time, vs gauge integral; hourly 48-entry RTC ring; S.4.9 table +
        trend graph; console energy / energy period <s> / energy clear.
 [TODO] LoRa RX duty cycle; GPS M10 power-save; idle-password lock
 

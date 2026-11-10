@@ -25,13 +25,25 @@ usb off
 expect 5000 [POWER] Saver: cpu 240 MHz
 # The idle splash (30 s) is up by now: the first key only wakes it.
 key G
+wait 300
+shot power-02b-woke.png
 wait 1500
-# Custom: copies Saver, then CPU speed steps 240 -> 160.
-key 4
+# Custom (row 7): copies Saver, then CPU speed steps 240 -> 160.
+key 7
 wait 1200
 shot power-03-custom.png
 key 1
 expect 3000 [POWER] Custom: cpu 160 MHz
 wait 1200
 shot power-04-custom-cpu.png
+# Back to the Power page: Ultra-low (row 4) and On demand (row 5, LoRa on after a key).
+key BACK
+wait 1200
+key 4
+expect 3000 [POWER] Ultra-low: cpu 240 MHz, sleep 5 min, awake 5s, lora on, gps Off
+wait 1200
+key 5
+expect 3000 [POWER] On demand: cpu 240 MHz, sleep 5 min, awake 10s, lora on, gps When used
+wait 1200
+shot power-05-ondemand.png
 quit

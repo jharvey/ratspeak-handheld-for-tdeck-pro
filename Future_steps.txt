@@ -32,12 +32,16 @@ Hardware / platform
 - DONE - Energy modes Full / Balanced / Saver / Custom; audio + e-ink power gating; GPS visits
 - DONE - Reliable LoRa delivery to a sleeping receiver (14/14, 1.3 frames/msg)
 - DONE - Sleep floor 27 -> 7 mA (GPS UART back-power fix, touch gating); Saver ~7 mA asleep
-- IN PROGRESS - Remaining ~5 mA board floor: BHI260 sensor hub / keyboard controller sleep, SD card
+- IN PROGRESS - Remaining ~4 mA board floor (ESP32 off): BHI260 ruled out; SD card next, then keyboard
+- DONE - Mode ladder: Full / Balanced (default) / Saver / Ultra-low / On demand / Check-in / Custom
+- DONE - Check-in mode: LoRa only in scheduled windows (e.g. hourly at :30), outbox, peer clock sync
+- Check-in: keep the outbox in NVS (lost on reset today); show queued messages in the thread
+- Check-in: measure RTC drift over a day to size the 1 min lead
 - Message store: slow writes + ~2 min boot with thousands of messages (proofs get late)
-- DONE - Energy monitor: hourly per-part estimate vs gauge, trend graph on the e-ink (S.4.8)
+- DONE - Energy monitor: hourly per-part estimate vs gauge, trend graph on the e-ink (S.4.9)
 - LoRa RX duty cycle (SX1262 preamble detection) for sleeping modes
-- Fifth energy mode "Check-in" (repeater): LoRa off and CPU asleep (~25 mA floor today);
-  the radio wakes only on "Check messages" (or every N min) to sync from an always-on,
+- Repeater / propagation-node sync: LoRa off and CPU asleep; the radio wakes only on
+  "Check messages" (or at check-in times) to sync from an always-on,
   solar-powered LXMF propagation node (e.g. lxmd + RNode on a Pi), then sleeps again.
   Needs LXMF propagation client support (rsLXMFLite has none yet): pick a node from
   announces, send via the node when direct delivery fails, sync (link + message list +

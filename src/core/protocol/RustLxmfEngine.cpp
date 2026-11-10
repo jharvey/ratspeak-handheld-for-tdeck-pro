@@ -1,6 +1,7 @@
 
 #include "protocol/RustLxmfEngine.h"
 #include "protocol/RustClock.h"
+#include "hal/PeerClock.h"
 #include "protocol/RustEntropy.h"
 #include "protocol/RustKeyMap.h"
 #include "protocol/RustInterfacePump.h"
@@ -782,6 +783,7 @@ void RustLxmfEngine::onDataFrame(const rs_handheld_local_frame_t& f, uint8_t ifa
     view.title = msg.title; view.titleLength = msg.title_len;
     view.content = msg.content; view.contentLength = msg.content_len;
     view.timestamp = epoch ? double(epoch) : msg.timestamp; view.reaction = msg.is_reaction != 0;
+    if (msg.timestamp > 0) peerclock::note((uint32_t)msg.timestamp, peerclock::MESSAGE);
     _incoming.accept(view, seed);
 }
 
@@ -816,6 +818,7 @@ RustIncomingDelivery::ReceiveResult RustLxmfEngine::onDirectPayload(
     view.title = packed + parsed.title_offset; view.titleLength = parsed.title_len;
     view.content = packed + parsed.content_offset; view.contentLength = parsed.content_len;
     view.timestamp = epoch ? double(epoch) : parsed.timestamp; view.reaction = parsed.is_reaction != 0;
+    if (parsed.timestamp > 0) peerclock::note((uint32_t)parsed.timestamp, peerclock::MESSAGE);
     return _incoming.accept(view, seed);
 }
 

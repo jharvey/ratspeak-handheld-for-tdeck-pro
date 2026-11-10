@@ -5,6 +5,7 @@
 #include "transport/TCPClientInterface.h"
 #include "transport/WiFiInterface.h"
 #include <Arduino.h>
+#include "hal/PeerClock.h"
 
 namespace {
 static_assert(handheld::TxLease::TokenBytes == RS_HANDHELD_TX_LIFETIME_BYTES,
@@ -65,6 +66,7 @@ void RustInterfacePump::attachLoRa(LoRaInterface* lora) {
             return static_cast<RustInterfacePump*>(context)->leaseLive(lease);
         });
         lora->setRawSink([this](const uint8_t* data, size_t len) {
+            peerclock::noteFrame(data, len);     // announce wire time (check-in clock sync)
             ingest(data, len, LORA_IFACE_ID);
         });
     }

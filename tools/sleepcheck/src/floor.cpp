@@ -119,7 +119,33 @@ void boot() {
     }
 }
 
+// BHI260AP sensor hub (I2C 0x28) on the always-on 1.8 V rail. LilyGO's factory firmware
+// uploads a program into it; the suspicion was that it kept running after reflashing. It does
+// not: boot status reads 0x18 (host interface ready, no firmware) = idle in its boot ROM, and
+// a soft reset (host register 0x14 = 1) changes nothing on the floor (2026-11-10).
+void bhiInfo(const char* tag) {
+    uint8_t v[2] = {0xFF, 0xFF};
+    const uint8_t regs[2] = {0x2B, 0x25};    // product id, boot status
+    for (int i = 0; i < 2; i++) {
+        Wire.beginTransmission(0x28);
+        Wire.write(regs[i]);
+        if (Wire.endTransmission(false) == 0 && Wire.requestFrom(0x28, 1) == 1) v[i] = Wire.read();
+    }
+    Serial.printf("[FLOOR] BHI260 %s: product 0x%02X boot status 0x%02X\n", tag, v[0], v[1]);
+}
+
 bool command(const char* line) {
+    if (!strcmp(line, "bhi reset")) {
+        bhiInfo("before");
+        Wire.beginTransmission(0x28);
+        Wire.write(0x14);
+        Wire.write(0x01);
+        Serial.printf("[FLOOR] BHI260 reset request: %s\n", Wire.endTransmission() == 0 ? "sent" : "no ACK");
+        delay(100);
+        bhiInfo("after");
+        return true;
+    }
+    if (!strcmp(line, "bhi")) { bhiInfo("now"); return true; }
     if (strncmp(line, "floor", 5) != 0) return false;
     const char* a = line + 5;
     while (*a == ' ') a++;

@@ -1,0 +1,23 @@
+# Check-in mode: pick it (Power row 6), open the schedule (row 8), queue a message.
+usb off
+expect 20000 [BOOT] ready
+wait 2000
+key M
+wait 800
+key S
+wait 800
+key 4
+wait 1200
+key 6
+expect 3000 [POWER] Check-in: cpu 240 MHz, sleep 5 min, awake 10s
+wait 1200
+shot checkin-01-power.png
+key 8
+wait 1200
+shot checkin-02-schedule.png
+key 1
+wait 1200
+serial checkin
+expect 3000 [CHECKIN] now
+shot checkin-03-minute.png
+quit

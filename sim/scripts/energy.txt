@@ -1,6 +1,8 @@
 # Energy monitor: 60 s periods, then Settings > Power > Energy monitor and its trend graph.
 usb off
 expect 20000 [BOOT] ready
+serial pm0
+expect 3000 [POWER] Full power
 serial energy period 60
 expect 3000 [ENERGY] period 60 s
 wait 135000
@@ -15,7 +17,7 @@ key S
 wait 800
 key 4
 wait 1200
-key 8
+key 9
 wait 1500
 shot energy-01-table.png
 key 1
