@@ -39,6 +39,7 @@
 #include <esp_partition.h>
 #if !defined(SIMULATOR)
 #include <soc/gpio_periph.h>
+#include <driver/gpio.h>
 #endif
 #include <LittleFS.h>
 
@@ -61,6 +62,7 @@
 #include "power/PowerModes.h"
 #include "power/LightSleep.h"
 #include "power/RtcLog.h"
+#include "power/EnergyMonitor.h"
 #include <WiFi.h>
 #include "protocol/ProtocolRuntime.h"
 #include "protocol/OutgoingContract.h"
@@ -128,6 +130,9 @@ uint32_t g_usbSleepUntil = 0;       // console "usbsleep": allow light sleep wit
 uint32_t g_benchUntil = 0;            // bench: charger input off, run from battery (console)
 void powerApply(bool force);
 void powerTouchTick();
+void energyAccountAwake();
+void energyAfterSleep(uint32_t sleptMs);
+bool g_energyShowCurrent = false;     // Energy page: this period instead of the last closed one
 bool chargerSetHiz(bool on);
 
 char g_selfName[24] = "";
@@ -1560,7 +1565,7 @@ bool entryNumeric() {
 enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
-    PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM
+    PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -2199,6 +2204,8 @@ const char* pageTitle(Page p) {
         case PG_WIFI_JOIN:  return "Join WiFi";
         case PG_POWER:        return "Power";
         case PG_POWER_CUSTOM: return "Custom power";
+        case PG_ENERGY:       return "Energy monitor";
+        case PG_ENERGY_GRAPH: return "Energy trend";
     }
     return "";
 }
@@ -2369,8 +2376,50 @@ void buildSettingsRows(Page p) {
             srow(RK_INFO, "Battery draw", "%d mA, %u h %02u m left", (int)-g_bat.avgMa,
                  (unsigned)(g_bat.tteMin / 60), (unsigned)(g_bat.tteMin % 60));
         else                                       srow(RK_INFO, "Battery draw", "%d mA", (int)-g_bat.avgMa);
+        srow(RK_MENU, "Energy monitor", "what uses the battery");
         break;
     }
+
+    case PG_ENERGY: {
+        const int battPct = g_bat.valid ? g_bat.pct : -1;
+        const bool cur = g_energyShowCurrent || energy::count() == 0;
+        const energy::Record r = cur ? energy::current(millis(), battPct) : energy::closed(0);
+        srow(RK_MENU, "Trend graph", "last %d periods", energy::count() < 24 ? energy::count() : 24);
+        const unsigned per = (unsigned)(energy::period() / 60);
+        if (cur) srow(RK_ACTION, "View: this period", "%lu of %u min so far", (unsigned long)(r.lenS / 60), per);
+        else     srow(RK_ACTION, "View: last period", "%u min, Enter = this one", per);
+        float est = 0;
+        for (int c = 0; c < energy::CAT_COUNT; c++) est += r.est10[c] / 10.0f;
+        const float hours = r.lenS ? r.lenS / 3600.0f : 0;
+        const bool measured = r.measuredS * 2 >= r.lenS && r.lenS > 0;
+        if (measured)
+            srow(RK_INFO, "Measured (gauge)", "%.1f mAh, avg %.1f mA", r.measured10 / 10.0f,
+                 r.measuredS ? (r.measured10 / 10.0f) * 3600.0f / r.measuredS : 0.0f);
+        else
+            srow(RK_INFO, "Measured (gauge)", "n/a: on USB power");
+        srow(RK_INFO, "Estimated total", "%.1f mAh, avg %.1f mA", est, hours > 0 ? est / hours : 0.0f);
+        // Categories, largest first.
+        uint8_t order[energy::CAT_COUNT];
+        for (int c = 0; c < energy::CAT_COUNT; c++) order[c] = (uint8_t)c;
+        for (int i = 0; i < energy::CAT_COUNT; i++)
+            for (int j = i + 1; j < energy::CAT_COUNT; j++)
+                if (r.est10[order[j]] > r.est10[order[i]]) { uint8_t t = order[i]; order[i] = order[j]; order[j] = t; }
+        for (int i = 0; i < energy::CAT_COUNT; i++) {
+            const uint8_t c = order[i];
+            if (!r.est10[c]) continue;
+            srow(RK_INFO, energy::catName(c), "%.1f mAh  %u%%", r.est10[c] / 10.0f,
+                 est > 0 ? (unsigned)(r.est10[c] / 10.0f * 100.0f / est + 0.5f) : 0u);
+        }
+        if (measured) {
+            const float other = r.measured10 / 10.0f - est;
+            srow(RK_INFO, "Other (meas - est)", "%+.1f mAh", other);
+        }
+        srow(RK_INFO, "Awake / battery", "%u%% awake, battery %u%%", (unsigned)r.awakePct, (unsigned)r.battPct);
+        break;
+    }
+
+    case PG_ENERGY_GRAPH:
+        break;                                          // drawn by renderEnergyGraph()
 
     case PG_POWER_CUSTOM: {
         const power::Profile& c = g_pw.custom;
@@ -2674,7 +2723,15 @@ void activateSetting(int idx) {
             power::save(g_pw);
             powerApply(true);
             requestRedraw();
+        } else if (idx == 7) {
+            g_energyShowCurrent = false;
+            pushPage(PG_ENERGY);
         }
+        break;
+
+    case PG_ENERGY:
+        if (idx == 0) pushPage(PG_ENERGY_GRAPH);
+        else if (idx == 1) { g_energyShowCurrent = !g_energyShowCurrent; requestRedraw(); }
         break;
 
     case PG_POWER_CUSTOM: {
@@ -3038,7 +3095,10 @@ void renderHome() {
 }
 
 // ---- Settings ---------------------------------------------------------------------
+void renderEnergyGraph();
+
 void renderSettings() {
+    if (g_page == PG_ENERGY_GRAPH) { renderEnergyGraph(); return; }
     buildSettingsRows(g_page);
     clampScroll(g_sel, g_scroll, g_srowCount);
     char path[24], hdr[48];
@@ -3049,6 +3109,77 @@ void renderSettings() {
         const int y = LIST_TOP + (i - g_scroll) * ROW_H;
         listRow(y, g_srows[i].title, g_srows[i].sub, i == g_sel);
         if (browseMode()) addHit(2, y, W - 4, ROW_H, H_ROW, i);
+    }
+    drawFooter();
+}
+
+// ---- Energy trend graph ------------------------------------------------------------
+// Average battery current per period (newest right). Filled bar = gauge measurement;
+// outlined bar = estimate only (period mostly on USB). The rightmost bar is the period in
+// progress. Below: the largest consumers over the shown periods.
+void renderEnergyGraph() {
+    g_srowCount = 0;
+    char path[24], hdr[48];
+    settingsPath(path, sizeof(path));
+    snprintf(hdr, sizeof(hdr), "%s %s", path, pageTitle(g_page));
+    drawHeader(hdr, false);
+
+    constexpr int kBars = 24;
+    float ma[kBars + 1];
+    bool meas[kBars + 1];
+    int n = energy::count() < kBars ? energy::count() : kBars;
+    float sumCat[energy::CAT_COUNT] = {0};
+    float maxMa = 10.0f;
+    for (int i = 0; i <= n; i++) {          // i == n: the current period
+        const energy::Record r = i < n ? energy::closed(n - 1 - i) : energy::current(millis(), -1);
+        float est = 0;
+        for (int c = 0; c < energy::CAT_COUNT; c++) { est += r.est10[c] / 10.0f; sumCat[c] += r.est10[c] / 10.0f; }
+        meas[i] = r.measuredS * 2 >= r.lenS && r.measuredS > 0;
+        const float hrs = (meas[i] ? r.measuredS : r.lenS) / 3600.0f;
+        ma[i] = hrs > 0 ? (meas[i] ? r.measured10 / 10.0f : est) / hrs : 0;
+        if (ma[i] > maxMa) maxMa = ma[i];
+    }
+    const int gx = 6, gy = LIST_TOP + 18, gw = W - 12, gh = 120;
+    char t[40];
+    snprintf(t, sizeof(t), "max %.0f mA", maxMa);
+    text(gx, LIST_TOP, t);
+    snprintf(t, sizeof(t), "%lu min/bar", (unsigned long)(energy::period() / 60));
+    text(W - 6 - textW(t), LIST_TOP, t);
+    box(gx, gy, gw, gh + 2, 1);
+    const int slots = n + 1;
+    const int bw = (gw - 4) / (slots < 8 ? 8 : slots);
+    for (int i = 0; i < slots; i++) {
+        int h = (int)(ma[i] / maxMa * gh + 0.5f);
+        if (ma[i] > 0 && h < 1) h = 1;
+        const int x = gx + 2 + i * bw, y = gy + 1 + gh - h;
+        if (h <= 0) continue;
+        if (meas[i]) fillRect(x, y, bw - 2 > 1 ? bw - 2 : 1, h);
+        else         box(x, y, bw - 2 > 2 ? bw - 2 : 2, h, 1);
+    }
+    const uint32_t backMin = (uint32_t)n * energy::period() / 60;
+    if (backMin >= 120) snprintf(t, sizeof(t), "%luh ago", (unsigned long)(backMin / 60));
+    else                snprintf(t, sizeof(t), "%lu min ago", (unsigned long)backMin);
+    text(gx, gy + gh + 4, n ? t : "");
+    text(W - 6 - textW("now"), gy + gh + 4, "now");
+
+    // Top consumers over the shown periods.
+    float total = 0;
+    for (int c = 0; c < energy::CAT_COUNT; c++) total += sumCat[c];
+    int y = gy + gh + 24;
+    for (int k = 0; k < 2 && total > 0; k++) {
+        char line[48] = "";
+        size_t len = 0;
+        for (int j = 0; j < 2; j++) {
+            int best = -1;
+            for (int c = 0; c < energy::CAT_COUNT; c++)
+                if (sumCat[c] > 0 && (best < 0 || sumCat[c] > sumCat[best])) best = c;
+            if (best < 0) break;
+            len += snprintf(line + len, sizeof(line) - len, "%s%s %u%%", j ? ", " : "", energy::catName(best),
+                            (unsigned)(sumCat[best] * 100.0f / total + 0.5f));
+            sumCat[best] = -1;
+        }
+        if (len) text(gx, y, line, false, W - 12);
+        y += 18;
     }
     drawFooter();
 }
@@ -3793,6 +3924,7 @@ void powerTick() {
     powerApply(false);
     powerGpsTick();
     powerTouchTick();
+    energyAccountAwake();
     static uint32_t rtcAt = 0;
     if (!rtcAt || millis() - rtcAt >= 10000) {     // RTC log: one entry per ~10 s awake or per wake
         rtcAt = millis() ? millis() : 1;
@@ -3812,6 +3944,51 @@ void powerTouchTick() {
     g_touchGated = !want;
     digitalWrite(TOUCH_RST, want ? HIGH : LOW);
     Serial.printf("[TOUCH] %s\n", want ? "on" : "off until a key is pressed");
+}
+
+// ---- Energy monitor accounting ----------------------------------------------------
+uint32_t g_enLastMs = 0, g_enLastMeasMs = 0, g_enLastTxAir = 0, g_enLastEink = 0;
+
+energy::State energyState(bool awake) {
+    energy::State st = {};
+    st.awake = awake;
+    st.cpuMhz = g_pwEff.cpuMhz;
+    st.loraRx = g_loraIf && g_loraIf->isOnline();
+    st.gps = g_gpsSerial != nullptr;
+    st.wifi = WiFi.getMode() != WIFI_OFF;
+    st.keyLight = g_kbOk && g_kb.backlightIsLit();
+    st.touch = !g_touchGated;
+    st.audio = g_audio.isPowered();
+    st.sd = g_sdMounted;
+    return st;
+}
+
+// Awake time since the last accounting point, plus event costs and the gauge reading.
+void energyAccountAwake() {
+    const uint32_t now = millis();
+    if (!g_enLastMs) { g_enLastMs = g_enLastMeasMs = now; }
+    energy::account(now - g_enLastMs, energyState(true));
+    g_enLastMs = now;
+    if (g_radio) {                                   // LoRa TX: airtime x PA current
+        const uint32_t air = g_radio->txAirMs - g_enLastTxAir;
+        g_enLastTxAir = g_radio->txAirMs;
+        const int p = loraTxPower();
+        const float txMa = p >= 17 ? 118.0f : p >= 10 ? 60.0f : p >= 0 ? 35.0f : 20.0f;
+        energy::addEvent(energy::E_LORA_TX, txMa * air / 1000.0f);
+    }
+    const uint32_t ein = g_display.totalRefreshMs() - g_enLastEink;   // e-ink refresh ~8 mA
+    g_enLastEink = g_display.totalRefreshMs();
+    energy::addEvent(energy::E_DISPLAY, 8.0f * ein / 1000.0f);
+    if (g_bat.valid && (!g_bat.usb || g_benchUntil))  // gauge average over the time since the last reading
+        energy::addMeasured(g_bat.avgMa, now - g_enLastMeasMs);
+    g_enLastMeasMs = now;
+    const time_t t = time(nullptr);
+    energy::tick(now, t > 100000 ? (uint32_t)t : 0, g_bat.valid ? g_bat.pct : -1);
+}
+
+void energyAfterSleep(uint32_t sleptMs) {
+    energy::account(sleptMs, energyState(false));
+    g_enLastMs = millis();
 }
 
 // Why the CPU must stay awake right now (nullptr = it may sleep).
@@ -3878,8 +4055,10 @@ void powerIdle() {
     if (g_epdOffInSleep == 2) g_display.hibernate();     // controller deep sleep; re-init on next refresh
     else if (g_epdOffInSleep) g_display.powerOff();     // panel charge pump off; image stays
     if (accountedAt) g_pwAwakeMs += millis() - accountedAt;
+    energyAccountAwake();
     uint32_t slept = 0;
     const power::Wake w = power::lightSleep(ms, pins, slept);
+    energyAfterSleep(slept);
     accountedAt = millis();
     g_pwSleepMs += slept;
     g_pwSleepTotalMs += slept;
@@ -4081,6 +4260,12 @@ void handleSerialLine(char* p) {
         saveSelfName(p[4] ? p + 5 : "");
         requestRedraw();
         Serial.printf("[NAME] this device is now %s\n", g_selfName);
+    } else if (!strncmp(p, "energy", 6)) {
+        // energy | energy period <s> | energy clear
+        if (!strncmp(p + 6, " period ", 8)) energy::setPeriod((uint32_t)atoi(p + 14));
+        else if (!strcmp(p + 6, " clear")) energy::clear();
+        energyAccountAwake();
+        energy::dump();
     } else if (!strcmp(p, "id")) {
         Serial.printf("[ID] dest=%s name=%s\n", g_destHex, g_selfName);
     } else if (!strncmp(p, "txp", 3) && (p[3] == ' ' || p[3] == 0)) {
@@ -4113,7 +4298,7 @@ void handleSerialLine(char* p) {
     } else if (!strcmp(p, "FORMAT")) {
         Serial.println(recoverCorruptLittleFS() ? "[FLASH] formatted - reboot now" : "[FLASH] format failed");
     } else {
-        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> usbsleep<s> txp<dBm> msg id name rl sleeptest L FORMAT");
+        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> usbsleep<s> txp<dBm> msg id name energy rl sleeptest L FORMAT");
     }
 }
 
@@ -4228,6 +4413,17 @@ bool begin() {
 
     handheld::bindDeviceOwner();
 
+#if !defined(SIMULATOR)
+    // A pad hold left by other firmware (e.g. a deep-sleep test) survives resets on the RTC
+    // pins and would pin LoRa CS / RST low: release holds on every pin we drive.
+    {
+        static const int kPins[] = {LORA_CS, LORA_RST, LORA_IRQ, LORA_BUSY, BOARD_LORA_EN, BOARD_GPS_EN, GPS_TX,
+                                    GPS_RX, BOARD_6609_EN, BOARD_1V8_EN, BOARD_EPD_BACKLIGHT, BOARD_KEYBOARD_LED,
+                                    BOARD_MOTOR_PIN, EPD_CS, SD_CS};
+        for (int p : kPins) gpio_hold_dis((gpio_num_t)p);
+        gpio_deep_sleep_hold_dis();
+    }
+#endif
     pinMode(BOARD_1V8_EN, OUTPUT);
     pinMode(BOARD_LORA_EN, OUTPUT);
     digitalWrite(BOARD_1V8_EN, HIGH);
@@ -4254,7 +4450,9 @@ bool begin() {
 #if !defined(SIMULATOR)
     Serial.printf("[BOOT] reset reason %d\n", (int)esp_reset_reason());
     rtclog::boot((int)esp_reset_reason());
+    energy::begin();
 #else
+    energy::begin();
     rtclog::boot(0);
 #endif
     spiBusIdle();

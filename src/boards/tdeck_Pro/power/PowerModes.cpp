@@ -103,19 +103,19 @@ bool sameProfile(const Profile& a, const Profile& b) {
 }
 
 uint16_t estimateMa(const Profile& p) {
-    // Measured 2026-11-10 (after the GPS UART back-power fix): awake 80 MHz LoRa off ~79 mA,
-    // +12 mA at 240 MHz, LoRa receiver ~8 mA awake. Asleep: ~8 mA floor with touch on, LoRa
-    // listening ~+1-2 mA, waking every 1 s ~+1 mA; touch held in reset saves ~2 mA. GPS ~15 mA
-    // while powered (a powered GPS also keeps the CPU awake).
+    // Measured 2026-11-10 after the GPS UART, audio and front-light fixes: awake at 240 MHz
+    // with LoRa listening and touch on ~48 mA (CPU ~35, -12 at 80 MHz), GPS ~19 mA more.
+    // Asleep: ~8 mA floor with touch on, LoRa listening ~+1-2 mA, waking every 1 s ~+1 mA;
+    // touch held in reset saves ~2 mA. A powered GPS keeps the CPU awake.
     const bool sleeps = p.wakeSecs > 0 && p.gps != GPS_ON;
     uint32_t ma;
     if (!sleeps) {
-        ma = 79 + (p.cpuMhz >= 240 ? 12 : p.cpuMhz >= 160 ? 6 : 0) + (p.lora ? 8 : 0);
+        ma = 7 + (p.cpuMhz >= 240 ? 35 : p.cpuMhz >= 160 ? 29 : 23) + (p.lora ? 6 : 0);
     } else {
         ma = 6 + (p.touchOnKey ? 0 : 2) + (p.lora ? 2 : 0) + (p.wakeSecs <= 1 ? 1 : 0);
     }
     switch (p.gps) {
-        case GPS_ON:     ma += 15; break;
+        case GPS_ON:     ma += 19; break;
         case GPS_15MIN:  ma += 1; break;     // ~1 min visits every 15 min
         case GPS_HOURLY: ma += 1; break;
         default: break;

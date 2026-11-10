@@ -482,6 +482,7 @@ int SX1262::endPacket(bool async) {
     _txFailed = false;
     _txActive = true;
     txStarted++;
+    txAirMs += airtime;
     if (async) return 1;
     while (isTxBusy()) {
         yield();

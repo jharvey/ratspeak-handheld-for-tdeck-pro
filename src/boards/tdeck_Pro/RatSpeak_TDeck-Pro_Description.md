@@ -205,10 +205,11 @@ S     Settings                      ← M then S
 │   ├── S.4.1  Full power
 │   ├── S.4.2  Balanced
 │   ├── S.4.3  Saver
-│   ├── S.4.4  Custom               → S.4.4.1–8 knobs (§6.2)
+│   ├── S.4.4  Custom               → S.4.4.1–9 knobs (§6.2)
 │   ├── S.4.5  Full power on USB    ON (default) / OFF
 │   ├── S.4.6  Now                  CPU MHz and % of time asleep
-│   └── S.4.7  Battery draw         mA and estimated time left (gauge)
+│   ├── S.4.7  Battery draw         mA and estimated time left (gauge)
+│   └── S.4.8  Energy monitor       per-part mAh vs gauge, trend graph (§6.5)
 ├── S.5   Battery                   volts, %, current, charger status, capacity
 │   ├── S.5.8  Battery log          internal RAM ring / SD CSV, dump to USB
 │   └── S.5.10 Reset calibration
@@ -240,8 +241,8 @@ messages are immediate in every mode**, because they wake the processor directly
 | WiFi | allowed | allowed | **off** | allowed / off |
 | Key backlight | allowed | allowed | **off** | allowed / off |
 | Touch | on | on | **1 min after a key** | your choice |
-| Battery draw (measured) | ~90–120 mA | ~9–10 mA asleep | **~7 mA asleep** | — |
-| Runtime (~1450 mAh) | ~12 h | ~5–6 days | ~6–8 days | shown on S.4 |
+| Battery draw (measured) | ~48 mA, ~67 with GPS | ~9–10 mA asleep | **~7 mA asleep** | — |
+| Runtime (~1450 mAh) | ~21–30 h | ~5–6 days | ~6–8 days | shown on S.4 |
 | Feels like | always responsive | same, minus constant GPS | clock / battery update once a minute | — |
 
 **Full power on USB** (S.4.5, default ON): whenever USB power is present the device
@@ -344,7 +345,9 @@ charger input off — identical to an unplugged run on COM9):
 
 | Configuration | Asleep | Battery draw |
 |---|---|---|
-| 240 MHz, never sleeps, LoRa on (Full, GPS off) | 0% | ~99 mA |
+| 240 MHz, never sleeps, LoRa on, GPS off (Full) | 0% | ~48 mA |
+| same with GPS on | 0% | ~67 mA |
+| 240 MHz awake, before the audio / front-light / GPS fixes (COM8, 11-09) | 0% | ~99 mA |
 | 80 MHz, never sleeps, LoRa off | 0% | ~79 mA |
 | Saver preset, between GPS visits | 98% | **~7 mA** |
 | wake every 1 s, LoRa listening (Balanced-like) | 87% | ~9 mA |
@@ -374,12 +377,37 @@ light on v1.1) was driven high as "touch reset" (+2 mA).
 A message store bloated by thousands of test messages slows every write (and boot, to ~2
 minutes); that also delays proofs. Separate storage issue, tracked in Future_steps.txt.
 
-### 6.5 Next
+### 6.5 Energy monitor (S.4.8)
+
+**Settings → Power → Energy monitor** shows where the battery charge goes. The board has one
+current sensor (the gauge, total only), so the split is an **estimate**: the time each part
+spends in each state × its bench-measured current (CPU awake by clock or asleep, LoRa
+listening, LoRa transmit airtime × PA current at the set power, GPS powered, WiFi on, key
+light, touch scanning, audio path, e-ink refresh time, SD mounted, board base). The gauge's
+average current over the same time is the **measured** total; *Other* = measured − estimated
+shows how good the estimate is. On USB power there is no battery measurement.
+
+- Rows: trend graph · view (last closed period / this period so far) · measured · estimated
+  total · each part largest first (mAh and %) · Other · % awake and battery %.
+- **Trend graph:** average current per period, newest right (filled bar = measured,
+  outlined = estimate only), the period in progress at the right edge, and the largest
+  consumers over the shown periods.
+- Periods are 1 hour; records go into a 48-entry ring in RTC memory (kept through resets,
+  lost on a power loss). Console: `energy` (dump), `energy period <s>` (e.g. 300 for
+  testing), `energy clear`.
+
+**E-ink refreshes:** a partial (non-blinking) refresh takes ~0.7–0.8 s and a full (blinking)
+one ~1.1–1.8 s at a few mA — with the clock updating once a minute that is well under
+0.1 mA on average. The panel datasheet (GDEQ031T10) recommends a full refresh after about 5
+partial ones to stop afterimages building up; partial refreshes do not wear the panel.
+RatSpeak does a full refresh whenever the idle splash appears and on wake, and MIC forces
+one at any time.
+
+### 6.6 Next
 
 - **Lower the ~5 mA board floor:** BHI260AP sensor hub into its low-power state, keyboard
   controller sleep; check the SD card's share (remove it on one unit).
 - **Message store performance** with many messages (slow writes and boot).
-- **Energy monitor:** hourly per-subsystem estimate vs gauge, trend graph on the display.
 - **LoRa receive duty cycle** (SX1262 RX duty-cycle with preamble detection) — the
   receiver costs ~10–20 mA of the sleeping draw; RNode-style 18-symbol preambles allow it.
 - **Deep sleep "storage" mode:** would need the deep-sleep backports, which break light
@@ -509,6 +537,7 @@ the device does not light-sleep.
 | `msg <32 hex> <text>` / `id` | send a message to a destination hash / print this device's destination |
 | `txp <dBm>` | LoRa transmit power, −9…22, saved (bench builds with `RS_BENCH_TX_DBM` default to it) |
 | `epdoff 0\|1` / `audio 0\|1` / `gpio <pin> <0\|1>` | bench switches: e-ink off before sleep, audio path, raw output pin |
+| `energy` / `energy period <s>` / `energy clear` | energy monitor: per-period measured and estimated mAh by part (§6.5) |
 | `L` | toggle key backlight |
 | `FORMAT` | erase and format the data partition |
 | `@…` | screen-mirror protocol (§10.3) |

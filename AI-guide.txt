@@ -41,6 +41,9 @@ ENERGY MODES  (Settings S.4 Power; power/PowerModes.*, power/LightSleep.*)
 [DONE] Touch held in reset on the idle splash (all modes) and, in Saver, except 1 min
        after a key. Presets run 240 MHz while awake (sleep dominates the average).
 [IN-PROGRESS] ~5 mA board floor (ESP32 off): BHI260 / keyboard sleep, SD share.
+[DONE] Energy monitor (power/EnergyMonitor.*): state-time x bench currents + TX airtime +
+       e-ink refresh time, vs gauge integral; hourly 48-entry RTC ring; S.4.8 table +
+       trend graph; console energy / energy period <s> / energy clear.
 [TODO] LoRa RX duty cycle; GPS M10 power-save; idle-password lock
 
 MEASURED (gauge avg, battery 4.0–4.2 V)

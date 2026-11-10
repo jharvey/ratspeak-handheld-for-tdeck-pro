@@ -117,6 +117,7 @@ void DisplayEink::fullRefresh() {
     dirty_ = false;
     partialCount_ = 0;
     lastRefreshMs_ = millis() - t0;
+    totalRefreshMs_ += lastRefreshMs_;
     Serial.printf("[EINK] full %ums\n", (unsigned)lastRefreshMs_);
 }
 
@@ -149,6 +150,7 @@ void DisplayEink::partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 
     partialCount_++;
     lastRefreshMs_ = millis() - t0;
+    totalRefreshMs_ += lastRefreshMs_;
     Serial.printf("[EINK] partial rows %d-%d %ums\n", first, last, (unsigned)lastRefreshMs_);
 }
 

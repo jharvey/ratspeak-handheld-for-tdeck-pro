@@ -40,6 +40,7 @@ public:
 
     uint8_t partialCount() const { return partialCount_; }
     uint32_t lastRefreshMs() const { return lastRefreshMs_; }
+    uint32_t totalRefreshMs() const { return totalRefreshMs_; }   // energy monitor
 
     uint16_t width()  const { return EPD_WIDTH; }
     uint16_t height() const { return EPD_HEIGHT; }
@@ -51,6 +52,7 @@ private:
     uint8_t* framebuffer_;
     uint8_t* shadow_;          // what the panel currently shows (1 = black)
     uint32_t lastRefreshMs_;
+    uint32_t totalRefreshMs_ = 0;
     bool     ready_;
     bool     dirty_;
     uint8_t  partialCount_;

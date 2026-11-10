@@ -32,6 +32,7 @@ public:
     // so the path is switched on only to play a sound and off again after 3 s of silence.
     void pause();      // path off now
     void resume();     // path on now (also done automatically before any sound)
+    bool isPowered() const { return _i2sReady && _powered; }
 
 private:
     bool _enabled = true;

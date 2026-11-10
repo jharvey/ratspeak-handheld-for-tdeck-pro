@@ -34,7 +34,7 @@ Hardware / platform
 - DONE - Sleep floor 27 -> 7 mA (GPS UART back-power fix, touch gating); Saver ~7 mA asleep
 - IN PROGRESS - Remaining ~5 mA board floor: BHI260 sensor hub / keyboard controller sleep, SD card
 - Message store: slow writes + ~2 min boot with thousands of messages (proofs get late)
-- Energy monitor: hourly per-subsystem estimate vs gauge, trend graph on the e-ink
+- DONE - Energy monitor: hourly per-part estimate vs gauge, trend graph on the e-ink (S.4.8)
 - LoRa RX duty cycle (SX1262 preamble detection) for sleeping modes
 - Fifth energy mode "Check-in" (repeater): LoRa off and CPU asleep (~25 mA floor today);
   the radio wakes only on "Check messages" (or every N min) to sync from an always-on,
@@ -105,7 +105,7 @@ Energy target (rough)
 ---------------------
 - Few messages per day + sleep: multi-day battery goal; measure after sleep work
   Now (2026-11-10): Saver ~7 mA asleep (LoRa listening) -> ~6-8 days on ~1450 mAh;
-  Balanced ~9-10 mA -> ~5-6 days; Full ~12 h. Multi-day goal reached.
+  Balanced ~9-10 mA -> ~5-6 days; Full ~48-67 mA -> ~21-30 h. Multi-day goal reached.
 
 Hardware issues
 ---------------

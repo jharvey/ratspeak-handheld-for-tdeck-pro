@@ -64,7 +64,8 @@ set(FW_SRCS
     ${BOARD}/remote/ScreenMirror.cpp
     ${BOARD}/power/PowerModes.cpp
     ${BOARD}/power/LightSleep.cpp
-    ${BOARD}/power/RtcLog.cpp)
+    ${BOARD}/power/RtcLog.cpp
+    ${BOARD}/power/EnergyMonitor.cpp)
 file(GLOB CORE_SRCS CONFIGURE_DEPENDS
     ${SRC}/core/storage/*.cpp
     ${SRC}/core/reticulum/*.cpp

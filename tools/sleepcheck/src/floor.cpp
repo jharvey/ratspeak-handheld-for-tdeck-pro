@@ -63,7 +63,7 @@ void holdRails(bool on) {
     for (int p : kLowPins) {
         if (on) gpio_hold_en((gpio_num_t)p); else gpio_hold_dis((gpio_num_t)p);
     }
-    gpio_hold_en((gpio_num_t)3);
+    if (on) gpio_hold_en((gpio_num_t)3); else gpio_hold_dis((gpio_num_t)3);   // LoRa CS (RTC pin: hold survives resets)
     if (on) gpio_deep_sleep_hold_en(); else gpio_deep_sleep_hold_dis();
 }
 

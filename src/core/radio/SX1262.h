@@ -168,4 +168,5 @@ public:
     volatile bool packetAvailable = false;
     uint32_t rxOk = 0, rxCrcFail = 0;      // frames read from the FIFO (diagnostics)
     uint32_t txStarted = 0, txDone = 0, txTimeout = 0;   // transmissions (diagnostics)
+    uint32_t txAirMs = 0;                                // total airtime started (energy monitor)
 };

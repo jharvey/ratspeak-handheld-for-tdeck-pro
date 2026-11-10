@@ -1,0 +1,24 @@
+# Energy monitor: 60 s periods, then Settings > Power > Energy monitor and its trend graph.
+usb off
+expect 20000 [BOOT] ready
+serial energy period 60
+expect 3000 [ENERGY] period 60 s
+wait 135000
+serial energy
+expect 3000 [ENERGY] -2
+# The idle splash is up after the wait: the first key only wakes it.
+key G
+wait 2500
+key M
+wait 800
+key S
+wait 800
+key 4
+wait 1200
+key 8
+wait 1500
+shot energy-01-table.png
+key 1
+wait 1500
+shot energy-02-trend.png
+quit

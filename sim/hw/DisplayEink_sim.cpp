@@ -86,6 +86,7 @@ void DisplayEink::fullRefresh() {
     dirty_ = false;
     partialCount_ = 0;
     lastRefreshMs_ = millis() - t0;
+    totalRefreshMs_ += lastRefreshMs_;
     publish(framebuffer_, true, lastRefreshMs_);
     Serial.printf("[EINK] full %ums\n", (unsigned)lastRefreshMs_);
 }
@@ -110,6 +111,7 @@ void DisplayEink::partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
     memcpy(shadow_ + (size_t)first * kRowBytes, framebuffer_ + (size_t)first * kRowBytes, (size_t)rows * kRowBytes);
     partialCount_++;
     lastRefreshMs_ = millis() - t0;
+    totalRefreshMs_ += lastRefreshMs_;
     publish(shadow_, false, lastRefreshMs_);
     Serial.printf("[EINK] partial rows %d-%d %ums\n", first, last, (unsigned)lastRefreshMs_);
 }
