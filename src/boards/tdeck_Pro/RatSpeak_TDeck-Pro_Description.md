@@ -45,7 +45,9 @@ I  →  select  →  type  →  Enter  →  ^ (optional)
 3. **Enter** to open name edit, type the name (**Alt** for case), **Enter** to save.
 
 Row **0** is always **this** device (**MyID**). Rename it the same way to set the
-local display name (default **MyRatSpeakPro**).
+local display name. The default is **TDP-** plus the last four hex digits of the MAC
+(e.g. `TDP-179C`), so units on one table can be told apart; console `name <text>` sets it
+too (`name` alone restores the default).
 
 ### 1.3 First-boot setup
 
@@ -219,20 +221,12 @@ S     Settings                      ← M then S
 
 ---
 
-## 6. Power & energy modes (S.4) — Built (light sleep off for now)
+## 6. Power & energy modes (S.4) — Works (light sleep verified 2026-11-10)
 
-> **Status 2026-11-09:** light sleep resets this board. On COM8, on battery with no USB,
-> every first light sleep ended in an immediate watchdog reset (reset reason 7), so the
-> device boot-looped every ~16 s. The same happens with a PC attached. Until it is
-> solved, light sleep is compiled out (`RS_LIGHT_SLEEP` 0): the modes still apply CPU
-> clock, LoRa, GPS schedule, WiFi and key-light, and the sleep knobs are kept but have no
-> effect. Build with `-DRS_LIGHT_SLEEP=1` to test sleep again.
-
-The T-Deck Pro's largest steady loads are the ESP32-S3 itself (awake at 240 MHz), the
-GPS receiver, WiFi and the key backlight. The e-ink panel costs nothing between
-refreshes, and the LoRa receiver is small. The energy modes trade background
-responsiveness for runtime. **Keys and incoming LoRa messages are immediate in every
-mode**, because they wake the processor directly.
+The ESP32-S3 awake is the biggest single load (~50 mA of a ~80–100 mA total); a powered
+GPS adds ~20–30 mA, the LoRa receiver ~10 mA, the audio path ~15–20 mA while it runs.
+The energy modes trade background responsiveness for runtime. **Keys and incoming LoRa
+messages are immediate in every mode**, because they wake the processor directly.
 
 ### 6.1 The four modes
 
@@ -245,7 +239,7 @@ mode**, because they wake the processor directly.
 | GPS | always on | every 15 min | every hour | your choice |
 | WiFi | allowed | allowed | **off** | allowed / off |
 | Key backlight | allowed | allowed | **off** | allowed / off |
-| Feels like | today's behaviour | same, minus constant GPS | clock, battery and GPS update slowly | — |
+| Feels like | always responsive | same, minus constant GPS | clock, battery and GPS update slowly | — |
 
 **Full power on USB** (S.4.5, default ON): whenever USB power is present the device
 runs **Full**, whatever mode is chosen, and goes back to the chosen mode when unplugged.
@@ -277,82 +271,98 @@ Example: GPS off but snappy UI → Custom, CPU 240, sleep "never", GPS Off.
   USB console and peripherals running normally.
 - **Light sleep** (`power/LightSleep.cpp`): the CPU clocks stop but RAM, PSRAM and every
   pin level are kept, so the e-ink image stays, the LoRa radio keeps listening and
-  nothing re-initialises. Wake-up takes about a millisecond and the program carries on.
-  Wake sources:
+  nothing re-initialises. Wake-up takes about a millisecond. Wake sources:
   - **timer** — the mode's wake interval (Saver lands on the minute so the clock stays right);
-  - **key** — TCA8418 INT line (GPIO 15, low). The chip's interrupt is acknowledged before
-    each sleep so the line is high again;
+  - **key** — TCA8418 INT (GPIO 15, low); the chip's interrupt is acknowledged before each sleep;
   - **touch** — CST328 INT (GPIO 12, low), not while the idle splash shows;
-  - **LoRa packet** — SX1262 DIO1 (GPIO 5, high = RX done). After the wake the radio's
-    edge interrupt is re-armed and the packet is read at once.
-- **When the CPU stays awake anyway** (the "blocker", shown by console `pw`): within the
-  stay-awake time after a key; the first 15 s after boot; a redraw, queued key or LoRa
-  packet pending; LXMF messages waiting to be sent; LoRa transmitting; **WiFi on**;
-  **GPS powered** (its serial data would be lost while asleep); screen mirror active;
-  **a USB host attached**. On this ESP32-S3 / Arduino 2.x build, light sleep with the
-  USB-Serial-JTAG console connected to a PC resets the chip (watchdog reset, reason 7,
-  seen on COM8), so the device never sleeps while plugged into a PC. With a plain USB
-  charger the "Full power on USB" rule normally keeps it awake anyway.
+  - **LoRa packet** — SX1262 DIO1 (GPIO 5, high = RX done); the radio's edge interrupt is
+    re-armed after the wake and the packet is read at once.
+- **Why light sleep needed a build change:** the vendored ESP-IDF *deep*-sleep backports
+  (`vendor/esp_idf_compat/rtc_sleep.c`, `rtc_init.c`, pulled in by `core/compat/`)
+  replace the SDK's own functions and break *light* sleep on IDF 4.4.7: every
+  `esp_light_sleep_start()` ended in a watchdog reset (reason 7) within a second, which
+  made Balanced/Saver boot-loop on battery. Found by bisection (a bare sketch sleeps on
+  the same boards; with RatSpeak's sources it resets; without those two files it works).
+  The `tdeck_pro_standalone` env leaves them out; the T-Deck Pro uses no deep sleep.
+- **When the CPU stays awake anyway** (the "blocker", console `pw`): within the stay-awake
+  time after a key; the first 15 s after boot; a redraw or queued key pending (not while
+  the idle splash shows — the splash is redrawn when a key wakes it); a LoRa packet being
+  read or sent; **frames queued in the LoRa interface** and **3 s after any LoRa wake**
+  (so delivery proofs and path responses go out before sleeping again); LXMF messages
+  waiting to be sent; **WiFi on**; **GPS powered** (its serial data would be lost);
+  screen mirror active; **a USB host attached** (unless `usbsleep` — the USB console
+  disconnects while asleep and reconnects on wake).
+- **Before each sleep** the e-ink power stage is switched off (GxEPD2 leaves it on after a
+  refresh; the next refresh powers it again, ~50 ms).
+- **Audio is power-gated in every mode:** the DAC/amplifier rail (GPIO 41) and the I2S
+  clocks + DMA (which run continuously even when silent) are on only while a sound plays
+  and switch off after 3 s of silence. Switching on costs ~20 ms before a beep.
 - **LoRa off:** the interface stops (queued frames are dropped) and the SX1262 goes to
-  warm sleep (~1 µA); turning it on restarts receive.
+  warm sleep (~1 µA). Its power rail (GPIO 46) stays on: cutting it while the ESP32
+  drives the SPI lines back-powers the chip and *raises* the draw (measured +20 mA).
 - **GPS schedule:** a "visit" powers the receiver (GPS_EN, GPIO 39) until a fix has held
   for 20 s (which also syncs the clock if Auto GPS sync is on) or 3 minutes pass, then
-  powers it off until the next interval. The receiver's backup cell keeps satellite
-  data, so later visits are usually hot starts of a few seconds. S.1.3 shows
-  `resting (Every hour)` between visits. Switching modes starts a visit at once.
-- **WiFi off:** the radio is turned off and auto-connect / scans are refused with a
-  toast ("WiFi off in Saver mode"). Allowed again → auto-connect resumes in 2 s.
+  powers it off until the next interval. The backup cell keeps satellite data, so later
+  visits are usually hot starts. S.1.3 shows `resting (Every hour)` between visits.
+- **WiFi off:** the radio is turned off and scans / auto-connect are refused with a toast.
 - **Key backlight:** lit only if S.3.3 is ON **and** the mode allows it.
-- **Battery estimate:** S.4.7 shows the gauge's average current and its TimeToEmpty
-  (BQ27220 register 0x16).
+- **Battery estimate:** S.4.7 shows the gauge's average current and its TimeToEmpty.
 
 ### 6.4 Measuring
 
-- Console `pw`: mode, knobs, percent of time asleep, wake counts by cause, and what is
-  keeping the CPU awake right now.
-- Console `bench <s>` (max 1800): turns the charger's input off (BQ25896 EN_HIZ) so the
-  board runs from its battery while USB stays connected for the console; the gauge then
-  shows the real draw. It prints a `[BENCH]` line every second and turns the charger back
-  on when time is up or the battery drops below 3.55 V. Refused below 3.70 V or with no
-  battery. Light sleep is still blocked by the USB host, so this measures awake draw.
-  `pset <knob> <value>` changes one Custom knob from the console (`pset` alone lists them).
-- Light-sleep draw: console `blog 1` (or S.5.8 Internal log), unplug USB for 10+
-  minutes, plug back in, then `pw` (sleep statistics; uptime shows there was no reset)
-  and `d` (the log, one sample per wake-up).
+- Console `pw`: mode, knobs, % asleep, wake counts by cause, the current blocker, battery,
+  unread messages and LXMF queue.
+- Console `bench <s>` (max 4 h): turns the charger's input off (BQ25896 EN_HIZ) and its
+  I²C watchdog off (otherwise the charger re-enables its input after 40 s, e.g. while the
+  CPU sleeps), so the board runs from its battery with USB still connected. Ends by time,
+  below 3.55 V, or `bench 0`; every boot switches the charger input and watchdog back on.
+  Refused below 3.70 V or with no battery.
+- Console `usbsleep <s>`: allow light sleep with a USB host attached (the console drops
+  during each sleep). `rl` dumps the RTC power log, which survives resets and records
+  voltage, current, uptime and sleep counts every wake, plus a BOOT line per reset.
+- `pset <knob> <value>` sets one Custom knob; `epdoff 0|1`, `audio 0|1`, `gpio <pin> <0|1>`
+  and `txp <dBm>` are bench switches.
 
-Measured with `bench` on COM8 (battery 4.14–4.16 V, USB attached so no light sleep;
-the gauge's average current, settled for 60 s; COM8's GPS receiver is in its
-backup-fault state, so a working receiver adds its own ~20–30 mA while powered):
+Measured 2026-11-09/10 (gauge average current, battery 4.0–4.2 V, USB attached with the
+charger input off; GPS off unless noted):
 
-| Configuration (awake, never sleeping) | Battery draw |
-|---|---|
-| 240 MHz, LoRa on, GPS off | ~99 mA |
-| 80 MHz, LoRa on, GPS off | ~87 mA (CPU clock: −12 mA) |
-| 80 MHz, LoRa off, GPS off | ~79 mA (LoRa receiver: −8 mA) |
-| Full / Balanced / Saver as presets, awake | ~90 / ~82 / ~76 mA |
+| Configuration | Asleep | Battery draw |
+|---|---|---|
+| 240 MHz, never sleeps, LoRa on (COM8) | 0% | ~99 mA |
+| 80 MHz, never sleeps, LoRa on | 0% | ~87 mA |
+| 80 MHz, never sleeps, LoRa off | 0% | ~79 mA |
+| 80 MHz, wake every 1 s, LoRa on | 79% | ~52 mA |
+| 80 MHz, wake every 60 s, LoRa on (Saver-like) | 97% | ~48 mA |
+| 80 MHz, wake every 60 s, LoRa off | 98% | ~27 mA |
+| same + audio path off + GPIO 38 low | 98% | ~25 mA |
+| Saver-like receiver on a busy channel (2 senders, 1 h) | 70% | ~49 mA |
 
-So with the CPU awake about 75 mA is board baseline that no knob reaches (USB PHY while
-plugged in, e-ink/touch/keyboard/sensor rails, regulators). **Light sleep is where the
-large saving is** (the ESP32-S3 drops from tens of mA to ~1–2 mA); its measured figure
-was to go here, but the unplugged test found the reset described at the top of §6.
+With the CPU asleep and the radio asleep the board still draws **~27 mA**. The ESP32-S3
+itself should be ~1–2 mA in light sleep, so most of this floor is elsewhere — the USB
+connection used for these measurements, the touch/keyboard/sensor-hub chips, regulators
+or an indicator LED. It needs an unplugged run (RTC log) to tell the USB part apart.
 
-### 6.5 Planned
+**LoRa stress test** (receiver COM6 in a Saver-like mode on battery, COM3 + COM5 sending
+a message every 60–120 s each, all at −9 dBm on one table):
 
-- **Fix light sleep** (first priority). Facts so far: reset reason 7 within ~1 s of
-  `esp_light_sleep_start()`, also with a timer-only 0.5 s sleep and no wake pins; arming
-  the RTC watchdog ourselves (paused in sleep) did not help. Next suspects: QSPI PSRAM /
-  flash power-down settings in the prebuilt Arduino 2.x libraries, the super-watchdog,
-  and the other core's tasks. `sleeptest <ms> [guard]` and the `rl` RTC log are there
-  for this.
-- **Find the ~75 mA baseline:** measure with each rail off in turn (BOARD_1V8_EN 38 /
-  touch / keyboard / sensor hub), and check whether the modem enable (GPIO 41) or the
-  BHI260 sensor hub draws while unused.
-- **Deep sleep "storage" mode:** everything off, wake on a key, reboot on wake (~3 s).
-  For a device left in a drawer; LoRa messages are not received.
-- **LoRa receive duty cycle** (SX1262 RX duty-cycle with preamble detection) for a
-  further cut in Saver, once tested against RNode-style 18-symbol preambles.
+| Firmware | Messages | Delivered | Sender frames / message | Resets |
+|---|---|---|---|---|
+| before the LoRa-reply fix (2 h) | 161 | 72 (45%) | ~9.3 | 0 |
+| after it (1 h) | 82 | 45 (55%) | ~7.4 | 0 |
+
+The receiver woke on every packet (657 LoRa wakes in 2 h) and never reset.
+
+### 6.5 Next
+
+- **Delivery rate:** compare with a never-sleeping receiver (control run) to separate
+  channel/protocol losses from sleep-related ones; then look at the proof/path traffic.
+- **Unplugged measurement** of the ~27 mA floor, then find the remaining rails (touch
+  controller, BHI260 sensor hub, keyboard controller, power LED).
+- **LoRa receive duty cycle** (SX1262 RX duty-cycle with preamble detection) — the
+  receiver costs ~10–20 mA of the sleeping draw; RNode-style 18-symbol preambles allow it.
+- **Deep sleep "storage" mode:** would need the deep-sleep backports, which break light
+  sleep — only one of the two can be linked as things stand.
 - **GPS power-save mode** on the u-blox M10 (cyclic tracking) instead of full off/on.
-- A "Power" tile on Home and a battery-runtime figure on the idle splash.
 
 ---
 
@@ -468,16 +478,20 @@ the device does not light-sleep.
 | `g` / `gp` / `gr` | GPS status / power-cycle / hardware reset |
 | `pw` | power status: mode, knobs, % asleep, wakes, blocker, battery |
 | `pm0` … `pm3` | set mode: Full, Balanced, Saver, Custom |
-| `bench <s>` | run from battery with USB attached (charger input off) for `<s>` s; `bench 0` stops |
+| `bench <s>` | run from battery with USB attached (charger input + its watchdog off) for up to 4 h; `bench 0` stops |
+| `usbsleep <s>` | allow light sleep with a USB host for `<s>` s (the console drops while asleep); `usbsleep 0` blocks it |
 | `pset <knob> <v>` | set a Custom knob and switch to Custom: `cpu 80\|160\|240`, `wake <s>`, `awake <s>`, `lora 0\|1`, `gps 0-3`, `wifi 0\|1`, `kbl 0\|1` |
 | `blog 0\|1` | internal battery log off / on (RAM ring, 120 samples) |
 | `rl` / `rl 0` | dump / clear the RTC power log (survives resets: time, uptime, mV, mA, USB, sleeps; a BOOT line with the reset reason at every boot) |
-| `sleeptest <ms> [guard]` | diagnostic: one timer-only light sleep (resets the board today, see §6) |
+| `sleeptest <ms> [guard] [stop]` | diagnostic: one timer-only light sleep; stop bits 1 audio, 2 GPS, 4 LoRa |
+| `msg <32 hex> <text>` / `id` | send a message to a destination hash / print this device's destination |
+| `txp <dBm>` | LoRa transmit power, −9…22, saved (bench builds with `RS_BENCH_TX_DBM` default to it) |
+| `epdoff 0\|1` / `audio 0\|1` / `gpio <pin> <0\|1>` | bench switches: e-ink off before sleep, audio path, raw output pin |
 | `L` | toggle key backlight |
 | `FORMAT` | erase and format the data partition |
 | `@…` | screen-mirror protocol (§10.3) |
 
-Log prefixes: `[BOOT] [CFG] [POWER] [BENCH] [GPS] [LORA] [WIFI] [EINK] [BAT] [UI] [PROTO]`.
+Log prefixes: `[BOOT] [CFG] [POWER] [BENCH] [GPS] [LORA] [WIFI] [EINK] [BAT] [UI] [PROTO] [MSG] [RTCLOG]`.
 
 ---
 
@@ -517,9 +531,10 @@ entry mode.
 
 | Item | Status |
 |---|---|
-| Energy modes Full / Balanced / Saver / Custom, GPS schedule | Built |
-| Light sleep | Off: resets the board; under investigation (§6.5) |
-| Power numbers in §6.4 | Awake measured |
+| Energy modes Full / Balanced / Saver / Custom, GPS schedule, audio gating | Works |
+| Light sleep | Works: deep-sleep backports excluded from the T-Deck Pro build (§6.3) |
+| Power numbers in §6.4 | Awake + sleeping measured on USB; unplugged run next |
+| LoRa delivery to a sleeping receiver | 55% on a crowded bench; control run in progress |
 | GPS check of all five units (`tools/gpscheck`): only COM8 has the backup fault; COM3, COM5, COM6, COM9 OK | Done — report to LilyGo next |
 | Idle password + vault unlock | Planned |
 | Deep-sleep storage mode, LoRa RX duty cycle, GPS power-save | Planned |
@@ -533,3 +548,4 @@ entry mode.
 |-----|--------|
 | 0.1 | Initial draft: how-to, device figures, settings tree, LoRa-first bring-up |
 | 0.2 | Energy modes (S.4 Power), renumbered settings (Battery S.5 … Storage S.10, key 0), GPS diagnosis, hardware table, simulator + live mode, console reference, roadmap |
+| 0.3 | Light sleep fixed (deep-sleep backports excluded), sleep blockers for LoRa replies and the idle splash, audio gating, e-ink power-off, sleeping-current and LoRa stress measurements, bench console commands |

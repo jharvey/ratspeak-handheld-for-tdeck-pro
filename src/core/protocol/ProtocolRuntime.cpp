@@ -611,6 +611,20 @@ ProtocolRuntime::AnnounceResult ProtocolRuntime::emitAnnounce(const uint8_t* app
     return AnnounceResult::Sent;
 }
 
+uint32_t ProtocolRuntime::msUntilScheduledTx() const {
+    const uint32_t now = millis();
+    uint32_t best = UINT32_MAX;
+    auto consider = [&](bool pending, uint32_t due) {
+        if (!pending) return;
+        const int32_t left = int32_t(due - now);
+        const uint32_t ms = left <= 0 ? 0u : uint32_t(left);
+        if (ms < best) best = ms;
+    };
+    consider(_announceTiming & PathPending, _pathRespPendingUntil);
+    consider(_announceTiming & NormalPending, _normalAnnouncePendingUntil);
+    return best;
+}
+
 void ProtocolRuntime::onOwnPathRequest(uint8_t ifaceId, const uint8_t tag[16], size_t tagLen) {
     handheld::assertDeviceOwner();
     if (_maintenanceRadio) return;

@@ -31,6 +31,8 @@ public:
     // Switch the panel's charge pump off (the image stays). GxEPD2 leaves it on after a
     // refresh; the next refresh turns it back on (~50 ms). Called before light sleep.
     void powerOff();
+    // Controller deep sleep (command 0x07). The next refresh resets and re-inits it.
+    void hibernate();
 
     // Called repeatedly while the panel is busy (~0.7 s per partial refresh),
     // so the app can keep reading input. The callback must not draw.

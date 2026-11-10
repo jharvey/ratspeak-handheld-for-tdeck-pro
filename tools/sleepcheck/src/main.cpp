@@ -16,6 +16,7 @@
 #include <SD.h>
 #include <SPI.h>
 #include <Wire.h>
+#include "floor.h"
 
 namespace {
 constexpr int kGpsEn = 39, kLoraEn = 46;
@@ -55,6 +56,7 @@ void sleepOnce(uint32_t ms, bool gpio = false) {
 }  // namespace
 
 void setup() {
+    floorcheck::boot();                  // continues a deep-sleep floor run
     pinMode(kLoraEn, OUTPUT);
     digitalWrite(kLoraEn, LOW);
     pinMode(kGpsEn, OUTPUT);
@@ -76,7 +78,8 @@ void loop() {
         if (c == '\r' || c == '\n') {
             line[n] = 0;
             n = 0;
-            if (line[0] == 's' && line[1] == ' ') sleepOnce((uint32_t)atoi(line + 2));
+            if (floorcheck::command(line)) {}
+            else if (line[0] == 's' && line[1] == ' ') sleepOnce((uint32_t)atoi(line + 2));
             else if (line[0] == 'g' && line[1] == ' ') sleepOnce((uint32_t)atoi(line + 2), true);
             else if (line[0] == 'p' && line[1] == ' ') {
                 // PSRAM in use across a light sleep: fill 1 MB, sleep, verify.

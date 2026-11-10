@@ -481,6 +481,7 @@ int SX1262::endPacket(bool async) {
     if (!waitOnBusy()) return 0;
     _txFailed = false;
     _txActive = true;
+    txStarted++;
     if (async) return 1;
     while (isTxBusy()) {
         yield();
@@ -499,6 +500,7 @@ bool SX1262::isTxBusy() {
 
     _txActive = false;
     _txFailed = _ioFailed || !done;
+    if (done) txDone++; else txTimeout++;
     // A timeout is not TX_DONE. Abort the radio operation before the caller
     // restores RX, and retain the failure until the next beginPacket.
     if (_txFailed) standby();
@@ -582,6 +584,7 @@ int SX1262::parsePacket(int size) {
     float snr  = float((int8_t)pktStat[1]) * 0.25;
 
     bool crcOk = getPacketValidity();
+    if (crcOk) rxOk++; else rxCrcFail++;
 
     // Always read FIFO data for diagnostics
     _packetIndex = 0;

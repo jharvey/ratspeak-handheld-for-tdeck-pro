@@ -37,6 +37,9 @@
 #include <sys/time.h>
 #include <esp_heap_caps.h>
 #include <esp_partition.h>
+#if !defined(SIMULATOR)
+#include <soc/gpio_periph.h>
+#endif
 #include <LittleFS.h>
 
 #include "config/BoardConfig.h"
@@ -118,7 +121,7 @@ bool     g_pwOnUsb = false;           // effective profile was forced to Full by
 bool     g_gpsAllowed = true;         // power scheduler lets the GPS receiver be powered
 // Sleep statistics (decayed every 10 min so they describe the recent past).
 uint32_t g_pwAwakeMs = 0, g_pwSleepMs = 0, g_pwSleeps = 0, g_pwWakes[6] = {};
-bool     g_epdOffInSleep = true;      // e-ink power stage off before light sleep (console "epdoff")
+uint8_t  g_epdOffInSleep = 1;         // before light sleep: 1 e-ink power stage off, 2 controller deep sleep (console "epdoff")
 uint32_t g_pwLoraWakeMs = 0;         // last wake by a LoRa packet (stay awake for the reply)
 uint32_t g_pwSleepTotalMs = 0;       // since boot (not decayed), for the RTC log
 uint32_t g_usbSleepUntil = 0;       // console "usbsleep": allow light sleep with a USB host
@@ -233,6 +236,13 @@ void saveEpochThrottled() {
     p.end();
 }
 
+// Default display name: "TDP-" + the last two MAC bytes (e.g. TDP-179C). Older firmware
+// gave every unit the same "MyRatSpeakPro"; that stored default is replaced too.
+void defaultSelfName(char* out, size_t n) {
+    const uint64_t mac = ESP.getEfuseMac();
+    snprintf(out, n, "TDP-%02X%02X", (unsigned)((mac >> 32) & 0xFF), (unsigned)((mac >> 40) & 0xFF));
+}
+
 void loadSelfName() {
     Preferences p;
     if (p.begin("rs_self", true)) {
@@ -240,8 +250,8 @@ void loadSelfName() {
         if (s.length()) snprintf(g_selfName, sizeof(g_selfName), "%.23s", s.c_str());
         p.end();
     }
-    if (!g_selfName[0]) {
-        snprintf(g_selfName, sizeof(g_selfName), "%s", kDefaultSelfName);
+    if (!g_selfName[0] || !strcmp(g_selfName, kDefaultSelfName)) {
+        defaultSelfName(g_selfName, sizeof(g_selfName));
         Preferences w;
         if (w.begin("rs_self", false)) { w.putString("name", g_selfName); w.end(); }
         Serial.printf("[NAME] default -> %s\n", g_selfName);
@@ -249,7 +259,8 @@ void loadSelfName() {
 }
 
 void saveSelfName(const char* name) {
-    snprintf(g_selfName, sizeof(g_selfName), "%.23s", (name && name[0]) ? name : kDefaultSelfName);
+    if (name && name[0]) snprintf(g_selfName, sizeof(g_selfName), "%.23s", name);
+    else                 defaultSelfName(g_selfName, sizeof(g_selfName));
     Preferences p;
     if (p.begin("rs_self", false)) { p.putString("name", g_selfName); p.end(); }
     Serial.printf("[NAME] self -> \"%s\"\n", g_selfName);
@@ -2322,9 +2333,20 @@ void buildSettingsRows(Page p) {
         break;
 
     case PG_POWER: {
-        for (uint8_t m = power::MODE_FULL; m < power::MODE_CUSTOM; m++)
-            srow(RK_PICK, power::modeName(m), "%s%s", g_pw.mode == m ? "ON " : "", power::modeBlurb(m));
-        srow(RK_MENU, "Custom", "%s", g_pw.mode == power::MODE_CUSTOM ? "ON  your own settings" : "set your own");
+        // Estimated runtime on a full battery (gauge FullChargeCapacity, else ~1450 mAh).
+        const uint16_t cap = (g_bat.valid && g_bat.fccMah >= 500 && g_bat.fccMah <= 6000) ? g_bat.fccMah : 1450;
+        static const char* kNote[3] = {"always awake", "wakes each 1s", "may miss msgs"};
+        char rt[16];
+        for (uint8_t m = power::MODE_FULL; m < power::MODE_CUSTOM; m++) {
+            power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(power::preset(m)));
+            srow(RK_PICK, power::modeName(m), "%s%s, %s", g_pw.mode == m ? "ON " : "", rt, kNote[m]);
+        }
+        if (g_pw.customSet || g_pw.mode == power::MODE_CUSTOM) {
+            power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(g_pw.custom));
+            srow(RK_MENU, "Custom", "%s%s (your settings)", g_pw.mode == power::MODE_CUSTOM ? "ON " : "", rt);
+        } else {
+            srow(RK_MENU, "Custom", "set your own");
+        }
         srow(RK_TOGGLE, "Full power on USB", "%s", g_pw.fullOnUsb ? "ON" : "OFF");
         const uint32_t tot = g_pwAwakeMs + g_pwSleepMs;
         if (g_pwOnUsb)               srow(RK_INFO, "Now", "Full (USB power)");
@@ -3803,6 +3825,11 @@ void powerIdle() {
         const int32_t left = (int32_t)(g_toastUntil - millis());
         ms = left <= 0 ? 1 : ((uint32_t)left < ms ? (uint32_t)left : ms);
     }
+    if (g_protoReady) {                                // wake for a scheduled path response
+        const uint32_t due = g_proto.msUntilScheduledTx();
+        if (due < 50) { delay(5); return; }           // due now: stay awake and send it
+        if (due < ms) ms = due;
+    }
 
     // Acknowledge the keyboard interrupt; if the line stays low a key is waiting.
     if (g_kbOk) g_kb.clearInterrupt();
@@ -3813,7 +3840,8 @@ void powerIdle() {
     pins.touch = g_idleActive ? -1 : TOUCH_INT;     // idle splash: key-only wake
     pins.lora = (g_radio && g_loraIf && g_loraIf->isOnline()) ? LORA_IRQ : -1;
 
-    if (g_epdOffInSleep) g_display.powerOff();     // panel charge pump off; image stays
+    if (g_epdOffInSleep == 2) g_display.hibernate();     // controller deep sleep; re-init on next refresh
+    else if (g_epdOffInSleep) g_display.powerOff();     // panel charge pump off; image stays
     if (accountedAt) g_pwAwakeMs += millis() - accountedAt;
     uint32_t slept = 0;
     const power::Wake w = power::lightSleep(ms, pins, slept);
@@ -3843,6 +3871,10 @@ void powerStatus() {
                   (unsigned long)g_pwWakes[power::WAKE_OTHER], why ? why : "none");
     Serial.printf("[POWER] battery %.3f V %+d mA tte=%u min usb=%d bench=%d\n", g_bat.volts, (int)g_bat.avgMa,
                   (unsigned)g_bat.tteMin, g_bat.usb, g_benchUntil != 0);
+    if (g_radio) Serial.printf("[POWER] lora rx ok=%lu crc_fail=%lu  tx started=%lu done=%lu timeout=%lu\n",
+                               (unsigned long)g_radio->rxOk, (unsigned long)g_radio->rxCrcFail,
+                               (unsigned long)g_radio->txStarted, (unsigned long)g_radio->txDone,
+                               (unsigned long)g_radio->txTimeout);
     Serial.printf("[POWER] messages unread=%d lxmf_queue=%d uptime=%lu s\n",
                   g_storeReady ? g_msgStore.totalUnreadCount() : -1, g_protoReady ? g_proto.lxmfQueuedCount() : -1,
                   (unsigned long)(millis() / 1000));
@@ -3982,14 +4014,36 @@ void handleSerialLine(char* p) {
         } else {
             Serial.println("[CMD] gpio <pin> <0|1>");
         }
+    } else if (!strcmp(p, "epdsleep")) {
+        g_display.hibernate();
+        Serial.println("[EINK] controller in deep sleep (next refresh re-inits)");
+    } else if (!strcmp(p, "sdinfo")) {
+        Serial.printf("[SD] %s (mounting to check)%c", g_sdStatus, 10);
+        sdMount();
+        Serial.printf("[SD] %s%c", g_sdStatus, 10);
     } else if (!strncmp(p, "epdoff ", 7)) {
-        g_epdOffInSleep = atoi(p + 7) != 0;
-        Serial.printf("[EINK] power off before sleep: %s%c", g_epdOffInSleep ? "on" : "off", 10);
+        g_epdOffInSleep = (uint8_t)atoi(p + 7);
+        Serial.printf("[EINK] before sleep: %s%c", g_epdOffInSleep == 2 ? "controller deep sleep" : g_epdOffInSleep ? "power off" : "left on", 10);
+#if !defined(SIMULATOR)
+    } else if (!strcmp(p, "iomux")) {
+        // Bench: IO_MUX config of the radio / SPI / rail pins. Bit 1 SLP_SEL = the pin switches
+        // to its sleep configuration in light sleep; bits 2/3 = sleep pull-down / pull-up.
+        static const int pins[] = {LORA_CS, LORA_RST, LORA_IRQ, LORA_BUSY, BOARD_LORA_EN, SPI_SCK, SPI_MOSI,
+                                   SPI_MISO, EPD_CS, SD_CS, BOARD_GPS_EN, KB_INT, TOUCH_INT};
+        for (int pin : pins)
+            Serial.printf("[IOMUX] gpio %2d = 0x%08lx slp_sel=%lu\n", pin,
+                          (unsigned long)REG_READ(GPIO_PIN_MUX_REG[pin]),
+                          (unsigned long)((REG_READ(GPIO_PIN_MUX_REG[pin]) >> 1) & 1));
+#endif
     } else if (!strncmp(p, "audio ", 6)) {
         // Bench: audio path off (I2S stopped, GPIO 41 rail low) or back on.
         if (atoi(p + 6)) g_audio.resume();
         else             g_audio.pause();
         Serial.printf("[AUDIO] path %s\n", atoi(p + 6) ? "on" : "off (I2S stopped, rail 41 low)");
+    } else if (!strncmp(p, "name", 4) && (p[4] == ' ' || p[4] == 0)) {
+        saveSelfName(p[4] ? p + 5 : "");
+        requestRedraw();
+        Serial.printf("[NAME] this device is now %s\n", g_selfName);
     } else if (!strcmp(p, "id")) {
         Serial.printf("[ID] dest=%s name=%s\n", g_destHex, g_selfName);
     } else if (!strncmp(p, "txp", 3) && (p[3] == ' ' || p[3] == 0)) {
@@ -4022,7 +4076,7 @@ void handleSerialLine(char* p) {
     } else if (!strcmp(p, "FORMAT")) {
         Serial.println(recoverCorruptLittleFS() ? "[FLASH] formatted - reboot now" : "[FLASH] format failed");
     } else {
-        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> usbsleep<s> txp<dBm> msg id rl sleeptest L FORMAT");
+        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> usbsleep<s> txp<dBm> msg id name rl sleeptest L FORMAT");
     }
 }
 
@@ -4148,6 +4202,8 @@ bool begin() {
 #endif
     delay(30);
 
+    pinMode(BOARD_EPD_BACKLIGHT, OUTPUT);
+    digitalWrite(BOARD_EPD_BACKLIGHT, LOW);   // front light off
     pinMode(TOUCH_RST, OUTPUT);
     digitalWrite(TOUCH_RST, LOW);  delay(10);
     digitalWrite(TOUCH_RST, HIGH); delay(50);

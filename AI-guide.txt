@@ -1,109 +1,132 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: G1.98  (2026-11-01)
+Last: 2026-11-10  (energy modes, light-sleep fix, bench tooling)
 ================================================================================
 Long-term backlog → Future_steps.txt (do not strip future items from there).
+User/developer guide → src/boards/tdeck_Pro/RatSpeak_TDeck-Pro_Description.md
+Simulator → sim/README.md
 
 Standalone excludes LvglApplication.cpp / full Plus UI; uses boards/tdeck_Pro
-(DisplayEink, LvglPort, LvglStubs, StandaloneApp, hal/Keyboard).
+(DisplayEink, LvglPort, LvglStubs, StandaloneApp, hal/Keyboard, power/, remote/,
+security/).
 
 Status tags: [DONE] solid on hardware   [IN-PROGRESS] partial / next polish
              [TODO] not started
 
 --------------------------------------------------------------------------------
-CURRENT PHASE (G1.98)
+CURRENT PHASE — energy modes (2026-11-09 … 11-10)
 --------------------------------------------------------------------------------
-TOP NAV
-[DONE] Layout: [↻ refresh] [battery box] [ date + time ] [ MENU ]
-[DONE] Clock cell: MM/DD on top line, HH:MM below
-[DONE] Battery cell has full border box (bottom line) like refresh/clock
-[DONE] MENU overlay: Home / Settings / Contacts / Peers / Msg Box
-[DONE] Overlay leaves top bar visible; M toggles; MENU never maps to Home via topTab
+ENERGY MODES  (Settings S.4 Power; power/PowerModes.*, power/LightSleep.*)
+[DONE] Four modes: Full / Balanced (160 MHz, wake 1 s, GPS 15 min) /
+       Saver (80 MHz, wake 60 s, GPS hourly, no WiFi / key light) / Custom
+[DONE] Custom knobs: CPU, wake interval, awake-after-key, LoRa, GPS schedule,
+       WiFi, key backlight (S.4.4); NVS rs_power; "Full power on USB" rule
+[DONE] Light sleep with wake on timer / key INT (15) / touch INT (12) / LoRa DIO1 (5)
+[DONE] Light-sleep crash FIXED: vendor/esp_idf_compat rtc_sleep.c + rtc_init.c
+       (deep-sleep backports pulled in by core/compat/) break light sleep on
+       IDF 4.4.7 → watchdog reset (reason 7). tdeck_pro_standalone excludes
+       core/compat/RtcSleep.c + RtcInit.c. Do NOT put them back for this board.
+[DONE] Sleep blockers: boot 15 s, awake-after-key, redraw (not while idle splash),
+       keys, USB host (unless usbsleep), WiFi, GPS powered, LXMF queue,
+       LoRa busy / TX queue (txIdle()), 3 s after a LoRa wake
+[DONE] Audio power-gated (GPIO 41 rail + I2S stop after 3 s silence)
+[DONE] E-ink power stage off before each sleep (DisplayEink::powerOff)
+[DONE] GPS periodic visits (on until 20 s fix or 3 min, then off)
+[IN-PROGRESS] LoRa delivery to a SLEEPING receiver: 39–55% on a crowded bench
+       (100% when the receiver never sleeps at 240 MHz; 61% awake at 80 MHz).
+       Frame counters added (pw: "lora rx ok/crc_fail") to find where they go.
+[IN-PROGRESS] ~27 mA floor with CPU + LoRa asleep (measured on USB, charger
+       input off). Unplugged run on COM9 started 2026-11-10 05:37.
+[TODO] LoRa RX duty cycle; GPS M10 power-save; idle-password lock
 
-BOTTOM NAV
-[DONE] Contact | Peers | Msg Box on every page (C / P / M)
-[DONE] Thread / name-edit: full-width "^ BACK UP TO …" bar
+MEASURED (gauge avg, battery 4.0–4.2 V)
+       awake 240 MHz ~99 mA · 80 MHz ~87 · 80 MHz LoRa off ~79
+       asleep, wake 60 s, LoRa on ~48 · LoRa off ~27 · + audio off / IO38 low ~25
+       cutting LoRa rail (GPIO 46) RAISES draw (back-power via SPI) — don't
 
-FOOTER
-[DONE] V=Down | G=up | v more widths = Contact(80) | Peers(64) | Msg Box(96)
-[DONE] Keys: G = list up, V = list down
+GPS
+[DONE] u-blox MIA-M10Q diag: NMEA/UBX parse, sky summary, link recovery,
+       "CANNOT USE BBR" detection + power-cycle retry; console g / gp / gr
+[DONE] tools/gpscheck: standalone check app + check.sh COMx → VERDICT line
+       Results: COM8 (…15:90) GPS FAULT (backup cell / V_BCKP); COM3 (…0E:34),
+       COM5 (…14:48), COM6 (…17:CC), COM9 (…17:9C) GPS OK
 
-IDLE SPLASH
-[DONE] Logo + RatSpeak + spaced date + spaced time (TZ)
-[DONE] Battery gauge + % ; cord line under gauge:
-      "charging | plugged in" / "plugged in" / "unplugged"
-[DONE] Unread line + "press a KEY to wake"
-[DONE] Two lines: "uptime DDDDD:HH:MM" then value #####:##:##
+SIMULATOR + LIVE MODE  (sim/)
+[DONE] Qt desktop simulator running the real firmware; scripts (smoke, wifi,
+       power, announce_a/b, live_tcp) exit 0 = PASS
+[DONE] Live-device mode: screen mirror over USB (@M/@K/@T in, @FB/@ST out)
 
-HOME
-[DONE] Identity card, tiles, Announce; no RTC under Announce
-[DONE] CHG / USB PWR / ONLINE identity status from charge flags
-
-CONTACTS / PEERS / MSG BOX
-[DONE] Peers-style list; rename sub-screen; no Enter=name footer junk
-
-SETTINGS S.4 BATTERY
-[DONE] Row 1: "1 : Info : Voltage | SOC %" / "4.09 V | 49 %" (left values)
-[DONE] Row 2: State of charge (chip %)
-[DONE] Row 3: Average current (+mA charging / −mA consuming)
-[DONE] Row 4: "4 : Info : Status | Cord stat"
-      Values: "charging | plugged in", "Bat full/idle | plugged in",
-              "Not charging | unplugged"
-[DONE] Rows 5–7: USB power, gauge flags, power source
-[DONE] Prefer BQ27220 StateOfCharge; do not force 100% on USB plug
-[DONE] Auto-redraw ~0.8s when charging or USB presence flips
-[DONE] USB clears on avgMa<0 or DSG (was sticky ~30s after unplug)
-[DONE] S.4.1 voltage only; S.4.4 cord right-justified in 11-char field
-[DONE] Idle: uptime 3-line normal weight; KEY wake bold at bottom; cord not bold
-[DONE] Vertical battery icon (nav style) on idle + home identity
-[DONE] Home: CHG/USB/ON under battery icon, name row uncrowded
-[DONE] Charge detect: strong +mA always wins over sticky DSG flag
-[DONE] Uptime DDDDD:HH:MM / value with fixed per-char slots (colons stack)
-[DONE] Home identity: left %/charg|plug|batt/online under nav bat; name right
-[DONE] Home: nav bat open bottom + vertical drop-line; other screens full bat box
-[DONE] Idle uptime slots cell=12 for D/0 balance
-
-BATTERY ICONS
-[DONE] Lightning bolt while charging (inverts vs fill: white on black, etc.)
-[DONE] Plug icon when USB powered but not charging (float/full)
-[DONE] No icon on battery-only
-
-INPUT / SYM
-[DONE] Force-num only inside true digit-entry boxes
-[DONE] Nav letters (C/M/H/S/P) work from list screens; layer cleared on key
-
-PROTOCOL (earlier, still green)
-[DONE] PSRAM; LXMF announce/send/receive; theme invert
+NAMES
+[DONE] Default display name = "TDP-" + last two MAC bytes (was "MyRatSpeakPro"
+       on every unit); console "name <text>"
 
 --------------------------------------------------------------------------------
-BUILD
+BENCH / CONSOLE TOOLS (115200, see guide §11)
+--------------------------------------------------------------------------------
+  pw              power status, blocker, battery, unread, LoRa rx counters
+  pm0..3          mode     pset <knob> <v>   Custom knob
+  bench <s>       run from battery with USB attached (charger input + its
+                  watchdog off, ≤4 h, auto-off <3.55 V; boot always restores)
+  usbsleep <s>    allow light sleep with a USB host (console drops while asleep)
+  rl / rl 0       RTC power log (survives resets; BOOT lines with reset reason)
+  txp <dBm>       saved LoRa TX power (-9..22)   msg <hex32> <text>   id   name
+  sleeptest, epdoff, audio, gpio <pin> <0|1>, iomux   diagnostics
+  Scratch scripts used on the bench (not in repo): measure.py (matrix of power
+  configs from the RTC log), stress.py (senders → sleeping receiver).
+
+--------------------------------------------------------------------------------
+BUILD / FLASH
 --------------------------------------------------------------------------------
   env: tdeck_pro_standalone  (keep tdeck_pro_cooperative green)
   Primary UI: src/boards/tdeck_Pro/StandaloneApp.cpp
   Keyboard:   src/boards/tdeck_Pro/hal/Keyboard.cpp
+  Flash: esptool stub FAILS on these boards → use ROM loader, no buttons needed:
+    esptool.py --chip esp32s3 --port COMx --baud 115200 --before default_reset
+      --after hard_reset --no-stub write_flash 0x10000 firmware.bin
+    (fresh unit with LilyGO partitions: also 0x0 bootloader, 0x8000 partitions,
+     0xe000 boot_app0)
+  Bench builds (separate build dir so the main build stays incremental):
+    RS_NO_RADIO=1          LoRa never powered (antenna off)
+    RS_BENCH_TX_DBM=-9     low TX power default (units on one table)
+    PLATFORMIO_BUILD_FLAGS="-D…" PLATFORMIO_BUILD_DIR=".pio/build_bench"
+  Simulator: sim\build-sim.bat, sim\run-script.bat sim\scripts\power.txt
   Prefer full files (not diffs) when handing patches.
+  Shell gotcha: heredocs in the Bash tool turn "\n" inside Python strings into
+  real newlines — write patch scripts as files.
 
 --------------------------------------------------------------------------------
-HARDWARE (T-Deck Pro v1.1)
+HARDWARE (T-Deck Pro v1.1, schematic 25-09-15)
 --------------------------------------------------------------------------------
-  E-ink 240×320, TCA8418, CST328, SX1262, BQ27220
-  GPS UART1 RX=44 TX=43 EN=39; KB LED=42; motor=2
+  E-ink 240×320 (GDEQ031T10), TCA8418 (INT 15), CST328 (INT 12), SX1262
+  (CS 3, IRQ 5, RST 4, BUSY 6, EN 46), BQ27220 0x55, BQ25896 0x6B, DRV2605
+  GPS MIA-M10Q UART1 RX=44 TX=43 EN=39, backup cell MS621FE (J6, D8 + R15)
+  Audio PCM5102A I2S BCK 7 DOUT 8 WS 9, rail GPIO 41; KB LED=42; motor=2
+  v1.1: IO38 = T-RST, IO16 = LCD_RST, IO45 = EPD backlight PWM
   See boards/tdeck_Pro/config/BoardConfig.h
 
 --------------------------------------------------------------------------------
 WHEN ADDING FEATURES
 --------------------------------------------------------------------------------
   Full files preferred. Keep cooperative green.
+  Hardware power changes go through powerApply() only.
+  Anything that must finish before sleeping → add a powerSleepBlocker() reason.
+  Never cut the LoRa rail with SPI lines driven; LoRa "off" = radio sleep.
   Do not re-enable force-num except inside digit-entry boxes.
   Top MENU must never map through topTabScreen() to Home.
+  Settings rows: one build function per page; digits 1–9, 0 = row 10.
 ================================================================================
 
 
-G1.98 additions
+HISTORY
+-------
+G1.98 (2026-11-01)
 - Announce button: "Announce ID" (public ID chirp, NOT private key)
 - Bottom nav: Inbox (key I); MENU stays M
 - Settings path line: left S.x, right-justified name (e.g. Battery)
-- S.4.8 Battery log: internal ring + SD CSV every 5s
-- S.9.5 SD card tools: mount/unmount/reset log
+- Battery log: internal ring + SD CSV every 5 s (now S.5.8)
+- SD card tools: mount/unmount/reset log (now S.10.5)
 - How to get logs: USB Serial dump, or pull TF card /batlog.csv
 - Idle: local name above "press a KEY to wake"
+Earlier G1.9x: top nav (refresh / battery / clock / MENU), bottom nav, footer,
+idle splash, home identity card, battery icons + charge detection, Settings
+battery page (now S.5), SYM / number-layer rules — all [DONE].

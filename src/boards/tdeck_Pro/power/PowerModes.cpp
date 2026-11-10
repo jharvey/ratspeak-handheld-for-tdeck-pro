@@ -101,6 +101,34 @@ bool sameProfile(const Profile& a, const Profile& b) {
            a.lora == b.lora && a.gps == b.gps && a.wifi == b.wifi && a.keyLight == b.keyLight;
 }
 
+uint16_t estimateMa(const Profile& p) {
+    // Measured: awake 80 MHz LoRa off ~79 mA (board + CPU), +12 mA at 240 MHz, LoRa
+    // receiver ~8 mA awake; asleep (wake 60 s) ~27 mA LoRa off, ~48 mA LoRa on; wake
+    // every 1 s ~+4 mA. GPS ~25 mA while powered (a powered GPS also keeps the CPU awake).
+    const bool sleeps = p.wakeSecs > 0 && p.gps != GPS_ON;
+    uint32_t ma;
+    if (!sleeps) {
+        ma = 79 + (p.cpuMhz >= 240 ? 12 : p.cpuMhz >= 160 ? 6 : 0) + (p.lora ? 8 : 0);
+    } else {
+        ma = 27 + (p.lora ? 21 : 0) + (p.wakeSecs <= 1 ? 4 : p.wakeSecs <= 10 ? 2 : 0);
+    }
+    switch (p.gps) {
+        case GPS_ON:     ma += 25; break;
+        case GPS_15MIN:  ma += 2; break;     // ~1 min visits every 15 min
+        case GPS_HOURLY: ma += 1; break;
+        default: break;
+    }
+    return (uint16_t)ma;
+}
+
+void fmtRuntime(char* out, unsigned n, uint16_t capacityMah, uint16_t ma) {
+    if (!ma) { snprintf(out, n, "?"); return; }
+    const uint32_t tenthsH = (uint32_t)capacityMah * 10u / ma;     // hours x10
+    if (tenthsH < 360) snprintf(out, n, "~%lu h", (unsigned long)((tenthsH + 5) / 10));
+    else               snprintf(out, n, "~%lu.%lu days", (unsigned long)(tenthsH / 240),
+                                (unsigned long)((tenthsH % 240) / 24));
+}
+
 void load(Settings& s) {
     s = Settings{};
     s.custom = kBalanced;

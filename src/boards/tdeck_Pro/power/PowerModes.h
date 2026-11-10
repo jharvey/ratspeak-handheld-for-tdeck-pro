@@ -54,6 +54,12 @@ void     fmtWake(char* out, unsigned n, uint16_t secs);   // "never", "1 s", "1 
 
 bool sameProfile(const Profile& a, const Profile& b);
 
+// Estimated average battery draw (mA) of a profile, from bench measurements on the
+// T-Deck Pro (2026-11-09/10); WiFi traffic and LoRa activity are not included.
+uint16_t estimateMa(const Profile& p);
+// Runtime text for a full battery of capacityMah: "~12 h" or "~1.2 days".
+void fmtRuntime(char* out, unsigned n, uint16_t capacityMah, uint16_t ma);
+
 void load(Settings& s);         // NVS "rs_power"
 void save(const Settings& s);
 

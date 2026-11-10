@@ -125,7 +125,10 @@
 
 // --- Touch ---
 #define TOUCH_INT               12
-#define TOUCH_RST               45
+// T-DeckPro V1.1 (schematic 25-09-15): touch reset is IO38 (TOU_RESET), IO45 is the e-ink
+// front-light PWM (BL_PWM). Driving 45 high lit the front light (~2 mA) all the time.
+#define TOUCH_RST               38
+#define BOARD_EPD_BACKLIGHT     45
 #define TOUCH_I2C_ADDR          0x1A
 #define TOUCH_I2C_ADDR_1        TOUCH_I2C_ADDR
 #define TOUCH_I2C_ADDR_2        TOUCH_I2C_ADDR

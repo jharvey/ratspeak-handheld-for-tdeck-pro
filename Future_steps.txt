@@ -1,6 +1,6 @@
 ================================================================================
 FUTURE STEPS — T-Deck Pro Ratspeak (long-term, update rarely)
-Last revised: 2026-10-16
+Last revised: 2026-11-10
 ================================================================================
 Short-term work stays in AI-guide.txt. This file is the backlog / vision list.
 ================================================================================
@@ -28,8 +28,23 @@ Hardware / platform
 - DONE - PSRAM fully leveraged for protocol + LVGL buffers (QSPI mapped — keep verifying)
 - DONE - Keyboard backlight GPIO control beyond serial L
 - DONE - Partial e-ink refresh / ghosting control for lower energy
-- Deep sleep / light sleep between RX windows; wake on LoRa / key / touch
-- IN PROGRESS -Battery model accuracy + charge UI
+- DONE - Light sleep between wake-ups; wake on LoRa / key / touch / timer (energy modes, S.4 Power)
+- DONE - Energy modes Full / Balanced / Saver / Custom; audio + e-ink power gating; GPS visits
+- IN PROGRESS - Reliable LoRa delivery to a sleeping receiver (39-55% on a busy bench vs 100% awake)
+- IN PROGRESS - Find the ~27 mA floor with CPU + radio asleep (unplugged measurement, then rails:
+  touch, BHI260 sensor hub, keyboard controller, power LED)
+- LoRa RX duty cycle (SX1262 preamble detection) for sleeping modes
+- Fifth energy mode "Check-in" (repeater): LoRa off and CPU asleep (~25 mA floor today);
+  the radio wakes only on "Check messages" (or every N min) to sync from an always-on,
+  solar-powered LXMF propagation node (e.g. lxmd + RNode on a Pi), then sleeps again.
+  Needs LXMF propagation client support (rsLXMFLite has none yet): pick a node from
+  announces, send via the node when direct delivery fails, sync (link + message list +
+  resource downloads). Also removes the "sleeping receiver misses messages" problem.
+- GPS power-save (u-blox M10 cyclic tracking) instead of full off/on visits
+- Deep sleep 'storage' mode: conflicts with light sleep today (the vendored deep-sleep
+  backports break light sleep); needs a backport that keeps both working
+- DONE - Battery model accuracy + charge UI (per-device full-charge calibration)
+- DONE - Bench current measurement with USB attached (bench / usbsleep / RTC log)
 - DONE - SD card mount, eject, format card found under S.9.5
 - SD card support (storage expansion, maps, logs, optional assets)
 
@@ -54,14 +69,14 @@ UI / UX
 - DONE - add manual refresh button, for ghosting issues. Do full screen refresh. 
 - DONE - add GPS clock displayed on idle screen / header. 
 - DONE - add battery / charge indicator. Lighting bolt in the battery icon, or a plug icon? Something to say it's getting power over USB. 
-- incrase keypad refresh rate, currently often have to press keys like once a second as the max speed. 
+- DONE - incrase keypad refresh rate (key queue read during e-ink refresh)
 - add share contact option. If you click a contact, offer a share button, where you can share it with other contacts in your list. 
 
 Audio / modes
 -------------
 - Voice / walkie-talkie mode: push-to-talk style over LoRa (or related path),
   separate from text LXMF and from simple beep/vibrate alerts
-- in settings, add volum controls for the beeps. 
+- DONE - in settings, add volum controls for the beeps (S.8 Alerts)
 - intergreate audio, perhaps https://codeberg.org/rfnxdev/partyline
 - text to audio, so it can read you a message. 
 
@@ -73,9 +88,10 @@ Protocol / mesh
 
 Build / devex
 -------------
-- Host UI simulator (SDL) for layout without hardware
+- DONE - Host UI simulator (Qt, real firmware) + scripted checks; live-device mirror over USB
 - Faster incremental builds (ccache; avoid full recompile on COM-only change)
-- COM port upload without editing platformio.ini (tasks / bat helpers exist)
+- COM port upload without editing platformio.ini (esptool --no-stub one-liner documented)
+- DONE - Unique default device names (TDP-<MAC>) so units on one bench are identifiable
 
 Robustness / safety (code quality)
 ----------------------------------
@@ -86,5 +102,13 @@ Robustness / safety (code quality)
 Energy target (rough)
 ---------------------
 - Few messages per day + sleep: multi-day battery goal; measure after sleep work
+  Now (2026-11-10, on USB w/ charger input off): asleep + LoRa listening ~48 mA,
+  LoRa off ~27 mA, awake 80-100 mA. ~1500 mAh cell -> ~1.3 days (Saver) today;
+  multi-day needs the floor + LoRa duty cycle work above.
+
+Hardware issues
+---------------
+- GPS backup cell fault on unit COM8 (MAC ...15:90): MIA-M10Q reports 'CANNOT USE BBR'.
+  4 other units OK (tools/gpscheck). Report to LilyGO (order LILYGO-88970).
 
 ================================================================================

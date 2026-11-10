@@ -158,6 +158,12 @@ void DisplayEink::powerOff() {
     g_epd.epd2.powerOff();         // no-op when already off
 }
 
+void DisplayEink::hibernate() {
+    if (!ready_) return;
+    parkSpiCs();
+    g_epd.epd2.hibernate();
+}
+
 void DisplayEink::refreshIfDirty() {
     if (!dirty_) return;
     partialRefresh(0, 0, EPD_WIDTH, EPD_HEIGHT);
