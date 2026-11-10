@@ -219,7 +219,14 @@ S     Settings                      ← M then S
 
 ---
 
-## 6. Power & energy modes (S.4) — Built
+## 6. Power & energy modes (S.4) — Built (light sleep off for now)
+
+> **Status 2026-11-09:** light sleep resets this board. On COM8, on battery with no USB,
+> every first light sleep ended in an immediate watchdog reset (reset reason 7), so the
+> device boot-looped every ~16 s. The same happens with a PC attached. Until it is
+> solved, light sleep is compiled out (`RS_LIGHT_SLEEP` 0): the modes still apply CPU
+> clock, LoRa, GPS schedule, WiFi and key-light, and the sleep knobs are kept but have no
+> effect. Build with `-DRS_LIGHT_SLEEP=1` to test sleep again.
 
 The T-Deck Pro's largest steady loads are the ESP32-S3 itself (awake at 240 MHz), the
 GPS receiver, WiFi and the key backlight. The e-ink panel costs nothing between
@@ -327,10 +334,16 @@ backup-fault state, so a working receiver adds its own ~20–30 mA while powered
 So with the CPU awake about 75 mA is board baseline that no knob reaches (USB PHY while
 plugged in, e-ink/touch/keyboard/sensor rails, regulators). **Light sleep is where the
 large saving is** (the ESP32-S3 drops from tens of mA to ~1–2 mA); its measured figure
-goes here after the unplugged test: _pending_.
+was to go here, but the unplugged test found the reset described at the top of §6.
 
 ### 6.5 Planned
 
+- **Fix light sleep** (first priority). Facts so far: reset reason 7 within ~1 s of
+  `esp_light_sleep_start()`, also with a timer-only 0.5 s sleep and no wake pins; arming
+  the RTC watchdog ourselves (paused in sleep) did not help. Next suspects: QSPI PSRAM /
+  flash power-down settings in the prebuilt Arduino 2.x libraries, the super-watchdog,
+  and the other core's tasks. `sleeptest <ms> [guard]` and the `rl` RTC log are there
+  for this.
 - **Find the ~75 mA baseline:** measure with each rail off in turn (BOARD_1V8_EN 38 /
   touch / keyboard / sensor hub), and check whether the modem enable (GPIO 41) or the
   BHI260 sensor hub draws while unused.
@@ -370,7 +383,8 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
   refuses to navigate. The firmware shows "backup cell low" and power-cycles the
   receiver every minute (every 5 min after 10 tries). On the unit at COM8 this fault is
   permanent under RatSpeak, LilyGo's own test and factory firmware; the unit at COM9
-  navigates normally. Suspected cause: the J6 cell or its D8 / R15 charge path.
+  navigates normally, as do three more units checked on 2026-11-09 (MACs …0E:34,
+  …14:48, …17:CC). Suspected cause: the J6 cell or its D8 / R15 charge path on COM8.
 - **Bench check of any unit:** `tools/gpscheck/check.sh COMx` flashes a tiny check app
   (LoRa kept off), listens 70 s and prints `VERDICT: GPS OK / GPS FAULT / NO DATA`.
 - Console: `g` (status dump), `gp` (power-cycle the receiver), `gr` (hardware reset).
@@ -457,6 +471,8 @@ the device does not light-sleep.
 | `bench <s>` | run from battery with USB attached (charger input off) for `<s>` s; `bench 0` stops |
 | `pset <knob> <v>` | set a Custom knob and switch to Custom: `cpu 80\|160\|240`, `wake <s>`, `awake <s>`, `lora 0\|1`, `gps 0-3`, `wifi 0\|1`, `kbl 0\|1` |
 | `blog 0\|1` | internal battery log off / on (RAM ring, 120 samples) |
+| `rl` / `rl 0` | dump / clear the RTC power log (survives resets: time, uptime, mV, mA, USB, sleeps; a BOOT line with the reset reason at every boot) |
+| `sleeptest <ms> [guard]` | diagnostic: one timer-only light sleep (resets the board today, see §6) |
 | `L` | toggle key backlight |
 | `FORMAT` | erase and format the data partition |
 | `@…` | screen-mirror protocol (§10.3) |
@@ -501,9 +517,10 @@ entry mode.
 
 | Item | Status |
 |---|---|
-| Energy modes Full / Balanced / Saver / Custom, light sleep, GPS schedule | Built — light-sleep current to be measured off USB |
-| Power numbers in §6.4: awake measured; light sleep needs an unplugged run | Next |
-| GPS backup-cell diagnosis on all units (`tools/gpscheck`) and report to LilyGo | In progress |
+| Energy modes Full / Balanced / Saver / Custom, GPS schedule | Built |
+| Light sleep | Off: resets the board; under investigation (§6.5) |
+| Power numbers in §6.4 | Awake measured |
+| GPS check of all five units (`tools/gpscheck`): only COM8 has the backup fault; COM3, COM5, COM6, COM9 OK | Done — report to LilyGo next |
 | Idle password + vault unlock | Planned |
 | Deep-sleep storage mode, LoRa RX duty cycle, GPS power-save | Planned |
 | Simulator: show power state / sleep % in the side panel | Planned |

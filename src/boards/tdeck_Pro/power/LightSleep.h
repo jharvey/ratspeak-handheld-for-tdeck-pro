@@ -23,7 +23,10 @@ struct WakePins {
 };
 
 // Sleep up to `ms`. Returns why it woke; `sleptMs` gets the time actually spent asleep.
-Wake lightSleep(uint32_t ms, const WakePins& pins, uint32_t& sleptMs);
+// `guardWdt`: arm the RTC watchdog ourselves (paused while asleep) so ESP-IDF 4.4 does not
+// install its own 1 s "light sleep exit" watchdog, which keeps counting during the sleep
+// and resets the chip (reset reason 7) on any sleep longer than about a second.
+Wake lightSleep(uint32_t ms, const WakePins& pins, uint32_t& sleptMs, bool guardWdt = true);
 
 const char* wakeName(Wake w);
 

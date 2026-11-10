@@ -57,6 +57,7 @@
 #include "remote/ScreenMirror.h"
 #include "power/PowerModes.h"
 #include "power/LightSleep.h"
+#include "power/RtcLog.h"
 #include <WiFi.h>
 #include "protocol/ProtocolRuntime.h"
 #include "protocol/OutgoingContract.h"
@@ -117,6 +118,7 @@ bool     g_pwOnUsb = false;           // effective profile was forced to Full by
 bool     g_gpsAllowed = true;         // power scheduler lets the GPS receiver be powered
 // Sleep statistics (decayed every 10 min so they describe the recent past).
 uint32_t g_pwAwakeMs = 0, g_pwSleepMs = 0, g_pwSleeps = 0, g_pwWakes[6] = {};
+uint32_t g_pwSleepTotalMs = 0;       // since boot (not decayed), for the RTC log
 uint32_t g_benchUntil = 0;            // bench: charger input off, run from battery (console)
 void powerApply(bool force);
 bool chargerSetHiz(bool on);
@@ -3724,12 +3726,25 @@ void powerTick() {
     }
     powerApply(false);
     powerGpsTick();
+    static uint32_t rtcAt = 0;
+    if (!rtcAt || millis() - rtcAt >= 10000) {     // RTC log: one entry per ~10 s awake or per wake
+        rtcAt = millis() ? millis() : 1;
+        if (g_bat.valid)
+            rtclog::sample((uint16_t)(g_bat.volts * 1000 + 0.5f), g_bat.avgMa, g_bat.usb, g_pwSleeps,
+                           g_pwSleepTotalMs / 1000);
+    }
 }
 
 // Why the CPU must stay awake right now (nullptr = it may sleep).
 const char* powerSleepBlocker() {
     const uint32_t now = millis();
     if (!g_pwEff.wakeSecs) return "mode";
+#if !defined(RS_LIGHT_SLEEP) || !RS_LIGHT_SLEEP
+    // Light sleep resets this board (watchdog reset, reason 7) within a moment of the
+    // first sleep, with or without USB (COM8, 2026-11-09). Off until that is solved;
+    // build with -DRS_LIGHT_SLEEP=1 to test it.
+    return "light sleep disabled";
+#endif
     if (now < 15000) return "boot";
     if (now - g_lastInputMs < (uint32_t)g_pwEff.awakeSecs * 1000UL) return "recent input";
     if (g_redraw || g_redrawAt) return "redraw";
@@ -3776,6 +3791,7 @@ void powerIdle() {
     const power::Wake w = power::lightSleep(ms, pins, slept);
     accountedAt = millis();
     g_pwSleepMs += slept;
+    g_pwSleepTotalMs += slept;
     g_pwSleeps++;
     if (w < 6) g_pwWakes[w]++;
     if (g_radio && pins.lora >= 0 && digitalRead(LORA_IRQ) == HIGH) g_radio->packetAvailable = true;
@@ -3889,6 +3905,23 @@ void handleSerialLine(char* p) {
             g_benchUntil = millis() + (uint32_t)(secs > 1800 ? 1800 : secs) * 1000UL;
             Serial.printf("[BENCH] charger input off for %d s - running from battery\n", secs > 1800 ? 1800 : secs);
         }
+    } else if (!strncmp(p, "sleeptest ", 10)) {
+        // Diagnostic: one timer-only light sleep. "sleeptest <ms> 0" skips the watchdog guard.
+        int ms = 0, guard = 1;
+        sscanf(p + 10, "%d %d", &ms, &guard);
+        if (ms < 10 || ms > 60000) { Serial.println("[SLEEPTEST] sleeptest <10-60000 ms> [guard 0|1]"); return; }
+        Serial.printf("[SLEEPTEST] sleeping %d ms, guard %d\n", ms, guard);
+        Serial.flush();
+        delay(50);
+        uint32_t slept = 0;
+        const power::Wake w = power::lightSleep((uint32_t)ms, power::WakePins{}, slept, guard != 0);
+        Serial.printf("[SLEEPTEST] woke (%s) after %lu ms, uptime %lu s\n", power::wakeName(w),
+                      (unsigned long)slept, (unsigned long)(millis() / 1000));
+    } else if (!strcmp(p, "rl")) {
+        rtclog::dump();
+    } else if (!strcmp(p, "rl 0")) {
+        rtclog::clear();
+        Serial.println("[RTCLOG] cleared");
     } else if (!strncmp(p, "blog", 4)) {
         g_batLogInternal = atoi(p + 4) != 0;
         if (g_batLogInternal) batLogSample();
@@ -3900,7 +3933,7 @@ void handleSerialLine(char* p) {
     } else if (!strcmp(p, "FORMAT")) {
         Serial.println(recoverCorruptLittleFS() ? "[FLASH] formatted - reboot now" : "[FLASH] format failed");
     } else {
-        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> L FORMAT");
+        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> rl sleeptest L FORMAT");
     }
 }
 
@@ -4038,6 +4071,9 @@ bool begin() {
     chargerSetHiz(false);
 #if !defined(SIMULATOR)
     Serial.printf("[BOOT] reset reason %d\n", (int)esp_reset_reason());
+    rtclog::boot((int)esp_reset_reason());
+#else
+    rtclog::boot(0);
 #endif
     spiBusIdle();
     logPsram();
