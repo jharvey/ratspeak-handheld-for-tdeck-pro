@@ -27,14 +27,18 @@ public:
 
     bool isReady() const { return _i2sReady; }
 
-    // Stop / restart the I2S clocks and DMA around a light sleep. With tx_desc_auto_clear
-    // the DMA runs continuously, even when silent.
-    void pause();
-    void resume();
+    // Audio power gating. The DAC/amplifier rail (BOARD_6609_EN) and the I2S clocks + DMA
+    // (which run continuously with tx_desc_auto_clear, even when silent) cost ~15-20 mA,
+    // so the path is switched on only to play a sound and off again after 3 s of silence.
+    void pause();      // path off now
+    void resume();     // path on now (also done automatically before any sound)
 
 private:
     bool _enabled = true;
     bool _i2sReady = false;
     volatile bool _messagePending = false;
+    bool _powered = true;
+    uint32_t _lastUseMs = 0;
+    void wake();
     uint8_t _volume = 80;  // 0-100
 };

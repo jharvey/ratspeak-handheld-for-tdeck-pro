@@ -118,6 +118,8 @@ bool     g_pwOnUsb = false;           // effective profile was forced to Full by
 bool     g_gpsAllowed = true;         // power scheduler lets the GPS receiver be powered
 // Sleep statistics (decayed every 10 min so they describe the recent past).
 uint32_t g_pwAwakeMs = 0, g_pwSleepMs = 0, g_pwSleeps = 0, g_pwWakes[6] = {};
+bool     g_epdOffInSleep = true;      // e-ink power stage off before light sleep (console "epdoff")
+uint32_t g_pwLoraWakeMs = 0;         // last wake by a LoRa packet (stay awake for the reply)
 uint32_t g_pwSleepTotalMs = 0;       // since boot (not decayed), for the RTC log
 uint32_t g_usbSleepUntil = 0;       // console "usbsleep": allow light sleep with a USB host
 uint32_t g_benchUntil = 0;            // bench: charger input off, run from battery (console)
@@ -3768,7 +3770,9 @@ const char* powerSleepBlocker() {
 #endif
     if (now < 15000) return "boot";
     if (now - g_lastInputMs < (uint32_t)g_pwEff.awakeSecs * 1000UL) return "recent input";
-    if (g_redraw || g_redrawAt) return "redraw";
+    // While the idle splash shows, loop() does not render, so a pending redraw waits for the wake
+    // key anyway and must not keep the CPU awake.
+    if (!g_idleActive && (g_redraw || g_redrawAt)) return "redraw";
     if (g_keyqTail != g_keyqHead) return "keys";
     if (HWCDC::isPlugged() && !g_usbSleepUntil) return "usb host";   // console drops while asleep
     if (mirror::active()) return "mirror";
@@ -3776,13 +3780,15 @@ const char* powerSleepBlocker() {
     if (g_gpsSerial) return "gps";
     if (g_protoReady && g_proto.lxmfQueuedCount() > 0) return "lxmf queue";
     if (g_radio && (g_radio->packetAvailable || g_radio->isTxBusy())) return "lora busy";
+    if (g_loraIf && !g_loraIf->txIdle()) return "lora tx queue";
+    if (g_pwLoraWakeMs && now - g_pwLoraWakeMs < 3000) return "lora exchange";   // let replies go out
     return nullptr;
 }
 
 // End of each loop pass: either a short idle delay or a light sleep until the next
 // wake-up (timer, key, touch or LoRa packet).
 void powerIdle() {
-    if (g_redraw) return;
+    if (g_redraw && !g_idleActive) return;
     static uint32_t accountedAt = 0;
     const char* why = powerSleepBlocker();
     if (why) { delay(g_pwEff.cpuMhz >= 240 ? 2 : 5); return; }
@@ -3807,6 +3813,7 @@ void powerIdle() {
     pins.touch = g_idleActive ? -1 : TOUCH_INT;     // idle splash: key-only wake
     pins.lora = (g_radio && g_loraIf && g_loraIf->isOnline()) ? LORA_IRQ : -1;
 
+    if (g_epdOffInSleep) g_display.powerOff();     // panel charge pump off; image stays
     if (accountedAt) g_pwAwakeMs += millis() - accountedAt;
     uint32_t slept = 0;
     const power::Wake w = power::lightSleep(ms, pins, slept);
@@ -3815,6 +3822,7 @@ void powerIdle() {
     g_pwSleepTotalMs += slept;
     g_pwSleeps++;
     if (w < 6) g_pwWakes[w]++;
+    if (w == power::WAKE_LORA) g_pwLoraWakeMs = millis() ? millis() : 1;
     if (g_radio && pins.lora >= 0 && digitalRead(LORA_IRQ) == HIGH) g_radio->packetAvailable = true;
 }
 
@@ -3974,10 +3982,13 @@ void handleSerialLine(char* p) {
         } else {
             Serial.println("[CMD] gpio <pin> <0|1>");
         }
+    } else if (!strncmp(p, "epdoff ", 7)) {
+        g_epdOffInSleep = atoi(p + 7) != 0;
+        Serial.printf("[EINK] power off before sleep: %s%c", g_epdOffInSleep ? "on" : "off", 10);
     } else if (!strncmp(p, "audio ", 6)) {
         // Bench: audio path off (I2S stopped, GPIO 41 rail low) or back on.
-        if (atoi(p + 6)) { digitalWrite(BOARD_6609_EN, HIGH); delay(20); g_audio.resume(); }
-        else             { g_audio.pause(); digitalWrite(BOARD_6609_EN, LOW); }
+        if (atoi(p + 6)) g_audio.resume();
+        else             g_audio.pause();
         Serial.printf("[AUDIO] path %s\n", atoi(p + 6) ? "on" : "off (I2S stopped, rail 41 low)");
     } else if (!strcmp(p, "id")) {
         Serial.printf("[ID] dest=%s name=%s\n", g_destHex, g_selfName);

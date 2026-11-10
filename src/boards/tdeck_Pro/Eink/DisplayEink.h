@@ -28,6 +28,10 @@ public:
     void refreshIfDirty();
     void markDirty() { dirty_ = true; }
 
+    // Switch the panel's charge pump off (the image stays). GxEPD2 leaves it on after a
+    // refresh; the next refresh turns it back on (~50 ms). Called before light sleep.
+    void powerOff();
+
     // Called repeatedly while the panel is busy (~0.7 s per partial refresh),
     // so the app can keep reading input. The callback must not draw.
     void setBusyCallback(void (*cb)(const void*), const void* param = nullptr);

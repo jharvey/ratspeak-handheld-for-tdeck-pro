@@ -152,6 +152,12 @@ void DisplayEink::partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
     Serial.printf("[EINK] partial rows %d-%d %ums\n", first, last, (unsigned)lastRefreshMs_);
 }
 
+void DisplayEink::powerOff() {
+    if (!ready_) return;
+    parkSpiCs();
+    g_epd.epd2.powerOff();         // no-op when already off
+}
+
 void DisplayEink::refreshIfDirty() {
     if (!dirty_) return;
     partialRefresh(0, 0, EPD_WIDTH, EPD_HEIGHT);

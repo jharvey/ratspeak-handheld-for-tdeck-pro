@@ -75,6 +75,7 @@ void DisplayEink::flush(const lv_area_t* area, lv_color_t* color_map) {
 }
 
 void DisplayEink::setBusyCallback(void (*cb)(const void*), const void* param) { g_busyCb = cb; g_busyParam = param; }
+void DisplayEink::powerOff() {}
 
 void DisplayEink::fullRefresh() {
     if (!ready_ || !framebuffer_) return;

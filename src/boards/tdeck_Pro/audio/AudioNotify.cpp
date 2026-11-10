@@ -55,6 +55,8 @@ void AudioNotify::begin() {
 
     i2s_zero_dma_buffer(I2S_PORT);
     _i2sReady = true;
+    _powered = true;
+    _lastUseMs = millis();
     Serial.printf(
         "[AUDIO] I2S TX ready  BCK=%d DOUT=%d WS=%d  rate=%d\r\n",
         I2S_BCK, I2S_DOUT, I2S_WS, AUDIO_SAMPLE_RATE);
@@ -69,17 +71,29 @@ void AudioNotify::end() {
 }
 
 void AudioNotify::pause() {
-    if (_i2sReady) i2s_stop(I2S_PORT);
+    if (!_i2sReady || !_powered) return;
+    i2s_stop(I2S_PORT);
+    if (BOARD_6609_EN >= 0) digitalWrite(BOARD_6609_EN, LOW);
+    _powered = false;
 }
 
 void AudioNotify::resume() {
     if (!_i2sReady) return;
-    i2s_zero_dma_buffer(I2S_PORT);
-    i2s_start(I2S_PORT);
+    if (!_powered) {
+        if (BOARD_6609_EN >= 0) digitalWrite(BOARD_6609_EN, HIGH);
+        delay(20);                     // DAC / amplifier supply settles
+        i2s_zero_dma_buffer(I2S_PORT);
+        i2s_start(I2S_PORT);
+        _powered = true;
+    }
+    _lastUseMs = millis();
 }
+
+void AudioNotify::wake() { resume(); }
 
 void AudioNotify::writeTone(uint16_t freq, uint16_t durationMs) {
     if (!_enabled || !_i2sReady) return;
+    wake();
 
     int numSamples = (AUDIO_SAMPLE_RATE * durationMs) / 1000;
     if (numSamples <= 0) return;
@@ -110,6 +124,7 @@ void AudioNotify::writeTone(uint16_t freq, uint16_t durationMs) {
 
 void AudioNotify::writeSilence(uint16_t durationMs) {
     if (!_i2sReady) return;
+    wake();
     int numSamples = (AUDIO_SAMPLE_RATE * durationMs) / 1000;
     if (numSamples <= 0) return;
 
@@ -125,6 +140,7 @@ void AudioNotify::writeSilence(uint16_t durationMs) {
 
 void AudioNotify::playMessage() {
     if (!_enabled || !_i2sReady) return;
+    wake();
 
     const int sr = AUDIO_SAMPLE_RATE;
     const int toneMs = 34;
@@ -174,9 +190,11 @@ void AudioNotify::requestMessage() {
 }
 
 void AudioNotify::loop() {
-    if (!_messagePending) return;
-    _messagePending = false;
-    playMessage();
+    if (_messagePending) {
+        _messagePending = false;
+        playMessage();
+    }
+    if (_powered && millis() - _lastUseMs > 3000) pause();   // silent for 3 s: path off
 }
 
 void AudioNotify::playAnnounce() {
@@ -196,6 +214,7 @@ void AudioNotify::playError() {
 
 void AudioNotify::playBoot() {
     if (!_enabled || !_i2sReady) return;
+    wake();
 
     // === RSDECK BOOT SEQUENCE ===
     // Sci-fi computer startup: sweep -> digital arpeggio -> confirmation

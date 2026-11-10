@@ -63,6 +63,9 @@ public:
     int lastRxRssi() const { return _lastRxRssi; }
     float lastRxSnr() const { return _lastRxSnr; }
     bool isOnline() const { return _online && _radio && _radio->isRadioOnline(); }
+    // Frames waiting to go out (queued, split or in flight): a sleeping device must stay
+    // awake until these are sent, or replies such as delivery proofs leave late.
+    bool txIdle() const { return !_txPending && !_splitTxPending && !_splitRxPending && _txCount == 0; }
     // Owner-only settings continuation. Existing packets retain their payloads
     // and receipts; new admission returns Blocked until retune or cancellation.
     void pauseForReconfigure(bool pause) { _reconfigurePending = pause; }
