@@ -31,7 +31,8 @@ START HERE (handoff 2026-11-11)
   trimmed (the core's Trim reloads every record of a conversation per pass - too slow to
   run per save). COM9 has a 32 GB card (the OLD sdMount at 20 MHz failed on it; SDStore
   mounts fine): map shown from maptest tiles, archive saves 0.2-0.45 s, boot unchanged.
-  COM9 left with archive OFF and test tiles on the card. COM5 card status unknown.
+  COM9 left with archive OFF and test tiles on the card. COM5/COM6 cards fitted 2026-11-11 (32 GB each; COM5's card already holds 28 GB of
+  other data - firmware only adds /ratdeckpro and /batlog2.csv).
   Sim: --nosd / script "sd in|out"; run-script uses %SIM_ARGS%; sim/scripts/map.txt.
 - Message store layout (flash, since 2026-11-11): /messages/<peer>/<counter/64, 8 digits>/
   <counter 13 digits>_<i|o>.json[.bak]; .deleted markers stay in /messages/<peer>/. SD keeps

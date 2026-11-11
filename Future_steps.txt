@@ -88,6 +88,27 @@ UI / UX
 - Optional fuller LVGL screens later (keep standalone build rules)
 - DONE (sim + COM9) - Geo maps on SD: offline 1-bit tiles (tools/maptiles), own position, pan/zoom.
   Next: contacts' positions on the map (needs location sharing), touch pan, real map tiles
+- Map data at country scale (user asked 2026-11-11: "something usable for the entire US").
+  Contiguous-US bbox, raw 8 KB tiles: z0-12 ~2.6 GB, z13 +7.8 GB, z14 +31 GB, z15 +125 GB.
+  Plan: (1) render 1-bit e-ink-styled tiles ourselves from free OSM vector data (Protomaps
+  PMTiles / OpenMapTiles), no tile-server policy issue; (2) compressed pack files (one file
+  per region/zoom + index) instead of millions of loose .rmt files: much faster to copy to
+  the card, mostly-white tiles shrink 5-20x, skip empty ocean tiles. Target: US to z13-14 on
+  a 32 GB card, z15-16 for chosen home areas.
+- Map heading: the BHI260AP IMU has accel + gyro; the factory code never enables a
+  magnetometer and no BMM150 is known on the board -> probably no true compass. Options:
+  GPS course-over-ground arrow while moving (RMC field 8); confirm with an I2C scan / the
+  BHI260AP sensor list whether a magnetometer exists.
+
+Robustness to verify (before the stress-test pass)
+-------------------------------------------------
+- FULL FLASH: what happens when LittleFS fills with messages? (Does a save fail, is the
+  oldest deleted, does the UI say anything, can identity/ratchet/NVS-adjacent writes still
+  succeed?) Nothing calls MessageStore::requestTrim on this board, so today it never deletes.
+  Fill a unit (or the sim with a small LittleFS) and make the outcome tolerable: e.g. evict
+  the oldest delivered messages past a high-water mark, keep a reserve for identity/ratchet
+  files, show "storage full" instead of silently dropping.
+- Same for a full SD card (archive + map tiles).
 - IN PROGRESS - add a idle screen options, after like 1 min you need password to gain access to device, screen is blank when idle. 
 - DONE - add manual refresh button, for ghosting issues. Do full screen refresh. 
 - DONE - add GPS clock displayed on idle screen / header. 
