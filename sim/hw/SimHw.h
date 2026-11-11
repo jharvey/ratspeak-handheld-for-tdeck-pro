@@ -73,6 +73,7 @@ struct Hw {
 
     // Firmware-side flags
     bool quit = false;
+    std::string powerInfo;      // one-line power state published by the firmware each second
 };
 
 Hw& hw();

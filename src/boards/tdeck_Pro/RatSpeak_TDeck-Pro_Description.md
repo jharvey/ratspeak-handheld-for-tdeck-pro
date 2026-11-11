@@ -725,7 +725,7 @@ entry mode.
 | LoRa RX duty cycle in sleeping modes (§6.3) | Works: 14/14, ~13 → 8 mA asleep (gauge); reply latency same as continuous (the ~1 in 3 retries were a test artifact) |
 | Deep-sleep storage mode, GPS power-save | Planned |
 | Repeater / propagation-node sync for Check-in and On demand | Planned |
-| Simulator: show power state / sleep % in the side panel | Planned |
+| Simulator: show power state / sleep % in the side panel | Done: Power box "Now" line (mode, asleep %, sleeps, MHz, LoRa); `winshot` captures it |
 
 ---
 

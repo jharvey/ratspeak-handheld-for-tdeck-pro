@@ -72,7 +72,8 @@ each other over the simulated LoRa air (also across PCs on the same LAN).
 
 The side panel has battery level, USB / charge-done, GPS fix, real e-ink timing on/off,
 the WiFi access points (with their passwords), screenshot buttons and the USB serial
-console (type a firmware serial command at the bottom).
+console (type a firmware serial command at the bottom). The Power box's **Now** line shows what the energy mode is doing: mode, percent of time
+asleep, number of sleeps, CPU MHz and whether LoRa is on.
 
 ## Live-device mode (real T-Deck Pro over USB)
 
@@ -130,6 +131,7 @@ to `build\simdata\<name>\shots\`. One command per line, `#` for comments:
 | `touch <x> <y>` | tap the screen at panel coordinates (240 x 320) |
 | `shot <file.png>` | save the screen (2x, crisp) |
 | `devshot <file.png>` | save the whole device drawing |
+| `winshot <file.png>` | save the whole window (device + side panel, incl. the power line) |
 | `battery <0-100>` / `usb on\|off` / `full on\|off` / `gps on\|off` | change the hardware |
 | `serial <text>` | send a line to the firmware's USB serial |
 | `expect <ms> <text>` | wait until the serial log shows `<text>`, else FAIL |

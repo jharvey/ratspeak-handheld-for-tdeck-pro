@@ -116,6 +116,10 @@ void MainWindow::buildPanel(QWidget* panel) {
     full_ = new QCheckBox("Charge done");
     pf->addRow(usb_);
     pf->addRow(full_);
+    powerState_ = new QLabel("mode: (booting)");
+    powerState_->setWordWrap(true);
+    powerState_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    pf->addRow("Now", powerState_);
     connect(soc_, &QSlider::valueChanged, this, &MainWindow::applyBattery);
     connect(usb_, &QCheckBox::toggled, this, &MainWindow::applyBattery);
     connect(full_, &QCheckBox::toggled, this, &MainWindow::applyBattery);
@@ -203,6 +207,14 @@ void MainWindow::applyBattery() {
 }
 
 void MainWindow::drainSerial() {
+    if (powerState_) {
+        std::string info;
+        { std::lock_guard<std::mutex> l(sim::hw().mu); info = sim::hw().powerInfo; }
+        if (!info.empty()) {
+            const QString text = QString::fromStdString(info);
+            if (powerState_->text() != text) powerState_->setText(text);
+        }
+    }
     QStringList lines;
     { std::lock_guard<std::mutex> g(g_logMu); lines.swap(g_logQueue); }
     lines.erase(std::remove_if(lines.begin(), lines.end(), isMirrorLine), lines.end());
@@ -212,11 +224,12 @@ void MainWindow::drainSerial() {
     if (lastLines_.size() > 200000) lastLines_ = lastLines_.right(100000);
 }
 
-void MainWindow::saveShot(const QString& file, bool wholeDevice) {
+void MainWindow::saveShot(const QString& file, bool wholeDevice, bool window) {
     const QString dir = opt_.shotDir.isEmpty() ? QDir(opt_.dataDir).filePath("shots") : opt_.shotDir;
     QDir().mkpath(dir);
     const QString path = QDir(dir).filePath(file);
-    const QImage img = wholeDevice ? device_->deviceImage() : device_->screenImage(2);
+    if (window) drainSerial();   // fresh side-panel state
+    const QImage img = window ? grab().toImage() : wholeDevice ? device_->deviceImage() : device_->screenImage(2);
     const bool ok = img.save(path);
     status_->setText(ok ? "saved " + path : "FAILED to save " + path);
     fprintf(stdout, "[SIM] screenshot %s %s\n", ok ? "saved" : "FAILED", path.toLocal8Bit().constData());
@@ -225,7 +238,7 @@ void MainWindow::saveShot(const QString& file, bool wholeDevice) {
 
 // ---- Script runner -------------------------------------------------------------------
 // One command per line (see sim/README.md): wait, key, down, up, type, touch, shot,
-// devshot, battery, usb, full, gps, serial, expect, quit. '#' starts a comment.
+// devshot, winshot, battery, usb, full, gps, serial, expect, quit. '#' starts a comment.
 void MainWindow::loadScript(const QString& path) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -292,6 +305,7 @@ void MainWindow::stepScript() {
         if (cmd == "touch") { device_->touch(arg.section(' ', 0, 0).toInt(), arg.section(' ', 1, 1).toInt()); next(200); return; }
         if (cmd == "shot") { saveShot(arg, false); next(20); return; }
         if (cmd == "devshot") { saveShot(arg, true); next(20); return; }
+        if (cmd == "winshot") { saveShot(arg, false, true); next(20); return; }
         if (cmd == "battery") { soc_->setValue(arg.toInt()); next(20); return; }
         if (cmd == "usb") { usb_->setChecked(arg == "on"); next(20); return; }
         if (cmd == "full") { full_->setChecked(arg == "on"); next(20); return; }

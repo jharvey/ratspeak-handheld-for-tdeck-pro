@@ -76,6 +76,10 @@
 // hal/Keyboard.cpp — app-driven number layer for numeric fields
 extern void keyboardSetNumLayer(bool on);
 
+#if defined(SIMULATOR)
+namespace sim { void setPowerInfo(const char* line); }   // side panel (sim/shim)
+#endif
+
 namespace standalone {
 namespace {
 
@@ -4145,6 +4149,18 @@ void powerTick() {
         g_pwAwakeMs /= 2; g_pwSleepMs /= 2;
     }
     powerApply(false);
+#if defined(SIMULATOR)
+    {
+        // Side panel line: what the energy mode is doing right now.
+        char line[128];
+        const uint32_t tot = g_pwAwakeMs + g_pwSleepMs;
+        snprintf(line, sizeof(line), "%s%s | asleep %u%% (%lu sleeps) | %u MHz | LoRa %s",
+                 power::modeName(g_pw.mode), g_pwOnUsb ? " (USB -> Full)" : "",
+                 tot ? (unsigned)((uint64_t)g_pwSleepMs * 100 / tot) : 0u, (unsigned long)g_pwSleeps,
+                 (unsigned)g_pwEff.cpuMhz, loraOnline() ? "on" : "off");
+        ::sim::setPowerInfo(line);
+    }
+#endif
     checkinTick();
     peerClockTick();
     powerGpsTick();

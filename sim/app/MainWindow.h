@@ -32,7 +32,7 @@ private:
     void buildPanel(QWidget* panel);
     void drainSerial();
     void applyBattery();
-    void saveShot(const QString& file, bool wholeDevice);
+    void saveShot(const QString& file, bool wholeDevice, bool window = false);
     // Script runner
     void loadScript(const QString& path);
     void stepScript();
@@ -43,6 +43,7 @@ private:
     QLineEdit* serialIn_ = nullptr;
     QSlider* soc_ = nullptr;
     QLabel* socLabel_ = nullptr;
+    QLabel* powerState_ = nullptr;
     QCheckBox* usb_ = nullptr;
     QCheckBox* full_ = nullptr;
     QCheckBox* gps_ = nullptr;
