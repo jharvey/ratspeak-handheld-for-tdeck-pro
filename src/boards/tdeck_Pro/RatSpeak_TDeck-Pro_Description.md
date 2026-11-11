@@ -417,10 +417,24 @@ charger input off) measures **~4 mA** (gauge 3–5 mA; its average filter lags f
 That is what is left with the ESP32 effectively off: the always-on 3.3 V buck and 1.8 V
 LDO, gauge, charger, keyboard controller, SD card, e-ink controller, sensor hub.
 
-- **BHI260AP sensor hub ruled out:** boot status 0x18 (host interface ready, no firmware
-  loaded), so it sits idle in its boot ROM; a soft reset changed nothing.
-- **Next suspect: the microSD card** (1–3 mA idle is common for SD cards that are not put
-  to sleep). Test: remove it on one unit and rerun `floor d 14`.
+Four units, `floor d 8 300` (8 × 5 min deep sleep), 2026-11-10:
+
+| Unit | SD card | BHI260 boot status | Gauge avg current | Battery voltage over 35 min |
+|---|---|---|---|---|
+| COM6 | no | 0x18 (idle, no firmware) | 3–4 mA | −2 mV |
+| COM3 | no | 0x38 (firmware loaded) | 3–4 mA | −3 mV |
+| COM5 | no | 0x38 (firmware loaded) | 4–6 mA | −4 mV |
+| COM9 | yes | 0x18 | **0 mA** | −4 mV |
+
+- **The gauge cannot resolve this.** COM9 reads 0 mA while its voltage falls like the
+  others: below a few mA the BQ27220 reading is dominated by its deadband and per-unit
+  offset. The real floor is somewhere around 1–5 mA; only a meter in series with the
+  battery will say.
+- Neither a loaded BHI260 (COM3/COM5) nor the SD card (COM9) stands out.
+- With 30 s cycles (a full reboot each) the reading also showed a burst every ~7.5 min
+  (7–8 mA, −13 mV dip, slow decay); with 5 min cycles it mostly disappears.
+- **Next:** meter measurement; then the e-ink controller's deep-sleep command and the
+  keyboard controller.
 
 ### 6.7 Check-in mode (S.4.6, S.4.8)
 
@@ -454,7 +468,8 @@ in a short window around each check-in:
 
 ### 6.8 Next
 
-- **Lower the ~4 mA board floor** (§6.6): SD card share first, then keyboard controller sleep.
+- **Board floor** (§6.6): measure with a meter (the gauge cannot resolve it), then e-ink
+  controller and keyboard.
 - **Message store performance** with many messages (slow writes and boot).
 - **LoRa receive duty cycle** (SX1262 RX duty-cycle with preamble detection) — the
   receiver costs ~10–20 mA of the sleeping draw; RNode-style 18-symbol preambles allow it.

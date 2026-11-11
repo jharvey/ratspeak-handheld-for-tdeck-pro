@@ -41,8 +41,11 @@ ENERGY MODES  (Settings S.4 Power; power/PowerModes.*, power/LightSleep.*)
 [DONE] Touch held in reset on the idle splash (all modes) and, in Saver, except 1 min
        after a key. Presets run 240 MHz while awake (sleep dominates the average).
 [IN-PROGRESS] ~4 mA board floor (ESP32 in deep sleep, tools/sleepcheck floor d 14).
-       BHI260 ruled out (boot status 0x18 = boot ROM idle, no firmware). Next: SD card
-       share (pull the card on one unit), keyboard controller sleep.
+       4 units, floor d 8 300: COM6/COM3 3-4 mA, COM5 4-6, COM9 (SD card) reads 0 mA
+       while its voltage falls like the others -> the BQ27220 cannot resolve currents
+       this small (deadband / offset). Real floor ~1-5 mA; needs a meter. BHI260 boot
+       status 0x38 (firmware loaded) on COM3/COM5, 0x18 on COM6/COM9 - no visible
+       difference. Only COM8/COM9 have SD cards. floor d <n> <secs> sets cycle length.
 [DONE] Mode ladder (power/PowerModes.*): Full, Balanced (DEFAULT), Saver, Ultra-low
        (LoRa only, 5 min wakes), On demand (Profile.loraOnUse: LoRa 2 min after a key;
        GPS_ON_USE one fix per key, <= every 15 min), Check-in, Custom. NVS key "mode2"

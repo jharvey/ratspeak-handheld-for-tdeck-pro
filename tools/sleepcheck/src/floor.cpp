@@ -11,7 +11,7 @@ namespace {
 
 constexpr uint8_t kGauge = 0x55, kCharger = 0x6B;
 constexpr int kSda = 13, kScl = 14;
-constexpr uint32_t kCycleS = 30;
+constexpr uint32_t kCycleS = 30;     // default; "floor d <n> <secs>" overrides
 constexpr uint32_t kMagic = 0x464C4F52;   // "FLOR"
 constexpr int kCap = 120;
 
@@ -24,6 +24,7 @@ struct Sample { uint16_t mv; int16_t ma; uint8_t mode; uint8_t pad; uint16_t cyc
 RTC_NOINIT_ATTR uint32_t g_magic;
 RTC_NOINIT_ATTR uint8_t g_mode;          // 0 idle, 'l' light, 'd' deep
 RTC_NOINIT_ATTR uint16_t g_cyclesLeft, g_cycle, g_count;
+RTC_NOINIT_ATTR uint32_t g_cycleS;
 RTC_NOINIT_ATTR Sample g_log[kCap];
 
 bool rd16(uint8_t addr, uint8_t reg, uint16_t& v) {
@@ -85,7 +86,7 @@ void runCycles() {
     while (g_mode && g_cyclesLeft) {
         g_cyclesLeft--;
         g_cycle++;
-        esp_sleep_enable_timer_wakeup((uint64_t)kCycleS * 1000000ULL);
+        esp_sleep_enable_timer_wakeup((uint64_t)g_cycleS * 1000000ULL);
         if (g_mode == 'd') {
             holdRails(true);
             esp_deep_sleep_start();             // wakes through a reboot -> boot()
@@ -152,7 +153,10 @@ bool command(const char* line) {
     if (!*a) { print(); return true; }
     if (*a == 'x') { finish(); return true; }
     if (*a == 'l' || *a == 'd') {
-        const int n = atoi(a + 1);
+        char* rest = nullptr;
+        const int n = (int)strtol(a + 1, &rest, 10);
+        const long secs = rest ? strtol(rest, nullptr, 10) : 0;
+        g_cycleS = secs >= 5 && secs <= 3600 ? (uint32_t)secs : kCycleS;
         g_mode = (uint8_t)*a;
         g_cyclesLeft = (uint16_t)(n > 0 && n < 100 ? n : 10);
         g_cycle = 0;
@@ -160,7 +164,7 @@ bool command(const char* line) {
         railsLow();
         chargerInputOff(true);
         Serial.printf("[FLOOR] %s sleep, %u cycles of %lu s, charger input off\n",
-                      *a == 'd' ? "deep" : "light", (unsigned)g_cyclesLeft, (unsigned long)kCycleS);
+                      *a == 'd' ? "deep" : "light", (unsigned)g_cyclesLeft, (unsigned long)g_cycleS);
         Serial.flush();
         delay(3000);                             // let the gauge see battery current
         logSample();
