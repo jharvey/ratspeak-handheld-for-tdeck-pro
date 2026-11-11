@@ -4553,6 +4553,13 @@ void handleSerialLine(char* p) {
         else if (!strcmp(p + 6, " clear")) energy::clear();
         energyAccountAwake();
         energy::dump();
+    } else if (!strcmp(p, "clk")) {
+        // Bench: wall clock to the microsecond (RTC drift: compare with host time over hours).
+        struct timeval tv;
+        gettimeofday(&tv, nullptr);
+        Serial.printf("[CLK] %lld.%06ld up %lu ms; clock %s\n", (long long)tv.tv_sec, (long)tv.tv_usec,
+                      (unsigned long)millis(),
+                      handheld::ClockConfidence::synchronized() ? "synced" : g_clkLastAt ? "from peer" : "own");
     } else if (!strcmp(p, "id")) {
         Serial.printf("[ID] dest=%s name=%s\n", g_destHex, g_selfName);
     } else if (!strncmp(p, "txp", 3) && (p[3] == ' ' || p[3] == 0)) {

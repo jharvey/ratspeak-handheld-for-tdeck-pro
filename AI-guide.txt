@@ -148,6 +148,7 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
   usbsleep <s>    allow light sleep with a USB host (console drops while asleep)
   rxdc 0|2..8     LoRa RX duty cycle off / symbols per window   tcxo  TCXO check
   dctcxo <ms>     bench: lowest duty-cycle TCXO delay (0 auto)  fe 0|1  log RX freq error (Hz)
+  clk             bench: wall clock to the us + uptime + clock source (RTC drift logging)
   ev | ev 0       bench: RAM event trace (rx/tx/offer/txdone/msg-in, dup-scan/dup-idx/commit ms,
                   recovered; timer wakes fold into one mark per run; survives light sleep)
   rl / rl 0       RTC power log (survives resets; BOOT lines with reset reason)
