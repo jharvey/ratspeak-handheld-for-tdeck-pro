@@ -488,7 +488,9 @@ in a short window around each check-in:
 ```
 
 - **Writing a message outside a window** queues it ("Queued for 14:30 check-in", up to 8,
-  kept in RAM through light sleep); the console `msg` command queues the same way.
+  kept in NVS so a reset or battery swap keeps them); the thread shows each one under the
+  history as "queued HH:MM". The console `msg` command queues the same way. Switching to
+  another mode sends anything still queued at once.
 - **Clock sync, no protocol change.** Reticulum announces carry the sender's time (the
   low 5 bytes of the announce `random_hash`) when its clock is GPS/NTP synchronized, and
   LXMF messages carry their creation time. A device whose own clock is not synchronized
@@ -508,8 +510,9 @@ in a short window around each check-in:
 
 - **Board floor** (§6.6): INA226 logger in series with the battery (the gauge cannot
   resolve it), then e-ink controller and keyboard.
-- **Check-in:** keep the outbox in NVS (RAM only today), show queued messages in the
-  thread, measure RTC drift over a day to size the 1 min lead.
+- **Check-in:** done: the outbox is kept in NVS (survives a reset), queued messages show in
+  the thread as "queued HH:MM", and leaving Check-in mode sends them at once. Next: measure
+  RTC drift over a day to size the 1 min lead.
 - **Repeater / propagation-node sync** for Check-in and On demand.
 - **Message store performance:** every LittleFS lookup walks the whole peer directory.
   Done: scans read names only; a record open is one `fopen` (Arduino's open was three
@@ -518,7 +521,9 @@ in a short window around each check-in:
   outgoing recovery reads pending keys collected at boot. COM5 boot 281 → 98 s, outgoing
   recovery done 0.5 s after the store scan (sends were rejected "8" for 3+ min before);
   incoming save + proof on COM9 23 → 1.3 s, send → proof 28 → 7 s. Left: the boot scan
-  itself (~160 ms per record, 81 s on COM5) — persist summaries, or shard peer directories.
+  itself (81 s on COM5): each LittleFS `fopen` in a ~500-entry directory costs ~209 ms
+  (parsing is 0.2 s in total), so the fix is sharding peer directories — an on-disk format
+  change, pending a decision.
 - **LoRa receive duty cycle:** done (§6.3), ~13 → 8 mA asleep on the gauge; reply delay is
   the message store, not the radio. Next: the INA226 rig for exact numbers.
 - **Deep sleep "storage" mode:** would need the deep-sleep backports, which break light
@@ -712,7 +717,7 @@ entry mode.
 | Sleeping draw 27 → ~7 mA (GPS UART back-power fix, touch gating) | Done |
 | LoRa delivery to a sleeping receiver | Done: 14/14 at 1.3 frames/message |
 | Energy monitor: per-part estimate vs gauge, hourly trend graph (§6.5) | Works |
-| Check-in mode: scheduled LoRa windows, outbox, peer clock sync (§6.7) | Works on 2 units; outbox in NVS, queued messages in thread, RTC drift next |
+| Check-in mode: scheduled LoRa windows, outbox, peer clock sync (§6.7) | Works on 2 units; outbox in NVS and queued messages in the thread done; RTC drift next |
 | Board floor ~1–5 mA with the ESP32 off (§6.6) | Gauge cannot resolve it; INA226 logger software ready (`tools/inalogger`), needs the parts wired; then e-ink controller / keyboard sleep |
 | GPS check of all five units (`tools/gpscheck`): only COM8 has the backup fault; COM3, COM5, COM6, COM9 OK | Done — report to LilyGo next |
 | Message store performance (slow writes and boot with many messages) | Mostly done: COM5 boot 281 → 98 s, incoming save 23 → 1.3 s, send → proof 28 → 7 s, no "rejected 8" after boot; boot scan (81 s on COM5) next |
@@ -734,4 +739,4 @@ entry mode.
 | 0.4 | Mode ladder (Ultra-low, On demand, Check-in; Balanced default), energy monitor, Check-in mode and peer clock sync, board floor on four units, roadmap refresh |
 | 0.5 | LoRa receive duty cycle (§6.3, ~13 → 8 mA asleep), back-power rule table (§9), INA226 logger rig software (§6.6) |
 | 0.6 | Duty-cycle reply "misses" explained (store save delay, test timing); message store scans by name (boot 281 → 129 s) |
-| 0.7 | Message store: one-walk record open, duplicate-ID index, pending-outgoing cache (boot 98 s, save 1.3 s, proof 7 s); peer-ratchet save no longer reports a busy store as a flash failure |
+| 0.7 | Message store: one-walk record open, duplicate-ID index, pending-outgoing cache (boot 98 s, save 1.3 s, proof 7 s); peer-ratchet save no longer reports a busy store as a flash failure; Check-in outbox in NVS, queued messages in the thread |

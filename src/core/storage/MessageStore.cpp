@@ -60,6 +60,12 @@ bool MessageStore::begin(FlashStore* flash, SDStore* sd, bool externalStorageEna
     }
     Serial.printf("[MSGSTORE] startup scan %lu ms (%lu conversations, %d pending outgoing)%c", millis() - scanStart,
                   (unsigned long)_totalConversations, transactions().pendingCached(), 10);
+    {
+        const auto& p = MessageTransactions::readProfile();
+        Serial.printf("[MSGSTORE] flash reads: %lu opens, open %lu ms, parse %lu ms, close %lu ms, listing %lu ms%c",
+                      (unsigned long)p.opens, (unsigned long)(p.openUs / 1000), (unsigned long)(p.parseUs / 1000),
+                      (unsigned long)(p.closeUs / 1000), (unsigned long)(p.listUs / 1000), 10);
+    }
     return _writeQueue.begin(transactions(), STORAGE_DEFERRED_IO ? WriteQueue::Execution::Deferred : WriteQueue::Execution::Immediate);
 }
 

@@ -23,8 +23,13 @@ START HERE (handoff 2026-11-11)
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
-- NEXT: (0) message store boot scan: still loads every record (~160 ms each, 81 s of COM5's 98 s
-  boot). Options: persist conversation summaries + the duplicate-ID index, or shard peer dirs.
+- NEXT: (0) message store boot scan: still loads every record, 81 s of COM5's 98 s boot. The
+  boot line "[MSGSTORE] flash reads" splits it: ~209 ms per fopen (78 s), parse 0.2 s, listing
+  3 s. The cost is the LittleFS lookup in a ~500-entry peer directory (prebuilt core: 128 B
+  reads, 512 B cache - not tunable). A boot cache alone is not enough (the runtime summary
+  cache holds 4 peers and a status change rescans a peer). Real fix = shard peer directories
+  (e.g. /messages/<peer>/<counter/64>/...): ON-DISK FORMAT CHANGE, older firmware would not see
+  moved records -> needs the user's go-ahead before building.
   DONE 2026-11-11: record open = one fopen (FlashStore::openRecord), exists() = one stat,
   duplicate-ID index (MessageTransactions IdIndex, 4 peers x 1024, seeded at boot), pending
   outgoing keys collected at boot (ReadPending = one load) -> save+proof 1.3 s, send->proof 7 s,
@@ -33,8 +38,9 @@ START HERE (handoff 2026-11-11)
   software is READY: tools/inalogger (ESP32-C3 SuperMini + INA226 firmware, log.py PC
   logger; builds, selftest passes, not run on hardware). Needs the parts (README) and
   wiring, then: log.py COMx --zero; sleepcheck floor d 8 300; log.py --out floor.csv. (2) e-ink
-  controller deep-sleep command, keyboard controller sleep; (3) check-in outbox in
-  NVS + queued messages in the thread view; (4) RTC drift over a day.
+  controller deep-sleep command, keyboard controller sleep; (3) DONE 2026-11-11 check-in
+  outbox in NVS (rs_outbox/q), queued messages shown in the thread ("queued HH:MM"), flushed
+  when leaving Check-in, rejected 1/8 kept for retry; (4) RTC drift over a day.
 Long-term backlog → Future_steps.txt (do not strip future items from there).
 User/developer guide → src/boards/tdeck_Pro/RatSpeak_TDeck-Pro_Description.md
 Simulator → sim/README.md
@@ -87,7 +93,8 @@ ENERGY MODES  (Settings S.4 Power; power/PowerModes.*, power/LightSleep.*)
        holds the new numbering (old "mode" 3 = Custom is migrated). pm0..pm6.
 [DONE] Check-in mode (Profile.checkin; Settings.checkinMin/checkinEvery, NVS ciMin/
        ciEvery): LoRa only from 1 min before to 3 min after each check-in; announce at
-       +5 s and +90 s; outbox (8, RAM) sent from +20 s; sleep capped to window edges.
+       +5 s and +90 s; outbox (8, NVS rs_outbox) sent from +20 s, or at once when the
+       mode is no longer Check-in; sleep capped to window edges.
        Peer clock: hal/PeerClock.h samples announce wire time (raw LoRa frame, hops 0,
        random_hash low 5 bytes) and LXMF message timestamps; unsynced devices adopt
        announce time, move forward only to message time (<= 15 min). gpsSyncClock now

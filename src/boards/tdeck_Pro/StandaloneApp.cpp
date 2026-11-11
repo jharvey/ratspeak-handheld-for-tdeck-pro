@@ -1515,18 +1515,41 @@ power::CheckinPhase checkinNow() {
     return power::checkinPhase(g_pw, sod);
 }
 
-// Messages written outside a check-in window wait here (RAM: light sleep keeps it) and go
-// out kCheckinSendS after the check-in time, when every device should be listening.
+// Messages written outside a check-in window wait here and go out kCheckinSendS after the
+// check-in time, when every device should be listening. Kept in NVS "rs_outbox" (blob "q",
+// count = size / item) so a reset or battery swap does not lose them.
 struct OutboxItem { uint8_t dest[16]; char text[161]; };
 constexpr int kOutboxCap = 8;
 OutboxItem g_outbox[kOutboxCap];
 int g_outboxCount = 0;
 
+void outboxSave() {
+    Preferences p;
+    if (!p.begin("rs_outbox", false)) { Serial.println("[CHECKIN] outbox save failed (nvs)"); return; }
+    if (g_outboxCount) p.putBytes("q", g_outbox, sizeof(OutboxItem) * (size_t)g_outboxCount);
+    else p.remove("q");
+    p.end();
+}
+
+void outboxLoad() {
+    Preferences p;
+    if (!p.begin("rs_outbox", true)) return;
+    const size_t n = p.getBytesLength("q");
+    if (n && n % sizeof(OutboxItem) == 0 && n <= sizeof(g_outbox)) {
+        g_outboxCount = (int)(p.getBytes("q", g_outbox, n) / sizeof(OutboxItem));
+        for (int i = 0; i < g_outboxCount; i++) g_outbox[i].text[sizeof(g_outbox[i].text) - 1] = 0;
+    }
+    p.end();
+    if (g_outboxCount) Serial.printf("[CHECKIN] outbox restored: %d waiting\n", g_outboxCount);
+}
+
 bool outboxAdd(const uint8_t dest[16], const char* text) {
     if (g_outboxCount >= kOutboxCap) return false;
     OutboxItem& o = g_outbox[g_outboxCount++];
+    memset(&o, 0, sizeof(o));
     memcpy(o.dest, dest, 16);
     strlcpy(o.text, text, sizeof(o.text));
+    outboxSave();
     Serial.printf("[CHECKIN] queued \"%s\" (%d waiting)\n", o.text, g_outboxCount);
     return true;
 }
@@ -3096,10 +3119,19 @@ void renderThread() {
         text(4, y, st);
         y += 18;
     }
-    const int yMax = STRIP_Y - 2;
-    if (g_histCount == 0) {
+    int yMax = STRIP_Y - 2;
+    // Check-in outbox messages for this contact are the newest: they sit under the
+    // history (as sent bubbles, "queued HH:MM") and win the space first.
+    constexpr int kQueuedH = 42;
+    int queued[kOutboxCap], nQueued = 0;
+    for (int i = 0; i < g_outboxCount; i++)
+        if (!memcmp(g_outbox[i].dest, g_threadPeer, 16)) queued[nQueued++] = i;
+    int qFirst = 0;
+    while (nQueued - qFirst > 0 && y + (nQueued - qFirst) * kQueuedH > yMax) qFirst++;
+    yMax -= (nQueued - qFirst) * kQueuedH;
+    if (g_histCount == 0 && !nQueued) {
         text(4, y, g_histNote[0] ? g_histNote : "(no messages yet)");
-    } else {
+    } else if (g_histCount) {
         // Newest messages win the space; older ones drop off the top.
         auto hOf = [](int i) { return (!g_hist[i].incoming && g_hist[i].status[0]) ? 42 : 28; };
         int start = g_histCount, used = 0;
@@ -3107,6 +3139,20 @@ void renderThread() {
         for (int i = start; i < g_histCount; i++) {
             drawBubble(y, g_hist[i].text, g_hist[i].incoming, g_hist[i].incoming ? nullptr : g_hist[i].status);
             y += hOf(i);
+        }
+    }
+    if (nQueued - qFirst > 0) {
+        char st[24];
+        const power::CheckinPhase ph = checkinNow();
+        const time_t at = time(nullptr) + ph.toNextS;
+        struct tm lt;
+        applyTz();
+        localtime_r(&at, &lt);
+        if (g_pwEff.checkin) snprintf(st, sizeof(st), "queued %02d:%02d", lt.tm_hour, lt.tm_min);
+        else snprintf(st, sizeof(st), "queued");
+        for (int k = qFirst; k < nQueued; k++) {
+            drawBubble(y, g_outbox[queued[k]].text, false, st);
+            y += kQueuedH;
         }
     }
 
@@ -4035,31 +4081,42 @@ void checkinTick() {
     static bool wasIn = false;
     static uint8_t announced = 0;
     static uint32_t lastTry = 0;
-    if (!g_pwEff.checkin) { wasIn = false; return; }
     const power::CheckinPhase ph = checkinNow();
-    if (ph.inWindow != wasIn) {
-        wasIn = ph.inWindow;
-        announced = 0;
-        Serial.printf("[CHECKIN] window %s (%d queued)\n", ph.inWindow ? "open" : "closed", g_outboxCount);
+    // Out of Check-in mode (switched away with messages still queued): LoRa is on as
+    // usual, so send the outbox now instead of leaving it waiting for a window.
+    const bool flushNow = !g_pwEff.checkin && g_outboxCount && loraOnline();
+    if (!g_pwEff.checkin && !flushNow) { wasIn = false; return; }
+    if (!flushNow) {
+        if (ph.inWindow != wasIn) {
+            wasIn = ph.inWindow;
+            announced = 0;
+            Serial.printf("[CHECKIN] window %s (%d queued)\n", ph.inWindow ? "open" : "closed", g_outboxCount);
+        }
+        if (!ph.inWindow) return;
+        // Announce at +5 s and again at +90 s: a peer whose clock is up to ~1.5 min late still
+        // hears one (and, if this clock is synchronized, takes its time from it).
+        const uint8_t due = ph.sinceS >= 90 ? 2 : ph.sinceS >= 5 ? 1 : 0;
+        if (announced < due && g_loraIf && g_loraIf->isOnline()) {
+            announced = due;
+            doAnnounce();
+        }
+        if (!g_outboxCount || ph.sinceS < (int32_t)power::kCheckinSendS) return;
     }
-    if (!ph.inWindow) return;
-    // Announce at +5 s and again at +90 s: a peer whose clock is up to ~1.5 min late still
-    // hears one (and, if this clock is synchronized, takes its time from it).
-    const uint8_t due = ph.sinceS >= 90 ? 2 : ph.sinceS >= 5 ? 1 : 0;
-    if (announced < due && g_loraIf && g_loraIf->isOnline()) {
-        announced = due;
-        doAnnounce();
-    }
-    if (!g_outboxCount || ph.sinceS < (int32_t)power::kCheckinSendS || millis() - lastTry < 3500) return;
+    if (millis() - lastTry < 3500) return;
     lastTry = millis();
     OutboxItem& o = g_outbox[0];
     const bool sent = sendMessage(o.dest, o.text);
-    const bool hopeless = !sent && (!strncmp(g_txStr, "rejected", 8) || !strcmp(g_txStr, "invalid") ||
-                                    !strcmp(g_txStr, "pick remote"));
+    // "rejected 1" (busy) and "rejected 8" (store still recovering after boot) are
+    // temporary: keep the message for the next try instead of dropping it.
+    const bool transient = !strcmp(g_txStr, "rejected 1") || !strcmp(g_txStr, "rejected 8");
+    const bool hopeless = !sent && !transient &&
+                          (!strncmp(g_txStr, "rejected", 8) || !strcmp(g_txStr, "invalid") ||
+                           !strcmp(g_txStr, "pick remote"));
     Serial.printf("[CHECKIN] outbox \"%s\": %s\n", o.text, sent ? "sent" : g_txStr);
     if (sent || hopeless) {
         memmove(&g_outbox[0], &g_outbox[1], sizeof(OutboxItem) * (size_t)(g_outboxCount - 1));
         g_outboxCount--;
+        outboxSave();
     }
     requestRedraw();                             // sendMessage cleared the widget tree
 }
@@ -4680,6 +4737,7 @@ bool begin() {
     Serial.println(" RatSpeak T-Deck Pro - standalone");
     Serial.println("========================================");
     loadConfig();
+    outboxLoad();
     power::load(g_pw);
     applyTz();
     ensureClockSeeded();

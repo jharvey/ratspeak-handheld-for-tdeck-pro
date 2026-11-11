@@ -3,6 +3,7 @@
 #include <Preferences.h>
 #include <limits>
 #include <cerrno>
+#include <esp_timer.h>
 #include "util/DisplayText.h"
 #include "util/EventTrace.h"
 
@@ -228,6 +229,13 @@ Error MessageTransactions::openDirectory(unsigned which, const char* path, bool 
 }
 
 bool MessageTransactions::nextFlashRecord(Cursor& cursor, RecordKey& key) {
+    const int64_t started = esp_timer_get_time();
+    const bool found = nextFlashRecordTimed(cursor, key);
+    readProfile().listUs += uint64_t(esp_timer_get_time() - started);
+    return found;
+}
+
+bool MessageTransactions::nextFlashRecordTimed(Cursor& cursor, RecordKey& key) {
     auto toError = [](int e) { return e == ENOMEM ? Error::Allocation : Error::Read; };
     char name[64]; bool isDir = false; int failure = 0;
     if (!cursor.opened) {
@@ -356,11 +364,18 @@ Error MessageTransactions::inspect(const RecordKey& key, unsigned which, const c
     if (which == 0 && _flash) {
         // One directory walk (fopen) instead of Arduino open()'s three; ENOENT also
         // answers the caller's exists() question for free.
+        auto& profile = readProfile();
+        const int64_t t0 = esp_timer_get_time();
         FlashStore::RecordFile file;
         const int opened = _flash->openRecord(filePath, file);
+        const int64_t t1 = esp_timer_get_time();
+        ++profile.opens; profile.openUs += uint64_t(t1 - t0);
         if (opened) { if (missing) *missing = opened == ENOENT; return Error::Read; }
         if (parsed) *parsed = true;
         error = document.parse(file);
+        const int64_t t2 = esp_timer_get_time();
+        file.close();
+        profile.parseUs += uint64_t(t2 - t1); profile.closeUs += uint64_t(esp_timer_get_time() - t2);
     } else {
         auto store = medium(which); File file = store.open(filePath);
         if (!file) return Error::Read;

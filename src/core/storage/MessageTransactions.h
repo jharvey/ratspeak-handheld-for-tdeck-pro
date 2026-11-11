@@ -51,6 +51,9 @@ public:
     void beginStartupScan();
     void endStartupScan(bool complete);
     int pendingCached();   // pending outgoing keys held, -1 when the cache is not valid
+    // Where flash record reads spend their time (microseconds, cumulative since boot).
+    struct ReadProfile { uint32_t opens = 0; uint64_t openUs = 0, parseUs = 0, closeUs = 0, listUs = 0; };
+    static ReadProfile& readProfile() { static ReadProfile p; return p; }
 
 private:
     struct Summary {
@@ -113,6 +116,7 @@ private:
     void directory(const uint8_t peer[16], unsigned medium, char output[96]) const;
     Error openDirectory(unsigned medium, const char* path, bool required, File&);
     bool nextFlashRecord(Cursor&, RecordKey&);
+    bool nextFlashRecordTimed(Cursor&, RecordKey&);
     // load() for a key the cursor just produced, in the same lease: reuses the cursor's
     // delete cutoff and skips the flash .bak probe when the directory has none.
     Error load(const RecordKey&, MessageDocument&, StoredRecordHeader&, const Cursor* scan);
