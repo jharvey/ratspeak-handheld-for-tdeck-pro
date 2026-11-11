@@ -55,11 +55,11 @@ bool MessageStore::begin(FlashStore* flash, SDStore* sd, bool externalStorageEna
             Serial.println("[MSGSTORE] Initialization deferred: incomplete startup message metadata"); return false;
         }
     } catch (const std::bad_alloc&) {
-        releaseStartupSeeds();
+        transactions().endStartupScan(false); releaseStartupSeeds();
         Serial.println("[MSGSTORE] Initialization deferred: insufficient memory"); return false;
     }
-    Serial.printf("[MSGSTORE] startup scan %lu ms (%lu conversations)%c", millis() - scanStart,
-                  (unsigned long)_totalConversations, 10);
+    Serial.printf("[MSGSTORE] startup scan %lu ms (%lu conversations, %d pending outgoing)%c", millis() - scanStart,
+                  (unsigned long)_totalConversations, transactions().pendingCached(), 10);
     return _writeQueue.begin(transactions(), STORAGE_DEFERRED_IO ? WriteQueue::Execution::Deferred : WriteQueue::Execution::Immediate);
 }
 

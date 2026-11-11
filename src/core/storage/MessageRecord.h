@@ -127,9 +127,10 @@ struct TimestampFilter {
     template<class Index> TimestampFilter operator[](Index) const { return {token, uint8_t(depth + 1)}; }
 };
 
-class BufferedFileReader {
+template<class FileT>
+class BasicFileReader {
 public:
-    explicit BufferedFileReader(File& file, TimestampToken* token = nullptr) : _file(file), _token(token) {}
+    explicit BasicFileReader(FileT& file, TimestampToken* token = nullptr) : _file(file), _token(token) {}
     int read() {
         if (_position == _length) {
             _length = _file.read(_bytes, sizeof(_bytes)); _position = 0;
@@ -158,12 +159,13 @@ public:
         return _file.position() == _file.size();
     }
 private:
-    File& _file;
+    FileT& _file;
     TimestampToken* _token;
     uint8_t _bytes[512];
     size_t _position = 0, _length = 0;
     bool _failed = false;
 };
+using BufferedFileReader = BasicFileReader<File>;
 
 // One bounded document at a time. Normal records first try the approved owned
 // JSON allocation cap. Exceptional existing records may retry by streaming into
@@ -197,10 +199,12 @@ public:
             _arena.emplace(_memory, Budget::JsonAllocator); _document.emplace(&*_arena);
         } else _document.emplace(&_normal); // zero-budget allocator reports failure
     }
-    Error parse(File& file) {
+    // FileT: Arduino File or FlashStore::RecordFile (read/size/position/seek).
+    template<class FileT>
+    Error parse(FileT& file) {
         normal();
         if (!file || !file.size() || file.size() > Budget::MaxStoredFile) return Error::InvalidRecord;
-        BufferedFileReader reader(file, &_timestamp);
+        BasicFileReader<FileT> reader(file, &_timestamp);
         const auto error = _memory ? deserializeJson(*_document, reader, TimestampFilter{&_timestamp})
                                    : DeserializationError(DeserializationError::NoMemory);
         if (!error) {

@@ -8,7 +8,7 @@ START HERE (handoff 2026-11-11)
   COM3 unplugged. All run RatSpeak in Balanced with the RX duty-cycle build (2026-11-11).
   COM3 + COM6 = bench build at -9 dBm (antenna unknown); COM5 = normal build with
   txp -9 saved in NVS; COM9 = normal build. COM8 unplugged (GPS fault). Only COM8 and
-  COM9 have SD cards. COM3/COM5 boot slowly (large message stores; COM5 281 s -> 129 s after the 2026-11-11 scan fix).
+  COM9 have SD cards. COM3/COM5 boot slowly (large message stores; COM5 281 s -> 98 s after the 2026-11-11 store fixes).
 - Bench build (-9 dBm, ~11 min): PLATFORMIO_BUILD_FLAGS="-DRS_BENCH_TX_DBM=-9"
   PLATFORMIO_BUILD_DIR=".pio/build_bench" pio run -e tdeck_pro_standalone
 - Flash app only: esptool.py --chip esp32s3 --port COMx --baud 115200 --before
@@ -17,19 +17,19 @@ START HERE (handoff 2026-11-11)
 - Commit only our files; never stage platformio.ini port lines,
   tools/check_build_identity.py, putty*.log, backups/, Video/, lilygo-tdeck-pro/,
   sdkconfig.defaults, .trunk/, .vscode extras, e16/e17.patch, AI-guide-E23-snippet.txt.
-- Disk C: is ~99% full (20 GB free). Do not delete user media (baseball videos).
+- Disk C: is ~99% full (14 GB free 2026-11-11). Do not delete user media (baseball videos).
 - COM6 (…17:CC): 2026-11-11 usb=0 / ~-60 mA while plugged in; after the port/cable swap it
   does not enumerate at all (Windows lists it only as a non-present device). Likely flat
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
-- NEXT: (0) message store O(N^2): every record open walks the whole peer directory (LittleFS), twice
-  per Arduino File open (stat + fopen). Incoming saves scan every record of the sender for a
-  duplicate messageId, and the proof waits for that save: COM9 14 s, ~20 s end to end. Next:
-  one lookup per record (POSIX fopen + parse from a buffer), then a bounded duplicate check or
-  sharded peer directories. RESOLVED: "duty-cycle reply misses" were a test artifact (20 s gaps <
-  ~20 s proof latency, proofs collided with the sender's next TX); duty cycle vs continuous gives
-  the same latency (ev trace, 14.2 vs 15.5 s save). Clock is fine: replies arrive ~350-400 Hz off. (1) measure the board floor - the BQ27220 gauge cannot resolve 0-5 mA. Rig
+- NEXT: (0) message store boot scan: still loads every record (~160 ms each, 81 s of COM5's 98 s
+  boot). Options: persist conversation summaries + the duplicate-ID index, or shard peer dirs.
+  DONE 2026-11-11: record open = one fopen (FlashStore::openRecord), exists() = one stat,
+  duplicate-ID index (MessageTransactions IdIndex, 4 peers x 1024, seeded at boot), pending
+  outgoing keys collected at boot (ReadPending = one load) -> save+proof 1.3 s, send->proof 7 s,
+  no "rejected 8" (Recovering) after boot. ev marks: dup-scan/dup-idx/commit (ms), recovered.
+  RESOLVED: "duty-cycle reply misses" were a test artifact (proofs waited for the slow save). (1) measure the board floor - the BQ27220 gauge cannot resolve 0-5 mA. Rig
   software is READY: tools/inalogger (ESP32-C3 SuperMini + INA226 firmware, log.py PC
   logger; builds, selftest passes, not run on hardware). Needs the parts (README) and
   wiring, then: log.py COMx --zero; sleepcheck floor d 8 300; log.py --out floor.csv. (2) e-ink
@@ -141,7 +141,8 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
   usbsleep <s>    allow light sleep with a USB host (console drops while asleep)
   rxdc 0|2..8     LoRa RX duty cycle off / symbols per window   tcxo  TCXO check
   dctcxo <ms>     bench: lowest duty-cycle TCXO delay (0 auto)  fe 0|1  log RX freq error (Hz)
-  ev | ev 0       bench: RAM event trace (rx/tx/offer/txdone/msg-in/wakes, survives light sleep)
+  ev | ev 0       bench: RAM event trace (rx/tx/offer/txdone/msg-in, dup-scan/dup-idx/commit ms,
+                  recovered; timer wakes fold into one mark per run; survives light sleep)
   rl / rl 0       RTC power log (survives resets; BOOT lines with reset reason)
   txp <dBm>       saved LoRa TX power (-9..22)   msg <hex32> <text>   id   name
   sleeptest, epdoff, audio, gpio <pin> <0|1>, iomux   diagnostics

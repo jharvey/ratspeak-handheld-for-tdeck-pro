@@ -4,6 +4,7 @@
 #include <limits>
 #include <cerrno>
 #include "util/DisplayText.h"
+#include "util/EventTrace.h"
 
 namespace handheld::storage {
 
@@ -14,6 +15,95 @@ static bool historyLess(HistoryEntry a, HistoryEntry b) {
 void MessageTransactions::clearSummaries() {
     for (auto& summary : _summaries) summary.counter = 0;
     _summaryClock = 0;
+    dropIdIndex(nullptr);   // same triggers: begin, media change, external toggle
+    dropPending();
+}
+
+static bool pendingLess(const RecordKey& a, const RecordKey& b) {
+    return a.counter < b.counter || (a.counter == b.counter && memcmp(a.peer, b.peer, 16) < 0);
+}
+
+void MessageTransactions::dropPending() {
+    auto& state = idIndexState();
+    state.pendingValid = false;
+    std::vector<RecordKey>().swap(state.pending);
+}
+
+void MessageTransactions::notePending(const RecordKey& key, bool isPending) {
+    auto& state = idIndexState();
+    if (!state.pendingValid && !state.startup) return;
+    auto& keys = state.pending;
+    const auto at = std::lower_bound(keys.begin(), keys.end(), key, pendingLess);
+    const bool present = at != keys.end() && !pendingLess(key, *at);
+    if (present && !isPending) keys.erase(at);
+    else if (!present && isPending) {
+        if (keys.size() >= PendingMax) { state.pendingOverflow = true; dropPending(); return; }
+        try { keys.insert(at, key); }
+        catch (const std::bad_alloc&) { state.pendingOverflow = true; dropPending(); }
+    }
+}
+
+int MessageTransactions::pendingCached() {
+    auto& state = idIndexState();
+    return state.pendingValid ? int(state.pending.size()) : -1;
+}
+
+void MessageTransactions::beginStartupScan() {
+    auto& state = idIndexState();
+    dropPending();
+    state.startup = true; state.pendingOverflow = false;
+}
+
+void MessageTransactions::endStartupScan(bool complete) {
+    auto& state = idIndexState();
+    state.startup = false;
+    state.pendingValid = complete && !state.pendingOverflow;
+    if (!state.pendingValid) dropPending();
+}
+
+MessageTransactions::IdIndexState& MessageTransactions::idIndexState() {
+    // One executor per device. A different instance never inherits another's index.
+    static IdIndexState state;
+    if (state.owner != this) {
+        for (auto& index : state.slots) { index.valid = index.hasRecords = false; std::vector<uint64_t>().swap(index.ids); }
+        state.clock = 0; state.owner = this;
+    }
+    return state;
+}
+
+MessageTransactions::IdIndex* MessageTransactions::findIdIndex(const uint8_t peer[16], bool touch) {
+    auto& state = idIndexState();
+    for (auto& index : state.slots)
+        if (index.valid && !memcmp(index.peer, peer, 16)) {
+            if (touch) index.used = ++state.clock;
+            return &index;
+        }
+    return nullptr;
+}
+
+void MessageTransactions::dropIdIndex(const uint8_t* peer) {
+    auto& state = idIndexState();
+    for (auto& index : state.slots)
+        if (!peer || (index.valid && !memcmp(index.peer, peer, 16))) {
+            index.valid = index.hasRecords = false;
+            std::vector<uint64_t>().swap(index.ids);
+        }
+    if (!peer) state.clock = 0;
+}
+
+void MessageTransactions::installIdIndex(const uint8_t peer[16], std::vector<uint64_t>&& ids, bool hasRecords) {
+    dropIdIndex(peer);
+    auto& state = idIndexState();
+    if (state.clock == UINT32_MAX) dropIdIndex(nullptr);
+    IdIndex* slot = &state.slots[0];
+    for (auto& index : state.slots) {
+        if (!index.valid) { slot = &index; break; }
+        if (index.used < slot->used) slot = &index;
+    }
+    std::vector<uint64_t>().swap(slot->ids);
+    memcpy(slot->peer, peer, 16);
+    slot->ids = std::move(ids);
+    slot->hasRecords = hasRecords; slot->valid = true; slot->used = ++state.clock;
 }
 
 void MessageTransactions::checkSummaryMedia() {
@@ -96,11 +186,12 @@ uint32_t MessageTransactions::deletedThrough(const uint8_t peer[16], MessageDocu
     Error uncertain = Error::None;
     for (const char* suffix : {"", ".bak"}) {
         char candidate[128]; snprintf(candidate, sizeof(candidate), "%s%s", marker, suffix);
-        if (!flash.exists(candidate)) continue;
+        FlashStore::RecordFile file;
+        const int opened = _flash->openRecord(candidate, file);   // one walk; ENOENT = absent
+        if (opened == ENOENT) continue;
         exists = true;
         if (!suffix[0]) primaryExists = true;
-        File file = flash.open(candidate);
-        if (!file) { uncertain = Error::Read; continue; }
+        if (opened) { uncertain = Error::Read; continue; }
         if (file.size() > 512) continue;
         const auto parsed = document.parse(file);
         if (parsed == Error::Allocation || parsed == Error::Read) uncertain = parsed;
@@ -257,12 +348,25 @@ bool MessageTransactions::nextPeer(const char* after, char output[33], Error& er
 }
 
 Error MessageTransactions::inspect(const RecordKey& key, unsigned which, const char* suffix,
-                                   MessageDocument& document, StoredRecordHeader& header, bool* parsed) {
+                                   MessageDocument& document, StoredRecordHeader& header, bool* parsed,
+                                   bool* missing) {
     char filePath[128]; path(key, which, filePath, suffix);
-    auto store = medium(which); File file = store.open(filePath);
-    if (!file) return Error::Read;
-    if (parsed) *parsed = true;
-    const auto error = document.parse(file);
+    if (missing) *missing = false;
+    Error error;
+    if (which == 0 && _flash) {
+        // One directory walk (fopen) instead of Arduino open()'s three; ENOENT also
+        // answers the caller's exists() question for free.
+        FlashStore::RecordFile file;
+        const int opened = _flash->openRecord(filePath, file);
+        if (opened) { if (missing) *missing = opened == ENOENT; return Error::Read; }
+        if (parsed) *parsed = true;
+        error = document.parse(file);
+    } else {
+        auto store = medium(which); File file = store.open(filePath);
+        if (!file) return Error::Read;
+        if (parsed) *parsed = true;
+        error = document.parse(file);
+    }
     if (error != Error::None) return error;
     header = {};
     if (!recordHeader(document.document(), header) || header.incoming != key.incoming ||
@@ -296,17 +400,18 @@ Error MessageTransactions::load(const RecordKey& key, MessageDocument& document,
         if (candidate == 1u && scan && !scan->flashBackups) continue;   // no flash .bak in this directory
         const unsigned which = candidate / 2; const char* suffix = candidate % 2 ? ".bak" : "";
         StoredRecordHeader current;
-        bool parsed = false;
-        const auto error = inspect(key, which, suffix, document, current, &parsed);
+        bool parsed = false, missing = false;
+        const auto error = inspect(key, which, suffix, document, current, &parsed, &missing);
         if (parsed) loaded = int(candidate); // Even an invalid parse replaces scratch.
         if (error != Error::None) {
             // An unreadable candidate may have a newer revision. Do not build
             // a mutation on an older mirror merely because memory/I/O failed.
             if (error == Error::Allocation) return error;
-            if (error == Error::Read) {
+            if (error == Error::Read && !missing) {
                 char candidatePath[128]; path(key, which, candidatePath, suffix); auto store = medium(which);
                 if (store.exists(candidatePath)) return error;
             }
+            if (missing && candidate == 0u) continue;   // flash primary absent: nothing to block
             if (candidate % 2 == 0) {
                 char primary[128]; path(key, which, primary); auto store = medium(which);
                 if (store.exists(primary)) _blockedMedia |= uint8_t(1u << which);
@@ -413,32 +518,82 @@ void MessageTransactions::create(const Request& request, uint8_t* bytes, Result&
     if (cutoff == UINT32_MAX) { result.error = Error::CounterExhausted; return; }
     MessageDocument document;
     bool conversationExists = false;
-    {
+    const bool dedupe = request.key.incoming && request.hasMessageId;
+    const uint32_t wanted = uint32_t(idEntry(request.messageId, 0) >> 32);
+    auto duplicateOf = [&](const RecordKey& key, Error error, const StoredRecordHeader& header) {
+        if (error != Error::None || !header.incoming || !header.hasMessageId ||
+            memcmp(header.messageId, request.messageId, 32)) return false;
+        result.key = key; result.revision = header.revision; result.duplicate = true;
+        result.oldStatus = result.newStatus = header.status;
+        result.error = commit(key, document, false, result);
+        if (result.error == Error::None) result.outcome = Outcome::Committed;
+        return true;
+    };
+    const uint32_t started = millis();
+    if (IdIndex* index = findIdIndex(request.key.peer, true)) {
+        conversationExists = index->hasRecords;
+        if (dedupe) {
+            uint32_t hits[8]; size_t count = 0; bool overflow = false;
+            for (uint64_t entry : index->ids)
+                if (uint32_t(entry >> 32) == wanted) { if (count < 8) hits[count++] = uint32_t(entry); else overflow = true; }
+            if (overflow) dropIdIndex(request.key.peer);   // pathological prefix clash: full scan below
+            else {
+                for (size_t i = 0; i < count; ++i) {
+                    RecordKey key; memcpy(key.peer, request.key.peer, 16); key.counter = hits[i]; key.incoming = true;
+                    StoredRecordHeader header;
+                    const auto error = load(key, document, header);
+                    if (error == Error::Allocation || error == Error::Read) { result.error = error; return; }
+                    if (duplicateOf(key, error, header)) return;
+                }
+            }
+        }
+    }
+    bool scanned = false;
+    if (!findIdIndex(request.key.peer, false)) {
+        scanned = true;
+        std::vector<uint64_t> built; bool indexing = dedupe;
         Cursor cursor; beginRecords(cursor, request.key.peer, &document); RecordKey key;
         while (nextRecord(cursor, key)) {
             conversationExists = true;
-            if (!request.key.incoming || !request.hasMessageId) break;
+            if (!dedupe) break;
+            // The filename carries the direction and inspect() rejects a mismatched
+            // header, so an outgoing record can never be the duplicate: skip its load.
+            if (!key.incoming) continue;
             StoredRecordHeader header;
             const auto error = load(key, document, header, &cursor);
             if (error == Error::Allocation || error == Error::Read) { result.error = error; return; }
-            if (error == Error::None && header.incoming && header.hasMessageId &&
-                !memcmp(header.messageId, request.messageId, 32)) {
-                result.key = key; result.revision = header.revision; result.duplicate = true;
-                result.oldStatus = result.newStatus = header.status;
-                result.error = commit(key, document, false, result);
-                if (result.error == Error::None) result.outcome = Outcome::Committed;
-                return;
+            if (duplicateOf(key, error, header)) return;
+            if (indexing && error == Error::None && header.incoming && header.hasMessageId) {
+                try {
+                    if (built.size() >= IdIndexMax) { indexing = false; std::vector<uint64_t>().swap(built); }
+                    else built.push_back(idEntry(header.messageId, key.counter));
+                } catch (const std::bad_alloc&) { indexing = false; std::vector<uint64_t>().swap(built); }
             }
         }
         if (cursor.error != Error::None) { result.error = cursor.error; return; }
+        if (indexing) installIdIndex(request.key.peer, std::move(built), conversationExists);
     }
+    evtrace::mark(scanned ? "dup-scan" : "dup-idx", int32_t(millis() - started));
     document.normal();
     if (!createRecord(document.document(), request, bytes)) { result.error = Error::Allocation; return; }
     _nextCounter = std::max(_nextCounter, cutoff + 1);
     if (!reserveCounter(result.key.counter)) {
         result.error = _nextCounter == UINT32_MAX ? Error::CounterExhausted : Error::Write; return;
     }
+    const uint32_t writing = millis();
     result.error = commit(result.key, document, true, result);
+    evtrace::mark("commit", int32_t(millis() - writing));
+    if (IdIndex* index = findIdIndex(request.key.peer, false)) {
+        // A failed or partial commit may still have left a file: rebuild next time.
+        bool keep = result.error == Error::None;
+        if (keep && dedupe) {
+            try {
+                if (index->ids.size() >= IdIndexMax) keep = false;
+                else index->ids.push_back(idEntry(request.messageId, result.key.counter));
+            } catch (const std::bad_alloc&) { keep = false; }
+        }
+        if (keep) index->hasRecords = true; else dropIdIndex(request.key.peer);
+    }
     if (result.error != Error::None) return;
     result.revision = 1; result.countDelta = 1; result.conversationDelta = conversationExists ? 0 : 1;
     result.unreadDelta = request.key.incoming && !request.read ? 1 : 0;
@@ -622,9 +777,20 @@ Error MessageTransactions::summarize(const uint8_t peer[16], ConversationView& r
     Cursor cursor; beginRecords(cursor, peer);
     MessageDocument document; StoredRecordHeader header; RecordKey key;
     uint32_t newestRevision = 0;
+    const bool startup = idIndexState().startup;
+    std::vector<uint64_t> seenIds; bool seeding = startup;
     while (nextRecord(cursor, key)) {
         const auto error = load(key, document, header, &cursor);
         if (error != Error::None) return error;
+        if (startup) {
+            if (!header.incoming && (header.status == 1 || header.status == 2)) notePending(key, true);
+            if (seeding && header.incoming && header.hasMessageId) {
+                try {
+                    if (seenIds.size() >= IdIndexMax) { seeding = false; std::vector<uint64_t>().swap(seenIds); }
+                    else seenIds.push_back(idEntry(header.messageId, key.counter));
+                } catch (const std::bad_alloc&) { seeding = false; std::vector<uint64_t>().swap(seenIds); }
+            }
+        }
         if (row.totalCount < UINT32_MAX) ++row.totalCount;
         if (!selector.counter || historyLess({selector.counter, bool(selector.incoming)}, {key.counter, key.incoming})) {
             selector.counter = key.counter; selector.incoming = key.incoming;
@@ -657,6 +823,8 @@ Error MessageTransactions::summarize(const uint8_t peer[16], ConversationView& r
         }
     }
     if (cursor.error == Error::None) rememberSummary(row, selector, newestRevision);
+    if (cursor.error == Error::None && seeding && row.totalCount)
+        installIdIndex(peer, std::move(seenIds), true);
     return cursor.error;
 }
 
@@ -826,6 +994,22 @@ void MessageTransactions::pending(const Request& request, uint8_t* bytes, size_t
     };
     MessageDocument document; StoredRecordHeader selected; bool found = false;
     result.key = {};
+    if (idIndexState().pendingValid) {
+        const auto& keys = idIndexState().pending;
+        auto at = keys.begin();
+        if (request.key.counter) at = std::upper_bound(keys.begin(), keys.end(), request.key, pendingLess);
+        if (at == keys.end()) { result.outcome = Outcome::Committed; return; }
+        const RecordKey key = *at; const bool more = at + 1 != keys.end();
+        StoredRecordHeader header; const auto error = load(key, document, header);
+        if (error == Error::None && !header.incoming && (header.status == 1 || header.status == 2)) {
+            result.key = key; result.more = more;
+            memcpy(bytes, &header, sizeof(header)); result.length = sizeof(header);
+            result.revision = header.revision; result.outcome = Outcome::Committed;
+            return;
+        }
+        dropPending();   // cache disagrees with the record: fall back to the full scan
+        document.normal();
+    }
     char afterPeer[33] = {}, peerHex[33]; Error scanError = Error::None;
     while (nextPeer(afterPeer, peerHex, scanError)) {
         memcpy(afterPeer, peerHex, 33); uint8_t peer[16]; decodeHex(peerHex, 32, peer, 16);
@@ -972,6 +1156,12 @@ void MessageTransactions::execute(const Request& request, uint8_t* bytes, size_t
         // Invalidate before attempting a write: partial mirrors, failed cleanup
         // and exceptions can all change persistent state even on failure.
         invalidateSummary(request.key.peer);
+        // Status and read-flag rewrites keep every record and its message ID; creates
+        // maintain the index themselves. Anything that removes records drops it.
+        if (request.operation == Operation::DeleteConversation) dropIdIndex(request.key.peer);
+        else if (request.operation != Operation::CreateIncoming && request.operation != Operation::CreateOutgoing &&
+                 request.operation != Operation::UpdateStatus && request.operation != Operation::MarkRead)
+            dropIdIndex(nullptr);
     }
     switch (request.operation) {
     case Operation::CreateIncoming: case Operation::CreateOutgoing:
@@ -995,6 +1185,20 @@ void MessageTransactions::execute(const Request& request, uint8_t* bytes, size_t
     case Operation::ReadConversation: conversation(request, bytes, capacity, result); break;
     case Operation::Trim: trim(request, result); break;
     default: result.error = Error::InvalidRecord;
+    }
+    // Pending cache upkeep. Committed outgoing creates and status updates move one key
+    // in or out; incoming creates, read flags and reads cannot change it; anything else
+    // (or a write that did not commit cleanly) drops it until the next boot scan.
+    switch (request.operation) {
+    case Operation::CreateIncoming: case Operation::MarkRead:
+    case Operation::ReadRecord: case Operation::ReadPending: case Operation::ReadHistoryPage:
+    case Operation::ReadConversationPage: case Operation::ReadConversation: break;
+    case Operation::CreateOutgoing: case Operation::UpdateStatus:
+        if (result.outcome == Outcome::Committed && result.error == Error::None)
+            notePending(result.key, result.newStatus == 1 || result.newStatus == 2);
+        else dropPending();
+        break;
+    default: dropPending();
     }
 }
 

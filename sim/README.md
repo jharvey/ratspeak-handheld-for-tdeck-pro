@@ -118,7 +118,7 @@ buildatspeak-sim.exe --name live --live tcp:127.0.0.1:5577 --script scripts\liv
 sim\run-script.bat sim\scripts\wifi.txt
 ```
 
-runs headless, prints the firmware log, and exits **0 on PASS, 1 on FAIL**. Screenshots go
+runs headless, prints the firmware log, and exits **0 on PASS, 1 on FAIL**. Add a device name and `fresh` (`run-script.bat sim\scripts\power.txt power fresh`) to wipe that device's saved data first; `power.txt` needs it, since Custom keeps the previous run's settings. Screenshots go
 to `build\simdata\<name>\shots\`. One command per line, `#` for comments:
 
 | Command | Meaning |

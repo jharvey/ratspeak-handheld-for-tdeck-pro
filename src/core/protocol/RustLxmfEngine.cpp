@@ -1,5 +1,6 @@
 
 #include "protocol/RustLxmfEngine.h"
+#include "util/EventTrace.h"
 #include "protocol/RustClock.h"
 #include "hal/PeerClock.h"
 #include "protocol/RustEntropy.h"
@@ -323,6 +324,7 @@ void RustLxmfEngine::settleStorage(Ticket ticket) {
             value->error = result.error; value->nextAttempt = _d.clock->nowMs() + TX_RETRY_MS;
         } else if (!result.length) {
             _recovering = false; value->phase = Phase::Settled;
+            evtrace::mark("recovered");   // outgoing recovery done: sends stop being rejected (8)
         } else {
             _recoveryCursor = result.key;
             if (!validHeader) { value->phase = Phase::Settled; }

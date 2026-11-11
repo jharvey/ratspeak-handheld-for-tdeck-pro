@@ -7,6 +7,7 @@
 
 #include "protocol/RustEntropy.h"
 #include "storage/FlashStore.h"
+#include "storage/StorageLease.h"
 
 namespace {
 constexpr size_t IDENTITY_HASH_LEN = 16;
@@ -327,6 +328,12 @@ bool RustRatchetStore::flushPeers(rs_handheld_rns_t* ctx, uint32_t nowMs, bool f
     if (!_flash || !ctx || (_flags & static_cast<uint8_t>(PreparedKind::Peers)))
         return false;
     if (!force && static_cast<uint32_t>(nowMs - _lastPeerSaveMs) < PEER_SAVE_INTERVAL_MS) return false;
+    // The owner only tries the storage lease. While the storage worker holds it (a long
+    // message save) the write cannot start: defer to the next pass without stamping the
+    // attempt or reporting a flash failure. The lease is recursive, so writeAtomic's
+    // own acquire below succeeds.
+    handheld::storage::StorageLease lease;
+    if (!lease.held()) return false;
     // Stamp the attempt: a failed flash device must not be hammered on every loop pass.
     _lastPeerSaveMs = nowMs;
 

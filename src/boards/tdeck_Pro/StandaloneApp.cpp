@@ -4253,7 +4253,7 @@ void powerIdle() {
     const power::Wake w = power::lightSleep(ms, pins, slept);
     {
         static const char* const kWakeTag[] = {"wake-none", "wake-timer", "wake-key", "wake-touch", "wake-lora", "wake-other"};
-        evtrace::mark(w < 6 ? kWakeTag[w] : "wake-?", (int32_t)slept);   // value = ms slept
+        evtrace::markRun(w < 6 ? kWakeTag[w] : "wake-?", (int32_t)slept);   // value = ms slept (summed over a run)
     }
     energyAfterSleep(slept);
     accountedAt = millis();

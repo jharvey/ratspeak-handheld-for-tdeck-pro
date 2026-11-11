@@ -45,6 +45,12 @@ public:
     // run on the boot owner only; ordinary queries pass no heap-owning outputs.
     Error summarize(const uint8_t peer[16], ConversationView&, ConversationSelector&,
         RecentIds* recent = nullptr, size_t recentCapacity = 0, uint32_t* latestRevision = nullptr);
+    // Boot metadata pass (owner, before the worker starts): while open, summarize() also
+    // collects the pending outgoing keys and seeds the duplicate-ID index, so outgoing
+    // recovery and the first incoming save do not re-read every record.
+    void beginStartupScan();
+    void endStartupScan(bool complete);
+    int pendingCached();   // pending outgoing keys held, -1 when the cache is not valid
 
 private:
     struct Summary {
@@ -59,6 +65,38 @@ private:
     Summary* findSummary(const uint8_t peer[16]);
     void rememberSummary(const ConversationView&, const ConversationSelector&, uint32_t revision);
     void checkSummaryMedia();
+    // Incoming message-ID index for the duplicate check on create. Without it every
+    // incoming create loads every earlier incoming record of that peer. Entries are
+    // (first 4 ID bytes << 32 | counter); a prefix hit is confirmed by loading that one
+    // record, so the index only has to be complete, never exact. Built by the first
+    // full scan, appended by later creates, dropped by any other kind of change.
+    // Kept out of line (idIndexState()) so the inline executor stays within its byte budget.
+    struct IdIndex {
+        uint8_t peer[16] = {};
+        std::vector<uint64_t> ids;
+        uint32_t used = 0;
+        bool valid = false, hasRecords = false;
+    };
+    static constexpr size_t IdIndexPeers = 4, IdIndexMax = 1024;   // <= 8 KB per conversation
+    // Sorted (counter, peer) keys of outgoing records with status 1/2, complete only
+    // while valid. Recovery's ReadPending answers from it with one load per query.
+    static constexpr size_t PendingMax = 256;
+    struct IdIndexState {
+        const MessageTransactions* owner = nullptr;
+        IdIndex slots[IdIndexPeers];
+        uint32_t clock = 0;
+        std::vector<RecordKey> pending;
+        bool pendingValid = false, startup = false, pendingOverflow = false;
+    };
+    void dropPending();
+    void notePending(const RecordKey&, bool isPending);
+    IdIndexState& idIndexState();
+    IdIndex* findIdIndex(const uint8_t peer[16], bool touch);
+    void dropIdIndex(const uint8_t* peer);   // nullptr drops every peer
+    void installIdIndex(const uint8_t peer[16], std::vector<uint64_t>&& ids, bool hasRecords);
+    static uint64_t idEntry(const uint8_t id[32], uint32_t counter) {
+        uint32_t prefix; memcpy(&prefix, id, 4); return (uint64_t(prefix) << 32) | counter;
+    }
     struct Medium {
         FlashStore* flash = nullptr;
         SDStore* sd = nullptr;
@@ -80,7 +118,8 @@ private:
     Error load(const RecordKey&, MessageDocument&, StoredRecordHeader&, const Cursor* scan);
     static bool filename(const char*, uint32_t&, bool&);
     Error inspect(const RecordKey&, unsigned medium, const char* suffix, MessageDocument&, StoredRecordHeader&,
-                  bool* parsed = nullptr);
+                  bool* parsed = nullptr,
+                  bool* missing = nullptr);
     Error commit(const RecordKey&, MessageDocument&, bool creating, Result&);
     void create(const Request&, uint8_t*, Result&);
     void update(const Request&, Result&);

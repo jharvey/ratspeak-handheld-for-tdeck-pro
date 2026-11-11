@@ -62,6 +62,34 @@ public:
     // false at the end (err 0) or on failure (err = errno).
     bool nextName(NameScan& scan, char* name, size_t capacity, bool& isDir, int& err);
 
+    // Read-only record file over POSIX stdio. Arduino's open() costs three LittleFS
+    // directory walks (stat, stat, fopen); this is one. Same read/size/position/seek
+    // surface as File for the record parser. Move-only; closes itself.
+    class RecordFile {
+    public:
+        RecordFile() = default;
+        RecordFile(const RecordFile&) = delete;
+        RecordFile& operator=(const RecordFile&) = delete;
+        RecordFile(RecordFile&& other) noexcept : _f(other._f), _size(other._size) { other._f = nullptr; }
+        RecordFile& operator=(RecordFile&& other) noexcept {
+            if (this != &other) { close(); _f = other._f; _size = other._size; other._f = nullptr; }
+            return *this;
+        }
+        ~RecordFile() { close(); }
+        explicit operator bool() const { return _f != nullptr; }
+        size_t read(uint8_t* buffer, size_t length);
+        size_t size() const { return _size; }
+        size_t position() const;
+        bool seek(uint32_t position);
+        void close();
+    private:
+        friend class FlashStore;
+        void* _f = nullptr;
+        size_t _size = 0;
+    };
+    // 0 = open, ENOENT = no such file, other errno = failure.
+    int openRecord(const char* path, RecordFile& file);
+
     // String overloads (avoid .c_str() at every call site)
     bool remove(const String& p) { return remove(p.c_str()); }
     bool removeDir(const String& p) { return removeDir(p.c_str()); }

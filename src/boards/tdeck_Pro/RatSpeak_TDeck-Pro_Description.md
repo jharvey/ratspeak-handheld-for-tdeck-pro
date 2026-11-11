@@ -339,7 +339,8 @@ Example: GPS off but snappy UI → Custom, CPU 240, sleep "never", GPS Off.
   that unit's large store, so with a message every 20 s late replies collided with the
   sender's next transmission. Timed one message at a time (`ev` trace), the duty cycle and
   continuous receive give the same delay (save 14.2 vs 15.5 s), and replies arrive only
-  ~350–400 Hz off frequency, so the 5 ms TCXO start is fine. `rxdc 0` restores continuous
+  ~350–400 Hz off frequency, so the 5 ms TCXO start is fine. After the message-store fixes
+  (§14) the save takes ~1.3 s and send → proof ~7 s. `rxdc 0` restores continuous
   receive.
 - **Touch** is held in reset while the idle splash shows (every mode: key-only wake, no
   accidental touches) and, with "Touch: 1 min after a key" (Saver), except for 60 s after
@@ -510,11 +511,14 @@ in a short window around each check-in:
 - **Check-in:** keep the outbox in NVS (RAM only today), show queued messages in the
   thread, measure RTC drift over a day to size the 1 min lead.
 - **Repeater / propagation-node sync** for Check-in and On demand.
-- **Message store performance:** every file open on LittleFS walks the whole peer
-  directory, so scans grow with the square of the message count. Scans now read names only
-  and skip repeated marker/backup probes (COM5 boot 281 → 129 s; an incoming save, which the
-  delivery proof waits for, 23 → 14 s). Next: one lookup per record open, then a bounded
-  duplicate check or sharded peer directories.
+- **Message store performance:** every LittleFS lookup walks the whole peer directory.
+  Done: scans read names only; a record open is one `fopen` (Arduino's open was three
+  walks) and `exists()` one `stat`; the duplicate check on an incoming save uses an
+  in-RAM message-ID index (seeded at boot, confirmed by loading the one matching record);
+  outgoing recovery reads pending keys collected at boot. COM5 boot 281 → 98 s, outgoing
+  recovery done 0.5 s after the store scan (sends were rejected "8" for 3+ min before);
+  incoming save + proof on COM9 23 → 1.3 s, send → proof 28 → 7 s. Left: the boot scan
+  itself (~160 ms per record, 81 s on COM5) — persist summaries, or shard peer directories.
 - **LoRa receive duty cycle:** done (§6.3), ~13 → 8 mA asleep on the gauge; reply delay is
   the message store, not the radio. Next: the INA226 rig for exact numbers.
 - **Deep sleep "storage" mode:** would need the deep-sleep backports, which break light
@@ -711,7 +715,7 @@ entry mode.
 | Check-in mode: scheduled LoRa windows, outbox, peer clock sync (§6.7) | Works on 2 units; outbox in NVS, queued messages in thread, RTC drift next |
 | Board floor ~1–5 mA with the ESP32 off (§6.6) | Gauge cannot resolve it; INA226 logger software ready (`tools/inalogger`), needs the parts wired; then e-ink controller / keyboard sleep |
 | GPS check of all five units (`tools/gpscheck`): only COM8 has the backup fault; COM3, COM5, COM6, COM9 OK | Done — report to LilyGo next |
-| Message store performance (slow writes and boot with many messages) | In progress: scans read names only; COM5 boot 281 → 129 s, incoming save 23 → 14 s; per-record open still walks the directory — next |
+| Message store performance (slow writes and boot with many messages) | Mostly done: COM5 boot 281 → 98 s, incoming save 23 → 1.3 s, send → proof 28 → 7 s, no "rejected 8" after boot; boot scan (81 s on COM5) next |
 | Idle password + vault unlock | Planned |
 | LoRa RX duty cycle in sleeping modes (§6.3) | Works: 14/14, ~13 → 8 mA asleep (gauge); reply latency same as continuous (the ~1 in 3 retries were a test artifact) |
 | Deep-sleep storage mode, GPS power-save | Planned |
@@ -730,3 +734,4 @@ entry mode.
 | 0.4 | Mode ladder (Ultra-low, On demand, Check-in; Balanced default), energy monitor, Check-in mode and peer clock sync, board floor on four units, roadmap refresh |
 | 0.5 | LoRa receive duty cycle (§6.3, ~13 → 8 mA asleep), back-power rule table (§9), INA226 logger rig software (§6.6) |
 | 0.6 | Duty-cycle reply "misses" explained (store save delay, test timing); message store scans by name (boot 281 → 129 s) |
+| 0.7 | Message store: one-walk record open, duplicate-ID index, pending-outgoing cache (boot 98 s, save 1.3 s, proof 7 s); peer-ratchet save no longer reports a busy store as a flash failure |

@@ -8,6 +8,12 @@
 #include <algorithm>
 #include <dirent.h>
 #include <errno.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#ifdef SIMULATOR
+#include <string>
+namespace sim { std::string vfsHostPath(const char* path); }
+#endif
 
 // Global LittleFS mutex — prevents cross-task corruption (WriteQueue task)
 SemaphoreHandle_t FlashStore::_mutex = nullptr;
@@ -230,6 +236,15 @@ bool FlashStore::exists(const char* path) {
     handheld::storage::StorageLease lease;
     if (!lease.held()) return false;
     if (!_ready) return false;
+    // One stat() is one directory walk; LittleFS.exists() is a full Arduino open
+    // (two or three walks). The mount root may not stat, so it keeps the old path.
+    char full[192];
+    if (path && path[0] == '/' && path[1] &&
+        snprintf(full, sizeof(full), "%s%s", FLASH_BASE_PATH, path) < int(sizeof(full))) {
+        FSLock lock;
+        struct stat st;
+        return ::stat(full, &st) == 0;
+    }
     FSLock lock;
     return LittleFS.exists(path);
 }
@@ -303,6 +318,56 @@ bool FlashStore::nextName(NameScan& scan, char* name, size_t capacity, bool& isD
     snprintf(name, capacity, "%s", entry->d_name);
     isDir = entry->d_type == DT_DIR;
     return true;
+}
+
+void FlashStore::RecordFile::close() {
+    if (!_f) return;
+    FSLock lock;
+    fclose(static_cast<FILE*>(_f));
+    _f = nullptr; _size = 0;
+}
+
+size_t FlashStore::RecordFile::read(uint8_t* buffer, size_t length) {
+    if (!_f || !length) return 0;
+    FSLock lock;
+    return fread(buffer, 1, length, static_cast<FILE*>(_f));
+}
+
+size_t FlashStore::RecordFile::position() const {
+    if (!_f) return 0;
+    FSLock lock;
+    const long at = ftell(static_cast<FILE*>(_f));
+    return at < 0 ? 0 : size_t(at);
+}
+
+bool FlashStore::RecordFile::seek(uint32_t position) {
+    if (!_f) return false;
+    FSLock lock;
+    return fseek(static_cast<FILE*>(_f), long(position), SEEK_SET) == 0;
+}
+
+int FlashStore::openRecord(const char* path, RecordFile& file) {
+    handheld::storage::assertOwner();
+    file.close();
+    handheld::storage::StorageLease lease;
+    if (!lease.held() || !_ready) return EIO;
+    char full[192];
+    if (snprintf(full, sizeof(full), "%s%s", FLASH_BASE_PATH, path) >= int(sizeof(full))) return ENAMETOOLONG;
+    FSLock lock;
+    errno = 0;
+#ifdef SIMULATOR
+    FILE* f = fopen(sim::vfsHostPath(full).c_str(), "rb");
+#else
+    FILE* f = fopen(full, "r");
+#endif
+    if (!f) return errno ? errno : EIO;
+    // Size from the open handle: some esp_littlefs versions implement fstat as a
+    // path stat (another directory walk). A directory never opens as a file.
+    long end = -1;
+    if (fseek(f, 0, SEEK_END) == 0) end = ftell(f);
+    if (end < 0 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return EIO; }
+    file._f = f; file._size = size_t(end);
+    return 0;
 }
 
 File FlashStore::openFile(const char* path, const char* mode) {
