@@ -85,6 +85,27 @@ public:
     void standby();
     void sleep();
 
+    // --- RX duty cycle (off unless enabled) ---
+    // The SX1262 alternates a short listen window with warm sleep (SetRxDutyCycle) and
+    // stays in RX once it hears a preamble, so senders need no change: the windows are
+    // sized from SF/BW so that a preamble of getPreambleLength() symbols always overlaps
+    // at least minSymbols of one window. Applied at the next receive() (or at once when
+    // the radio is listening). While on, the TCXO start-up delay is short instead of the
+    // long default (the shortest of 5/10/20/40 ms that passes a cold-start check; if none
+    // does, duty cycling stays off until begin()).
+    void setRxDutyCycle(bool on, uint8_t minSymbols = 4);
+    bool rxDutyCycleWanted() const { return _dcWanted; }
+    bool rxDutyCycleActive() const { return _dcOn; }
+    bool rxDutyCycleTcxoFailed() const { return _dcTcxoFail; }
+    uint32_t rxDcListenUs() const { return _dcRxUs; }
+    uint32_t rxDcTcxoUs() const { return _dcTcxoUs; }
+    uint32_t rxDcSleepUs() const { return _dcSleepUs; }
+    // Any SPI access while the chip sleeps between windows wakes it into standby; call
+    // this (cheap, no SPI unless needed) before the CPU idles to resume the cycle.
+    void rxHeal();
+    // Bench: program TCXO delay us, cold-start it, return the device errors (bit 5 = XOSC start).
+    uint16_t tcxoProbe(uint32_t us);
+
     // --- Misc ---
     uint8_t random();
 
@@ -113,6 +134,9 @@ private:
     void explicitHeaderMode();
     void implicitHeaderMode();
     void handleLowDataRate();
+    bool dcCompute();
+    void startRxDc();
+    void setTcxoDelay(bool shortDelay);
 
     void handleDio0Rise();
     bool getPacketValidity();
@@ -151,6 +175,19 @@ private:
     bool _sleeping = false;
     uint32_t _txStartMs = 0;
     uint32_t _txBudgetMs = 0;  // elapsed-form (millis()-wrap safe), never an absolute deadline
+    bool _rxArmed = false;      // receive() issued and not left since (standby/TX/sleep)
+    bool _dcWanted = false;     // RX duty cycle requested
+    bool _dcOn = false;         // the radio is in RX duty cycle now
+    bool _dcNeedRearm = false;  // an SPI access woke the chip out of the cycle
+    bool _dcTcxoFail = false;   // TCXO not ready within the short delay
+    bool _tcxoShort = false;    // DIO3 TCXO delay programmed short
+    uint8_t _dcMinSym = 4;
+    uint32_t _dcRxUs = 0, _dcSleepUs = 0;
+    uint32_t _dcTcxoUs = 5000;  // TCXO start-up delay used while duty cycling
+    bool tcxoColdStartOk();
+    uint16_t _dcLastErr = 0;
+    int _lastPktRssi = 0;
+    float _lastPktSnr = 0;
 
     uint8_t _packet[MAX_PACKET_SIZE] = {};
     void (*_onReceive)(int) = nullptr;
@@ -169,4 +206,5 @@ public:
     uint32_t rxOk = 0, rxCrcFail = 0;      // frames read from the FIFO (diagnostics)
     uint32_t txStarted = 0, txDone = 0, txTimeout = 0;   // transmissions (diagnostics)
     uint32_t txAirMs = 0;                                // total airtime started (energy monitor)
+    uint32_t rxDcArms = 0, rxDcHeals = 0;                // duty-cycle starts / resumes after a wake
 };

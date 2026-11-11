@@ -193,6 +193,7 @@ void load(Settings& s) {
     c.checkin   = false;                       // check-in is a mode of its own, not a knob
     s.checkinMin   = p.getUChar("ciMin", 30);
     s.checkinEvery = p.getUShort("ciEvery", 60);
+    s.rxDc         = p.getUChar("rxdc", 4);
     p.end();
     if (s.mode >= MODE_COUNT) s.mode = MODE_BALANCED;
     if (!inSteps(kCpuSteps, c.cpuMhz))      c.cpuMhz = kBalanced.cpuMhz;
@@ -201,6 +202,7 @@ void load(Settings& s) {
     if (c.gps >= GPS_COUNT)                 c.gps = kBalanced.gps;
     if (s.checkinMin > 59)                  s.checkinMin = 30;
     if (!inSteps(kEverySteps, s.checkinEvery)) s.checkinEvery = 60;
+    if (s.rxDc == 1 || s.rxDc > 8)          s.rxDc = 4;
 }
 
 void save(const Settings& s) {
@@ -221,6 +223,7 @@ void save(const Settings& s) {
     p.putBool("cLoraUse", c.loraOnUse);
     p.putUChar("ciMin", s.checkinMin);
     p.putUShort("ciEvery", s.checkinEvery);
+    p.putUChar("rxdc", s.rxDc);
     p.end();
 }
 

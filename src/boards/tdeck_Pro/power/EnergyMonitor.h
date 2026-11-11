@@ -21,6 +21,7 @@ struct State {
     bool     awake;      // CPU running (else light sleep)
     uint16_t cpuMhz;
     bool     loraRx;     // receiver listening
+    uint8_t  loraDcPct;  // RX duty cycle: % of time in a listen window (0 = continuous)
     bool     gps;        // receiver powered
     bool     wifi;       // radio on
     bool     keyLight;

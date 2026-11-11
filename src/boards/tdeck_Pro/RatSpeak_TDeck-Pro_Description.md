@@ -313,6 +313,31 @@ Example: GPS off but snappy UI → Custom, CPU 240, sleep "never", GPS Off.
 - **GPS rail off → UART TX held low:** with the GPS unpowered, an idle-high UART TX line
   back-powered the receiver through its RX pin (+18 mA, the old "27 mA floor"). The UART
   is released and TX driven low whenever the GPS rail is off.
+- **LoRa receive duty cycle** (2026-11-11, every mode except Full): the SX1262 listens
+  in short windows and warm-sleeps in between (`SetRxDutyCycle`). At SF11 / 250 kHz a
+  symbol is 8.2 ms and the RNode-style preamble 18 symbols (147 ms), so a 45 ms window
+  (incl. 5 ms TCXO start-up) every 126 ms always overlaps ≥ 4 preamble symbols; on a
+  preamble the chip stays in RX for the whole frame. **Senders need no change**; the
+  receiver listens ~36 % of the time. Driver details (`core/radio/SX1262.cpp`): windows
+  sized from SF/BW/preamble (RadioLib's formula); TCXO delay cut from 640 ms to the
+  shortest of 5/10/20/40 ms that passes a cold-start check (5 ms on every unit so far),
+  restored when continuous; re-armed after every frame; any SPI access that wakes the
+  sleeping chip is noticed (BUSY high > 3 ms) and the cycle resumed (`rxHeal`, before each
+  CPU sleep); header errors also raise DIO1 so a broken frame re-arms at once.
+  Setting: console `rxdc 0` (continuous) / `rxdc 2..8` (preamble symbols per window,
+  default 4), NVS `rs_power/rxdc`.
+  Measured 2026-11-11, COM9 in Balanced on battery (`bench`), COM5 sending at −9 dBm:
+
+  | COM9 | Gauge, quiet, CPU asleep | 14 messages | Sender frames / message |
+  |---|---|---|---|
+  | continuous RX (`rxdc 0`) | 13–14 mA | 14/14 | 1.00 |
+  | duty cycle (`rxdc 4`), CPU asleep | **8 mA** | 14/14 (one by LXMF retry) | 1.36 |
+  | duty cycle, CPU awake | — | 14/14 | 1.00 |
+
+  The receiver decoded every frame sent (19/19, no CRC errors); the extra frames are
+  retries because the sender missed ~1 in 3 of the sleeping receiver's replies (proofs).
+  Cause not found yet (candidates: TCXO cold-started 5 ms before each reply instead of
+  running; reply timing after a CPU wake). `rxdc 0` restores continuous receive.
 - **Touch** is held in reset while the idle splash shows (every mode: key-only wake, no
   accidental touches) and, with "Touch: 1 min after a key" (Saver), except for 60 s after
   the last key or touch. Saves ~2 mA.
@@ -483,8 +508,9 @@ in a short window around each check-in:
   thread, measure RTC drift over a day to size the 1 min lead.
 - **Repeater / propagation-node sync** for Check-in and On demand.
 - **Message store performance** with many messages (slow writes and boot).
-- **LoRa receive duty cycle** (SX1262 RX duty-cycle with preamble detection) — the
-  receiver costs ~10–20 mA of the sleeping draw; RNode-style 18-symbol preambles allow it.
+- **LoRa receive duty cycle:** done (§6.3), ~13 → 8 mA asleep on the gauge. Next: why a
+  sleeping duty-cycled receiver's replies are missed ~1 in 3 (try a longer TCXO delay /
+  keeping the TCXO on around TX), then the INA226 rig for exact numbers.
 - **Deep sleep "storage" mode:** would need the deep-sleep backports, which break light
   sleep — only one of the two can be linked as things stand.
 - **GPS power-save mode** on the u-blox M10 (cyclic tracking) instead of full off/on.
@@ -540,6 +566,17 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
 | Haptics | DRV2605 | I²C 0x5A |
 | Audio | I²S amp | BCK 7, DOUT 8, WS 9 |
 | SD card | | SPI CS 48 |
+
+**Back-power rule (measured, do not regress).** A signal line held high into a chip whose
+rail is off powers that chip through its I/O protection diodes:
+
+| Line | Chip | Extra sleeping draw | Fix in firmware |
+|---|---|---|---|
+| GPS UART TX (GPIO 43), idle-high | MIA-M10Q, GPS_EN (39) low | **+18 mA** (floor 26 → 8 mA once fixed) | UART ended, TX driven low, RX input whenever the GPS rail is off |
+| LoRa SPI lines driven | SX1262, enable (46) low | **+20 mA** | LoRa "off" = radio sleep; the rail is never cut with SPI driven |
+
+Any new rail switching must park every line into that chip low (or high-Z) first.
+The same note sits next to the GPS pins in `config/BoardConfig.h`.
 
 The battery gauge often stops at ~85% when full (the charger terminates before the
 gauge sees the taper), so each device learns its own full point at a charge-done and
@@ -610,6 +647,7 @@ the device does not light-sleep.
 | `rl` / `rl 0` | dump / clear the RTC power log (survives resets: time, uptime, mV, mA, USB, sleeps; a BOOT line with the reset reason at every boot) |
 | `sleeptest <ms> [guard] [stop]` | diagnostic: one timer-only light sleep; stop bits 1 audio, 2 GPS, 4 LoRa |
 | `msg <32 hex> <text>` / `id` | send a message to a destination hash / print this device's destination |
+| `rxdc 0\|2..8` / `tcxo` | LoRa receive duty cycle off / preamble symbols per window (default 4, saved); bench: TCXO cold-start check at 5–640 ms |
 | `txp <dBm>` | LoRa transmit power, −9…22, saved (bench builds with `RS_BENCH_TX_DBM` default to it) |
 | `epdoff 0\|1` / `audio 0\|1` / `gpio <pin> <0\|1>` | bench switches: e-ink off before sleep, audio path, raw output pin |
 | `energy` / `energy period <s>` / `energy clear` | energy monitor: per-period measured and estimated mAh by part (§6.5) |
@@ -669,7 +707,8 @@ entry mode.
 | GPS check of all five units (`tools/gpscheck`): only COM8 has the backup fault; COM3, COM5, COM6, COM9 OK | Done — report to LilyGo next |
 | Message store performance (slow writes, 2–4 min boot with thousands of messages) | Planned |
 | Idle password + vault unlock | Planned |
-| Deep-sleep storage mode, LoRa RX duty cycle, GPS power-save | Planned |
+| LoRa RX duty cycle in sleeping modes (§6.3) | Works: 14/14, ~13 → 8 mA asleep (gauge); replies from a sleeping receiver need retries ~1 in 3 — next |
+| Deep-sleep storage mode, GPS power-save | Planned |
 | Repeater / propagation-node sync for Check-in and On demand | Planned |
 | Simulator: show power state / sleep % in the side panel | Planned |
 
@@ -683,3 +722,4 @@ entry mode.
 | 0.2 | Energy modes (S.4 Power), renumbered settings (Battery S.5 … Storage S.10, key 0), GPS diagnosis, hardware table, simulator + live mode, console reference, roadmap |
 | 0.3 | Light sleep fixed (deep-sleep backports excluded), sleep blockers for LoRa replies and the idle splash, audio gating, e-ink power-off, sleeping-current and LoRa stress measurements, bench console commands |
 | 0.4 | Mode ladder (Ultra-low, On demand, Check-in; Balanced default), energy monitor, Check-in mode and peer clock sync, board floor on four units, roadmap refresh |
+| 0.5 | LoRa receive duty cycle (§6.3, ~13 → 8 mA asleep), back-power rule table (§9), INA226 logger rig software (§6.6) |

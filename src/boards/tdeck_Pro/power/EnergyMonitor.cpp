@@ -78,10 +78,13 @@ const char* catName(uint8_t cat) {
     return cat < CAT_COUNT ? kNames[cat] : "?";
 }
 
+// Duty cycle: the receiver draws only in its listen windows (sleep ~1 uA in between).
+static float loraShare(const State& s) { return s.loraDcPct ? s.loraDcPct / 100.0f : 1.0f; }
+
 float stateMa(const State& s) {
     float ma = kBoard;
     ma += s.awake ? (s.cpuMhz >= 240 ? kCpu240 : s.cpuMhz >= 160 ? kCpu160 : kCpu80) : kCpuAsleep;
-    if (s.loraRx) ma += s.awake ? kLoraRxAwake : kLoraRxAsleep;
+    if (s.loraRx) ma += (s.awake ? kLoraRxAwake : kLoraRxAsleep) * loraShare(s);
     if (s.gps) ma += kGps;
     if (s.wifi) ma += kWifi;
     if (s.keyLight) ma += kKeyLight;
@@ -109,7 +112,7 @@ void account(uint32_t dtMs, const State& s) {
     if (s.awake) g_acc.awakeMs += dtMs;
     g_acc.mAs[E_BOARD] += kBoard * sec;
     g_acc.mAs[E_CPU] += (s.awake ? (s.cpuMhz >= 240 ? kCpu240 : s.cpuMhz >= 160 ? kCpu160 : kCpu80) : kCpuAsleep) * sec;
-    if (s.loraRx) g_acc.mAs[E_LORA_RX] += (s.awake ? kLoraRxAwake : kLoraRxAsleep) * sec;
+    if (s.loraRx) g_acc.mAs[E_LORA_RX] += (s.awake ? kLoraRxAwake : kLoraRxAsleep) * loraShare(s) * sec;
     if (s.gps) g_acc.mAs[E_GPS] += kGps * sec;
     if (s.wifi) g_acc.mAs[E_WIFI] += kWifi * sec;
     if (s.keyLight) g_acc.mAs[E_KEYS_TOUCH] += kKeyLight * sec;

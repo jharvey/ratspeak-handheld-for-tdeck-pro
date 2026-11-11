@@ -51,6 +51,9 @@ struct Settings {
     bool    customSet = false;    // custom profile has been initialised
     uint8_t checkinMin = 30;      // check-in minute (0-59)
     uint16_t checkinEvery = 60;   // minutes between check-ins (15 ... 1440)
+    // LoRa RX duty cycle in every sleeping mode (not Full): 0 = continuous receive,
+    // else the preamble symbols one listen window must catch (2..8, default 4).
+    uint8_t rxDc      = 4;
     Profile custom    = {};
 };
 

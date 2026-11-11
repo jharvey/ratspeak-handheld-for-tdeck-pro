@@ -44,7 +44,9 @@ Hardware / platform
 - Check-in: measure RTC drift over a day to size the 1 min lead
 - Message store: slow writes + ~2 min boot with thousands of messages (proofs get late)
 - DONE - Energy monitor: hourly per-part estimate vs gauge, trend graph on the e-ink (S.4.9)
-- LoRa RX duty cycle (SX1262 preamble detection) for sleeping modes
+- DONE - LoRa RX duty cycle (SX1262 SetRxDutyCycle) in sleeping modes: ~36 % listening, 14/14
+  (gauge: ~13 -> 8 mA asleep). Open: sleeping receiver's replies missed ~1 in 3 (retries)
+- Measure the duty-cycle saving with the INA226 rig; consider rxdc 3
 - Repeater / propagation-node sync: LoRa off and CPU asleep; the radio wakes only on
   "Check messages" (or at check-in times) to sync from an always-on,
   solar-powered LXMF propagation node (e.g. lxmd + RNode on a Pi), then sleeps again.

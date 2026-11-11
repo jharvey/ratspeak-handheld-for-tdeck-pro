@@ -3942,6 +3942,8 @@ void powerApply(bool force) {
 #if !defined(SIMULATOR)
     if (getCpuFrequencyMhz() != g_pwEff.cpuMhz) setCpuFrequencyMhz(g_pwEff.cpuMhz);
 #endif
+    // LoRa RX duty cycle whenever the profile sleeps (Full keeps continuous receive).
+    if (g_radio) g_radio->setRxDutyCycle(g_pw.rxDc && g_pwEff.wakeSecs != 0, g_pw.rxDc ? g_pw.rxDc : 4);
     if (g_loraIf && g_radio) {
         if (g_pwEff.lora && !g_loraIf->isOnline()) {
             if (g_loraIf->start()) Serial.println("[POWER] LoRa receiver on");
@@ -4118,6 +4120,10 @@ energy::State energyState(bool awake) {
     st.awake = awake;
     st.cpuMhz = g_pwEff.cpuMhz;
     st.loraRx = g_loraIf && g_loraIf->isOnline();
+    if (st.loraRx && g_radio && g_radio->rxDutyCycleActive()) {
+        const uint32_t on = g_radio->rxDcListenUs(), off = g_radio->rxDcSleepUs();
+        st.loraDcPct = (uint8_t)(on + off ? (on * 100 + off + on - 1) / (on + off) : 0);
+    }
     st.gps = g_gpsSerial != nullptr;
     st.wifi = WiFi.getMode() != WIFI_OFF;
     st.keyLight = g_kbOk && g_kb.backlightIsLit();
@@ -4236,6 +4242,7 @@ void powerIdle() {
     pins.touch = (g_idleActive || g_touchGated) ? -1 : TOUCH_INT;   // idle / gated: key-only wake
     pins.lora = (g_radio && g_loraIf && g_loraIf->isOnline()) ? LORA_IRQ : -1;
 
+    if (g_radio && pins.lora >= 0) g_radio->rxHeal();   // resume RX duty cycle after SPI reads
     if (g_epdOffInSleep == 2) g_display.hibernate();     // controller deep sleep; re-init on next refresh
     else if (g_epdOffInSleep) g_display.powerOff();     // panel charge pump off; image stays
     if (accountedAt) g_pwAwakeMs += millis() - accountedAt;
@@ -4273,6 +4280,11 @@ void powerStatus() {
                                (unsigned long)g_radio->rxOk, (unsigned long)g_radio->rxCrcFail,
                                (unsigned long)g_radio->txStarted, (unsigned long)g_radio->txDone,
                                (unsigned long)g_radio->txTimeout);
+    if (g_radio) Serial.printf("[POWER] lora rx %s (setting %u): listen %lu ms / sleep %lu ms, arms=%lu heals=%lu%s\n",
+                               g_radio->rxDutyCycleActive() ? "duty cycle" : "continuous", (unsigned)g_pw.rxDc,
+                               (unsigned long)(g_radio->rxDcListenUs() / 1000), (unsigned long)(g_radio->rxDcSleepUs() / 1000),
+                               (unsigned long)g_radio->rxDcArms, (unsigned long)g_radio->rxDcHeals,
+                               g_radio->rxDutyCycleTcxoFailed() ? " TCXO-FAIL" : "");
     if (g_storeReady) Serial.printf("[POWER] storage writes pending=%d\n", g_msgStore.writeQueue().drainCount());
     Serial.printf("[POWER] messages unread=%d lxmf_queue=%d uptime=%lu s\n",
                   g_storeReady ? g_msgStore.totalUnreadCount() : -1, g_protoReady ? g_proto.lxmfQueuedCount() : -1,
@@ -4489,6 +4501,22 @@ void handleSerialLine(char* p) {
             if (g_radio) g_radio->setTxPower(v);
         }
         Serial.printf("[LORA] tx power %d dBm (saved)\n", loraTxPower());
+    } else if (!strcmp(p, "tcxo") && g_radio) {
+        // Bench: TCXO cold-start check at each delay (bit 0x20 = XOSC start error).
+        static const uint32_t us[] = {5000, 10000, 20000, 40000, 640000};
+        for (uint32_t u : us)
+            Serial.printf("[LORA] tcxo %lu ms: errors 0x%04X%c", (unsigned long)(u / 1000), g_radio->tcxoProbe(u), 10);
+        if (g_loraIf && g_loraIf->isOnline()) g_radio->receive();
+    } else if (!strncmp(p, "rxdc", 4) && (p[4] == ' ' || p[4] == 0)) {
+        // rxdc | rxdc 0 (continuous) | rxdc <2..8> (preamble symbols per listen window)
+        if (p[4]) {
+            int v = atoi(p + 5);
+            g_pw.rxDc = (uint8_t)(v <= 0 ? 0 : (v < 2 ? 2 : (v > 8 ? 8 : v)));
+            power::save(g_pw);
+            powerApply(true);
+        }
+        Serial.printf("[LORA] rx duty cycle setting %u (%s now)\n", (unsigned)g_pw.rxDc,
+                      g_radio && g_radio->rxDutyCycleActive() ? "active" : "not active");
     } else if (!strncmp(p, "usbsleep", 8)) {
         const int secs = p[8] ? atoi(p + 8) : 600;
         g_usbSleepUntil = secs > 0 ? millis() + (uint32_t)(secs > 7200 ? 7200 : secs) * 1000UL : 0;
@@ -4510,7 +4538,7 @@ void handleSerialLine(char* p) {
     } else if (!strcmp(p, "FORMAT")) {
         Serial.println(recoverCorruptLittleFS() ? "[FLASH] formatted - reboot now" : "[FLASH] format failed");
     } else {
-        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> usbsleep<s> txp<dBm> msg id name energy rl sleeptest L FORMAT");
+        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> usbsleep<s> rxdc<0|2-8> txp<dBm> msg id name energy rl sleeptest L FORMAT");
     }
 }
 

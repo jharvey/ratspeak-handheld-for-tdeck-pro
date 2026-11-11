@@ -144,6 +144,11 @@
 #define SD_CS                   48
 
 // --- GPS ---
+// BACK-POWER RULE (measured 2026-11-10): never leave GPS_TX idle-high while GPS_EN is low.
+// The unpowered MIA-M10Q is fed through its RX pin: +18 mA on the sleeping floor (26 -> 8 mA
+// once fixed). With the rail off: end the UART, drive GPS_TX LOW, GPS_RX as input
+// (StandaloneApp.cpp, GPS power-off). Same for every switched rail: LoRa SPI driven into an
+// unpowered SX1262 cost +20 mA. See RatSpeak_TDeck-Pro_Description.md section 9.
 #define GPS_TX                  43
 #define GPS_RX                  44
 #define GPS_PPS                  1

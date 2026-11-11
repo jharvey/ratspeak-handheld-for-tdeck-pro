@@ -13,6 +13,7 @@
 #define OP_STANDBY_6X               0x80
 #define OP_TX_6X                    0x83
 #define OP_RX_6X                    0x82
+#define OP_RX_DUTY_CYCLE_6X         0x94
 #define OP_PA_CONFIG_6X             0x95
 #define OP_SET_IRQ_FLAGS_6X         0x08
 #define OP_CLEAR_IRQ_STATUS_6X      0x02
@@ -51,6 +52,7 @@
 #define IRQ_RX_DONE_MASK_6X             0x02
 #define IRQ_PREAMBLE_DET_MASK_6X        0x04
 #define IRQ_HEADER_DET_MASK_6X          0x10
+#define IRQ_HEADER_ERR_MASK_6X          0x20
 #define IRQ_PAYLOAD_CRC_ERROR_MASK_6X   0x40
 #define IRQ_ALL_MASK_6X                 0b0100001111111111
 

@@ -182,4 +182,16 @@ uint32_t SX1262::getBitrate() {
 void SX1262::onReceive(void (*cb)(int)) { _onReceive = cb; }
 void SX1262::standby() {}
 void SX1262::sleep() {}
+
+// RX duty cycle: the simulated air has no preambles to miss; keep the flags so the
+// app and energy monitor see the same state as on hardware.
+void SX1262::setRxDutyCycle(bool on, uint8_t minSymbols) {
+    _dcWanted = on;
+    _dcMinSym = minSymbols;
+    _dcOn = on;
+    _dcRxUs = on ? 46000 : 0;
+    _dcSleepUs = on ? 82000 : 0;
+}
+void SX1262::rxHeal() {}
+uint16_t SX1262::tcxoProbe(uint32_t) { return 0; }
 uint8_t SX1262::random() { return (uint8_t)(std::random_device{}() & 0xFF); }

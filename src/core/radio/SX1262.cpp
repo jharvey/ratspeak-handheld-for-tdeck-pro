@@ -189,6 +189,15 @@ void SX1262::failIo() {
 
 bool SX1262::waitOnBusy(unsigned long capMs) {
     if (_ioFailed) return false;
+    if (_dcOn && !_sleeping && _busy != -1 && digitalRead(_busy) == HIGH) {
+        // RX duty cycle: BUSY is high while the chip sleeps between windows, which can
+        // last longer than capMs. A command finishing clears BUSY within microseconds;
+        // still high after 3 ms means asleep, so wake it (it lands in STDBY_RC) and
+        // resume the cycle later (rxHeal / next receive()).
+        const uint32_t t0 = micros();
+        while (digitalRead(_busy) == HIGH && uint32_t(micros() - t0) < 3000) {}
+        if (digitalRead(_busy) == HIGH) { _sleeping = true; _dcNeedRearm = true; }
+    }
     if (_sleeping) {
         // SX1261/2 datasheet 8.2.2: NSS wakes the chip; BUSY remains high
         // throughout sleep. Do not clock a command until wake-up completes.
@@ -217,6 +226,7 @@ bool SX1262::waitOnBusy(unsigned long capMs) {
 
 void SX1262::reset() {
     _ioFailed = _sleeping = _txActive = _txFailed = false;
+    _rxArmed = _dcOn = _dcNeedRearm = _dcTcxoFail = _tcxoShort = false;
     _radioOnline = _preinitDone = packetAvailable = false;
     _imageCalBand = IMAGE_CAL_UNSUPPORTED;
     if (_reset != -1) {
@@ -526,6 +536,12 @@ size_t SX1262::write(const uint8_t* buffer, size_t size) {
 }
 
 void SX1262::receive(int size) {
+    bool dc = size <= 0 && _dcWanted && !_dcTcxoFail && dcCompute();
+    if (_tcxo && dc != _tcxoShort) {
+        setTcxoDelay(dc);                        // leaves the chip in STDBY_RC
+        if (dc && !_tcxoShort) dc = false;       // TCXO too slow: stay continuous
+        if (dc) dc = dcCompute();                // listen window includes the chosen delay
+    }
     standby();
     if (!ensureLoRaMode("receive")) return;
 
@@ -543,7 +559,9 @@ void SX1262::receive(int size) {
     // Set up DIO1 interrupt for RX done (enables packetAvailable flag)
     if (!_onReceive) {
         pinMode(_irq, INPUT);
-        uint8_t irqBuf[8] = {0xFF, 0xFF, 0x00, IRQ_RX_DONE_MASK_6X, 0x00, 0x00, 0x00, 0x00};
+        // Duty cycle: header errors on DIO1 too, so a broken frame re-arms at once.
+        const uint8_t dio1 = IRQ_RX_DONE_MASK_6X | (dc ? IRQ_HEADER_ERR_MASK_6X : 0);
+        uint8_t irqBuf[8] = {0xFF, 0xFF, 0x00, dio1, 0x00, 0x00, 0x00, 0x00};
         executeOpcode(OP_SET_IRQ_FLAGS_6X, irqBuf, 8);
         enableDio2RfSwitch();
         attachInterrupt(digitalPinToInterrupt(_irq), onDio0Rise, RISING);
@@ -552,8 +570,145 @@ void SX1262::receive(int size) {
     packetAvailable = false;
 
     if (_rxen != -1) { rxAntEnable(); }
-    uint8_t mode[3] = {0xFF, 0xFF, 0xFF};
-    executeOpcode(OP_RX_6X, mode, 3);
+    if (dc) {
+        startRxDc();
+        _dcOn = !_ioFailed;
+    } else {
+        uint8_t mode[3] = {0xFF, 0xFF, 0xFF};
+        executeOpcode(OP_RX_6X, mode, 3);
+    }
+    _rxArmed = !_ioFailed;
+}
+
+// ---- RX duty cycle ------------------------------------------------------------------
+// Window sizing follows RadioLib's startReceiveDutyCycleAuto: with a sender preamble of
+// P symbols and m symbols needed to detect it, sleep (P - 2m) symbols and listen long
+// enough that any preamble overlaps >= m symbols of a window; on detection the chip
+// extends the window itself and receives the whole frame.
+static constexpr uint32_t kDcTcxoStepsUs[] = {5000, 10000, 20000, 40000};
+
+bool SX1262::dcCompute() {
+    const uint32_t bw = getSignalBandwidth();
+    const uint32_t pre = _preambleLength > 0 ? (uint32_t)_preambleLength : 0;
+    if (!bw || _sf < 5 || _sf > 12 || pre <= 2u * _dcMinSym) return false;
+    const uint32_t symUs = (uint32_t)(((uint64_t)1000000 << _sf) / bw);
+    const uint32_t sleepUs = symUs * (pre - 2u * _dcMinSym);
+    const uint32_t tcxoUs = _tcxo ? _dcTcxoUs : 0;
+    if (sleepUs < tcxoUs + 1016) return false;            // too short to be worth it
+    uint32_t wakeUs = (symUs * (pre + 1) - (sleepUs - 1000)) / 2;
+    if (wakeUs < symUs * (_dcMinSym + 1u)) wakeUs = symUs * (_dcMinSym + 1u);
+    _dcRxUs = wakeUs + tcxoUs;                            // TCXO start-up eats into it
+    _dcSleepUs = sleepUs;
+    return true;
+}
+
+void SX1262::startRxDc() {
+    const uint32_t rx = (uint32_t)((uint64_t)_dcRxUs * 64 / 1000);
+    const uint32_t sl = (uint32_t)((uint64_t)_dcSleepUs * 64 / 1000);
+    uint8_t buf[6] = {uint8_t(rx >> 16), uint8_t(rx >> 8), uint8_t(rx),
+                      uint8_t(sl >> 16), uint8_t(sl >> 8), uint8_t(sl)};
+    executeOpcode(OP_RX_DUTY_CYCLE_6X, buf, 6);
+    _dcNeedRearm = false;
+    ++rxDcArms;
+}
+
+static void tcxoCmd(uint8_t* buf, uint32_t us) {
+    const uint32_t ticks = (uint32_t)((uint64_t)us * 64 / 1000);   // 15.625 us units
+    buf[0] = LORA_TCXO_VOLTAGE;
+    buf[1] = uint8_t(ticks >> 16);
+    buf[2] = uint8_t(ticks >> 8);
+    buf[3] = uint8_t(ticks);
+}
+
+// Cold start: warm sleep (TCXO unpowered), then XOSC standby with the programmed delay.
+bool SX1262::tcxoColdStartOk() {
+    uint8_t warm = 0x04;
+    executeOpcode(OP_SLEEP_6X, &warm, 1);
+    _sleeping = true;
+    delay(5);
+    // Wake into STDBY_RC first (TCXO still unpowered); waking itself can flag errors.
+    uint8_t rc = MODE_STDBY_RC_6X;
+    executeOpcode(OP_STANDBY_6X, &rc, 1);
+    waitOnBusy(100);
+    clearDeviceErrors();
+    standby();                                            // XOSC: TCXO on, programmed delay
+    uint8_t err[2] = {0};
+    executeOpcodeRead(OP_GET_DEVICE_ERRORS_6X, err, 2);
+    _dcLastErr = (uint16_t)(err[0] << 8 | err[1]);
+    clearDeviceErrors();
+    return !_ioFailed && !(err[1] & 0x20);               // XOSC_START_ERR
+}
+
+uint16_t SX1262::tcxoProbe(uint32_t us) {
+    if (!_tcxo || _txActive || _ioFailed) return 0xFFFF;
+    uint8_t rc = MODE_STDBY_RC_6X, buf[4];
+    tcxoCmd(buf, us);
+    executeOpcode(OP_STANDBY_6X, &rc, 1);
+    _rxArmed = _dcOn = false;
+    waitOnBusy(100);
+    executeOpcode(OP_DIO3_TCXO_CTRL_6X, buf, 4);
+    waitOnBusy(100);
+    clearDeviceErrors();
+    tcxoColdStartOk();
+    const uint16_t err = _dcLastErr;
+    _tcxoShort = true;                                    // force a reprogram on the next receive()
+    if (!_dcWanted) setTcxoDelay(false);
+    return err;
+}
+
+void SX1262::setTcxoDelay(bool shortDelay) {
+    uint8_t rc = MODE_STDBY_RC_6X;
+    uint8_t buf[4];
+    executeOpcode(OP_STANDBY_6X, &rc, 1);
+    _rxArmed = _dcOn = false;
+    waitOnBusy(100);
+    if (!shortDelay) {
+        buf[0] = LORA_TCXO_VOLTAGE;
+        constexpr uint32_t ticks = handheld::sx1262_timing::tcxoStartupTicks;
+        buf[1] = uint8_t(ticks >> 16); buf[2] = uint8_t(ticks >> 8); buf[3] = uint8_t(ticks);
+        executeOpcode(OP_DIO3_TCXO_CTRL_6X, buf, 4);
+        waitOnBusy(100);
+        clearDeviceErrors();
+        _tcxoShort = false;
+        return;
+    }
+    for (uint32_t us : kDcTcxoStepsUs) {
+        tcxoCmd(buf, us);
+        executeOpcode(OP_STANDBY_6X, &rc, 1);
+        waitOnBusy(100);
+        executeOpcode(OP_DIO3_TCXO_CTRL_6X, buf, 4);
+        waitOnBusy(100);
+        clearDeviceErrors();
+        if (_ioFailed) return;
+        // Two cold starts in a row must pass, the delay is then used for every window.
+        if (tcxoColdStartOk() && tcxoColdStartOk()) {
+            _dcTcxoUs = us;
+            _tcxoShort = true;
+            Serial.printf("[SX1262] RX duty cycle: TCXO start-up %lu ms\n", (unsigned long)(us / 1000));
+            executeOpcode(OP_STANDBY_6X, &rc, 1);
+            waitOnBusy(100);
+            return;
+        }
+    }
+    Serial.printf("[SX1262] TCXO not ready within 40 ms (errors 0x%04X) - RX duty cycle off%c", _dcLastErr, 10);
+    _dcTcxoFail = true;
+    setTcxoDelay(false);
+}
+
+void SX1262::setRxDutyCycle(bool on, uint8_t minSymbols) {
+    if (minSymbols < 2) minSymbols = 2;
+    if (minSymbols > 16) minSymbols = 16;
+    if (on == _dcWanted && minSymbols == _dcMinSym) return;
+    _dcWanted = on;
+    _dcMinSym = minSymbols;
+    // Listening now: switch at once (a pending packet switches when it is parsed).
+    if (_rxArmed && !_txActive && !_ioFailed && !packetAvailable) receive();
+}
+
+void SX1262::rxHeal() {
+    if (!_dcNeedRearm || !_dcOn || !_rxArmed || _txActive || _ioFailed) return;
+    startRxDc();
+    ++rxDcHeals;
 }
 
 int SX1262::parsePacket(int size) {
@@ -583,6 +738,8 @@ int SX1262::parsePacket(int size) {
     executeOpcodeRead(OP_PACKET_STATUS_6X, pktStat, 3);
     float rssi = -float(pktStat[0]) / 2.0;
     float snr  = float((int8_t)pktStat[1]) * 0.25;
+    _lastPktRssi = -int(pktStat[0]) / 2;
+    _lastPktSnr = snr;
 
     bool crcOk = getPacketValidity();
     if (crcOk) rxOk++; else rxCrcFail++;
@@ -605,6 +762,9 @@ int SX1262::parsePacket(int size) {
         return 0;
     }
 
+    // Duty cycle: after RxDone the chip falls back to standby, while continuous RX keeps
+    // listening on its own. The frame is in _packet[] and its status cached, so re-arm.
+    if (_dcWanted || _dcOn) receive();
     return pktLen;
 }
 
@@ -653,16 +813,19 @@ void SX1262::readBytes(uint8_t* buffer, size_t size) {
 int IRAM_ATTR SX1262::currentRssi() {
     uint8_t byte = 0;
     executeOpcodeRead(OP_CURRENT_RSSI_6X, &byte, 1);
+    rxHeal();
     return -(int(byte)) / 2;
 }
 
 int SX1262::packetRssi() {
+    if (_dcWanted || _dcOn) return _lastPktRssi;
     uint8_t buf[3] = {0};
     executeOpcodeRead(OP_PACKET_STATUS_6X, buf, 3);
     return -buf[0] / 2;
 }
 
 float SX1262::packetSnr() {
+    if (_dcWanted || _dcOn) return _lastPktSnr;
     uint8_t buf[3] = {0};
     executeOpcodeRead(OP_PACKET_STATUS_6X, buf, 3);
     return float((int8_t)buf[1]) * 0.25;
@@ -671,6 +834,7 @@ float SX1262::packetSnr() {
 uint16_t SX1262::getDeviceErrors() {
     uint8_t buf[2] = {0};
     executeOpcodeRead(OP_GET_DEVICE_ERRORS_6X, buf, 2);
+    rxHeal();
     return (uint16_t)(buf[0] << 8 | buf[1]);
 }
 
@@ -682,6 +846,7 @@ void SX1262::clearDeviceErrors() {
 uint8_t SX1262::getStatus() {
     uint8_t buf[1] = {0};
     executeOpcodeRead(OP_STATUS_6X, buf, 1);
+    rxHeal();
     return buf[0];
 }
 
@@ -694,6 +859,7 @@ uint8_t SX1262::getPacketType() {
 uint16_t SX1262::getIrqFlags() {
     uint8_t buf[2] = {0};
     executeOpcodeRead(OP_GET_IRQ_STATUS_6X, buf, 2);
+    rxHeal();
     return (uint16_t)(buf[0] << 8 | buf[1]);
 }
 
@@ -850,6 +1016,7 @@ void SX1262::handleLowDataRate() {
 void SX1262::standby() {
     uint8_t byte = _tcxo ? MODE_STDBY_XOSC_6X : MODE_STDBY_RC_6X;
     executeOpcode(OP_STANDBY_6X, &byte, 1);
+    _rxArmed = _dcOn = false;              // standby ends RX and any duty cycle
     waitOnBusy(_tcxo ? handheld::sx1262_timing::tcxoTimeoutMs() : 100);
 }
 
@@ -908,4 +1075,8 @@ void SX1262::onReceive(void(*callback)(int)) {
     }
 }
 
-uint8_t SX1262::random() { return readRegister(REG_RANDOM_GEN_6X); }
+uint8_t SX1262::random() {
+    const uint8_t v = readRegister(REG_RANDOM_GEN_6X);
+    rxHeal();
+    return v;
+}
