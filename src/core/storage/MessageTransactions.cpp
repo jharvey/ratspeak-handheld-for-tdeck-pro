@@ -2,6 +2,8 @@
 #include "config/Config.h"
 #include <Preferences.h>
 #include <limits>
+#include <string>
+#include <vector>
 #include <cerrno>
 #include <esp_timer.h>
 #include "util/DisplayText.h"
@@ -148,10 +150,22 @@ void MessageTransactions::directory(const uint8_t peer[16], unsigned which, char
     snprintf(output, 96, "%s/%s", which == 0 ? PATH_MESSAGES : SD_PATH_MESSAGES, hex);
 }
 
-void MessageTransactions::path(const RecordKey& key, unsigned which, char output[128], const char* suffix) const {
+void MessageTransactions::recordDirectory(const RecordKey& key, unsigned which, char output[128]) const {
     char parent[96]; directory(key.peer, which, parent);
+    if (which == 0) snprintf(output, 128, "%s/%08lu", parent, (unsigned long)(key.counter / ShardSpan));
+    else snprintf(output, 128, "%s", parent);
+}
+
+void MessageTransactions::path(const RecordKey& key, unsigned which, char output[128], const char* suffix) const {
+    char parent[128]; recordDirectory(key, which, parent);
     snprintf(output, 128, "%s/%013lu_%c.json%s", parent, (unsigned long)key.counter,
              key.incoming ? 'i' : 'o', suffix);
+}
+
+bool MessageTransactions::shardName(const char* name) {
+    if (!name || strnlen(name, 9) != 8) return false;
+    for (unsigned i = 0; i < 8; ++i) if (name[i] < '0' || name[i] > '9') return false;
+    return true;
 }
 
 bool MessageTransactions::filename(const char* name, uint32_t& counter, bool& incoming) {
@@ -238,35 +252,52 @@ bool MessageTransactions::nextFlashRecord(Cursor& cursor, RecordKey& key) {
 bool MessageTransactions::nextFlashRecordTimed(Cursor& cursor, RecordKey& key) {
     auto toError = [](int e) { return e == ENOMEM ? Error::Allocation : Error::Read; };
     char name[64]; bool isDir = false; int failure = 0;
+    char parent[96]; directory(cursor.peer, 0, parent);
     if (!cursor.opened) {
         if (!_flash || !_flash->isReady()) { cursor.error = Error::Unavailable; return false; }
-        char parent[96]; directory(cursor.peer, 0, parent);
-        failure = _flash->openNames(parent, cursor.names);
+        failure = _flash->openNames(parent, cursor.shards);
         // A missing peer directory is normal (same rule as openDirectory()).
         if (failure && failure != ENOENT) { cursor.error = toError(failure); return false; }
-        cursor.opened = true; cursor.flashBackups = false;
+        cursor.opened = true; cursor.flashBackups = false; cursor.shardName[0] = 0;
+    }
+    for (;;) {
         if (cursor.names) {
-            // Names-only pre-pass: does any record here have a .bak copy?
             while (_flash->nextName(cursor.names, name, sizeof(name), isDir, failure)) {
                 uint32_t counter = 0; bool incoming = false;
-                if (!isDir && strlen(name) == 24 && filename(name, counter, incoming)) { cursor.flashBackups = true; break; }
+                if (isDir || !filename(name, counter, incoming) || counter <= cursor.cutoff) continue;
+                if (counter / ShardSpan != strtoul(cursor.shardName, nullptr, 10)) continue;  // misplaced
+                key = {}; memcpy(key.peer, cursor.peer, 16); key.counter = counter; key.incoming = incoming;
+                // A key is visited once even when it has a backup.
+                if (strlen(name) == 24) { char primary[128]; path(key, 0, primary); if (_flash->exists(primary)) continue; }
+                return true;
             }
             if (failure) { cursor.error = toError(failure); return false; }
-            failure = _flash->openNames(parent, cursor.names);
-            if (failure && failure != ENOENT) { cursor.error = toError(failure); return false; }
+            cursor.names.close();
         }
+        // Next shard folder in the peer folder.
+        if (!cursor.shards) return false;
+        bool found = false;
+        while (_flash->nextName(cursor.shards, name, sizeof(name), isDir, failure)) {
+            if (isDir && shardName(name)) { found = true; break; }
+        }
+        if (failure) { cursor.error = toError(failure); return false; }
+        if (!found) { cursor.shards.close(); return false; }
+        memcpy(cursor.shardName, name, 9);
+        char shard[128]; snprintf(shard, sizeof(shard), "%s/%s", parent, name);
+        failure = _flash->openNames(shard, cursor.names);
+        if (failure == ENOENT) continue;
+        if (failure) { cursor.error = toError(failure); return false; }
+        // Names-only pre-pass: does any record in this shard have a .bak copy?
+        bool backups = false;
+        while (_flash->nextName(cursor.names, name, sizeof(name), isDir, failure)) {
+            uint32_t counter = 0; bool incoming = false;
+            if (!isDir && strlen(name) == 24 && filename(name, counter, incoming)) { backups = true; break; }
+        }
+        if (failure) { cursor.error = toError(failure); return false; }
+        cursor.flashBackups |= backups;
+        failure = _flash->openNames(shard, cursor.names);
+        if (failure && failure != ENOENT) { cursor.error = toError(failure); return false; }
     }
-    while (_flash->nextName(cursor.names, name, sizeof(name), isDir, failure)) {
-        uint32_t counter = 0; bool incoming = false;
-        if (isDir || !filename(name, counter, incoming) || counter <= cursor.cutoff) continue;
-        key = {}; memcpy(key.peer, cursor.peer, 16); key.counter = counter; key.incoming = incoming;
-        // A key is visited once even when it has a backup.
-        if (strlen(name) == 24) { char primary[128]; path(key, 0, primary); if (_flash->exists(primary)) continue; }
-        return true;
-    }
-    if (failure) { cursor.error = toError(failure); return false; }
-    cursor.names.close();
-    return false;
 }
 
 bool MessageTransactions::nextRecord(Cursor& cursor, RecordKey& key) {
@@ -449,6 +480,97 @@ Error MessageTransactions::load(const RecordKey& key, MessageDocument& document,
     return inspect(key, unsigned(best) / 2, best % 2 ? ".bak" : "", document, header);
 }
 
+bool MessageTransactions::eraseFlashPeer(const char* parent) {
+    // Collect names first: removing entries while readdir walks a folder is not portable.
+    auto list = [this](const char* folder, std::vector<std::string>& files, std::vector<std::string>* dirs) {
+        FlashStore::NameScan scan; char name[64]; bool isDir = false; int failure = 0;
+        const int opened = _flash->openNames(folder, scan);
+        if (opened == ENOENT) return true;
+        if (opened) return false;
+        while (_flash->nextName(scan, name, sizeof(name), isDir, failure)) {
+            if (isDir) { if (dirs) dirs->push_back(name); continue; }
+            files.push_back(name);
+        }
+        return failure == 0;
+    };
+    std::vector<std::string> files, shards;
+    if (!list(parent, files, &shards)) return false;
+    bool erased = true;
+    for (const auto& file : files) {
+        if (strncmp(file.c_str(), ".deleted", 8) == 0) continue;
+        erased = _flash->remove((std::string(parent) + "/" + file).c_str()) && erased;
+    }
+    for (const auto& shard : shards) {
+        if (!shardName(shard.c_str())) continue;
+        const std::string folder = std::string(parent) + "/" + shard;
+        std::vector<std::string> inner;
+        if (!list(folder.c_str(), inner, nullptr)) { erased = false; continue; }
+        for (const auto& file : inner) erased = _flash->remove((folder + "/" + file).c_str()) && erased;
+        erased = _flash->removeDir(folder.c_str()) && erased;
+    }
+    return erased;
+}
+
+bool MessageTransactions::migrateFlatLayout() {
+    // Firmware before 0.8 kept every flash record directly in /messages/<peer>/.
+    // Move each record into its shard. A rename is atomic, so a power cut leaves
+    // every record in exactly one place; the next boot finishes the rest.
+    FlashStore::NameScan peers; char name[64]; bool isDir = false; int failure = 0;
+    if (_flash->openNames(PATH_MESSAGES, peers)) return true;   // nothing there yet
+    std::vector<std::string> peerNames;
+    while (_flash->nextName(peers, name, sizeof(name), isDir, failure)) {
+        uint8_t peer[16];
+        if (isDir && strnlen(name, 33) == 32 && decodeHex(name, 32, peer, 16)) peerNames.push_back(name);
+    }
+    peers.close();
+    if (failure) return false;
+    const unsigned long started = millis(); unsigned moved = 0, dropped = 0;
+    for (const auto& peerHex : peerNames) {
+        char parent[96]; snprintf(parent, sizeof(parent), "%s/%s", PATH_MESSAGES, peerHex.c_str());
+        std::vector<std::string> flat;
+        {
+            FlashStore::NameScan scan;
+            if (_flash->openNames(parent, scan)) continue;
+            while (_flash->nextName(scan, name, sizeof(name), isDir, failure)) {
+                if (isDir) continue;
+                const size_t length = strnlen(name, 25);
+                if ((length == 20 || length == 24) && name[13] == '_') flat.push_back(name);
+            }
+            if (failure) return false;
+        }
+        if (flat.empty()) continue;
+        uint8_t peer[16]; decodeHex(peerHex.c_str(), 32, peer, 16);
+        for (const auto& file : flat) {
+            char from[128]; snprintf(from, sizeof(from), "%s/%s", parent, file.c_str());
+            const bool temporary = file.size() == 24 && !memcmp(file.c_str() + 20, ".tmp", 4);
+            char canonical[21]; memcpy(canonical, file.c_str(), 20); canonical[20] = 0;
+            uint32_t counter = 0; bool incoming = false;
+            if (temporary || !filename(file.c_str(), counter, incoming)) {
+                // Interrupted-write leftovers (.tmp) are what trim() would delete anyway.
+                if (temporary && filename(canonical, counter, incoming)) { _flash->remove(from); ++dropped; }
+                continue;
+            }
+            RecordKey key; memcpy(key.peer, peer, 16); key.counter = counter; key.incoming = incoming;
+            char shard[128], to[128]; recordDirectory(key, 0, shard);
+            path(key, 0, to, file.size() == 24 ? ".bak" : "");
+            if (!_flash->ensureDir(shard)) return false;
+            if (_flash->exists(to)) {
+                // Both copies exist only if a newer firmware wrote the shard copy
+                // first; that one is current. Keep the flat one as a .old remnant.
+                char old[128]; snprintf(old, sizeof(old), "%s.old", from);
+                _flash->rename(from, old); continue;
+            }
+            if (!_flash->rename(from, to)) return false;
+            ++moved;
+            if ((moved & 31) == 0) yield();
+        }
+    }
+    if (moved || dropped)
+        Serial.printf("[MSGSTORE] moved %u records into shard folders (%u leftovers dropped) in %lu ms\n",
+                      moved, dropped, millis() - started);
+    return true;
+}
+
 bool MessageTransactions::begin(FlashStore* flash, SDStore* sd, bool external, bool deferred) {
     handheld::assertDeviceOwner();
     _flash = flash; _sd = sd; _external = external; _deferred = deferred;
@@ -457,6 +579,7 @@ bool MessageTransactions::begin(FlashStore* flash, SDStore* sd, bool external, b
     StorageLease lease;
     if (!lease.held() || !_flash || !_flash->isReady() || !_flash->ensureDir(PATH_MESSAGES)) return false;
     if (_external && _sd && _sd->isReady()) _sd->ensureDir(SD_PATH_MESSAGES);
+    if (!migrateFlatLayout()) return false;
     return initializeCounter();
 }
 
@@ -510,7 +633,7 @@ Error MessageTransactions::commit(const RecordKey& key, MessageDocument& documen
         outcome.attempted = true;
         if (!store.isReady()) { outcome.error = Error::Unavailable; continue; }
         try {
-            char parent[96], filePath[128]; directory(key.peer, which, parent); path(key, which, filePath);
+            char parent[128], filePath[128]; recordDirectory(key, which, parent); path(key, which, filePath);
             char backup[128]; path(key, which, backup, ".bak");
             if (!creating && retainedCopy(key, which, document)) outcome.error = Error::None;
             else if (!creating && (_blockedMedia & (1u << which))) outcome.error = Error::InvalidRecord;
@@ -701,6 +824,10 @@ void MessageTransactions::erase(const Request& request, Result& result) {
         outcome.attempted = true;
         if (!store.isReady()) { outcome.error = Error::Unavailable; continue; }
         directory(request.key.peer, which, parent);
+        if (which == 0) {
+            if (!eraseFlashPeer(parent)) outcome.error = Error::Write;
+            continue;
+        }
         File dir;
         const Error opened = openDirectory(which, parent, false, dir);
         bool erased = opened == Error::None;
@@ -1053,8 +1180,19 @@ void MessageTransactions::trim(const Request& request, Result& result) {
     MessageDocument document;
     // Recover only known atomic artifacts. A valid backup newer than its
     // primary, or the only valid copy, must remain available to load().
+    std::vector<std::string> folders;
     for (unsigned which = 0; which < 2; ++which) {
-        auto store = medium(which); char parent[96]; directory(request.key.peer, which, parent);
+      auto store = medium(which); char peerDir[96]; directory(request.key.peer, which, peerDir);
+      folders.clear();
+      if (which == 1) folders.emplace_back(peerDir);
+      else if (_flash && _flash->isReady()) {
+        FlashStore::NameScan scan; char name[64]; bool isDir = false; int failure = 0;
+        if (_flash->openNames(peerDir, scan) == 0)
+            while (_flash->nextName(scan, name, sizeof(name), isDir, failure))
+                if (isDir && shardName(name)) folders.push_back(std::string(peerDir) + "/" + name);
+      }
+      for (const auto& folder : folders) {
+        const char* parent = folder.c_str();
         File dir = store.open(parent);
         if (!dir || !dir.isDirectory()) continue;
         for (File entry = dir.openNextFile(); entry; entry = dir.openNextFile()) {
@@ -1079,6 +1217,7 @@ void MessageTransactions::trim(const Request& request, Result& result) {
                 inspect(key, which, ".bak", document, backupHeader) == Error::None &&
                 primaryHeader.revision >= backupHeader.revision) store.remove(backup);
         }
+      }
     }
     // Space is bounded while persistent history is not. Each pass selects at
     // most eight oldest removable keys; queued/sending/unconfirmed bodies stay
@@ -1127,6 +1266,9 @@ void MessageTransactions::trim(const Request& request, Result& result) {
                 char primary[128], backup[128]; path(key, unsigned(target), primary); path(key, unsigned(target), backup, ".bak");
                 const bool primaryRemoved = !store.exists(primary) || store.remove(primary);
                 const bool backupRemoved = !store.exists(backup) || store.remove(backup);
+                if (target == 0 && primaryRemoved && backupRemoved) {
+                    char shard[128]; recordDirectory(key, 0, shard); _flash->removeDir(shard);  // only if empty
+                }
                 if (primaryRemoved && backupRemoved) { progress = true; ++result.total; result.outcome = Outcome::Committed; }
                 else result.error = Error::Write;
                 if (target == 1 && primaryRemoved && backupRemoved) {
@@ -1136,6 +1278,7 @@ void MessageTransactions::trim(const Request& request, Result& result) {
                     const bool removedPrimary = !flash.exists(primary) || flash.remove(primary);
                     const bool removedBackup = !flash.exists(backup) || flash.remove(backup);
                     if (!removedPrimary || !removedBackup) { result.error = Error::Write; continue; }
+                    char shard[128]; recordDirectory(key, 0, shard); _flash->removeDir(shard);  // only if empty
                 }
                 const bool cacheOnly = target == 0 && _external && _sd && _sd->isReady();
                 if (primaryRemoved && backupRemoved && !cacheOnly) {

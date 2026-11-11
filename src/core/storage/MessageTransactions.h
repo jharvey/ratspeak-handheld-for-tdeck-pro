@@ -23,12 +23,14 @@ public:
 
     struct Cursor {
         File directory;
-        FlashStore::NameScan names;   // flash records: name-only scan (no per-file open)
+        FlashStore::NameScan names;   // flash records: name-only scan of one shard folder
+        FlashStore::NameScan shards;  // flash peer folder: its shard subfolders
+        char shardName[12] = {};      // shard folder currently open in `names`
         uint8_t peer[16] = {};
         uint32_t cutoff = 0;
         uint8_t medium = 0;
         bool opened = false;
-        bool flashBackups = false;    // the flash peer directory holds a .bak record copy
+        bool flashBackups = false;    // a shard visited so far holds a .bak record copy (sticky)
         Error error = Error::None;
     };
     // Caller holds an explicit filesystem lease. No retained filename vector.
@@ -114,6 +116,14 @@ private:
     Medium medium(unsigned index) const { return index == 0 ? Medium{_flash, nullptr} : Medium{nullptr, _external ? _sd : nullptr}; }
     void path(const RecordKey&, unsigned medium, char output[128], const char* suffix = "") const;
     void directory(const uint8_t peer[16], unsigned medium, char output[96]) const;
+    // Flash records live in /messages/<peer>/<shard>/, shard = counter / ShardSpan
+    // (8 decimal digits, so names sort by counter). LittleFS walks a whole folder
+    // for every lookup; small folders keep each open cheap. SD keeps the flat layout.
+    static constexpr uint32_t ShardSpan = 64;
+    static bool shardName(const char* name);
+    void recordDirectory(const RecordKey&, unsigned medium, char output[128]) const;
+    bool migrateFlatLayout();          // older flat flash folders -> shards (idempotent)
+    bool eraseFlashPeer(const char* parent);   // every record + shard; keeps .deleted markers
     Error openDirectory(unsigned medium, const char* path, bool required, File&);
     bool nextFlashRecord(Cursor&, RecordKey&);
     bool nextFlashRecordTimed(Cursor&, RecordKey&);

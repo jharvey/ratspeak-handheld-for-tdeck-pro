@@ -4576,6 +4576,40 @@ void handleSerialLine(char* p) {
         Serial.printf("[CLK] %lld.%06ld up %lu ms; clock %s\n", (long long)tv.tv_sec, (long)tv.tv_usec,
                       (unsigned long)millis(),
                       handheld::ClockConfidence::synchronized() ? "synced" : g_clkLastAt ? "from peer" : "own");
+    } else if (!strncmp(p, "rmconv", 6) && (p[6] == 0 || p[6] == ' ')) {
+        // Bench: "rmconv" lists conversations; "rmconv <peer>" deletes one; "rmconv all" deletes all.
+        using namespace handheld::storage;
+        std::vector<std::string> peers;
+        if (p[6] == ' ' && strlen(p + 7) == 32) peers.push_back(p + 7);
+        else {
+            auto sub = g_msgStore.requestConversationPage({}, false, ConversationOrder::Recent,
+                                                          ConversationDirection::After, (uint8_t)MAX_ROWS);
+            MessageStore::Result res;
+            ConversationSelector sel[MAX_ROWS];
+            size_t n = 0;
+            if (sub.accepted() && waitResult(sub.ticket, res) && res.outcome == Outcome::Committed &&
+                res.error == Error::None) {
+                n = std::min(res.length / sizeof(ConversationSelector), (size_t)MAX_ROWS);
+                if (!g_msgStore.readPayload(sub.ticket, sel, n * sizeof(ConversationSelector))) n = 0;
+            }
+            if (sub.accepted()) g_msgStore.releaseResult(sub.ticket);
+            for (size_t i = 0; i < n; i++) {
+                char hex[33];
+                hashToHex(sel[i].cursor.peer, hex);
+                Serial.printf("[MSG] conversation %s\n", hex);
+                peers.push_back(hex);
+            }
+            if (strcmp(p + 6, " all")) peers.clear();   // plain "rmconv": list only
+        }
+        for (const auto& peer : peers) {
+            auto rq = g_msgStore.requestDelete(peer);
+            MessageStore::Result r;
+            const bool done = rq.accepted() && waitResult(rq.ticket, r, 6000);   // up to 30 s
+            if (rq.accepted()) g_msgStore.releaseResult(rq.ticket);
+            Serial.printf("[MSG] rmconv %s: %s\n", peer.c_str(),
+                          done && r.outcome == Outcome::Committed ? "deleted" : "failed");
+        }
+        requestRedraw();
     } else if (!strcmp(p, "id")) {
         Serial.printf("[ID] dest=%s name=%s\n", g_destHex, g_selfName);
     } else if (!strncmp(p, "txp", 3) && (p[3] == ' ' || p[3] == 0)) {

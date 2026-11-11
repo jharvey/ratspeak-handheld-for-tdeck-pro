@@ -23,13 +23,15 @@ START HERE (handoff 2026-11-11)
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
-- NEXT: (0) message store boot scan: still loads every record, 81 s of COM5's 98 s boot. The
-  boot line "[MSGSTORE] flash reads" splits it: ~209 ms per fopen (78 s), parse 0.2 s, listing
-  3 s. The cost is the LittleFS lookup in a ~500-entry peer directory (prebuilt core: 128 B
-  reads, 512 B cache - not tunable). A boot cache alone is not enough (the runtime summary
-  cache holds 4 peers and a status change rescans a peer). Real fix = shard peer directories
-  (e.g. /messages/<peer>/<counter/64>/...): ON-DISK FORMAT CHANGE, older firmware would not see
-  moved records -> needs the user's go-ahead before building.
+- Message store layout (flash, since 2026-11-11): /messages/<peer>/<counter/64, 8 digits>/
+  <counter 13 digits>_<i|o>.json[.bak]; .deleted markers stay in /messages/<peer>/. SD keeps
+  the flat layout. Reason: every LittleFS lookup walks the whole folder (~209 ms per fopen in a
+  ~500-entry folder; prebuilt core: 128 B reads, 512 B cache, not tunable). Boot moves any
+  flat flash record into its shard (MessageTransactions::migrateFlatLayout, rename = atomic,
+  idempotent). Older firmware cannot read the new layout - fine, the user said all earlier
+  builds are prototypes. Measured: fopen 209 -> 36 ms; COM5 boot 98 -> 29.8 s (376 records),
+  COM9 19.4 s (103); one-time move 146 s on COM5. Both units' messages were then deleted
+  (rmconv all, user OK'd): empty-store boot ~15 s.
   DONE 2026-11-11: record open = one fopen (FlashStore::openRecord), exists() = one stat,
   duplicate-ID index (MessageTransactions IdIndex, 4 peers x 1024, seeded at boot), pending
   outgoing keys collected at boot (ReadPending = one load) -> save+proof 1.3 s, send->proof 7 s,
@@ -40,7 +42,10 @@ START HERE (handoff 2026-11-11)
   wiring, then: log.py COMx --zero; sleepcheck floor d 8 300; log.py --out floor.csv. (2) e-ink
   controller deep-sleep command, keyboard controller sleep; (3) DONE 2026-11-11 check-in
   outbox in NVS (rs_outbox/q), queued messages shown in the thread ("queued HH:MM"), flushed
-  when leaving Check-in, rejected 1/8 kept for retry; (4) RTC drift over a day.
+  when leaving Check-in, rejected 1/8 kept for retry; (4) DONE 2026-11-11 RTC drift, 3.1 h
+  vs the PC clock (clk + rtcdrift log, Theil-Sen fit, late USB replies after a wake dropped):
+  COM9 asleep on battery +33 ppm (+2.9 s/day), COM5 awake on USB +28 ppm (+2.4 s/day), fit rms
+  < 4 ms. The 1 min lead covers ~20 days without a peer clock sync. PC clock not verified.
 Long-term backlog → Future_steps.txt (do not strip future items from there).
 User/developer guide → src/boards/tdeck_Pro/RatSpeak_TDeck-Pro_Description.md
 Simulator → sim/README.md
@@ -149,6 +154,7 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
   rxdc 0|2..8     LoRa RX duty cycle off / symbols per window   tcxo  TCXO check
   dctcxo <ms>     bench: lowest duty-cycle TCXO delay (0 auto)  fe 0|1  log RX freq error (Hz)
   clk             bench: wall clock to the us + uptime + clock source (RTC drift logging)
+  rmconv [<peer>|all]  bench: list conversations / delete one / delete all (with messages)
   ev | ev 0       bench: RAM event trace (rx/tx/offer/txdone/msg-in, dup-scan/dup-idx/commit ms,
                   recovered; timer wakes fold into one mark per run; survives light sleep)
   rl / rl 0       RTC power log (survives resets; BOOT lines with reset reason)

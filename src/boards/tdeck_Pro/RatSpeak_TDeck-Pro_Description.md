@@ -511,8 +511,9 @@ in a short window around each check-in:
 - **Board floor** (§6.6): INA226 logger in series with the battery (the gauge cannot
   resolve it), then e-ink controller and keyboard.
 - **Check-in:** done: the outbox is kept in NVS (survives a reset), queued messages show in
-  the thread as "queued HH:MM", and leaving Check-in mode sends them at once. Next: measure
-  RTC drift over a day to size the 1 min lead.
+  the thread as "queued HH:MM", and leaving Check-in mode sends them at once. RTC drift
+  measured over 3 h against the PC clock: +33 ppm asleep on battery, +28 ppm awake
+  (about 2.9 s a day), so the 1 min lead covers about 20 days without a clock sync.
 - **Repeater / propagation-node sync** for Check-in and On demand.
 - **Message store performance:** every LittleFS lookup walks the whole peer directory.
   Done: scans read names only; a record open is one `fopen` (Arduino's open was three
@@ -520,10 +521,10 @@ in a short window around each check-in:
   in-RAM message-ID index (seeded at boot, confirmed by loading the one matching record);
   outgoing recovery reads pending keys collected at boot. COM5 boot 281 → 98 s, outgoing
   recovery done 0.5 s after the store scan (sends were rejected "8" for 3+ min before);
-  incoming save + proof on COM9 23 → 1.3 s, send → proof 28 → 7 s. Left: the boot scan
-  itself (81 s on COM5): each LittleFS `fopen` in a ~500-entry directory costs ~209 ms
-  (parsing is 0.2 s in total), so the fix is sharding peer directories — an on-disk format
-  change, pending a decision.
+  incoming save + proof on COM9 23 → 1.3 s, send → proof 28 → 7 s. Then the peer folders
+  were split into subfolders of 64 records (`/messages/<peer>/<counter/64>/`; the old flat
+  layout is moved at boot, older firmware can no longer read it): a record `fopen` went
+  from ~209 ms to 36 ms, COM5 boot 98 → 29.8 s, send → proof 4–5 s.
 - **LoRa receive duty cycle:** done (§6.3), ~13 → 8 mA asleep on the gauge; reply delay is
   the message store, not the radio. Next: the INA226 rig for exact numbers.
 - **Deep sleep "storage" mode:** would need the deep-sleep backports, which break light
@@ -717,7 +718,7 @@ entry mode.
 | Sleeping draw 27 → ~7 mA (GPS UART back-power fix, touch gating) | Done |
 | LoRa delivery to a sleeping receiver | Done: 14/14 at 1.3 frames/message |
 | Energy monitor: per-part estimate vs gauge, hourly trend graph (§6.5) | Works |
-| Check-in mode: scheduled LoRa windows, outbox, peer clock sync (§6.7) | Works on 2 units; outbox in NVS and queued messages in the thread done; RTC drift next |
+| Check-in mode: scheduled LoRa windows, outbox, peer clock sync (§6.7) | Works on 2 units; outbox in NVS, queued messages in the thread; RTC drift ~2.9 s/day |
 | Board floor ~1–5 mA with the ESP32 off (§6.6) | Gauge cannot resolve it; INA226 logger software ready (`tools/inalogger`), needs the parts wired; then e-ink controller / keyboard sleep |
 | GPS check of all five units (`tools/gpscheck`): only COM8 has the backup fault; COM3, COM5, COM6, COM9 OK | Done — report to LilyGo next |
 | Message store performance (slow writes and boot with many messages) | Mostly done: COM5 boot 281 → 98 s, incoming save 23 → 1.3 s, send → proof 28 → 7 s, no "rejected 8" after boot; boot scan (81 s on COM5) next |
@@ -740,3 +741,4 @@ entry mode.
 | 0.5 | LoRa receive duty cycle (§6.3, ~13 → 8 mA asleep), back-power rule table (§9), INA226 logger rig software (§6.6) |
 | 0.6 | Duty-cycle reply "misses" explained (store save delay, test timing); message store scans by name (boot 281 → 129 s) |
 | 0.7 | Message store: one-walk record open, duplicate-ID index, pending-outgoing cache (boot 98 s, save 1.3 s, proof 7 s); peer-ratchet save no longer reports a busy store as a flash failure; Check-in outbox in NVS, queued messages in the thread |
+| 0.8 | Message folders split into 64-record subfolders, moved at boot (COM5 boot 98 → 29.8 s, proof 4–5 s); RTC drift measured (~2.9 s/day); `rmconv` bench command |
