@@ -673,6 +673,7 @@ void SX1262::setTcxoDelay(bool shortDelay) {
         return;
     }
     for (uint32_t us : kDcTcxoStepsUs) {
+        if (us < _dcTcxoMinUs) continue;
         tcxoCmd(buf, us);
         executeOpcode(OP_STANDBY_6X, &rc, 1);
         waitOnBusy(100);
@@ -693,6 +694,12 @@ void SX1262::setTcxoDelay(bool shortDelay) {
     Serial.printf("[SX1262] TCXO not ready within 40 ms (errors 0x%04X) - RX duty cycle off%c", _dcLastErr, 10);
     _dcTcxoFail = true;
     setTcxoDelay(false);
+}
+
+void SX1262::setDcTcxoMinUs(uint32_t us) {
+    _dcTcxoMinUs = us;
+    _dcTcxoFail = false;
+    if (_tcxo && _tcxoShort && !_txActive && !_ioFailed) setTcxoDelay(false);   // next receive() re-picks
 }
 
 void SX1262::setRxDutyCycle(bool on, uint8_t minSymbols) {
@@ -740,6 +747,14 @@ int SX1262::parsePacket(int size) {
     float snr  = float((int8_t)pktStat[1]) * 0.25;
     _lastPktRssi = -int(pktStat[0]) / 2;
     _lastPktSnr = snr;
+    {   // Frequency error estimate (RadioLib getFrequencyError): 20-bit signed at 0x076B.
+        uint32_t efe = ((uint32_t)(readRegister(0x076B) & 0x0F) << 16) |
+                       ((uint32_t)readRegister(0x076C) << 8) | readRegister(0x076D);
+        int32_t v = (efe & 0x80000) ? (int32_t)(efe | 0xFFF00000u) : (int32_t)efe;
+        const float bwKhz = getSignalBandwidth() / 1000.0f;
+        lastFreqErrHz = bwKhz > 0 ? (int32_t)(1.55f * v / (1600.0f / bwKhz)) : 0;
+        if (logFreqErr) Serial.printf("[SX1262] RX freq error %ld Hz (%d bytes, SNR %.1f)%c", (long)lastFreqErrHz, pktLen, snr, 10);
+    }
 
     bool crcOk = getPacketValidity();
     if (crcOk) rxOk++; else rxCrcFail++;

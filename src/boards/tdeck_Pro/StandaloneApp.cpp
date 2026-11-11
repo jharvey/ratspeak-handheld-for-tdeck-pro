@@ -4507,6 +4507,18 @@ void handleSerialLine(char* p) {
         for (uint32_t u : us)
             Serial.printf("[LORA] tcxo %lu ms: errors 0x%04X%c", (unsigned long)(u / 1000), g_radio->tcxoProbe(u), 10);
         if (g_loraIf && g_loraIf->isOnline()) g_radio->receive();
+    } else if (!strncmp(p, "dctcxo", 6) && g_radio) {
+        // Bench: dctcxo <ms> = lowest TCXO delay the RX duty cycle may use (0 = auto); not saved.
+        if (p[6]) {
+            g_radio->setDcTcxoMinUs((uint32_t)atoi(p + 6) * 1000UL);
+            if (g_loraIf && g_loraIf->isOnline()) g_radio->receive();
+        }
+        Serial.printf("[LORA] duty-cycle tcxo %lu ms (%s)%c", (unsigned long)(g_radio->rxDcTcxoUs() / 1000),
+                      g_radio->rxDutyCycleActive() ? "active" : "not active", 10);
+    } else if (!strncmp(p, "fe", 2) && (p[2] == ' ' || p[2] == 0) && g_radio) {
+        // Bench: fe 1 = log each received frame's frequency error; not saved.
+        if (p[2]) g_radio->logFreqErr = atoi(p + 3) != 0;
+        Serial.printf("[LORA] freq error log %s (last %ld Hz)%c", g_radio->logFreqErr ? "on" : "off", (long)g_radio->lastFreqErrHz, 10);
     } else if (!strncmp(p, "rxdc", 4) && (p[4] == ' ' || p[4] == 0)) {
         // rxdc | rxdc 0 (continuous) | rxdc <2..8> (preamble symbols per listen window)
         if (p[4]) {
@@ -4538,7 +4550,7 @@ void handleSerialLine(char* p) {
     } else if (!strcmp(p, "FORMAT")) {
         Serial.println(recoverCorruptLittleFS() ? "[FLASH] formatted - reboot now" : "[FLASH] format failed");
     } else {
-        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> usbsleep<s> rxdc<0|2-8> txp<dBm> msg id name energy rl sleeptest L FORMAT");
+        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> usbsleep<s> rxdc<0|2-8> dctcxo<ms> fe<0|1> txp<dBm> msg id name energy rl sleeptest L FORMAT");
     }
 }
 

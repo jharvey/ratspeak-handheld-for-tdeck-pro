@@ -23,7 +23,7 @@ START HERE (handoff 2026-11-11)
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
-- NEXT: (0) duty-cycle reply misses (above, LoRa RX duty cycle). (1) measure the board floor - the BQ27220 gauge cannot resolve 0-5 mA. Rig
+- NEXT: (0) duty-cycle reply misses (above, LoRa RX duty cycle; COM9 sent every proof, COM5 missed them. Built, not yet run on hardware: dctcxo 10/20 on the receiver + fe 1 on the sender, 14 msgs each). (1) measure the board floor - the BQ27220 gauge cannot resolve 0-5 mA. Rig
   software is READY: tools/inalogger (ESP32-C3 SuperMini + INA226 firmware, log.py PC
   logger; builds, selftest passes, not run on hardware). Needs the parts (README) and
   wiring, then: log.py COMx --zero; sleepcheck floor d 8 300; log.py --out floor.csv. (2) e-ink
@@ -134,6 +134,7 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
                   watchdog off, ≤4 h, auto-off <3.55 V; boot always restores)
   usbsleep <s>    allow light sleep with a USB host (console drops while asleep)
   rxdc 0|2..8     LoRa RX duty cycle off / symbols per window   tcxo  TCXO check
+  dctcxo <ms>     bench: lowest duty-cycle TCXO delay (0 auto)  fe 0|1  log RX freq error (Hz)
   rl / rl 0       RTC power log (survives resets; BOOT lines with reset reason)
   txp <dBm>       saved LoRa TX power (-9..22)   msg <hex32> <text>   id   name
   sleeptest, epdoff, audio, gpio <pin> <0|1>, iomux   diagnostics

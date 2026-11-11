@@ -105,6 +105,11 @@ public:
     void rxHeal();
     // Bench: program TCXO delay us, cold-start it, return the device errors (bit 5 = XOSC start).
     uint16_t tcxoProbe(uint32_t us);
+    // Bench: lowest TCXO delay the duty cycle may pick (0 = auto, tries 5 ms first).
+    void setDcTcxoMinUs(uint32_t us);
+    // Bench: log the frequency error of each received frame (Hz, SX126x estimate).
+    bool logFreqErr = false;
+    int32_t lastFreqErrHz = 0;
 
     // --- Misc ---
     uint8_t random();
@@ -183,6 +188,7 @@ private:
     bool _tcxoShort = false;    // DIO3 TCXO delay programmed short
     uint8_t _dcMinSym = 4;
     uint32_t _dcRxUs = 0, _dcSleepUs = 0;
+    uint32_t _dcTcxoMinUs = 0;  // bench floor for the duty-cycle TCXO delay
     uint32_t _dcTcxoUs = 5000;  // TCXO start-up delay used while duty cycling
     bool tcxoColdStartOk();
     uint16_t _dcLastErr = 0;

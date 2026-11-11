@@ -194,4 +194,5 @@ void SX1262::setRxDutyCycle(bool on, uint8_t minSymbols) {
 }
 void SX1262::rxHeal() {}
 uint16_t SX1262::tcxoProbe(uint32_t) { return 0; }
+void SX1262::setDcTcxoMinUs(uint32_t us) { _dcTcxoMinUs = us; }
 uint8_t SX1262::random() { return (uint8_t)(std::random_device{}() & 0xFF); }
