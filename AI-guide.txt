@@ -17,12 +17,15 @@ START HERE (handoff 2026-11-11)
   tools/check_build_identity.py, putty*.log, backups/, Video/, lilygo-tdeck-pro/,
   sdkconfig.defaults, .trunk/, .vscode extras, e16/e17.patch, AI-guide-E23-snippet.txt.
 - Disk C: is ~99% full (20 GB free). Do not delete user media (baseball videos).
-- COM6 (2026-11-11) reported usb=0 and ~-60 mA although plugged in; bench5 cycle did
-  not help -> likely its port/cable/hub; the user is swapping it. Recheck with "pw".
-- NEXT: (1) measure the board floor - the BQ27220 gauge cannot resolve 0-5 mA (COM9
-  reads 0 mA while its voltage falls). Plan: INA226 board in the battery + lead (cut
-  JST-PH extension, IN+ battery, IN- board), read over I2C by a small ESP32 (e.g.
-  ESP32-C3 SuperMini) logging to the PC; write that firmware + a PC logger. (2) e-ink
+- COM6 (…17:CC): 2026-11-11 usb=0 / ~-60 mA while plugged in; after the port/cable swap it
+  does not enumerate at all (Windows lists it only as a non-present device). Likely flat
+  battery or charge-only cable: check its screen, try a known data cable, then "pw".
+- Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
+  the unit (COM3/COM5 then need ~4 min to boot).
+- NEXT: (1) measure the board floor - the BQ27220 gauge cannot resolve 0-5 mA. Rig
+  software is READY: tools/inalogger (ESP32-C3 SuperMini + INA226 firmware, log.py PC
+  logger; builds, selftest passes, not run on hardware). Needs the parts (README) and
+  wiring, then: log.py COMx --zero; sleepcheck floor d 8 300; log.py --out floor.csv. (2) e-ink
   controller deep-sleep command, keyboard controller sleep; (3) check-in outbox in
   NVS + queued messages in the thread view; (4) RTC drift over a day.
 Long-term backlog → Future_steps.txt (do not strip future items from there).
@@ -64,6 +67,8 @@ ENERGY MODES  (Settings S.4 Power; power/PowerModes.*, power/LightSleep.*)
 [DONE] Touch held in reset on the idle splash (all modes) and, in Saver, except 1 min
        after a key. Presets run 240 MHz while awake (sleep dominates the average).
 [IN-PROGRESS] ~4 mA board floor (ESP32 in deep sleep, tools/sleepcheck floor d 14).
+       Meter rig: tools/inalogger (INA226 in the battery + lead, C3 logger, log.py) -
+       software done, awaiting hardware.
        4 units, floor d 8 300: COM6/COM3 3-4 mA, COM5 4-6, COM9 (SD card) reads 0 mA
        while its voltage falls like the others -> the BQ27220 cannot resolve currents
        this small (deadband / offset). Real floor ~1-5 mA; needs a meter. BHI260 boot

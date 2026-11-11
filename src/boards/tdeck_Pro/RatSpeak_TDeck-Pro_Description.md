@@ -439,6 +439,11 @@ Four units, `floor d 8 300` (8 × 5 min deep sleep), 2026-11-10:
   over USB; continuous logging shows wake bursts and the true average. A USB inline
   tester does not work for this (it measures the charger input). Then the e-ink
   controller's deep-sleep command and the keyboard controller.
+- **Rig software (2026-11-11):** `tools/inalogger` has the logger firmware (ESP32-C3
+  SuperMini, SDA 8 / SCL 9, INA226 auto-detected at 0x40–0x4F, ~1.2 ms conversions) and
+  `log.py` (CSV, window/overall average, charge, wake bursts, battery-life estimate,
+  `--zero` offset, `--summary` of a saved CSV). Wiring and use: `tools/inalogger/README.md`.
+  Built and self-tested; not yet run on hardware.
 
 ### 6.7 Check-in mode (S.4.6, S.4.8)
 
@@ -660,7 +665,7 @@ entry mode.
 | LoRa delivery to a sleeping receiver | Done: 14/14 at 1.3 frames/message |
 | Energy monitor: per-part estimate vs gauge, hourly trend graph (§6.5) | Works |
 | Check-in mode: scheduled LoRa windows, outbox, peer clock sync (§6.7) | Works on 2 units; outbox in NVS, queued messages in thread, RTC drift next |
-| Board floor ~1–5 mA with the ESP32 off (§6.6) | Gauge cannot resolve it; INA226 logger rig next, then e-ink controller / keyboard sleep |
+| Board floor ~1–5 mA with the ESP32 off (§6.6) | Gauge cannot resolve it; INA226 logger software ready (`tools/inalogger`), needs the parts wired; then e-ink controller / keyboard sleep |
 | GPS check of all five units (`tools/gpscheck`): only COM8 has the backup fault; COM3, COM5, COM6, COM9 OK | Done — report to LilyGo next |
 | Message store performance (slow writes, 2–4 min boot with thousands of messages) | Planned |
 | Idle password + vault unlock | Planned |

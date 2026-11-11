@@ -36,7 +36,8 @@ Hardware / platform
   Measure with an INA226 board (~$5, 0.1 ohm shunt, ~25 uA steps) in the battery + lead
   (cut JST-PH 2.0 mm extension) read by a small ESP32 logging to the PC; then e-ink
   controller deep sleep, keyboard controller sleep
-- Bench: firmware + PC script for the INA226 logger (continuous mA log, wake bursts, average)
+- DONE (software) - Bench: INA226 logger firmware + PC script, tools/inalogger (continuous
+  mA log, wake bursts, average, life estimate); run it once the parts are wired
 - DONE - Mode ladder: Full / Balanced (default) / Saver / Ultra-low / On demand / Check-in / Custom
 - DONE - Check-in mode: LoRa only in scheduled windows (e.g. hourly at :30), outbox, peer clock sync
 - Check-in: keep the outbox in NVS (lost on reset today); show queued messages in the thread
