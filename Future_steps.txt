@@ -32,7 +32,11 @@ Hardware / platform
 - DONE - Energy modes Full / Balanced / Saver / Custom; audio + e-ink power gating; GPS visits
 - DONE - Reliable LoRa delivery to a sleeping receiver (14/14, 1.3 frames/msg)
 - DONE - Sleep floor 27 -> 7 mA (GPS UART back-power fix, touch gating); Saver ~7 mA asleep
-- IN PROGRESS - Remaining ~4 mA board floor (ESP32 off): gauge cannot resolve it (COM9 reads 0 mA); measure with a meter, then e-ink controller, keyboard
+- IN PROGRESS - Remaining ~1-5 mA board floor (ESP32 off): gauge cannot resolve it (COM9 reads 0 mA).
+  Measure with an INA226 board (~$5, 0.1 ohm shunt, ~25 uA steps) in the battery + lead
+  (cut JST-PH 2.0 mm extension) read by a small ESP32 logging to the PC; then e-ink
+  controller deep sleep, keyboard controller sleep
+- Bench: firmware + PC script for the INA226 logger (continuous mA log, wake bursts, average)
 - DONE - Mode ladder: Full / Balanced (default) / Saver / Ultra-low / On demand / Check-in / Custom
 - DONE - Check-in mode: LoRa only in scheduled windows (e.g. hourly at :30), outbox, peer clock sync
 - Check-in: keep the outbox in NVS (lost on reset today); show queued messages in the thread

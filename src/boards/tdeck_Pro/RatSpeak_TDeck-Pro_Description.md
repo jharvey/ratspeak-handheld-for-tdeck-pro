@@ -433,8 +433,12 @@ Four units, `floor d 8 300` (8 × 5 min deep sleep), 2026-11-10:
 - Neither a loaded BHI260 (COM3/COM5) nor the SD card (COM9) stands out.
 - With 30 s cycles (a full reboot each) the reading also showed a burst every ~7.5 min
   (7–8 mA, −13 mV dip, slow decay); with 5 min cycles it mostly disappears.
-- **Next:** meter measurement; then the e-ink controller's deep-sleep command and the
-  keyboard controller.
+- **Next: measure it properly.** Planned rig (~$15): an INA226 current-sensor board
+  (0.1 Ω shunt, ~25 µA steps) in the battery's + lead via a cut JST-PH 2.0 mm extension
+  (IN+ battery side, IN− board side), read over I2C by a small ESP32 that logs to the PC
+  over USB; continuous logging shows wake bursts and the true average. A USB inline
+  tester does not work for this (it measures the charger input). Then the e-ink
+  controller's deep-sleep command and the keyboard controller.
 
 ### 6.7 Check-in mode (S.4.6, S.4.8)
 
@@ -468,8 +472,11 @@ in a short window around each check-in:
 
 ### 6.8 Next
 
-- **Board floor** (§6.6): measure with a meter (the gauge cannot resolve it), then e-ink
-  controller and keyboard.
+- **Board floor** (§6.6): INA226 logger in series with the battery (the gauge cannot
+  resolve it), then e-ink controller and keyboard.
+- **Check-in:** keep the outbox in NVS (RAM only today), show queued messages in the
+  thread, measure RTC drift over a day to size the 1 min lead.
+- **Repeater / propagation-node sync** for Check-in and On demand.
 - **Message store performance** with many messages (slow writes and boot).
 - **LoRa receive duty cycle** (SX1262 RX duty-cycle with preamble detection) — the
   receiver costs ~10–20 mA of the sleeping draw; RNode-style 18-symbol preambles allow it.
@@ -647,13 +654,18 @@ entry mode.
 
 | Item | Status |
 |---|---|
-| Energy modes Full / Balanced / Saver / Custom, GPS schedule, audio gating | Works |
+| Energy modes Full / Balanced (default) / Saver / Ultra-low / On demand / Check-in / Custom (§6.1) | Works |
 | Light sleep | Works: deep-sleep backports excluded from the T-Deck Pro build (§6.3) |
-| Power numbers in §6.4 | Awake + sleeping measured on USB; unplugged run next |
-| LoRa delivery to a sleeping receiver | 55% on a crowded bench; control run in progress |
+| Sleeping draw 27 → ~7 mA (GPS UART back-power fix, touch gating) | Done |
+| LoRa delivery to a sleeping receiver | Done: 14/14 at 1.3 frames/message |
+| Energy monitor: per-part estimate vs gauge, hourly trend graph (§6.5) | Works |
+| Check-in mode: scheduled LoRa windows, outbox, peer clock sync (§6.7) | Works on 2 units; outbox in NVS, queued messages in thread, RTC drift next |
+| Board floor ~1–5 mA with the ESP32 off (§6.6) | Gauge cannot resolve it; INA226 logger rig next, then e-ink controller / keyboard sleep |
 | GPS check of all five units (`tools/gpscheck`): only COM8 has the backup fault; COM3, COM5, COM6, COM9 OK | Done — report to LilyGo next |
+| Message store performance (slow writes, 2–4 min boot with thousands of messages) | Planned |
 | Idle password + vault unlock | Planned |
 | Deep-sleep storage mode, LoRa RX duty cycle, GPS power-save | Planned |
+| Repeater / propagation-node sync for Check-in and On demand | Planned |
 | Simulator: show power state / sleep % in the side panel | Planned |
 
 ---
@@ -665,3 +677,4 @@ entry mode.
 | 0.1 | Initial draft: how-to, device figures, settings tree, LoRa-first bring-up |
 | 0.2 | Energy modes (S.4 Power), renumbered settings (Battery S.5 … Storage S.10, key 0), GPS diagnosis, hardware table, simulator + live mode, console reference, roadmap |
 | 0.3 | Light sleep fixed (deep-sleep backports excluded), sleep blockers for LoRa replies and the idle splash, audio gating, e-ink power-off, sleeping-current and LoRa stress measurements, bench console commands |
+| 0.4 | Mode ladder (Ultra-low, On demand, Check-in; Balanced default), energy monitor, Check-in mode and peer clock sync, board floor on four units, roadmap refresh |

@@ -17,8 +17,12 @@ START HERE (handoff 2026-11-11)
   tools/check_build_identity.py, putty*.log, backups/, Video/, lilygo-tdeck-pro/,
   sdkconfig.defaults, .trunk/, .vscode extras, e16/e17.patch, AI-guide-E23-snippet.txt.
 - Disk C: is ~99% full (20 GB free). Do not delete user media (baseball videos).
-- NEXT: (1) measure the board floor with a USB/series meter - the BQ27220 gauge
-  cannot resolve 0-5 mA (COM9 reads 0 mA while its voltage falls); (2) e-ink
+- COM6 (2026-11-11) reported usb=0 and ~-60 mA although plugged in; bench5 cycle did
+  not help -> likely its port/cable/hub; the user is swapping it. Recheck with "pw".
+- NEXT: (1) measure the board floor - the BQ27220 gauge cannot resolve 0-5 mA (COM9
+  reads 0 mA while its voltage falls). Plan: INA226 board in the battery + lead (cut
+  JST-PH extension, IN+ battery, IN- board), read over I2C by a small ESP32 (e.g.
+  ESP32-C3 SuperMini) logging to the PC; write that firmware + a PC logger. (2) e-ink
   controller deep-sleep command, keyboard controller sleep; (3) check-in outbox in
   NVS + queued messages in the thread view; (4) RTC drift over a day.
 Long-term backlog → Future_steps.txt (do not strip future items from there).
