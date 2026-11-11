@@ -133,6 +133,7 @@ to `build\simdata\<name>\shots\`. One command per line, `#` for comments:
 | `devshot <file.png>` | save the whole device drawing |
 | `winshot <file.png>` | save the whole window (device + side panel, incl. the power line) |
 | `battery <0-100>` / `usb on\|off` / `full on\|off` / `gps on\|off` | change the hardware |
+| `sd in\|out` | insert / remove the SD card (seen at the firmware's next mount); `--nosd` (or `set SIM_ARGS=--nosd` for run-script) starts with the slot empty |
 | `serial <text>` | send a line to the firmware's USB serial |
 | `expect <ms> <text>` | wait until the serial log shows `<text>`, else FAIL |
 | `quit` | stop with PASS |

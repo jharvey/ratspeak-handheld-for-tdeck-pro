@@ -565,6 +565,35 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
 - **Bench check of any unit:** `tools/gpscheck/check.sh COMx` flashes a tiny check app
   (LoRa kept off), listens 70 s and prints `VERDICT: GPS OK / GPS FAULT / NO DATA`.
 - Console: `g` (status dump), `gp` (power-cycle the receiver), `gr` (hardware reset).
+- The position (GGA / RMC with a fix) is kept for the map (§8.1).
+
+### 8.1 Offline map — Works (simulator; COM9 with test tiles on its card, 2026-11-11)
+
+Press **L** on any list screen. The map is centred on the GPS fix, or on the saved
+position (S.2) without one, and follows it. **W A S D** pan half a screen, **Z / X**
+zoom, **C** or **Enter** returns to your position, **Shift (^)** closes. The header shows
+zoom, centre and the scale-bar length; `*` means the view is not following you. Missing
+tiles show a dotted grid and "no tiles".
+
+Tiles are 256×256 Web-Mercator tiles, converted on a PC to a 1-bit format
+(`.rmt`, 8 KB each) by `tools/maptiles/make_tiles.py` (from an MBTiles export or a tile
+server whose terms allow offline use; `--test` makes labelled grid tiles) and copied to
+`<SD>/ratdeckpro/maps/<z>/<x>/<y>.rmt`. See `tools/maptiles/README.md`. Six tiles stay in
+PSRAM; the SD card is mounted on the first map visit. On COM9: 4 tiles load and the
+frame builds in 156 ms; the e-ink full refresh is 1.1 s. Console: `map`,
+`map <lat> <lon> [zoom]`, `map close`; bench `maptest <lat> <lon>` writes 18 grid test
+tiles (z14–15) to the card (2.1 s).
+
+### 8.2 SD card
+
+The card shares the SPI bus with the e-ink panel and the radio; all three take the shared
+SPI lock (the e-ink driver since 2026-11-11), so the storage worker can use the card while
+the screen refreshes. S.10 → SD card: status, mount, eject, battery log file, and
+**Message archive** (off by default): with it on and a card present at boot, every new
+message is also written to `/ratdeckpro/messages/` on the card (a backup copy; flash keeps
+everything as before). On COM9 a save with the archive takes 0.2–0.45 s and boot is
+unchanged (~15 s). The old mount at 20 MHz failed on COM9's 32 GB card; SDStore mounts
+at 4 MHz, then 16 MHz. Console `sdinfo`, `sdarc 0|1` (applies at the next boot).
 
 ---
 
@@ -670,6 +699,10 @@ the device does not light-sleep.
 | `checkin [min [every]]` / `epoch [secs]` | check-in schedule and status; show / set the clock (§6.7) |
 | `pm0`…`pm6` | Full, Balanced, Saver, Ultra-low, On demand, Check-in, Custom |
 | `L` | toggle key backlight |
+| `map` / `map <lat> <lon> [zoom]` / `map close` | offline map: open (GPS / saved position) or at a place, status (§8.1) |
+| `sdinfo` / `sdarc 0\|1` | SD card status / message archive setting (next boot, §8.2) |
+| `maptest <lat> <lon>` | bench: write 18 grid test tiles around a point to the card |
+| `rmconv [<peer>\|all]` | bench: list conversations / delete one / delete all |
 | `FORMAT` | erase and format the data partition |
 | `@…` | screen-mirror protocol (§10.3) |
 
@@ -721,7 +754,9 @@ entry mode.
 | Check-in mode: scheduled LoRa windows, outbox, peer clock sync (§6.7) | Works on 2 units; outbox in NVS, queued messages in the thread; RTC drift ~2.9 s/day |
 | Board floor ~1–5 mA with the ESP32 off (§6.6) | Gauge cannot resolve it; INA226 logger software ready (`tools/inalogger`), needs the parts wired; then e-ink controller / keyboard sleep |
 | GPS check of all five units (`tools/gpscheck`): only COM8 has the backup fault; COM3, COM5, COM6, COM9 OK | Done — report to LilyGo next |
-| Message store performance (slow writes and boot with many messages) | Mostly done: COM5 boot 281 → 98 s, incoming save 23 → 1.3 s, send → proof 28 → 7 s, no "rejected 8" after boot; boot scan (81 s on COM5) next |
+| Message store performance (slow writes and boot with many messages) | Done: COM5 boot 281 → 29.8 s (sharded folders), incoming save 23 → 1.3 s, send → proof 28 → 4–5 s |
+| Offline map from SD tiles (§8.1) | Works: simulator and COM9 (test tiles); PC tile tool done; real map tiles need an MBTiles export or an allowed tile server |
+| SD card: shared-bus locking, message archive (§8.2) | Works on COM9 (32 GB card); archive off by default; flash trim still not wired |
 | Idle password + vault unlock | Planned |
 | LoRa RX duty cycle in sleeping modes (§6.3) | Works: 14/14, ~13 → 8 mA asleep (gauge); reply latency same as continuous (the ~1 in 3 retries were a test artifact) |
 | Deep-sleep storage mode, GPS power-save | Planned |
@@ -742,3 +777,4 @@ entry mode.
 | 0.6 | Duty-cycle reply "misses" explained (store save delay, test timing); message store scans by name (boot 281 → 129 s) |
 | 0.7 | Message store: one-walk record open, duplicate-ID index, pending-outgoing cache (boot 98 s, save 1.3 s, proof 7 s); peer-ratchet save no longer reports a busy store as a flash failure; Check-in outbox in NVS, queued messages in the thread |
 | 0.8 | Message folders split into 64-record subfolders, moved at boot (COM5 boot 98 → 29.8 s, proof 4–5 s); RTC drift measured (~2.9 s/day); `rmconv` bench command |
+| 0.9 | Offline map (§8.1) with the PC tile tool; SD card on the shared SPI lock, optional message archive (§8.2); GPS position parsed |

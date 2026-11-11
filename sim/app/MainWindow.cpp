@@ -310,6 +310,10 @@ void MainWindow::stepScript() {
         if (cmd == "usb") { usb_->setChecked(arg == "on"); next(20); return; }
         if (cmd == "full") { full_->setChecked(arg == "on"); next(20); return; }
         if (cmd == "gps") { gps_->setChecked(arg == "on"); next(20); return; }
+        if (cmd == "sd") {   // "sd in" / "sd out": the firmware sees it at its next mount
+            std::lock_guard<std::mutex> l(sim::hw().mu); sim::hw().sdPresent = arg == "in";
+            next(20); return;
+        }
         if (cmd == "serial") {
             const std::string s = arg.toStdString() + "\n";
             std::lock_guard<std::mutex> l(sim::hw().mu);

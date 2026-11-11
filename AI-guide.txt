@@ -23,6 +23,16 @@ START HERE (handoff 2026-11-11)
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
+- SD + maps (2026-11-11): MapView.cpp/.h (tiles /ratdeckpro/maps/z/x/y.rmt, 1-bit, made by
+  tools/maptiles/make_tiles.py; --test = grid tiles). DisplayEink now takes SharedSPILock
+  (SD shares the bus with e-ink + radio; the radio already locked). SD message archive
+  (NVS rs_sd/msgs, default OFF) = MessageStore external mode: new messages mirrored to the
+  card. NOTE: nothing on this board calls MessageStore::requestTrim, so flash is never
+  trimmed (the core's Trim reloads every record of a conversation per pass - too slow to
+  run per save). COM9 has a 32 GB card (the OLD sdMount at 20 MHz failed on it; SDStore
+  mounts fine): map shown from maptest tiles, archive saves 0.2-0.45 s, boot unchanged.
+  COM9 left with archive OFF and test tiles on the card. COM5 card status unknown.
+  Sim: --nosd / script "sd in|out"; run-script uses %SIM_ARGS%; sim/scripts/map.txt.
 - Message store layout (flash, since 2026-11-11): /messages/<peer>/<counter/64, 8 digits>/
   <counter 13 digits>_<i|o>.json[.bak]; .deleted markers stay in /messages/<peer>/. SD keeps
   the flat layout. Reason: every LittleFS lookup walks the whole folder (~209 ms per fopen in a
@@ -155,6 +165,9 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
   dctcxo <ms>     bench: lowest duty-cycle TCXO delay (0 auto)  fe 0|1  log RX freq error (Hz)
   clk             bench: wall clock to the us + uptime + clock source (RTC drift logging)
   rmconv [<peer>|all]  bench: list conversations / delete one / delete all (with messages)
+  map | map <lat> <lon> [z] | map close   offline map (key L on list screens; tiles on SD)
+  sdinfo | sdarc 0|1   SD status / message archive setting (applies at next boot)
+  maptest <lat> <lon>  bench: write 18 grid test tiles (z14-15) around a point to the SD card
   ev | ev 0       bench: RAM event trace (rx/tx/offer/txdone/msg-in, dup-scan/dup-idx/commit ms,
                   recovered; timer wakes fold into one mark per run; survives light sleep)
   rl / rl 0       RTC power log (survives resets; BOOT lines with reset reason)

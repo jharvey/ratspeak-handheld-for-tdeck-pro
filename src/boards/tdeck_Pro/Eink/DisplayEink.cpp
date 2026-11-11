@@ -3,6 +3,7 @@
 #include <GxEPD2_BW.h>
 #include <gdeq/GxEPD2_310_GDEQ031T10.h>
 #include <esp_heap_caps.h>
+#include "hal/SharedSPIBus.h"
 
 // Small page height keeps GxEPD2 static RAM tiny after the 200KB protocol node.
 // Full frame lives in framebuffer_; we push it with firstPage/drawBitmap.
@@ -53,6 +54,7 @@ bool DisplayEink::begin() {
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
     Serial.println("[EINK] init GxEPD2...");
+    SharedSPILock bus;   // the SD card (storage worker task) shares this SPI bus
     g_epd.init(0, true, 2, false);
     g_epd.setRotation(0);
     ready_ = true;
@@ -110,6 +112,7 @@ void DisplayEink::setBusyCallback(void (*cb)(const void*), const void* param) {
 void DisplayEink::fullRefresh() {
     if (!ready_ || !framebuffer_) return;
     const uint32_t t0 = millis();
+    SharedSPILock bus;   // recursive: the busy callback may service the radio on this task
     parkSpiCs();
     g_epd.epd2.writeImageForFullRefresh(framebuffer_, 0, 0, EPD_WIDTH, EPD_HEIGHT, true);
     g_epd.epd2.refresh(false);
@@ -140,6 +143,7 @@ void DisplayEink::partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
     if (first < 0) { lastRefreshMs_ = 0; return; }   // identical: no panel I/O
 
     const uint32_t t0 = millis();
+    SharedSPILock bus;
     parkSpiCs();
     const uint16_t rows = (uint16_t)(last - first + 1);
     const uint8_t* src = framebuffer_ + (size_t)first * kRowBytes;
@@ -156,12 +160,14 @@ void DisplayEink::partialRefresh(uint16_t x, uint16_t y, uint16_t w, uint16_t h)
 
 void DisplayEink::powerOff() {
     if (!ready_) return;
+    SharedSPILock bus;
     parkSpiCs();
     g_epd.epd2.powerOff();         // no-op when already off
 }
 
 void DisplayEink::hibernate() {
     if (!ready_) return;
+    SharedSPILock bus;
     parkSpiCs();
     g_epd.epd2.hibernate();
 }

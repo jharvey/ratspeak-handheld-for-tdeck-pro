@@ -34,7 +34,8 @@ int main(int argc, char** argv) {
     QCommandLineOption serialTcp("serial-tcp", "Expose this simulator's firmware USB serial on "
                                                "127.0.0.1:<port> (a second simulator can --live to it).",
                                  "port");
-    p.addOptions({name, data, fast, script, quit, shots, live, serialTcp});
+    QCommandLineOption noSd("nosd", "Start with the SD card slot empty.");
+    p.addOptions({name, data, fast, script, quit, shots, live, serialTcp, noSd});
     p.process(app);
 
     SimOptions opt;
@@ -55,6 +56,7 @@ int main(int argc, char** argv) {
         sim::hw().dataDir = opt.dataDir.toStdString();
         sim::hw().deviceName = opt.name.toStdString();
         sim::hw().realisticPanel = !opt.fast;
+        sim::hw().sdPresent = !p.isSet(noSd);
     }
 
     MainWindow w(opt);

@@ -51,6 +51,9 @@ struct Hw {
     bool chargeDone = false;
     int fccMah = 1400;
 
+    // ---- SD card slot (--nosd, script "sd in|out"); a removed card fails every SD call
+    bool sdPresent = true;
+
     // ---- GPS
     bool gpsFix = true;
     double lat = 43.6532, lon = -79.3832;

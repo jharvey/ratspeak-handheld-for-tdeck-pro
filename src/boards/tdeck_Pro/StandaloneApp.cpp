@@ -47,10 +47,12 @@
 #include "Eink/DisplayEink.h"
 #include "Eink/LvglPort.h"
 #include "Eink/RatSpeakLogo.h"
+#include "MapView.h"
 #include "audio/AudioNotify.h"
 #include "hal/Keyboard.h"
 #include "radio/SX1262.h"
 #include "storage/FlashStore.h"
+#include "storage/SDStore.h"
 #include "storage/MessageStore.h"
 #include "storage/ConversationView.h"
 #include "reticulum/IdentityManager.h"
@@ -93,6 +95,7 @@ AudioNotify     g_audio;
 FlashStore      g_flash;
 IdentityManager g_idMgr;
 MessageStore    g_msgStore;
+SDStore         g_sdStore;      // shared-SPI locked; the message store mirrors to it when enabled
 AnnounceManager g_announceMgr;
 ProtocolRuntime g_proto;
 
@@ -484,19 +487,43 @@ constexpr const char* kBatLogPath = "/batlog2.csv";
 constexpr const char* kBatLogHeader =
     "ms,mv,avgMa,pct,rawSoc,remMah,fccMah,fullCal,chrgStat,flags,chg,usb";
 
+// SD message archive (NVS rs_sd/msgs, default OFF until timed on hardware): with a card at
+// boot the message store writes every new message to the card as well as to flash (a
+// mirror / backup). No flash eviction: nothing on this board requests Trim, whose passes
+// reload every record of a conversation. Read at boot only (media fixed by begin()).
+bool sdArchiveEnabled() {
+    Preferences p;
+    if (!p.begin("rs_sd", true)) return false;
+    const bool on = p.getBool("msgs", false);
+    p.end();
+    return on;
+}
+void sdArchiveSet(bool on) {
+    Preferences p;
+    if (p.begin("rs_sd", false)) { p.putBool("msgs", on); p.end(); }
+}
+bool g_sdArchiveActive = false;   // the store was started with the card as its archive
+
+void sdStatusRefresh() {
+    if (!g_sdStore.isReady()) { snprintf(g_sdStatus, sizeof(g_sdStatus), "not mounted"); return; }
+    snprintf(g_sdStatus, sizeof(g_sdStatus), "OK %u/%u MB",
+             (unsigned)(g_sdStore.usedBytes() >> 20), (unsigned)(g_sdStore.totalBytes() >> 20));
+}
+
 bool sdMount() {
-    if (g_sdMounted) return true;
+    if (g_sdMounted && g_sdStore.isReady()) return true;
     spiBusIdle();
-    if (!SD.begin(SD_CS, SPI, 20000000)) {
+    if (!g_sdStore.begin(&SPI, SD_CS)) {
+        g_sdMounted = false;
         snprintf(g_sdStatus, sizeof(g_sdStatus), "mount failed");
         Serial.println("[SD] mount failed");
         return false;
     }
     g_sdMounted = true;
-    snprintf(g_sdStatus, sizeof(g_sdStatus), "OK %u/%u MB",
-             (unsigned)(SD.usedBytes() >> 20), (unsigned)(SD.totalBytes() >> 20));
-    if (!SD.exists(kBatLogPath)) {
-        File f = SD.open(kBatLogPath, FILE_WRITE);
+    if (!g_sdStore.formatForRsDeck()) Serial.println("[SD] folder setup failed");
+    sdStatusRefresh();
+    if (!g_sdStore.exists(kBatLogPath)) {
+        File f = g_sdStore.openFile(kBatLogPath, FILE_WRITE);
         if (f) { f.println(kBatLogHeader); f.close(); }
     }
     Serial.printf("[SD] mounted %s\n", g_sdStatus);
@@ -514,7 +541,7 @@ bool g_batLogInternal = false, g_batLogSd = false;
 
 void sdUnmount() {
     g_batLogSd = false;
-    if (g_sdMounted) { SD.end(); g_sdMounted = false; }
+    if (g_sdMounted) { g_sdStore.end(); g_sdMounted = false; }
     snprintf(g_sdStatus, sizeof(g_sdStatus), "not mounted");
     Serial.println("[SD] unmounted");
 }
@@ -539,7 +566,7 @@ void batLogSample() {
         if (g_batLogCount < kBatLogCap) g_batLogCount++;
     }
     if (g_batLogSd && g_sdMounted) {
-        File f = SD.open(kBatLogPath, FILE_APPEND);
+        File f = g_sdStore.openFile(kBatLogPath, FILE_APPEND);
         if (f) {
             f.printf("%lu,%u,%d,%d,%d,%u,%u,%u,%u,0x%04X,%u,%u\n", (unsigned long)s.ms, s.mv,
                      s.avgMa, s.pct, s.rawSoc, s.remMah, s.fccMah, s.fullCal, s.chrgStat,
@@ -636,6 +663,24 @@ bool setClockLocal(int y, int mo, int d, int hh, int mm) {
 HardwareSerial* g_gpsSerial = nullptr;
 bool    g_gpsFix = false;
 uint8_t g_gpsSats = 0;
+bool    g_gpsPosValid = false;   // last GGA/RMC with a fix carried a position
+double  g_gpsLat = 0, g_gpsLon = 0;
+uint32_t g_gpsPosAt = 0;
+
+// NMEA ddmm.mmmm / dddmm.mmmm + hemisphere -> signed degrees. false if empty.
+bool nmeaDegrees(const char* v, const char* hemi, double& out) {
+    if (!v || !v[0] || !hemi || !hemi[0]) return false;
+    const double raw = atof(v);
+    const int deg = (int)(raw / 100.0);
+    out = deg + (raw - deg * 100.0) / 60.0;
+    if (hemi[0] == 'S' || hemi[0] == 'W') out = -out;
+    return true;
+}
+void gpsNotePosition(const char* lat, const char* ns, const char* lon, const char* ew) {
+    double la, lo;
+    if (!nmeaDegrees(lat, ns, la) || !nmeaDegrees(lon, ew, lo)) return;
+    g_gpsLat = la; g_gpsLon = lo; g_gpsPosValid = true; g_gpsPosAt = millis();
+}
 char    g_gpsStatus[16] = "off";
 int     g_gpsUtc[6] = {0};       // y mo d hh mm ss of last valid RMC
 bool    g_gpsUtcValid = false;
@@ -921,10 +966,12 @@ void gpsHandleSentence(char* line) {
             g_gpsUtc[0] = 2000 + twoDigits(fld[9] + 4);
             g_gpsUtcValid = true;
         }
+        if (valid && n > 6) gpsNotePosition(fld[3], fld[4], fld[5], fld[6]);
         g_gpsFix = valid;
     } else if (gga && n > 7) {
         if (fld[7][0]) g_gpsSats = (uint8_t)atoi(fld[7]);
         if (fld[6][0]) g_gpsFix = fld[6][0] > '0';
+        if (fld[6][0] > '0') gpsNotePosition(fld[2], fld[3], fld[4], fld[5]);
     } else {
         return;
     }
@@ -1116,7 +1163,13 @@ void initStorageAndProto() {
         if (!recoverCorruptLittleFS()) { Serial.println("[FLASH] recovery failed"); return; }
     }
     g_idMgr.begin(&g_flash, nullptr);
-    if (!g_msgStore.begin(&g_flash, nullptr, false)) { Serial.println("[MSG] store failed"); return; }
+    const bool archive = sdArchiveEnabled() && sdMount();
+    if (!g_msgStore.begin(&g_flash, archive ? &g_sdStore : nullptr, archive)) {
+        Serial.println("[MSG] store failed"); return;
+    }
+    g_sdArchiveActive = archive;
+    Serial.printf("[SD] message archive %s\n", archive ? "on (new messages also go to the card)"
+                  : sdArchiveEnabled() ? "off (no card)" : "off (setting)");
     g_storeReady = true;
     g_announceMgr.setStorage(nullptr, &g_flash);
     g_announceMgr.loadNameCache();
@@ -2650,11 +2703,14 @@ void buildSettingsRows(Page p) {
         break;
 
     case PG_SD:
+        sdStatusRefresh();
         srow(RK_INFO, "Status", "%s", g_sdStatus);
         srow(RK_ACTION, "Mount", g_sdMounted ? "mounted" : "Enter = mount");
         srow(RK_ACTION, "Unmount", g_sdMounted ? "Enter = eject" : "-");
         srow(RK_ACTION, "Reset log file", g_sdMounted ? "Enter = reset" : "mount first");
         srow(RK_INFO, "Log file", "%s", kBatLogPath);
+        srow(RK_ACTION, "Message archive", "%s%s", sdArchiveEnabled() ? "On" : "Off",
+             (sdArchiveEnabled() != g_sdArchiveActive) ? " (after reboot)" : "");
         break;
     }
 }
@@ -2978,10 +3034,13 @@ void activateSetting(int idx) {
         else if (idx == 2) { sdUnmount(); toast("SD ejected"); }
         else if (idx == 3) {
             if (!g_sdMounted) { toast("Mount SD first"); break; }
-            SD.remove(kBatLogPath);
-            File f = SD.open(kBatLogPath, FILE_WRITE);
+            g_sdStore.remove(kBatLogPath);
+            File f = g_sdStore.openFile(kBatLogPath, FILE_WRITE);
             if (f) { f.println(kBatLogHeader); f.close(); }
             toast("Log file reset");
+        } else if (idx == 5) {
+            sdArchiveSet(!sdArchiveEnabled());
+            toast(sdArchiveEnabled() ? "Archive on: reboot to apply" : "Archive off: reboot to apply");
         }
         break;
 
@@ -3399,11 +3458,90 @@ void drawMenuOverlay() {
     }
 }
 
+// ---- Offline map (MapView.cpp; tiles from the SD card) ----------------------------------
+bool g_mapSdTried = false;
+
+size_t mapReadTile(const char* rel, uint8_t* buf, size_t cap) {
+    if (!g_sdMounted) {
+        if (g_mapSdTried) return 0;          // one mount attempt per map visit
+        g_mapSdTried = true;
+        if (!sdMount()) return 0;
+    }
+    char path[80];
+    snprintf(path, sizeof(path), "%s%s", SD_PATH_ROOT, rel);
+    if (!g_sdStore.exists(path)) return 0;
+    File f = g_sdStore.openFile(path, FILE_READ);
+    if (!f) return 0;
+    size_t n = f.size() <= cap ? f.read(buf, f.size()) : 0;
+    f.close();
+    return n;
+}
+
+void mapPixel(int x, int y, bool black) {
+    if (x >= 0 && y >= 0 && x < W && y < H) g_display.setPixel(x, y, black);
+}
+
+void mapFeedPosition() {
+    if (g_gpsPosValid && g_gpsFix) mapview::setPosition(true, g_gpsLat, g_gpsLon);
+    else if (g_cfg.hasPos) mapview::setPosition(true, g_cfg.lat, g_cfg.lon);
+    else mapview::setPosition(false, 0, 0);
+}
+
+void openMapAt(double lat, double lon) {
+    if (g_menuOpen) g_menuOpen = false;
+    mapview::setReader(mapReadTile);
+    g_mapSdTried = false;
+    mapFeedPosition();
+    mapview::open(lat, lon, true, false);   // explicit place: no follow
+    g_fullRefreshReq = true;                // a map is mostly new pixels: avoid ghosting
+    requestRedraw();
+    Serial.printf("[MAP] open %.5f,%.5f\n", lat, lon);
+}
+
+void openMap() {
+    mapview::setReader(mapReadTile);
+    g_mapSdTried = false;
+    mapFeedPosition();
+    double lat = 0, lon = 0; bool have = false;
+    if (g_gpsPosValid && g_gpsFix) { lat = g_gpsLat; lon = g_gpsLon; have = true; }
+    else if (g_cfg.hasPos) { lat = g_cfg.lat; lon = g_cfg.lon; have = true; }
+    if (g_menuOpen) g_menuOpen = false;
+    mapview::open(lat, lon, have);
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.printf("[MAP] open (%s)\n", have ? (g_gpsPosValid && g_gpsFix ? "GPS" : "saved position") : "no position");
+}
+
+void closeMap() {
+    mapview::close();
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.println("[MAP] closed");
+}
+
+void mapTick() {
+    if (!mapview::isOpen()) return;
+    mapFeedPosition();
+    if (mapview::positionNeedsRedraw()) requestRedraw();
+}
+
+void renderMapHeader() {
+    char st[64];
+    mapview::status(st, sizeof(st));
+    drawHeader(st, false);
+}
+
+void stampMap() {
+    mapview::draw(mapPixel, 0, LIST_TOP, W, BOT_TOP - LIST_TOP, g_cfg.dark);
+    g_display.markDirty();
+}
+
 void render() {
     const uint32_t t0 = millis();
     clearRoot();
     if (g_threadOpen)                  renderThread();
     else if (g_entry == Entry::Name)   renderRename();
+    else if (mapview::isOpen())        renderMapHeader();
     else switch (g_screen) {
         case SCR_HOME:     renderHome(); break;
         case SCR_SETTINGS: renderSettings(); break;
@@ -3413,6 +3551,7 @@ void render() {
     drawBottomBar();
     drawMenuOverlay();
     lv_refr_now(nullptr);
+    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen) stampMap();   // after LVGL's clear
     const uint32_t t1 = millis();
     // Clear the request first: keys queued during the panel refresh may ask again.
     g_redraw = false;
@@ -3543,6 +3682,7 @@ void startNameEntry(const uint8_t peer[16]) {
 
 void goScreen(ScreenId s) {
     g_menuOpen = false;
+    if (mapview::isOpen()) mapview::close();
     if (g_threadOpen) { g_threadOpen = false; }
     if (entryActive()) endEntry();
     if (s == SCR_SETTINGS) {          // doc: M -> S always lands on the Settings root
@@ -3635,6 +3775,7 @@ void cancelEntry() {
 
 void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
+    if (mapview::isOpen() && !entryActive()) { closeMap(); return; }
     if (entryActive())           { cancelEntry(); return; }
     if (g_screen == SCR_SETTINGS && g_navDepth > 0) { popPage(); return; }
 }
@@ -3818,6 +3959,7 @@ void browseKey(const KeyEvent& ev) {
         case 'A':
             if (g_screen == SCR_HOME) activateCurrent();
             break;
+        case 'L': openMap(); break;
         default: break;
     }
 }
@@ -3836,6 +3978,10 @@ void handleKey(const KeyEvent& ev) {
     if (g_menuOpen) { menuKey(ev); return; }
     if (entryActive()) { entryKey(ev); return; }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
+    if (mapview::isOpen()) {
+        if (mapview::key(ev.character, ev.enter)) requestRedraw();
+        return;
+    }
     browseKey(ev);
 }
 
@@ -4163,6 +4309,7 @@ void powerTick() {
 #endif
     checkinTick();
     peerClockTick();
+    mapTick();
     powerGpsTick();
     powerTouchTick();
     energyAccountAwake();
@@ -4536,10 +4683,59 @@ void handleSerialLine(char* p) {
     } else if (!strcmp(p, "epdsleep")) {
         g_display.hibernate();
         Serial.println("[EINK] controller in deep sleep (next refresh re-inits)");
+    } else if (!strcmp(p, "map") || !strncmp(p, "map ", 4)) {
+        // map | map close | map <lat> <lon> [zoom]: open the offline map (tiles on SD).
+        double la = 0, lo = 0; int z = 0;
+        const int got = sscanf(p + 3, "%lf %lf %d", &la, &lo, &z);
+        if (!strcmp(p, "map close")) closeMap();
+        else if (got >= 2) {
+            if (got >= 3) mapview::setZoom(z);
+            openMapAt(la, lo);
+        } else if (!mapview::isOpen()) openMap();   // "map" on an open map: status only
+        char st[64]; mapview::status(st, sizeof(st));
+        uint32_t ld, ms, hi; mapview::stats(ld, ms, hi);
+        Serial.printf("[MAP] %s %s; tiles loaded %lu missing %lu cache hits %lu\n",
+                      mapview::isOpen() ? "open" : "closed", st, (unsigned long)ld, (unsigned long)ms,
+                      (unsigned long)hi);
+    } else if (!strncmp(p, "maptest ", 8)) {
+        // Bench: write labelled grid test tiles (3x3 at z14 and z15) around <lat> <lon> on the SD card.
+        double la = 0, lo = 0;
+        if (sscanf(p + 8, "%lf %lf", &la, &lo) != 2 || !sdMount()) { Serial.println("[MAP] maptest <lat> <lon> (needs SD)"); return; }
+        static uint8_t buf[mapview::kHeaderBytes + mapview::kTileBytes];
+        int written = 0;
+        const uint32_t t0 = millis();
+        for (int z = 14; z <= 15; z++) {
+            const double n = (double)(1u << z), r = la * 3.14159265358979 / 180.0;
+            const int cx = (int)((lo + 180.0) / 360.0 * n);
+            const int cy = (int)((1.0 - log(tan(r) + 1.0 / cos(r)) / 3.14159265358979) / 2.0 * n);
+            for (int ty = cy - 1; ty <= cy + 1; ty++) for (int tx = cx - 1; tx <= cx + 1; tx++) {
+                memcpy(buf, "RMT1", 4); buf[4] = 0; buf[5] = 1; buf[6] = 0; buf[7] = 1;
+                uint8_t* bits = buf + mapview::kHeaderBytes;
+                for (int y = 0; y < 256; y++) for (int x = 0; x < 256; x++) {
+                    const bool on = x < 2 || y < 2 || x > 253 || y > 253 ||          // border
+                                    ((x % 32 == 0 || y % 32 == 0) && ((x + y) & 1)) ||   // dotted grid
+                                    (((tx * 256 + x) + (ty * 256 + y)) % 97 < 3) ||      // continuous diagonals
+                                    (x >= 8 && x < 8 + (tx % 10) * 6 && y >= 8 && y < 14) || // x mark bar
+                                    (y >= 18 && y < 18 + (ty % 10) * 6 && x >= 8 && x < 14); // y mark bar
+                    if (on) bits[y * 32 + (x >> 3)] |= 0x80 >> (x & 7);
+                    else bits[y * 32 + (x >> 3)] &= ~(0x80 >> (x & 7));
+                }
+                char dir[64], path[80];
+                snprintf(dir, sizeof(dir), "%s/maps/%d/%d", SD_PATH_ROOT, z, tx);
+                snprintf(path, sizeof(path), "%s/%d.rmt", dir, ty);
+                g_sdStore.ensureDir(dir);
+                if (g_sdStore.writeSimple(path, buf, sizeof(buf))) written++;
+            }
+        }
+        Serial.printf("[MAP] maptest wrote %d tiles in %lu ms\n", written, (unsigned long)(millis() - t0));
+    } else if (!strncmp(p, "sdarc ", 6)) {
+        sdArchiveSet(atoi(p + 6) != 0);
+        Serial.printf("[SD] message archive setting %s (applies at next boot)\n", sdArchiveEnabled() ? "on" : "off");
     } else if (!strcmp(p, "sdinfo")) {
         Serial.printf("[SD] %s (mounting to check)%c", g_sdStatus, 10);
         sdMount();
-        Serial.printf("[SD] %s%c", g_sdStatus, 10);
+        Serial.printf("[SD] %s; message archive %s%c", g_sdStatus,
+                      g_sdArchiveActive ? "active" : sdArchiveEnabled() ? "on, not active" : "off", 10);
     } else if (!strncmp(p, "epdoff ", 7)) {
         g_epdOffInSleep = (uint8_t)atoi(p + 7);
         Serial.printf("[EINK] before sleep: %s%c", g_epdOffInSleep == 2 ? "controller deep sleep" : g_epdOffInSleep ? "power off" : "left on", 10);

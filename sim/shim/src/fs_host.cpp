@@ -187,6 +187,7 @@ size_t LittleFSFS::usedBytes() {
 }
 
 bool SDFS::begin(uint8_t, SPIClass&, uint32_t, const char*, uint8_t, bool) {
+    { std::lock_guard<std::mutex> l(sim::hw().mu); if (!sim::hw().sdPresent) { mounted_ = false; return false; } }
     std::error_code ec;
     fsx::create_directories(root(), ec);
     mounted_ = !ec;
