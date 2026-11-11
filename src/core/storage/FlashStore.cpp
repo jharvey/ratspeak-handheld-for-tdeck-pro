@@ -6,6 +6,8 @@
 #include "util/PerfTrace.h"
 #include <esp_partition.h>
 #include <algorithm>
+#include <dirent.h>
+#include <errno.h>
 
 // Global LittleFS mutex — prevents cross-task corruption (WriteQueue task)
 SemaphoreHandle_t FlashStore::_mutex = nullptr;
@@ -266,6 +268,41 @@ File FlashStore::openDir(const char* path) {
     if (!_ready) return File();
     FSLock lock;
     return LittleFS.open(path);
+}
+
+void FlashStore::NameScan::close() {
+    if (!_dir) return;
+    FSLock lock;
+    closedir(static_cast<DIR*>(_dir));
+    _dir = nullptr;
+}
+
+int FlashStore::openNames(const char* path, NameScan& scan) {
+    handheld::storage::assertOwner();
+    scan.close();
+    handheld::storage::StorageLease lease;
+    if (!lease.held() || !_ready) return EIO;
+    char full[192];
+    if (snprintf(full, sizeof(full), "%s%s", FLASH_BASE_PATH, path) >= int(sizeof(full))) return ENAMETOOLONG;
+    FSLock lock;
+    errno = 0;
+    DIR* dir = opendir(full);
+    if (!dir) return errno ? errno : EIO;
+    scan._dir = dir;
+    return 0;
+}
+
+bool FlashStore::nextName(NameScan& scan, char* name, size_t capacity, bool& isDir, int& err) {
+    handheld::storage::assertOwner();
+    err = 0;
+    if (!scan._dir || !capacity) return false;
+    FSLock lock;
+    errno = 0;
+    const struct dirent* entry = readdir(static_cast<DIR*>(scan._dir));
+    if (!entry) { err = errno; return false; }
+    snprintf(name, capacity, "%s", entry->d_name);
+    isDir = entry->d_type == DT_DIR;
+    return true;
 }
 
 File FlashStore::openFile(const char* path, const char* mode) {

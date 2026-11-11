@@ -23,10 +23,12 @@ public:
 
     struct Cursor {
         File directory;
+        FlashStore::NameScan names;   // flash records: name-only scan (no per-file open)
         uint8_t peer[16] = {};
         uint32_t cutoff = 0;
         uint8_t medium = 0;
         bool opened = false;
+        bool flashBackups = false;    // the flash peer directory holds a .bak record copy
         Error error = Error::None;
     };
     // Caller holds an explicit filesystem lease. No retained filename vector.
@@ -72,6 +74,10 @@ private:
     void path(const RecordKey&, unsigned medium, char output[128], const char* suffix = "") const;
     void directory(const uint8_t peer[16], unsigned medium, char output[96]) const;
     Error openDirectory(unsigned medium, const char* path, bool required, File&);
+    bool nextFlashRecord(Cursor&, RecordKey&);
+    // load() for a key the cursor just produced, in the same lease: reuses the cursor's
+    // delete cutoff and skips the flash .bak probe when the directory has none.
+    Error load(const RecordKey&, MessageDocument&, StoredRecordHeader&, const Cursor* scan);
     static bool filename(const char*, uint32_t&, bool&);
     Error inspect(const RecordKey&, unsigned medium, const char* suffix, MessageDocument&, StoredRecordHeader&,
                   bool* parsed = nullptr);

@@ -42,7 +42,10 @@ Hardware / platform
 - DONE - Check-in mode: LoRa only in scheduled windows (e.g. hourly at :30), outbox, peer clock sync
 - Check-in: keep the outbox in NVS (lost on reset today); show queued messages in the thread
 - Check-in: measure RTC drift over a day to size the 1 min lead
-- Message store: slow writes + ~2 min boot with thousands of messages (proofs get late)
+- Message store: O(N^2) per peer directory (each LittleFS open walks the directory). 2026-11-11:
+  name-only scans + no repeated marker/.bak probes -> COM5 boot 281 -> 129 s, COM9 incoming save
+  23 -> 14 s (proofs wait for the save). Still to do: one lookup per record open, bounded
+  duplicate check on incoming saves, or sharded peer directories.
 - DONE - Energy monitor: hourly per-part estimate vs gauge, trend graph on the e-ink (S.4.9)
 - DONE - LoRa RX duty cycle (SX1262 SetRxDutyCycle) in sleeping modes: ~36 % listening, 14/14
   (gauge: ~13 -> 8 mA asleep). Open: sleeping receiver's replies missed ~1 in 3 (retries)

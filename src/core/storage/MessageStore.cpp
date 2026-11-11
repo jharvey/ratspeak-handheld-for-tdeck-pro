@@ -48,6 +48,7 @@ bool MessageStore::begin(FlashStore* flash, SDStore* sd, bool externalStorageEna
         marker.end();
     }
 #endif
+    const unsigned long scanStart = millis();
     if (!transactions().begin(_flash, _sd, _externalStorageEnabled, STORAGE_DEFERRED_IO != 0)) return false;
     try {
         if (!loadStartupMetadata()) {
@@ -57,6 +58,8 @@ bool MessageStore::begin(FlashStore* flash, SDStore* sd, bool externalStorageEna
         releaseStartupSeeds();
         Serial.println("[MSGSTORE] Initialization deferred: insufficient memory"); return false;
     }
+    Serial.printf("[MSGSTORE] startup scan %lu ms (%lu conversations)%c", millis() - scanStart,
+                  (unsigned long)_totalConversations, 10);
     return _writeQueue.begin(transactions(), STORAGE_DEFERRED_IO ? WriteQueue::Execution::Deferred : WriteQueue::Execution::Immediate);
 }
 

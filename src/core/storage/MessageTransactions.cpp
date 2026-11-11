@@ -136,9 +136,48 @@ Error MessageTransactions::openDirectory(unsigned which, const char* path, bool 
     return Error::None;
 }
 
+bool MessageTransactions::nextFlashRecord(Cursor& cursor, RecordKey& key) {
+    auto toError = [](int e) { return e == ENOMEM ? Error::Allocation : Error::Read; };
+    char name[64]; bool isDir = false; int failure = 0;
+    if (!cursor.opened) {
+        if (!_flash || !_flash->isReady()) { cursor.error = Error::Unavailable; return false; }
+        char parent[96]; directory(cursor.peer, 0, parent);
+        failure = _flash->openNames(parent, cursor.names);
+        // A missing peer directory is normal (same rule as openDirectory()).
+        if (failure && failure != ENOENT) { cursor.error = toError(failure); return false; }
+        cursor.opened = true; cursor.flashBackups = false;
+        if (cursor.names) {
+            // Names-only pre-pass: does any record here have a .bak copy?
+            while (_flash->nextName(cursor.names, name, sizeof(name), isDir, failure)) {
+                uint32_t counter = 0; bool incoming = false;
+                if (!isDir && strlen(name) == 24 && filename(name, counter, incoming)) { cursor.flashBackups = true; break; }
+            }
+            if (failure) { cursor.error = toError(failure); return false; }
+            failure = _flash->openNames(parent, cursor.names);
+            if (failure && failure != ENOENT) { cursor.error = toError(failure); return false; }
+        }
+    }
+    while (_flash->nextName(cursor.names, name, sizeof(name), isDir, failure)) {
+        uint32_t counter = 0; bool incoming = false;
+        if (isDir || !filename(name, counter, incoming) || counter <= cursor.cutoff) continue;
+        key = {}; memcpy(key.peer, cursor.peer, 16); key.counter = counter; key.incoming = incoming;
+        // A key is visited once even when it has a backup.
+        if (strlen(name) == 24) { char primary[128]; path(key, 0, primary); if (_flash->exists(primary)) continue; }
+        return true;
+    }
+    if (failure) { cursor.error = toError(failure); return false; }
+    cursor.names.close();
+    return false;
+}
+
 bool MessageTransactions::nextRecord(Cursor& cursor, RecordKey& key) {
     if (cursor.error != Error::None) return false;
     for (; cursor.medium < 2;) {
+        if (cursor.medium == 0) {
+            if (nextFlashRecord(cursor, key)) return true;
+            if (cursor.error != Error::None) return false;
+            cursor.opened = false; ++cursor.medium; continue;
+        }
         auto store = medium(cursor.medium);
         if (!cursor.opened) {
             char parent[96]; directory(cursor.peer, cursor.medium, parent);
@@ -233,9 +272,18 @@ Error MessageTransactions::inspect(const RecordKey& key, unsigned which, const c
 }
 
 Error MessageTransactions::load(const RecordKey& key, MessageDocument& document, StoredRecordHeader& header) {
-    Error markerError;
-    const auto cutoff = deletedThrough(key.peer, document, nullptr, &markerError);
-    if (markerError != Error::None) return markerError;
+    return load(key, document, header, nullptr);
+}
+
+Error MessageTransactions::load(const RecordKey& key, MessageDocument& document, StoredRecordHeader& header,
+                                const Cursor* scan) {
+    uint32_t cutoff = 0;
+    if (scan) cutoff = scan->cutoff;              // read once by beginRecords() in this lease
+    else {
+        Error markerError;
+        cutoff = deletedThrough(key.peer, document, nullptr, &markerError);
+        if (markerError != Error::None) return markerError;
+    }
     if (key.counter <= cutoff) return Error::Stale;
     int best = -1, loaded = -1; uint32_t revision = 0; _blockedMedia = _preferBackup = 0;
     uint32_t primaryRevision[2] = {}, backupRevision[2] = {};
@@ -245,6 +293,7 @@ Error MessageTransactions::load(const RecordKey& key, MessageDocument& document,
     // The selected document usually remains in the existing scratch owner,
     // avoiding another complete parse for every preview/status/body slice.
     for (unsigned candidate : {3u, 2u, 1u, 0u}) {
+        if (candidate == 1u && scan && !scan->flashBackups) continue;   // no flash .bak in this directory
         const unsigned which = candidate / 2; const char* suffix = candidate % 2 ? ".bak" : "";
         StoredRecordHeader current;
         bool parsed = false;
@@ -370,7 +419,7 @@ void MessageTransactions::create(const Request& request, uint8_t* bytes, Result&
             conversationExists = true;
             if (!request.key.incoming || !request.hasMessageId) break;
             StoredRecordHeader header;
-            const auto error = load(key, document, header);
+            const auto error = load(key, document, header, &cursor);
             if (error == Error::Allocation || error == Error::Read) { result.error = error; return; }
             if (error == Error::None && header.incoming && header.hasMessageId &&
                 !memcmp(header.messageId, request.messageId, 32)) {
@@ -422,7 +471,7 @@ void MessageTransactions::markRead(const Request& request, Result& result) {
     MessageDocument document; StoredRecordHeader header; Error failure = Error::None;
     while (nextRecord(cursor, key)) {
         if (!key.incoming || (request.key.counter && key.counter > request.key.counter)) continue;
-        const auto error = load(key, document, header);
+        const auto error = load(key, document, header, &cursor);
         if (error != Error::None) { failure = error; continue; }
         if (header.read) continue;
         if (header.revision == UINT32_MAX) { failure = Error::RevisionExhausted; continue; }
@@ -453,7 +502,7 @@ void MessageTransactions::erase(const Request& request, Result& result) {
     while (nextRecord(cursor, key)) {
         cutoff = std::max(cutoff, key.counter);
         if (records < INT32_MAX) ++records;
-        const Error error = load(key, previousDocument, previousHeader);
+        const Error error = load(key, previousDocument, previousHeader, &cursor);
         if (error == Error::Allocation || error == Error::Read) { result.error = error; return; }
         if (error == Error::None && previousHeader.incoming && !previousHeader.read && unread < INT32_MAX) ++unread;
     }
@@ -574,7 +623,7 @@ Error MessageTransactions::summarize(const uint8_t peer[16], ConversationView& r
     MessageDocument document; StoredRecordHeader header; RecordKey key;
     uint32_t newestRevision = 0;
     while (nextRecord(cursor, key)) {
-        const auto error = load(key, document, header);
+        const auto error = load(key, document, header, &cursor);
         if (error != Error::None) return error;
         if (row.totalCount < UINT32_MAX) ++row.totalCount;
         if (!selector.counter || historyLess({selector.counter, bool(selector.incoming)}, {key.counter, key.incoming})) {
@@ -783,7 +832,7 @@ void MessageTransactions::pending(const Request& request, uint8_t* bytes, size_t
         Cursor cursor; beginRecords(cursor, peer, &document); RecordKey key;
         while (nextRecord(cursor, key)) {
             if (key.incoming || (request.key.counter && !less(request.key, key))) continue;
-            StoredRecordHeader header; const auto error = load(key, document, header);
+            StoredRecordHeader header; const auto error = load(key, document, header, &cursor);
             if (error != Error::None) { result.error = error; return; }
             if (header.status != 1 && header.status != 2) continue;
             if (found) result.more = true;

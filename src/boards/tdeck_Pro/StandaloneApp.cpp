@@ -71,6 +71,7 @@
 #include "runtime/TaskOwner.h"
 #include "ratspeak_protocol.h"
 #include "util/Bytes.h"
+#include "util/EventTrace.h"
 
 // hal/Keyboard.cpp — app-driven number layer for numeric fields
 extern void keyboardSetNumLayer(bool on);
@@ -1189,6 +1190,7 @@ void vibrate(uint16_t ms) {
 }
 
 void notifyInbound() {
+    evtrace::mark("msg-in");
     Serial.printf("[MSG] inbound message at uptime %lu ms\n", (unsigned long)millis());
     if (g_cfg.beep) g_audio.requestMessage();
     if (g_cfg.vibe) vibrate(40);
@@ -4249,6 +4251,10 @@ void powerIdle() {
     energyAccountAwake();
     uint32_t slept = 0;
     const power::Wake w = power::lightSleep(ms, pins, slept);
+    {
+        static const char* const kWakeTag[] = {"wake-none", "wake-timer", "wake-key", "wake-touch", "wake-lora", "wake-other"};
+        evtrace::mark(w < 6 ? kWakeTag[w] : "wake-?", (int32_t)slept);   // value = ms slept
+    }
     energyAfterSleep(slept);
     accountedAt = millis();
     g_pwSleepMs += slept;
@@ -4534,6 +4540,22 @@ void handleSerialLine(char* p) {
         g_usbSleepUntil = secs > 0 ? millis() + (uint32_t)(secs > 7200 ? 7200 : secs) * 1000UL : 0;
         Serial.printf("[POWER] light sleep with USB host %s for %d s (console drops while asleep)\n",
                       secs > 0 ? "allowed" : "blocked", secs);
+    } else if (!strcmp(p, "ev") || !strcmp(p, "ev 0")) {
+        // Bench: RAM event trace (radio rx/tx, wakes, inbound messages); "ev 0" clears.
+        if (p[2]) { evtrace::clear(); Serial.println("[EV] cleared"); }
+        else {
+            const auto& r = evtrace::ring();
+            const uint32_t n = r.total < evtrace::Capacity ? r.total : evtrace::Capacity;
+            uint32_t prev = 0;
+            for (uint32_t i = r.total - n; i < r.total; ++i) {
+                const auto& e = r.events[i % evtrace::Capacity];
+                Serial.printf("[EV] %8lu ms  +%6lu  %-10s %ld%c", (unsigned long)e.ms,
+                              (unsigned long)(prev ? e.ms - prev : 0), e.tag, (long)e.value, 10);
+                prev = e.ms;
+            }
+            Serial.printf("[EV] %lu marks (%lu shown), now %lu ms%c", (unsigned long)r.total, (unsigned long)n,
+                          (unsigned long)millis(), 10);
+        }
     } else if (!strcmp(p, "rl")) {
         rtclog::dump();
     } else if (!strcmp(p, "rl 0")) {
@@ -4550,7 +4572,7 @@ void handleSerialLine(char* p) {
     } else if (!strcmp(p, "FORMAT")) {
         Serial.println(recoverCorruptLittleFS() ? "[FLASH] formatted - reboot now" : "[FLASH] format failed");
     } else {
-        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> usbsleep<s> rxdc<0|2-8> dctcxo<ms> fe<0|1> txp<dBm> msg id name energy rl sleeptest L FORMAT");
+        Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> usbsleep<s> rxdc<0|2-8> dctcxo<ms> fe<0|1> ev txp<dBm> msg id name energy rl sleeptest L FORMAT");
     }
 }
 

@@ -1,6 +1,7 @@
 #include "LoRaInterface.h"
 #include "runtime/ResourceBudget.h"
 #include "config/BoardConfig.h"
+#include "util/EventTrace.h"
 #include <Arduino.h>
 #include <algorithm>
 #include <cmath>
@@ -171,6 +172,7 @@ handheld::TxOffer LoRaInterface::send_outgoing(const uint8_t* rawData, size_t ra
     discardExpired();
 
     // Reject packets exceeding Reticulum MTU (500 bytes)
+    evtrace::mark("offer", (int32_t)rawLen);
     if (rawLen > RETICULUM_MTU) {
         Serial.printf("[LORA_IF] TX DROPPED: exceeds Reticulum MTU (%d > %d)\n",
             (int)rawLen, (int)RETICULUM_MTU);
@@ -272,6 +274,7 @@ bool LoRaInterface::transmitNow(const uint8_t* data, size_t len) {
         _splitTxPending = true;
         _splitTxHeader = header;
 
+        evtrace::mark("tx1", (int32_t)len);
         Serial.printf("[LORA_IF] TX SPLIT frame 1: %d+1 bytes (remaining: %d)\n",
             (int)firstLen, (int)(len - firstLen));
     } else {
@@ -282,6 +285,7 @@ bool LoRaInterface::transmitNow(const uint8_t* data, size_t len) {
         if (!_radio->endPacket(true)) { _radio->receive(); return false; }
 
         Serial.printf("[LORA_IF] TX %d+1 bytes (hdr=0x%02X)\n", (int)len, header);
+        evtrace::mark("tx", (int32_t)len);
     }
 
     _txPending = true;
@@ -330,6 +334,7 @@ void LoRaInterface::pollActiveTx(bool completionOnly, bool drainQueued) {
                 return;
             }
             _txPending = false;
+            evtrace::mark("txdone");
 
             // If split TX pending, send the second frame immediately
             if (_splitTxPending) {
@@ -449,6 +454,7 @@ void LoRaInterface::loop() {
             _splitRxPending = false;
 
             Serial.printf("[LORA_IF] RX SPLIT reassembled: %d bytes total\n", (int)totalSize);
+            evtrace::mark("rx2", (int32_t)totalSize);
 
             // RX-side MTU cap (mirrors the TX-side check): two adversarial 255-byte
             // frames can reassemble past the Reticulum MTU — drop, don't hand up.
@@ -489,6 +495,7 @@ void LoRaInterface::loop() {
         Serial.printf("[LORA_IF] RX non-split %d bytes while awaiting split frame 2 (kept)\n", payloadSize);
     }
 
+    evtrace::mark("rx", (int32_t)packetSize);
     Serial.printf("[LORA_IF] RX %d bytes (hdr=0x%02X, payload=%d), RSSI=%d, SNR=%.1f\n",
                   packetSize, header, payloadSize,
                   _lastRxRssi, _lastRxSnr);

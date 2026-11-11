@@ -37,6 +37,31 @@ public:
     File openDir(const char* path);
     File openFile(const char* path, const char* mode = "r");
 
+    // Name-only directory scan (POSIX readdir). Arduino's openNextFile() opens every
+    // entry, and on LittleFS each open walks the whole directory again, so scanning
+    // N files that way costs O(N^2). Move-only; closes itself.
+    class NameScan {
+    public:
+        NameScan() = default;
+        NameScan(const NameScan&) = delete;
+        NameScan& operator=(const NameScan&) = delete;
+        NameScan(NameScan&& other) noexcept : _dir(other._dir) { other._dir = nullptr; }
+        NameScan& operator=(NameScan&& other) noexcept {
+            if (this != &other) { close(); _dir = other._dir; other._dir = nullptr; }
+            return *this;
+        }
+        ~NameScan() { close(); }
+        explicit operator bool() const { return _dir != nullptr; }
+        void close();
+    private:
+        friend class FlashStore;
+        void* _dir = nullptr;
+    };
+    // 0 = open, ENOENT = no such directory, other errno = failure.
+    int openNames(const char* path, NameScan& scan);
+    // false at the end (err 0) or on failure (err = errno).
+    bool nextName(NameScan& scan, char* name, size_t capacity, bool& isDir, int& err);
+
     // String overloads (avoid .c_str() at every call site)
     bool remove(const String& p) { return remove(p.c_str()); }
     bool removeDir(const String& p) { return removeDir(p.c_str()); }

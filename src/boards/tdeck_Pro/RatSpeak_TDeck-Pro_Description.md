@@ -334,10 +334,13 @@ Example: GPS off but snappy UI → Custom, CPU 240, sleep "never", GPS Off.
   | duty cycle (`rxdc 4`), CPU asleep | **8 mA** | 14/14 (one by LXMF retry) | 1.36 |
   | duty cycle, CPU awake | — | 14/14 | 1.00 |
 
-  The receiver decoded every frame sent (19/19, no CRC errors); the extra frames are
-  retries because the sender missed ~1 in 3 of the sleeping receiver's replies (proofs).
-  Cause not found yet (candidates: TCXO cold-started 5 ms before each reply instead of
-  running; reply timing after a CPU wake). `rxdc 0` restores continuous receive.
+  The receiver decoded every frame sent (19/19, no CRC errors). The extra frames were a test
+  artifact: a reply (proof) is sent only after the message is saved, which took 15–20 s on
+  that unit's large store, so with a message every 20 s late replies collided with the
+  sender's next transmission. Timed one message at a time (`ev` trace), the duty cycle and
+  continuous receive give the same delay (save 14.2 vs 15.5 s), and replies arrive only
+  ~350–400 Hz off frequency, so the 5 ms TCXO start is fine. `rxdc 0` restores continuous
+  receive.
 - **Touch** is held in reset while the idle splash shows (every mode: key-only wake, no
   accidental touches) and, with "Touch: 1 min after a key" (Saver), except for 60 s after
   the last key or touch. Saves ~2 mA.
@@ -507,10 +510,13 @@ in a short window around each check-in:
 - **Check-in:** keep the outbox in NVS (RAM only today), show queued messages in the
   thread, measure RTC drift over a day to size the 1 min lead.
 - **Repeater / propagation-node sync** for Check-in and On demand.
-- **Message store performance** with many messages (slow writes and boot).
-- **LoRa receive duty cycle:** done (§6.3), ~13 → 8 mA asleep on the gauge. Next: why a
-  sleeping duty-cycled receiver's replies are missed ~1 in 3 (try a longer TCXO delay /
-  keeping the TCXO on around TX), then the INA226 rig for exact numbers.
+- **Message store performance:** every file open on LittleFS walks the whole peer
+  directory, so scans grow with the square of the message count. Scans now read names only
+  and skip repeated marker/backup probes (COM5 boot 281 → 129 s; an incoming save, which the
+  delivery proof waits for, 23 → 14 s). Next: one lookup per record open, then a bounded
+  duplicate check or sharded peer directories.
+- **LoRa receive duty cycle:** done (§6.3), ~13 → 8 mA asleep on the gauge; reply delay is
+  the message store, not the radio. Next: the INA226 rig for exact numbers.
 - **Deep sleep "storage" mode:** would need the deep-sleep backports, which break light
   sleep — only one of the two can be linked as things stand.
 - **GPS power-save mode** on the u-blox M10 (cyclic tracking) instead of full off/on.
@@ -705,9 +711,9 @@ entry mode.
 | Check-in mode: scheduled LoRa windows, outbox, peer clock sync (§6.7) | Works on 2 units; outbox in NVS, queued messages in thread, RTC drift next |
 | Board floor ~1–5 mA with the ESP32 off (§6.6) | Gauge cannot resolve it; INA226 logger software ready (`tools/inalogger`), needs the parts wired; then e-ink controller / keyboard sleep |
 | GPS check of all five units (`tools/gpscheck`): only COM8 has the backup fault; COM3, COM5, COM6, COM9 OK | Done — report to LilyGo next |
-| Message store performance (slow writes, 2–4 min boot with thousands of messages) | Planned |
+| Message store performance (slow writes and boot with many messages) | In progress: scans read names only; COM5 boot 281 → 129 s, incoming save 23 → 14 s; per-record open still walks the directory — next |
 | Idle password + vault unlock | Planned |
-| LoRa RX duty cycle in sleeping modes (§6.3) | Works: 14/14, ~13 → 8 mA asleep (gauge); replies from a sleeping receiver need retries ~1 in 3 — next |
+| LoRa RX duty cycle in sleeping modes (§6.3) | Works: 14/14, ~13 → 8 mA asleep (gauge); reply latency same as continuous (the ~1 in 3 retries were a test artifact) |
 | Deep-sleep storage mode, GPS power-save | Planned |
 | Repeater / propagation-node sync for Check-in and On demand | Planned |
 | Simulator: show power state / sleep % in the side panel | Planned |
@@ -723,3 +729,4 @@ entry mode.
 | 0.3 | Light sleep fixed (deep-sleep backports excluded), sleep blockers for LoRa replies and the idle splash, audio gating, e-ink power-off, sleeping-current and LoRa stress measurements, bench console commands |
 | 0.4 | Mode ladder (Ultra-low, On demand, Check-in; Balanced default), energy monitor, Check-in mode and peer clock sync, board floor on four units, roadmap refresh |
 | 0.5 | LoRa receive duty cycle (§6.3, ~13 → 8 mA asleep), back-power rule table (§9), INA226 logger rig software (§6.6) |
+| 0.6 | Duty-cycle reply "misses" explained (store save delay, test timing); message store scans by name (boot 281 → 129 s) |
