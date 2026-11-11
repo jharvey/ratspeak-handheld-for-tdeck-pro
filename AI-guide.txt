@@ -1,7 +1,26 @@
 ================================================================================
 AI-GUIDE — T-Deck Pro standalone (short-term)
-Last: 2026-11-10  (energy modes, light-sleep fix, bench tooling)
+Last: 2026-11-11  (energy modes, check-in mode, board floor, handoff)
 ================================================================================
+
+START HERE (handoff 2026-11-11)
+- Bench units (USB to this laptop): COM3, COM5, COM6, COM9 run RatSpeak in Balanced.
+  COM3 + COM6 = bench build at -9 dBm (antenna unknown); COM5 = normal build with
+  txp -9 saved in NVS; COM9 = normal build. COM8 unplugged (GPS fault). Only COM8 and
+  COM9 have SD cards. COM3/COM5 boot slowly (~3-4.5 min, large message stores).
+- Bench build (-9 dBm, ~11 min): PLATFORMIO_BUILD_FLAGS="-DRS_BENCH_TX_DBM=-9"
+  PLATFORMIO_BUILD_DIR=".pio/build_bench" pio run -e tdeck_pro_standalone
+- Flash app only: esptool.py --chip esp32s3 --port COMx --baud 115200 --before
+  default_reset --after hard_reset --no-stub write_flash 0x10000 <firmware.bin>
+- Floor tool: tools/sleepcheck ("floor d <n> <secs>", "floor", "floor x", "bhi").
+- Commit only our files; never stage platformio.ini port lines,
+  tools/check_build_identity.py, putty*.log, backups/, Video/, lilygo-tdeck-pro/,
+  sdkconfig.defaults, .trunk/, .vscode extras, e16/e17.patch, AI-guide-E23-snippet.txt.
+- Disk C: is ~99% full (20 GB free). Do not delete user media (baseball videos).
+- NEXT: (1) measure the board floor with a USB/series meter - the BQ27220 gauge
+  cannot resolve 0-5 mA (COM9 reads 0 mA while its voltage falls); (2) e-ink
+  controller deep-sleep command, keyboard controller sleep; (3) check-in outbox in
+  NVS + queued messages in the thread view; (4) RTC drift over a day.
 Long-term backlog → Future_steps.txt (do not strip future items from there).
 User/developer guide → src/boards/tdeck_Pro/RatSpeak_TDeck-Pro_Description.md
 Simulator → sim/README.md
