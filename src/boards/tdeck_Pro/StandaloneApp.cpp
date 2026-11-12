@@ -4764,10 +4764,13 @@ bool readRecordText(const handheld::storage::RecordKey& key, char* out, size_t c
     return true;
 }
 
+// When a position is from: the sender's timestamp, but never later than our own clock (the
+// two units' clocks differ; a "future" time would read as old / unknown age on the map).
 uint32_t msgEpoch(double ts) {
     const time_t now = time(nullptr);
-    if (ts > 1.6e9 && ts < (double)now + 86400.0) return (uint32_t)ts;   // sender clock, if sane
-    return now > 1600000000 ? (uint32_t)now : 0;
+    const uint32_t mine = now > 1600000000 ? (uint32_t)now : 0;
+    if (ts > 1.6e9 && ts < (double)now + 86400.0) return mine && (uint32_t)ts > mine ? mine : (uint32_t)ts;
+    return mine;
 }
 
 // Called by the protocol (inside g_proto.loop()): only queue the key.
