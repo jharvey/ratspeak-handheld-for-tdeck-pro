@@ -176,7 +176,7 @@ changes. While USB power is plugged in the device runs **Full** anyway (row 5).
 | **I** | Inbox | types letter |
 | **C** | Contacts | types letter |
 | **P** | Peers | types letter |
-| **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox · M**a**p) | does **not** open the menu |
+| **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox · M**a**p · Lib**r**ary) | does **not** open the menu |
 | **H** | Home | — |
 | **G** / **V** | Up / down | — |
 | **N** / **B** | Lists: next / previous page | — |
@@ -725,6 +725,21 @@ PSRAM; the SD card is mounted on the first map visit. On COM9: 4 tiles load and 
 frame builds in 156 ms; the e-ink full refresh is 1.1 s. Console: `map`,
 `map <lat> <lon> [zoom]`, `map close`; bench `maptest <lat> <lon>` writes 18 grid test
 tiles (z14–15) to the card (2.1 s).
+
+### 8.1a Library (reference texts)
+
+**M → Library** (hotkey **R**): the text files in `<SD>/ratdeckpro/library/` (frequency card,
+GhostNet / JS8Call notes, NOAA weather radio list ...), sorted by name. A digit or **Enter**
+opens one: word-wrapped pages, header `p3 12% name`; **N** / **V** / **Space** next page,
+**B** / **G** previous, **F** find (any case; jumps to the next match after this page), **^**
+back to the list, again to close. Plain text only (.txt / .md / .csv); a PDF needs a text
+version first. Copy files over USB without removing the card:
+
+```
+python tools/sdcard/push_files.py --port COM5 M:atspeak-inforequencies_quick_reference.txt
+```
+
+(8 KB pieces through `sdput <len> <crc> <path> <offset>`; any size.)
 
 ### 8.2 SD card
 

@@ -1,0 +1,37 @@
+# Library viewer: MENU -> Library (R) lists <SD>/ratdeckpro/library (sorted by name),
+# a digit opens one, N/B page, F find, ^ back to the list / close. Run after copying
+# files to device "libsim" (tools\sdcard\push_files.py over --serial-tcp, see README).
+expect 60000 [BOOT] ready
+wait 1500
+key M
+wait 800
+shot lib-00-menu.png
+key R
+expect 5000 [LIB]
+wait 1500
+shot lib-01-list.png
+key 1
+expect 5000 [LIB] open frequencies
+wait 1500
+shot lib-02-page1.png
+key N
+wait 1200
+shot lib-03-page2.png
+key BACK
+wait 1000
+key 2
+expect 5000 [LIB] open GhostNet
+wait 1000
+key F
+type THURSDAY
+key ENTER
+expect 8000 [LIB] found "THURSDAY"
+wait 1500
+shot lib-04-found.png
+key B
+wait 1000
+key BACK
+wait 800
+key BACK
+wait 800
+quit

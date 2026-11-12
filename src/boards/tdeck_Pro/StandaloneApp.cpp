@@ -79,6 +79,7 @@
 #include "protocol/OutgoingContract.h"
 #include "runtime/TaskOwner.h"
 #include "ratspeak_protocol.h"
+#include <vector>
 #include "util/Bytes.h"
 #include "util/EventTrace.h"
 
@@ -1879,10 +1880,11 @@ ScreenId g_screen = SCR_HOME;
 
 // MENU overlay rows (doc §4.3): Home · Settings · Contacts · Peers · Inbox
 // Last row "Map" is not a screen: it opens the offline map (same as L); hotkey A.
-constexpr int  kMenuCount = 6, kMenuMap = 5;
-const ScreenId kMenuScreens[kMenuCount] = {SCR_HOME, SCR_SETTINGS, SCR_CONTACTS, SCR_PEERS, SCR_INBOX, SCR_HOME};
-const char*    kMenuLabels[kMenuCount]  = {"Home", "Settings", "Contacts", "Peers", "Inbox", "Map"};
-const char     kMenuKeys[kMenuCount]    = {'H', 'S', 'C', 'P', 'I', 'A'};
+// "Library" opens the reference texts on the SD card; hotkey R.
+constexpr int  kMenuCount = 7, kMenuMap = 5, kMenuLib = 6;
+const ScreenId kMenuScreens[kMenuCount] = {SCR_HOME, SCR_SETTINGS, SCR_CONTACTS, SCR_PEERS, SCR_INBOX, SCR_HOME, SCR_HOME};
+const char*    kMenuLabels[kMenuCount]  = {"Home", "Settings", "Contacts", "Peers", "Inbox", "Map", "Library"};
+const char     kMenuKeys[kMenuCount]    = {'H', 'S', 'C', 'P', 'I', 'A', 'R'};
 bool g_menuOpen = false;
 int  g_menuSel = 0;
 
@@ -1901,7 +1903,8 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              Search,                            // list filter (Inbox / Contacts / Peers)
                              TcpHost, TcpPort,
                              MapNum,                            // contact page: map number
-                             WptName };                         // map P: waypoint name
+                             WptName,                           // map P: waypoint name
+                             LibFind };                         // library: find text
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -2338,7 +2341,7 @@ constexpr int BOT_TOP     = H - BOT_H;               // 280
 constexpr int BOT_C_W     = 80;                      // Contact | Peers | Inbox
 constexpr int BOT_P_W     = 64;
 constexpr int BOT_I_W     = W - BOT_C_W - BOT_P_W;   // 96
-constexpr int MENU_ROW_H  = 36;
+constexpr int MENU_ROW_H  = 32;                        // 7 rows end at 260 (bottom bar 280)
 constexpr int HEADER_Y    = TOP_H + 1;               // path / title line
 constexpr int LIST_TOP    = TOP_H + 20;              // 56
 constexpr int FOOT_H      = 20;
@@ -5155,6 +5158,251 @@ void renderThreadMenu(int y) {
     addHit(2, y, W - 4, ROW_H, H_TMENU, 4);
 }
 
+void openMenu();
+
+// ---- Library (reference texts on the SD card) -----------------------------------------
+// MENU -> Library: the files in <SD>/ratdeckpro/library/ (plain text: frequency card,
+// GhostNet / JS8Call notes, weather radio list ...). Enter / digit opens one; pages with
+// word wrap: N or V = next page, B or G = previous, F = find (case-insensitive, from the
+// next page on), ^ = back to the list / close. Copy files with tools/sdcard/push_files.py.
+constexpr const char* kLibDir = SD_PATH_ROOT "/library";
+constexpr int kLibMaxFiles = 24, kLibLines = 12, kLibLineH = 17;
+struct LibFile { char name[40]; uint32_t size; };
+LibFile g_libFiles[kLibMaxFiles];
+int g_libCount = 0, g_libSel = 0, g_libScroll = 0;
+bool g_libOpen = false, g_libReading = false;
+char g_libPath[96] = "";
+uint32_t g_libSize = 0;
+std::vector<uint32_t> g_libPages;            // start offset of every page read so far
+char g_libText[kLibLines][40];               // the current page, wrapped
+int g_libTextN = 0;
+uint32_t g_libNext = 0;                      // offset after the current page
+
+void libScan() {
+    g_libCount = 0;
+    if (!sdMount()) return;
+    g_sdStore.ensureDir(kLibDir);
+    File d = g_sdStore.openDir(kLibDir);
+    if (!d) return;
+    for (File e = d.openNextFile(); e && g_libCount < kLibMaxFiles; e = d.openNextFile()) {
+        if (!e.isDirectory()) {
+            const char* nm = strrchr(e.name(), '/');
+            nm = nm ? nm + 1 : e.name();
+            if (nm[0] != '.') {
+                strlcpy(g_libFiles[g_libCount].name, nm, sizeof(g_libFiles[0].name));
+                g_libFiles[g_libCount].size = (uint32_t)e.size();
+                g_libCount++;
+            }
+        }
+        e.close();
+    }
+    d.close();
+    for (int a = 1; a < g_libCount; a++)     // by name
+        for (int b = a; b > 0 && strcasecmp(g_libFiles[b].name, g_libFiles[b - 1].name) < 0; b--)
+            std::swap(g_libFiles[b], g_libFiles[b - 1]);
+}
+
+// UTF-8 punctuation the font may not have -> ASCII; other non-ASCII -> '?'.
+int libAscii(const uint8_t* p, int n, char& out) {
+    if (p[0] < 0x80) { out = (char)p[0]; return 1; }
+    if (n >= 3 && p[0] == 0xE2 && p[1] == 0x80) {
+        const uint8_t c = p[2];
+        out = (c == 0x98 || c == 0x99) ? '\'' : (c == 0x9C || c == 0x9D) ? '"' : (c == 0x93 || c == 0x94) ? '-' :
+              (c == 0xA2) ? '*' : (c == 0xA6) ? '.' : '?';
+        return 3;
+    }
+    int len = (p[0] & 0xE0) == 0xC0 ? 2 : (p[0] & 0xF0) == 0xE0 ? 3 : (p[0] & 0xF8) == 0xF0 ? 4 : 1;
+    if (len > n) len = n;
+    out = '?';
+    return len;
+}
+
+// Wrap text from `off` into kLibLines lines of at most W-12 px; sets g_libNext.
+void libLoadPage(uint32_t off) {
+    g_libTextN = 0;
+    g_libNext = off;
+    File f = g_sdStore.openFile(g_libPath, FILE_READ);
+    if (!f) return;
+    f.seek(off);
+    static uint8_t buf[2048];
+    const int n = f.read(buf, sizeof(buf));
+    f.close();
+    if (n <= 0) return;
+    const int maxW = W - 12;
+    int i = 0;
+    char line[40];
+    int ll = 0;
+    int lastSpace = -1, lastSpaceIn = 0;     // break point in `line` / in buf
+    int lineStartIn = 0;
+    while (i < n && g_libTextN < kLibLines) {
+        char c;
+        const int used = libAscii(buf + i, n - i, c);
+        if (c == '\r') { i += used; continue; }
+        if (c == '\t') c = ' ';
+        if (c == '\n' || ll >= (int)sizeof(line) - 1) {
+            line[ll] = 0;
+            strlcpy(g_libText[g_libTextN++], line, sizeof(line));
+            ll = 0; lastSpace = -1;
+            i += (c == '\n') ? used : 0;
+            lineStartIn = i;
+            continue;
+        }
+        line[ll] = c;
+        line[ll + 1] = 0;
+        if (textW(line) > maxW) {            // wrap at the last space, else hard
+            if (lastSpace > 0) {
+                line[lastSpace] = 0;
+                strlcpy(g_libText[g_libTextN++], line, sizeof(line));
+                i = lastSpaceIn + 1;
+            } else {
+                line[ll] = 0;
+                strlcpy(g_libText[g_libTextN++], line, sizeof(line));
+            }
+            ll = 0; lastSpace = -1;
+            lineStartIn = i;
+            continue;
+        }
+        if (c == ' ') { lastSpace = ll; lastSpaceIn = i; }
+        ll++;
+        i += used;
+    }
+    if (g_libTextN < kLibLines && ll > 0 && i >= n) {   // end of the chunk (= end of file if short)
+        line[ll] = 0;
+        strlcpy(g_libText[g_libTextN++], line, sizeof(line));
+        lineStartIn = i;
+    }
+    g_libNext = off + (uint32_t)lineStartIn;
+}
+
+void libOpenFile(int k) {
+    if (k < 0 || k >= g_libCount) return;
+    snprintf(g_libPath, sizeof(g_libPath), "%s/%s", kLibDir, g_libFiles[k].name);
+    g_libSize = g_libFiles[k].size;
+    g_libPages.clear();
+    g_libPages.push_back(0);
+    libLoadPage(0);
+    g_libReading = true;
+    Serial.printf("[LIB] open %s (%u bytes)\n", g_libFiles[k].name, (unsigned)g_libSize);
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void libOpen() {
+    if (g_menuOpen) g_menuOpen = false;
+    libScan();
+    g_libOpen = true;
+    g_libReading = false;
+    g_libSel = 0;
+    g_libScroll = 0;
+    Serial.printf("[LIB] %d files\n", g_libCount);
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void libClose() { g_libOpen = false; g_libReading = false; g_libPages.clear(); g_libPages.shrink_to_fit(); requestRedraw(); }
+
+void libPage(int dir) {
+    if (dir > 0) {
+        if (g_libNext >= g_libSize || g_libNext <= g_libPages.back()) { toast("End of file"); return; }
+        g_libPages.push_back(g_libNext);
+    } else {
+        if (g_libPages.size() <= 1) { toast("Start of file"); return; }
+        g_libPages.pop_back();
+    }
+    libLoadPage(g_libPages.back());
+    requestRedraw();
+}
+
+// Find (case-insensitive) after the current page; jumps to the line that holds it.
+void libFind(const char* what) {
+    const size_t wl = strlen(what);
+    if (!wl) return;
+    File f = g_sdStore.openFile(g_libPath, FILE_READ);
+    if (!f) return;
+    static uint8_t buf[2048 + 64];
+    uint32_t pos = g_libPages.back() + 1;
+    int32_t found = -1;
+    while (pos < g_libSize && found < 0) {
+        f.seek(pos);
+        const int n = f.read(buf, 2048 + 63);
+        if (n <= 0) break;
+        for (int i = 0; i + (int)wl <= n; i++) {
+            if (!strncasecmp((const char*)buf + i, what, wl)) { found = (int32_t)(pos + i); break; }
+        }
+        if (n < (int)wl) break;
+        pos += (uint32_t)(n - (int)wl + 1);
+        if (n < 2048) break;
+    }
+    if (found < 0) { f.close(); toast("Not found: %.14s", what); return; }
+    uint32_t ls = (uint32_t)found;           // back to the start of that line (max 200 bytes)
+    for (int k = 0; k < 200 && ls > 0; k++) {
+        f.seek(ls - 1);
+        if (f.read() == '\n') break;
+        ls--;
+    }
+    f.close();
+    g_libPages.push_back(ls);
+    libLoadPage(ls);
+    Serial.printf("[LIB] found \"%s\" at %ld\n", what, (long)found);
+    requestRedraw();
+}
+
+void libKey(const KeyEvent& ev) {
+    const char c = (char)toupper((unsigned char)ev.character);
+    if (g_libReading) {
+        if (c == 'N' || c == 'V' || ev.space) libPage(+1);
+        else if (c == 'B' || c == 'G') libPage(-1);
+        else if (c == 'F') startEntry(Entry::LibFind);
+        else if (c == 'M') { libClose(); openMenu(); }
+        return;
+    }
+    if (ev.enter) { libOpenFile(g_libSel); return; }
+    if (c >= '1' && c <= '9') { const int k = g_libScroll + (c - '1'); if (k < g_libCount) { g_libSel = k; libOpenFile(k); } return; }
+    if (c == 'V' && g_libSel < g_libCount - 1) g_libSel++;
+    if (c == 'G' && g_libSel > 0) g_libSel--;
+    if (c == 'M') { libClose(); openMenu(); return; }
+    if (g_libSel < g_libScroll) g_libScroll = g_libSel;
+    if (g_libSel >= g_libScroll + 4) g_libScroll = g_libSel - 3;
+    requestRedraw();
+}
+
+void renderLibrary() {
+    char hdr[48];
+    if (!g_libReading) {
+        drawHeader("Library", false);
+        if (!g_libCount) {
+            text(8, LIST_TOP + 8, "No files in ratdeckpro/library", false, W - 16);
+            text(8, LIST_TOP + 30, "on the SD card (push_files.py)", false, W - 16);
+        }
+        for (int r = 0; r < 4 && g_libScroll + r < g_libCount; r++) {
+            const int k = g_libScroll + r;
+            char t[48], sub[24];
+            snprintf(t, sizeof(t), "%d %s", r + 1, g_libFiles[k].name);
+            const uint32_t sz = g_libFiles[k].size;
+            if (sz < 2048) snprintf(sub, sizeof(sub), "%u bytes", (unsigned)sz);
+            else snprintf(sub, sizeof(sub), "%u KB", (unsigned)((sz + 512) / 1024));
+            listRow(LIST_TOP + r * ROW_H, t, sub, k == g_libSel);
+        }
+        box(0, FOOT_Y, W, FOOT_H, 1);
+        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4 / Enter  G/V  ^ close");
+        return;
+    }
+    const char* nm = strrchr(g_libPath, '/');
+    nm = nm ? nm + 1 : g_libPath;
+    const unsigned pct = g_libSize ? (unsigned)((uint64_t)g_libPages.back() * 100 / g_libSize) : 0;
+    snprintf(hdr, sizeof(hdr), "p%u %u%% %s", (unsigned)g_libPages.size(), pct, nm);
+    drawHeader(hdr, false);
+    for (int l = 0; l < g_libTextN; l++) text(6, LIST_TOP + l * kLibLineH, g_libText[l], false, W - 10);
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    if (g_entry == Entry::LibFind) {
+        char t[48];
+        snprintf(t, sizeof(t), "Find: %s_", g_buf);
+        label(0, FOOT_Y - 1, W, FOOT_H, t);
+    } else {
+        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "N/B page  F find  ^ list");
+    }
+}
+
 // ---- Contact page + share picker ----------------------------------------------------
 const char* const kCardActs[4] = {"Message", "Rename", "Share", "Map number"};
 const char* const kCardSubs[4] = {"open the chat", "name it on this radio", "send it to a contact", ""};
@@ -5292,6 +5540,7 @@ void render() {
     if (g_threadOpen)                  renderThread();
     else if (g_entry == Entry::Name)   renderRename();
     else if (g_cardOpen)               renderCard();
+    else if (g_libOpen)                renderLibrary();
     else if (mapview::isOpen())        renderMapHeader();
     else switch (g_screen) {
         case SCR_HOME:     renderHome(); break;
@@ -5302,7 +5551,7 @@ void render() {
     drawBottomBar();
     drawMenuOverlay();
     lv_refr_now(nullptr);
-    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen) stampMap();   // after LVGL's clear
+    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen) stampMap();   // after LVGL's clear
     const uint32_t t1 = millis();
     // Clear the request first: keys queued during the panel refresh may ask again.
     g_redraw = false;
@@ -5496,6 +5745,7 @@ void startNameEntry(const uint8_t peer[16]) {
 
 void goScreen(ScreenId s) {
     g_menuOpen = false;
+    g_libOpen = false;
     g_cardOpen = false;
     g_shareActive = false;
     if (mapview::isOpen()) mapview::close();
@@ -5524,7 +5774,7 @@ void wptOpenFromSettings(int i) {
 void openMenu() {
     g_menuOpen = true;
     g_menuSel = 0;
-    for (int i = 0; i < kMenuMap; i++) if (kMenuScreens[i] == g_screen) g_menuSel = i;
+    for (int i = 0; i < kMenuMap; i++) if (kMenuScreens[i] == g_screen) g_menuSel = i;   // not Map / Library
     requestRedraw();
 }
 
@@ -5618,6 +5868,10 @@ void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
     if (g_shareActive && !entryActive()) { g_shareActive = false; toast("Share cancelled"); return; }
+    if (g_libOpen && !entryActive()) {
+        if (g_libReading) { g_libReading = false; requestRedraw(); } else libClose();
+        return;
+    }
     if (mapview::isOpen() && !entryActive()) { closeMap(); return; }    // map over a list: map first
     if (g_filter[0] && !entryActive() && isListScreen(g_screen)) { g_filter[0] = 0; loadRows(g_screen); requestRedraw(); return; }
     if (entryActive())           { cancelEntry(); return; }
@@ -5697,6 +5951,13 @@ void commitEntry() {
         if (v < lo[g_entryArg] || v > hi[g_entryArg]) { toast("Out of range %d-%d", lo[g_entryArg], hi[g_entryArg]); return; }
         g_rtc[g_entryArg] = (int)v;
         endEntry();
+        return;
+    }
+    case Entry::LibFind: {
+        char what[40];
+        strlcpy(what, g_buf, sizeof(what));
+        endEntry();
+        libFind(what);
         return;
     }
     case Entry::WptName: {
@@ -5860,7 +6121,7 @@ void entryKey(const KeyEvent& ev) {
     if (ev.space) {
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) c = '.';
         else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass || passEntry(g_entry) ||
-                 g_entry == Entry::Search || g_entry == Entry::WptName) c = ' ';
+                 g_entry == Entry::Search || g_entry == Entry::WptName || g_entry == Entry::LibFind) c = ' ';
     } else if (ev.fn) {
         if (passEntry(g_entry)) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
         if (g_entry == Entry::Message && g_threadOpen) { g_tmenuOpen = true; g_tmenuSel = 0; requestRedraw(); return; }
@@ -5892,8 +6153,11 @@ void entryKey(const KeyEvent& ev) {
     requestRedraw();
 }
 
+void libOpen();
+
 void menuGo(int i) {
     if (i == kMenuMap) { closeMenu(); openMap(); return; }
+    if (i == kMenuLib) { closeMenu(); libOpen(); return; }
     goScreen(kMenuScreens[i]);
 }
 
@@ -5956,6 +6220,7 @@ void handleKey(const KeyEvent& ev) {
     if (ev.up) { goBack(); return; }                          // lone Shift = ^
     if (g_menuOpen) { menuKey(ev); return; }
     if (entryActive()) { entryKey(ev); return; }
+    if (g_libOpen) { libKey(ev); return; }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
     if (mapview::isOpen()) {
         const char mc = (char)toupper((unsigned char)ev.character);
@@ -6551,6 +6816,7 @@ uint8_t* g_putBuf = nullptr;
 size_t   g_putLen = 0, g_putGot = 0;
 uint32_t g_putCrc = 0, g_putAt = 0;
 char     g_putPath[96] = "";
+uint32_t g_putOffset = 0;                    // > 0: append at this offset
 bool     g_putActive = false;
 
 uint32_t crc32Of(const uint8_t* d, size_t n) {
@@ -6563,13 +6829,16 @@ uint32_t crc32Of(const uint8_t* d, size_t n) {
 }
 
 void sdputStart(const char* args) {
-    unsigned long len = 0, crc = 0;
+    unsigned long len = 0, crc = 0, off = 0;
     char rel[80] = "";
-    if (sscanf(args, "%lu %lx %79s", &len, &crc, rel) != 3 || !len || len > kSdPutMax || rel[0] != '/' ||
+    // Optional 4th value: append at this byte offset (big files in 16 KB pieces; the
+    // file must already be exactly that long). Without it the file is (re)written.
+    if (sscanf(args, "%lu %lx %79s %lu", &len, &crc, rel, &off) < 3 || !len || len > kSdPutMax || rel[0] != '/' ||
         strstr(rel, "..")) {
-        Serial.println("[SDPUT] err usage: sdput <len 1-16384> <crc32 hex> </path under ratdeckpro>");
+        Serial.println("[SDPUT] err usage: sdput <len 1-16384> <crc32 hex> </path under ratdeckpro> [offset]");
         return;
     }
+    g_putOffset = off;
     if (!g_putBuf) {
 #if !defined(SIMULATOR)
         g_putBuf = (uint8_t*)heap_caps_malloc(kSdPutMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -6595,7 +6864,14 @@ void sdputFinish() {
         if (!g_sdStore.ensureDir(dir)) { lastDir[0] = 0; Serial.println("[SDPUT] err mkdir"); return; }
         snprintf(lastDir, sizeof(lastDir), "%s", dir);
     }
-    if (!g_sdStore.writeSimple(g_putPath, g_putBuf, g_putLen)) { lastDir[0] = 0; Serial.println("[SDPUT] err write"); return; }
+    if (g_putOffset) {                          // append piece: the file must end at the offset
+        File af = g_sdStore.openFile(g_putPath, FILE_APPEND);
+        if (!af) { Serial.println("[SDPUT] err open"); return; }
+        if (af.size() != g_putOffset) { af.close(); Serial.printf("[SDPUT] err offset (file is %u)\n", (unsigned)af.size()); return; }
+        const size_t wr = af.write(g_putBuf, g_putLen);
+        af.close();
+        if (wr != g_putLen) { Serial.println("[SDPUT] err write"); return; }
+    } else if (!g_sdStore.writeSimple(g_putPath, g_putBuf, g_putLen)) { lastDir[0] = 0; Serial.println("[SDPUT] err write"); return; }
     Serial.println("[SDPUT] ok");
 }
 

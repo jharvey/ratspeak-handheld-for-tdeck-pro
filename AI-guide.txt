@@ -201,6 +201,8 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
                   header-less 8 KB tile = one cluster), then restart. COM5/COM6/COM9
                   cards formatted 8 KB on 2026-11-12 (backups of their few non-map files
                   were taken first). sdinfo prints FAT type / cluster / free.
+  sdput ... <offset>  (4th value) append a piece at that offset: big files in 8 KB pieces
+                  (tools/sdcard/push_files.py -> /library for MENU -> Library)
   sdls [/path]    list an SD folder (absolute card path; sdlsa = all entries, for tools)
   sdget </path>   read an SD file (<= 16 KB): "[SDGET] <len> <crc32>" + raw bytes
                   (tools/maptiles/copy_tiles.py: card-to-card copy through the PC)
