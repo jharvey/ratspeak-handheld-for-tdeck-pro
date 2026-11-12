@@ -3663,9 +3663,12 @@ void drawFooter() {
 void drawHeader(const char* left, bool moreUp) {
     text(4, HEADER_Y, left, true, moreUp ? MENU_X - 8 : W - 8);
     if (moreUp) {
-        box(MENU_X, TOP_H - 1, TAB_W, 18, 1);
-        label(MENU_X, TOP_H - 2, TAB_W, 18, "^ more");
-        addHit(MENU_X, TOP_H - 1, TAB_W, 18, H_UP);
+        // Hangs off MENU: same left/right edges, bottom edge = top line of
+        // the first list row, so it reads like the footer's "v more" cell.
+        const int h = LIST_TOP - (TOP_H - 1) + 1;
+        box(MENU_X, TOP_H - 1, TAB_W, h, 1);
+        label(MENU_X, TOP_H - 2, TAB_W, h, "^ more");
+        addHit(MENU_X, TOP_H - 1, TAB_W, h, H_UP);
     }
 }
 
