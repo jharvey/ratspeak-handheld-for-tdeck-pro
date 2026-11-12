@@ -1877,7 +1877,8 @@ uint8_t g_threadPeer[16];
 enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, Longitude, WifiPass,
                              PassOld, PassNew, PassConfirm,     // Pass*: lock password (arg = purpose)
                              Search,                            // list filter (Inbox / Contacts / Peers)
-                             TcpHost, TcpPort };
+                             TcpHost, TcpPort,
+                             MapNum };                          // contact page: map number
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -1890,6 +1891,7 @@ bool passEntry(Entry e) { return e == Entry::PassOld || e == Entry::PassNew || e
 bool browseMode()  { return !entryActive(); }
 bool entryNumeric() {
     return g_entry == Entry::RtcField || g_entry == Entry::IdleSecs || g_entry == Entry::TcpPort ||
+           g_entry == Entry::MapNum ||
            g_entry == Entry::Latitude || g_entry == Entry::Longitude;
 }
 
@@ -4138,8 +4140,12 @@ void mapFeedPosition() {
     else mapview::setPosition(false, 0, 0);
 }
 
+extern int g_mapSel;
+
 void openMapAt(double lat, double lon) {
     if (g_menuOpen) g_menuOpen = false;
+    g_cardOpen = false;                      // the map replaces a contact page
+    g_mapSel = -1;
     mapview::setReader(mapReadTile);
     g_mapSdTried = false;
     mapFeedPosition();
@@ -4151,6 +4157,8 @@ void openMapAt(double lat, double lon) {
 }
 
 void openMap() {
+    g_cardOpen = false;
+    g_mapSel = -1;                           // callers that show a contact select it after
     mapview::setReader(mapReadTile);
     g_mapSdTried = false;
     mapFeedPosition();
@@ -4454,7 +4462,11 @@ void autoShareTick() {
 // text) updates that contact's last position: NVS rs_cpos, newest 16 contacts. Fed by
 // the protocol's committed-message notice (queued, read in the main loop) and by
 // loadHistory() for messages that arrived before. Shown as markers on the map.
-struct CPos { uint8_t dest[16]; float lat, lon; uint32_t at; };    // at = epoch s (sender)
+// num = the contact's map number (1-99): set by hand on the contact page (4 Map number),
+// else the lowest free one when their first position arrives. hasPos = 0: a number set
+// before any position (no marker yet).
+struct CPos { uint8_t dest[16]; float lat, lon; uint32_t at; uint8_t num, hasPos, pad[2]; };
+struct CPosV1 { uint8_t dest[16]; float lat, lon; uint32_t at; };   // NVS before 2026-11-12
 constexpr int kCPosMax = 16;
 CPos g_cpos[kCPosMax];
 int g_cposCount = 0;
@@ -4474,32 +4486,85 @@ void cposLoad() {
     g_cposCount = 0;
     if (!p.begin("rs_cpos", true)) return;
     const int n = p.getUChar("n", 0);
-    if (n > 0 && n <= kCPosMax && p.getBytes("list", g_cpos, sizeof(CPos) * n) == sizeof(CPos) * (size_t)n)
-        g_cposCount = n;
+    const size_t len = p.getBytesLength("list");
+    if (n > 0 && n <= kCPosMax && len == sizeof(CPos) * (size_t)n) {
+        if (p.getBytes("list", g_cpos, len) == len) g_cposCount = n;
+    } else if (n > 0 && n <= kCPosMax && len == sizeof(CPosV1) * (size_t)n) {   // migrate
+        CPosV1 old[kCPosMax];
+        if (p.getBytes("list", old, len) == len) {
+            for (int i = 0; i < n; i++) {
+                memset(&g_cpos[i], 0, sizeof(CPos));
+                memcpy(g_cpos[i].dest, old[i].dest, 16);
+                g_cpos[i].lat = old[i].lat; g_cpos[i].lon = old[i].lon; g_cpos[i].at = old[i].at;
+                g_cpos[i].num = (uint8_t)(i + 1);
+                g_cpos[i].hasPos = 1;
+            }
+            g_cposCount = n;
+        }
+    }
     p.end();
+}
+
+int cposFind(const uint8_t dest[16]) {
+    for (int i = 0; i < g_cposCount; i++) if (!memcmp(g_cpos[i].dest, dest, 16)) return i;
+    return -1;
+}
+
+int cposByNum(int num) {
+    for (int i = 0; i < g_cposCount; i++) if (g_cpos[i].num == num) return i;
+    return -1;
+}
+
+uint8_t cposFreeNum() {
+    for (int n = 1; n < 100; n++) if (cposByNum(n) < 0) return (uint8_t)n;
+    return 99;
+}
+
+// Slot for a contact (new one: lowest free number; full: replaces the oldest position).
+int cposSlot(const uint8_t dest[16]) {
+    int i = cposFind(dest);
+    if (i >= 0) return i;
+    if (g_cposCount < kCPosMax) i = g_cposCount++;
+    else {
+        i = 0;
+        for (int k = 1; k < kCPosMax; k++) if (g_cpos[k].at < g_cpos[i].at) i = k;
+    }
+    memset(&g_cpos[i], 0, sizeof(CPos));
+    memcpy(g_cpos[i].dest, dest, 16);
+    g_cpos[i].num = cposFreeNum();
+    return i;
 }
 
 void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at) {
     if (isSelf(dest)) return;
-    int i = 0;
-    while (i < g_cposCount && memcmp(g_cpos[i].dest, dest, 16)) i++;
-    if (i < g_cposCount && g_cpos[i].at > at) return;      // already have a newer one
-    if (i == g_cposCount) {
-        if (g_cposCount < kCPosMax) g_cposCount++;
-        else {                                               // full: replace the oldest
-            i = 0;
-            for (int k = 1; k < kCPosMax; k++) if (g_cpos[k].at < g_cpos[i].at) i = k;
-        }
-    }
-    memcpy(g_cpos[i].dest, dest, 16);
+    const int found = cposFind(dest);
+    if (found >= 0 && g_cpos[found].hasPos && g_cpos[found].at > at) return;   // have a newer one
+    const int i = cposSlot(dest);
     g_cpos[i].lat = (float)lat;
     g_cpos[i].lon = (float)lon;
     g_cpos[i].at = at;
+    g_cpos[i].hasPos = 1;
     cposSave();
     char nm[24];
     peerName(dest, nm, sizeof(nm));
-    Serial.printf("[LOC] %s at %.5f,%.5f\n", nm, lat, lon);
+    Serial.printf("[LOC] %s at %.5f,%.5f (#%u)\n", nm, lat, lon, (unsigned)g_cpos[i].num);
     if (mapview::isOpen()) requestRedraw();
+}
+
+// Contact page "4 Map number": give this contact number n; whoever had it takes this
+// contact's old number (or the lowest free one).
+void cposAssign(const uint8_t dest[16], int n) {
+    const int i = cposSlot(dest);
+    const int other = cposByNum(n);
+    if (other >= 0 && other != i) {
+        g_cpos[other].num = g_cpos[i].num;
+        if (g_cpos[other].num == n || !g_cpos[other].num) g_cpos[other].num = cposFreeNum();
+    }
+    g_cpos[i].num = (uint8_t)n;
+    cposSave();
+    char nm[24];
+    peerName(dest, nm, sizeof(nm));
+    Serial.printf("[LOC] %s is map #%d\n", nm, n);
 }
 
 // Text of a stored message (content only, NUL-terminated); false if busy / missing.
@@ -4565,7 +4630,7 @@ int g_mapSel = -1;                           // index into g_cpos, -1 = none
 
 int cposOrder(int* idx) {                    // newest first
     int n = 0;
-    for (int i = 0; i < g_cposCount; i++) idx[n++] = i;
+    for (int i = 0; i < g_cposCount; i++) if (g_cpos[i].hasPos) idx[n++] = i;
     for (int a = 1; a < n; a++)
         for (int b = a; b > 0 && g_cpos[idx[b]].at > g_cpos[idx[b - 1]].at; b--) std::swap(idx[b], idx[b - 1]);
     return n;
@@ -4591,7 +4656,7 @@ double bearingDeg(double la1, double lo1, double la2, double lo2) {
 }
 
 bool mapContactInfo(char* out, size_t n) {
-    if (g_mapSel < 0 || g_mapSel >= g_cposCount) return false;
+    if (g_mapSel < 0 || g_mapSel >= g_cposCount || !g_cpos[g_mapSel].hasPos) return false;
     const CPos& c = g_cpos[g_mapSel];
     char nm[24], age[12] = "?", dist[24] = "";
     peerName(c.dest, nm, sizeof(nm));
@@ -4613,7 +4678,7 @@ bool mapContactInfo(char* out, size_t n) {
     } else {
         snprintf(dist, sizeof(dist), "%.3f,%.3f", c.lat, c.lon);
     }
-    snprintf(out, n, "#%d %.9s %s %s ago", g_mapSel + 1, nm, dist, age);
+    snprintf(out, n, "#%u %.9s %s %s ago", (unsigned)c.num, nm, dist, age);
     return true;
 }
 
@@ -4643,11 +4708,13 @@ void mapCycleContact() {
 void mapContactsFeed() {
     mapview::Marker m[kCPosMax];
     const time_t now = time(nullptr);
+    int n = 0;
     for (int i = 0; i < g_cposCount; i++) {
+        if (!g_cpos[i].hasPos) continue;
         const bool fresh = g_cpos[i].at && now >= (time_t)g_cpos[i].at && now - (time_t)g_cpos[i].at < 3600;
-        m[i] = {g_cpos[i].lat, g_cpos[i].lon, i == g_mapSel, (uint8_t)(i + 1), fresh};   // number = slot
+        m[n++] = {g_cpos[i].lat, g_cpos[i].lon, i == g_mapSel, g_cpos[i].num, fresh, false};
     }
-    mapview::setMarkers(m, g_cposCount);
+    mapview::setMarkers(m, n);
 }
 
 // The marker carries the contact's number (no name tags: the screen is small); the
@@ -4656,11 +4723,6 @@ void mapContactsStamp() {}
 
 int g_mapNum = 0;                            // digits typed on the map: open that chat
 
-int cposFind(const uint8_t dest[16]) {
-    for (int i = 0; i < g_cposCount; i++) if (!memcmp(g_cpos[i].dest, dest, 16)) return i;
-    return -1;
-}
-
 void openThread(const uint8_t peer[16]);
 void openMap();
 void closeThread();
@@ -4668,7 +4730,7 @@ void closeThread();
 // Map centred on a contact's last position, its marker selected (lists: L, chat menu 5).
 bool mapShowContact(const uint8_t dest[16]) {
     const int i = cposFind(dest);
-    if (i < 0) { toast("No position from them yet"); return false; }
+    if (i < 0 || !g_cpos[i].hasPos) { toast("No position from them yet"); return false; }
     if (!mapview::isOpen()) openMap();
     g_mapSel = i;
     mapview::centreOn(g_cpos[i].lat, g_cpos[i].lon);
@@ -4693,9 +4755,10 @@ bool mapNumberKey(const KeyEvent& ev) {
     if (ev.enter && g_mapNum) {
         const int n = g_mapNum;
         g_mapNum = 0;
-        if (n < 1 || n > g_cposCount) { toast("No contact #%d on the map", n); requestRedraw(); return true; }
+        const int k = cposByNum(n);
+        if (k < 0) { toast("No contact #%d on the map", n); requestRedraw(); return true; }
         uint8_t peer[16];
-        memcpy(peer, g_cpos[n - 1].dest, 16);
+        memcpy(peer, g_cpos[k].dest, 16);
         Serial.printf("[MAP] open chat #%d\n", n);
         closeMap();
         openThread(peer);
@@ -4724,7 +4787,7 @@ void tmenuAct(int i) {
     else if (i == 4) {
         uint8_t peer[16];
         memcpy(peer, g_threadPeer, 16);
-        if (cposFind(peer) < 0) { toast("No position from them yet"); return; }
+        if (cposFind(peer) < 0 || !g_cpos[cposFind(peer)].hasPos) { toast("No position from them yet"); return; }
         g_tmenuOpen = false;
         closeThread();
         mapShowContact(peer);
@@ -4769,12 +4832,12 @@ void renderThreadMenu(int y) {
     listRow(y, "4 Stop all auto-sharing", sub, g_tmenuSel == 3);
     addHit(2, y, W - 4, ROW_H, H_TMENU, 3); y += ROW_H;
     const int ci = cposFind(g_threadPeer);
-    if (ci >= 0) {
+    if (ci >= 0 && g_cpos[ci].hasPos) {
         const time_t now = time(nullptr);
         const uint32_t a = (g_cpos[ci].at && now > (time_t)g_cpos[ci].at) ? (uint32_t)(now - g_cpos[ci].at) : 0;
         char age[12];
         fmtAge(a, age, sizeof(age));
-        snprintf(sub, sizeof(sub), "#%d, %s old", ci + 1, g_cpos[ci].at ? age : "?");
+        snprintf(sub, sizeof(sub), "#%u, %s old", (unsigned)g_cpos[ci].num, g_cpos[ci].at ? age : "?");
     } else {
         snprintf(sub, sizeof(sub), "no position from them yet");
     }
@@ -4783,8 +4846,8 @@ void renderThreadMenu(int y) {
 }
 
 // ---- Contact page + share picker ----------------------------------------------------
-const char* const kCardActs[3] = {"Message", "Rename", "Share"};
-const char* const kCardSubs[3] = {"open the chat", "name it on this radio", "send it to a contact"};
+const char* const kCardActs[4] = {"Message", "Rename", "Share", "Map number"};
+const char* const kCardSubs[4] = {"open the chat", "name it on this radio", "send it to a contact", ""};
 
 void openCard(const uint8_t peer[16]) {
     memcpy(g_cardPeer, peer, 16);
@@ -4801,18 +4864,26 @@ void renderCard() {
     hashToHex(g_cardPeer, hex);
     snprintf(line, sizeof(line), "%s%s", isSelf(g_cardPeer) ? "MyID: " : "", name);
     text(4, HEADER_Y, line, true, W - 8);
-    snprintf(line, sizeof(line), "%.16s", hex);
-    text(6, HEADER_Y + 20, line);
-    text(6, HEADER_Y + 38, hex + 16);
-    int y = HEADER_Y + 62;
-    for (int i = 0; i < 3; i++) {
+    snprintf(line, sizeof(line), "%.20s..", hex);         // one line: room for 4 rows
+    text(6, HEADER_Y + 19, line);
+    int y = HEADER_Y + 39;
+    for (int i = 0; i < 4; i++) {
+        char sub[40];
+        snprintf(sub, sizeof(sub), "%s", kCardSubs[i]);
+        if (i == 3) {
+            const int ci = cposFind(g_cardPeer);
+            if (g_entry == Entry::MapNum) snprintf(sub, sizeof(sub), ">%s_  (1-99, Enter)", g_buf);
+            else if (ci >= 0) snprintf(sub, sizeof(sub), "#%u on the map%s", (unsigned)g_cpos[ci].num,
+                                       g_cpos[ci].hasPos ? "" : " (no position yet)");
+            else snprintf(sub, sizeof(sub), "none yet (1 = shown first)");
+        }
         snprintf(line, sizeof(line), "%d : %s", i + 1, kCardActs[i]);
-        listRow(y, line, kCardSubs[i], i == g_cardSel);
+        listRow(y, line, sub, i == g_cardSel);
         addHit(2, y, W - 4, ROW_H, H_CARD, i);
         y += ROW_H;
     }
     box(0, FOOT_Y, W, FOOT_H, 1);
-    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-3 / Enter    ^ = back");
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4 / Enter    ^ = back");
 }
 
 void startNameEntry(const uint8_t peer[16]);
@@ -4841,16 +4912,24 @@ void cardAct(int i) {
             toast("Pick who gets it");
             Serial.println("[CARD] pick recipient");
             break;
+        case 3: {                                   // map number (1 = wins at a shared spot)
+            if (isSelf(peer)) { toast("That is this radio"); return; }
+            const int ci = cposFind(peer);
+            char cur[4] = "";
+            if (ci >= 0) snprintf(cur, sizeof(cur), "%u", (unsigned)g_cpos[ci].num);
+            startEntry(Entry::MapNum, cur);
+            break;
+        }
     }
 }
 
 void cardKey(const KeyEvent& ev) {
     if (ev.enter) { cardAct(g_cardSel); return; }
     const char raw = ev.character;
-    if (raw >= '1' && raw <= '3') { g_cardSel = raw - '1'; cardAct(g_cardSel); return; }
+    if (raw >= '1' && raw <= '4') { g_cardSel = raw - '1'; cardAct(g_cardSel); return; }
     switch (toupper((unsigned char)raw)) {
         case 'G': if (g_cardSel > 0) g_cardSel--; requestRedraw(); break;
-        case 'V': if (g_cardSel < 2) g_cardSel++; requestRedraw(); break;
+        case 'V': if (g_cardSel < 3) g_cardSel++; requestRedraw(); break;
         case 'M': closeCard(); openMenu(); break;
         default: break;
     }
@@ -5222,8 +5301,8 @@ void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
     if (g_shareActive && !entryActive()) { g_shareActive = false; toast("Share cancelled"); return; }
+    if (mapview::isOpen() && !entryActive()) { closeMap(); return; }    // map over a list: map first
     if (g_filter[0] && !entryActive() && isListScreen(g_screen)) { g_filter[0] = 0; loadRows(g_screen); requestRedraw(); return; }
-    if (mapview::isOpen() && !entryActive()) { closeMap(); return; }
     if (entryActive())           { cancelEntry(); return; }
     if (g_screen == SCR_SETTINGS && g_navDepth > 0) { popPage(); return; }
 }
@@ -5301,6 +5380,15 @@ void commitEntry() {
         if (v < lo[g_entryArg] || v > hi[g_entryArg]) { toast("Out of range %d-%d", lo[g_entryArg], hi[g_entryArg]); return; }
         g_rtc[g_entryArg] = (int)v;
         endEntry();
+        return;
+    }
+    case Entry::MapNum: {
+        long v;
+        if (!parseLong(g_buf, v) || v < 1 || v > 99) { toast("Map number 1-99"); return; }
+        endEntry();
+        cposAssign(g_cardPeer, (int)v);
+        toast("Map #%ld", v);
+        requestRedraw();
         return;
     }
     case Entry::IdleSecs: {
@@ -5512,7 +5600,8 @@ void browseKey(const KeyEvent& ev) {
             if (g_screen == SCR_HOME) activateCurrent();
             break;
         case 'L':                                   // map; on a list row with a known position: there
-            if (isListScreen(g_screen) && g_listSel < g_rowCount && cposFind(g_rows[g_listSel].peer) >= 0)
+            if (isListScreen(g_screen) && g_listSel < g_rowCount && cposFind(g_rows[g_listSel].peer) >= 0 &&
+                g_cpos[cposFind(g_rows[g_listSel].peer)].hasPos)
                 mapShowContact(g_rows[g_listSel].peer);
             else openMap();
             break;
@@ -6405,8 +6494,18 @@ void handleSerialLine(char* p) {
         sdArchiveSet(atoi(p + 6) != 0);
         Serial.printf("[SD] message archive setting %s (applies at next boot)\n", sdArchiveEnabled() ? "on" : "off");
     } else if (!strcmp(p, "cpos") || !strncmp(p, "cpos ", 5)) {
-        // cpos = contacts' last positions; bench: cpos <hex32> <lat> <lon> [age min] | cpos clear
+        // cpos = contacts' last positions; bench: cpos <hex32> <lat> <lon> [age min] |
+        // cpos num <hex32> <n> (map number) | cpos clear
         if (!strcmp(p, "cpos clear")) { g_cposCount = 0; g_mapSel = -1; cposSave(); Serial.println("[LOC] cpos cleared"); return; }
+        if (!strncmp(p, "cpos num ", 9)) {
+            uint8_t d[16];
+            if (strlen(p + 9) < 34 || !hexToHash(p + 9, d) || atoi(p + 9 + 33) < 1 || atoi(p + 9 + 33) > 99) {
+                Serial.println("[LOC] cpos num <hex32> <1-99>");
+                return;
+            }
+            cposAssign(d, atoi(p + 9 + 33));
+            return;
+        }
         if (p[4]) {
             uint8_t d[16];
             double la = 0, lo = 0;
@@ -6422,8 +6521,9 @@ void handleSerialLine(char* p) {
             char nm[24], hex[33];
             peerName(g_cpos[i].dest, nm, sizeof(nm));
             hashToHex(g_cpos[i].dest, hex);
-            Serial.printf("[LOC] cpos %s %s %.5f,%.5f at %lu\n", hex, nm, g_cpos[i].lat, g_cpos[i].lon,
-                          (unsigned long)g_cpos[i].at);
+            Serial.printf("[LOC] cpos #%u %s %s %.5f,%.5f at %lu%s\n", (unsigned)g_cpos[i].num, hex, nm,
+                          g_cpos[i].lat, g_cpos[i].lon, (unsigned long)g_cpos[i].at,
+                          g_cpos[i].hasPos ? "" : " (no position yet)");
         }
         Serial.printf("[LOC] cpos %d contacts\n", g_cposCount);
     } else if (!strcmp(p, "loc")) {

@@ -57,11 +57,13 @@ bool key(char c, bool enter);
 
 // Other positions (contacts' last shared locations): the contact's number (1-99) in a
 // black disc with a white ring; fresh=false (old position) draws a white disc with a black
-// edge instead; selected adds an outer black ring. Copied (at most kMaxMarkers).
+// edge instead; selected adds an outer black ring. Overlapping markers: only the selected
+// one, else the lowest number, is drawn, with a small "+" (more here); the others are
+// hidden. Copied (at most kMaxMarkers).
 // markerScreen() gives where marker i was drawn by the last draw(), relative to the draw
 // rectangle; false when it is off the view.
 constexpr int kMaxMarkers = 16;
-struct Marker { double lat, lon; bool selected; uint8_t number; bool fresh; };
+struct Marker { double lat, lon; bool selected; uint8_t number; bool fresh; bool more; };
 void setMarkers(const Marker* m, int n);
 bool markerScreen(int i, int& x, int& y);
 // Centre the view on a point without following the own position (zoom kept).

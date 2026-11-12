@@ -42,7 +42,7 @@ I  →  select  →  type  →  Enter  →  ^ (optional)
 
 1. **C** → Contacts *(or **P** Peers if they are not saved yet)*.
 2. Select the device (touch, **V**/**G**, or digit).
-3. **Enter** opens the contact page: **1 Message · 2 Rename · 3 Share**.
+3. **Enter** opens the contact page: **1 Message · 2 Rename · 3 Share · 4 Map number**.
 4. **2** (Rename), type the name (**Alt** for case), **Enter** to save.
 
 Row **0** is always **this** device (**MyID**). Rename it the same way to set the
@@ -668,9 +668,14 @@ Geological Survey) as 1-bit tiles at `--threshold 150`: the lower 48 states at z
 3–8 and Maine at zoom 9–12, about 6,200 tiles / 50 MB; start view Maine at zoom 6.
 **Contacts on the map:** every location a contact shares (manual or auto, §1.2d) is kept
 as that contact's last position (16 contacts, NVS rs_cpos; older chats add theirs when
-opened). Each shows as its **number** (1–16, fixed per contact) in a disc: **black disc**
-= position less than an hour old, **hollow disc** = older (check the age), extra ring =
-selected. On the map:
+opened). Each shows as its **map number** in a disc: **black disc** = position less than
+an hour old, **hollow disc** = older (check the age), black ring inside a white halo =
+selected. Contacts at the same spot: only the **lowest number** is drawn (the selected one
+wins while T steps through them), with a small **+** meaning more are there.
+**Map numbers:** set on the contact page (Contacts / Peers → row → **Enter** → **4 Map
+number**, type 1–99, Enter) - e.g. your partner = 1, so they win at a shared spot; whoever
+had that number takes the old one. Unset: the lowest free number when their first
+position arrives. On the map:
 
 - **T** steps through them, newest first, centring each; the bottom line reads
   `#1 Alice 12.4km NE 8m ago` (distance / direction from you, age of the position).

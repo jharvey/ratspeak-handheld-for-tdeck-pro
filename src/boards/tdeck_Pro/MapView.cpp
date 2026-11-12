@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <utility>
 #if !defined(SIMULATOR)
 #include <esp_heap_caps.h>
 #endif
@@ -255,8 +256,18 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
     }
 
     // Markers (contacts), drawn last so nothing covers them: number in 2x 5x7 digits
-    // (10x14 px) on a black disc (white disc + black edge when the position is old),
-    // white ring around it, selected: an extra black ring.
+    // (10x14 px) on a black disc (white disc + black edge when the position is old);
+    // selected: a black ring around the disc; a white halo outermost. Overlapping markers: the
+    // selected one, else the lowest number, is drawn with a "+" badge; the rest hidden.
+    auto radius = [](const Marker& mk) {
+        const int rDisc = mk.number >= 10 ? 13 : 10;
+        return mk.selected ? rDisc + 4 : rDisc + 2;
+    };
+    auto before = [](const Marker& a, const Marker& b) {    // priority: selected, low number
+        if (a.selected != b.selected) return a.selected;
+        return a.number < b.number;
+    };
+    int order[kMaxMarkers];
     for (int i = 0; i < g_markerCount; i++) {
         double mpx, mpy;
         project(g_markers[i].lat, g_markers[i].lon, g_zoom, mpx, mpy);
@@ -264,15 +275,38 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
         const double s = worldSize(g_zoom);
         if (dx < -s / 2) dx += s;
         if (dx > s / 2) dx -= s;
-        const int cx = (int)dx, cy = (int)(mpy - top);
-        g_markerOn[i] = cx >= 0 && cy >= 0 && cx < w && cy < h;
-        g_markerX[i] = cx; g_markerY[i] = cy;
+        g_markerX[i] = (int)dx;
+        g_markerY[i] = (int)(mpy - top);
+        g_markers[i].more = false;
+        order[i] = i;
+    }
+    for (int a = 1; a < g_markerCount; a++)
+        for (int b = a; b > 0 && before(g_markers[order[b]], g_markers[order[b - 1]]); b--)
+            std::swap(order[b], order[b - 1]);
+    for (int k = 0; k < g_markerCount; k++) {
+        const int i = order[k];
+        g_markerOn[i] = true;
+        for (int q = 0; q < k; q++) {
+            const int j = order[q];
+            if (!g_markerOn[j]) continue;
+            const int ddx = g_markerX[i] - g_markerX[j], ddy = g_markerY[i] - g_markerY[j];
+            const int lim = radius(g_markers[i]) + radius(g_markers[j]) - 4;
+            if (ddx * ddx + ddy * ddy < lim * lim) { g_markerOn[i] = false; g_markers[j].more = true; break; }
+        }
+    }
+    for (int i = 0; i < g_markerCount; i++) {
+        const int cx = g_markerX[i], cy = g_markerY[i];
         if (!g_markerOn[i]) continue;
+        g_markerOn[i] = cx >= 0 && cy >= 0 && cx < w && cy < h;
+        if (cx < -16 || cy < -16 || cx >= w + 16 || cy >= h + 16) continue;
         const Marker& mk = g_markers[i];
         char num[4];
         snprintf(num, sizeof(num), "%u", (unsigned)(mk.number % 100));
         const int nd = (int)strlen(num), tw = nd * 12 - 2;          // 10 px glyph + 2 px gap
-        const int rDisc = nd > 1 ? 13 : 10, rRing = rDisc + 2, rOut = mk.selected ? rRing + 2 : rRing;
+        // From the centre out: disc, (selected: black ring), white halo outermost.
+        // Fresh (black) disc: a 1 px white gap first so the selection ring shows.
+        const int rDisc = nd > 1 ? 13 : 10, rGap = (mk.selected && mk.fresh) ? rDisc + 1 : rDisc;
+        const int rSel = mk.selected ? rGap + 2 : rDisc, rOut = rSel + 2;
         for (int yy = -rOut; yy <= rOut; yy++) {
             for (int xx = -rOut; xx <= rOut; xx++) {
                 const int vx = cx + xx, vy = cy + yy;
@@ -288,12 +322,27 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
                         const int c = num[gx / 12] - '0';
                         if (kDigit5x7[c][gy / 2] & (0x10 >> ((gx % 12) / 2))) black = !mk.fresh;
                     }
-                } else if (d2 <= rRing * rRing + rRing) {
-                    black = false;
+                } else if (d2 <= rGap * rGap + rGap) {
+                    black = false;                                // gap (fresh + selected)
+                } else if (d2 <= rSel * rSel + rSel) {
+                    black = true;                                 // selected: black ring
                 } else {
-                    black = true;
+                    black = false;                                // white halo (outermost)
                 }
                 px(x0 + vx, y0 + vy, black != dark);
+            }
+        }
+        if (mk.more) {                       // "+" badge, upper right: 11x11 white box, black plus
+            const int bx = cx + rDisc - 1, by = cy - rDisc + 1;
+            for (int yy = -5; yy <= 5; yy++) {
+                for (int xx = -5; xx <= 5; xx++) {
+                    const int vx = bx + xx, vy = by + yy;
+                    if (vx < 0 || vy < 0 || vx >= w || vy >= h) continue;
+                    const bool border = xx == -5 || xx == 5 || yy == -5 || yy == 5;
+                    const bool plus = (xx >= -3 && xx <= 3 && yy >= -1 && yy <= 1) ||
+                                      (yy >= -3 && yy <= 3 && xx >= -1 && xx <= 1);
+                    px(x0 + vx, y0 + vy, (border || plus) != dark);
+                }
             }
         }
     }
