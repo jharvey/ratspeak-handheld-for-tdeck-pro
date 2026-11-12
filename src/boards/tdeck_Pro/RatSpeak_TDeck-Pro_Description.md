@@ -681,6 +681,9 @@ position arrives. On the map:
 - **T** steps through them, newest first, centring each; the bottom line reads
   `#1 Alice 12.4km NE 8m ago` (distance / direction from you, age of the position).
   **T** after the last one, **C** or **Enter**: back to your own position.
+- On screen: for 6 s after the map opens the bottom line shows the keys
+  (`T: 3 contacts  Z/X zoom`); while a contact is selected the top line reads
+  `T next  #+Enter chat  C me`.
 - **Type the number, Enter** (e.g. `2` Enter): opens that contact's chat.
 
 From a list (Inbox / Contacts / Peers) **L** on a row shows that contact on the map; in

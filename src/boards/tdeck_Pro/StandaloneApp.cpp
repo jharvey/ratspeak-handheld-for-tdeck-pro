@@ -4142,6 +4142,8 @@ void mapFeedPosition() {
 
 extern int g_mapSel;
 
+void mapKeyHint();
+
 void openMapAt(double lat, double lon) {
     if (g_menuOpen) g_menuOpen = false;
     g_cardOpen = false;                      // the map replaces a contact page
@@ -4154,6 +4156,17 @@ void openMapAt(double lat, double lon) {
     g_fullRefreshReq = true;                // a map is mostly new pixels: avoid ghosting
     requestRedraw();
     Serial.printf("[MAP] open %.5f,%.5f\n", lat, lon);
+    mapKeyHint();
+}
+
+int cposWithPos();
+
+// Key hints on the map's bottom line for 6 s after it opens (keys are not written anywhere).
+void mapKeyHint() {
+    const int n = cposWithPos();
+    if (n) toast("T: %d contact%s  Z/X zoom", n, n == 1 ? "" : "s");   // fits 240 px
+    else toast("WASD move  Z/X zoom  C me");
+    g_toastUntil = millis() + 6000;
 }
 
 void openMap() {
@@ -4183,6 +4196,7 @@ void openMap() {
     g_fullRefreshReq = true;
     requestRedraw();
     Serial.printf("[MAP] open (%s)\n", how);
+    mapKeyHint();
 }
 
 void closeMap() {
@@ -4210,12 +4224,16 @@ extern int g_mapNum;
 void mapContactsStamp();
 void mapContactsFeed();
 
+extern int g_mapSel;
+
 void renderMapHeader() {
     char st[64];
-    mapview::status(st, sizeof(st));
+    if (g_mapSel >= 0) snprintf(st, sizeof(st), "T next  #+Enter chat  C me");   // what to press
+    else mapview::status(st, sizeof(st));
     drawHeader(st, false);
     char pos[56];
-    if (g_mapNum) snprintf(pos, sizeof(pos), "open chat #%d_  (Enter)", g_mapNum);
+    if (g_toast[0]) snprintf(pos, sizeof(pos), "%s", g_toast);                    // key hints
+    else if (g_mapNum) snprintf(pos, sizeof(pos), "open chat #%d_  (Enter)", g_mapNum);
     else if (!mapContactInfo(pos, sizeof(pos))) gpsPosText(pos, sizeof(pos));
     box(0, BOT_TOP - MAP_FOOT_H, W, MAP_FOOT_H, 1);
     text(4, BOT_TOP - MAP_FOOT_H + 1, pos, false, W - 8);
@@ -4513,6 +4531,12 @@ int cposFind(const uint8_t dest[16]) {
 int cposByNum(int num) {
     for (int i = 0; i < g_cposCount; i++) if (g_cpos[i].num == num) return i;
     return -1;
+}
+
+int cposWithPos() {
+    int n = 0;
+    for (int i = 0; i < g_cposCount; i++) n += g_cpos[i].hasPos ? 1 : 0;
+    return n;
 }
 
 uint8_t cposFreeNum() {
