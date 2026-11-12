@@ -35,12 +35,13 @@ bool g_posValid = false;
 double g_posLat = 0, g_posLon = 0;
 double g_drawnPx = -1e9, g_drawnPy = -1e9;   // own position (world px) at the last draw
 int g_viewW = 240, g_viewH = 224;
-const uint8_t kDigit5x7[10][7] = {        // rows, 5 bits each (bit 4 = left)
+const uint8_t kDigit5x7[11][7] = {        // rows, 5 bits each (bit 4 = left)
     {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}, {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
     {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}, {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E},
     {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}, {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E},
     {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}, {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
-    {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}};
+    {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C},
+    {0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00}};                       // [10] = '+' 
 Marker g_markers[kMaxMarkers];
 int g_markerCount = 0;
 int g_markerX[kMaxMarkers], g_markerY[kMaxMarkers];
@@ -258,14 +259,10 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
     // Markers (contacts), drawn last so nothing covers them: number in 2x 5x7 digits
     // (10x14 px) on a white centre, black ring (3 px fresh / 1 px old), white halo;
     // selected: black centre, white number. Overlapping markers: the
-    // selected one, else the lowest number, is drawn with a "+" badge; the rest hidden.
-    auto radius = [](const Marker& mk) {
-        return (mk.number >= 10 ? 12 : 9) + (mk.fresh ? 3 : 1) + 2;
-    };
-    auto before = [](const Marker& a, const Marker& b) {    // priority: selected, low number
-        if (a.selected != b.selected) return a.selected;
-        return a.number < b.number;
-    };
+    // lowest number is drawn, as "1+" (more here); the rest hidden. A selected one under
+    // it makes that tag show selected.
+    auto radius = [](const Marker& mk) { return 12 + (mk.fresh ? 3 : 1) + 2; };
+    auto before = [](const Marker& a, const Marker& b) { return a.number < b.number; };   // low number wins
     int order[kMaxMarkers];
     for (int i = 0; i < g_markerCount; i++) {
         double mpx, mpy;
@@ -282,15 +279,22 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
     for (int a = 1; a < g_markerCount; a++)
         for (int b = a; b > 0 && before(g_markers[order[b]], g_markers[order[b - 1]]); b--)
             std::swap(order[b], order[b - 1]);
+    bool showSel[kMaxMarkers] = {};          // drawn selected: itself, or a hidden one under it
     for (int k = 0; k < g_markerCount; k++) {
         const int i = order[k];
         g_markerOn[i] = true;
+        if (g_markers[i].selected) showSel[i] = true;
         for (int q = 0; q < k; q++) {
             const int j = order[q];
             if (!g_markerOn[j]) continue;
             const int ddx = g_markerX[i] - g_markerX[j], ddy = g_markerY[i] - g_markerY[j];
             const int lim = radius(g_markers[i]) + radius(g_markers[j]) - 4;
-            if (ddx * ddx + ddy * ddy < lim * lim) { g_markerOn[i] = false; g_markers[j].more = true; break; }
+            if (ddx * ddx + ddy * ddy < lim * lim) {
+                g_markerOn[i] = false;
+                g_markers[j].more = true;
+                if (g_markers[i].selected) showSel[j] = true;
+                break;
+            }
         }
     }
     for (int i = 0; i < g_markerCount; i++) {
@@ -299,13 +303,14 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
         g_markerOn[i] = cx >= 0 && cy >= 0 && cx < w && cy < h;
         if (cx < -16 || cy < -16 || cx >= w + 16 || cy >= h + 16) continue;
         const Marker& mk = g_markers[i];
-        char num[4];
-        snprintf(num, sizeof(num), "%u", (unsigned)(mk.number % 100));
+        char num[5];                         // "1", "12", "1+", "12+" (more contacts here)
+        snprintf(num, sizeof(num), "%u%s", (unsigned)(mk.number % 100), mk.more ? "+" : "");
         const int nd = (int)strlen(num), tw = nd * 12 - 2;          // 10 px glyph + 2 px gap
+        const bool sel = showSel[i];
         // Tag (user's sketch): white centre with the black number, a black ring, a white
         // halo outermost. Ring 3 px = fresh position (< 1 h), 1 px = older. Selected: the
         // centre turns black with a white number.
-        const int rIn = nd > 1 ? 12 : 9;                         // white centre (digits fit)
+        const int rIn = nd > 2 ? 18 : nd > 1 ? 12 : 9;           // white centre (glyphs fit)
         const int rRing = rIn + (mk.fresh ? 3 : 1), rOut = rRing + 2;
         for (int yy = -rOut; yy <= rOut; yy++) {
             for (int xx = -rOut; xx <= rOut; xx++) {
@@ -315,11 +320,12 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
                 if (d2 > rOut * rOut + rOut) continue;
                 bool black;
                 if (d2 <= rIn * rIn + rIn) {
-                    black = mk.selected;
+                    black = sel;
                     const int gx = xx + tw / 2, gy = yy + 7;           // cell 0..tw-1, 0..13
                     if (gx >= 0 && gx < tw && gy >= 0 && gy < 14 && (gx % 12) < 10) {
-                        const int c = num[gx / 12] - '0';
-                        if (kDigit5x7[c][gy / 2] & (0x10 >> ((gx % 12) / 2))) black = !mk.selected;
+                        const char ch = num[gx / 12];
+                        const int c = ch == '+' ? 10 : ch - '0';
+                        if (kDigit5x7[c][gy / 2] & (0x10 >> ((gx % 12) / 2))) black = !sel;
                     }
                 } else if (d2 <= rRing * rRing + rRing) {
                     black = true;                                 // the black ring
@@ -327,19 +333,6 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
                     black = false;                                // white halo (outermost)
                 }
                 px(x0 + vx, y0 + vy, black != dark);
-            }
-        }
-        if (mk.more) {                       // "+" badge, upper right: 11x11 white box, black plus
-            const int bx = cx + rIn + 1, by = cy - rIn - 1;
-            for (int yy = -5; yy <= 5; yy++) {
-                for (int xx = -5; xx <= 5; xx++) {
-                    const int vx = bx + xx, vy = by + yy;
-                    if (vx < 0 || vy < 0 || vx >= w || vy >= h) continue;
-                    const bool border = xx == -5 || xx == 5 || yy == -5 || yy == 5;
-                    const bool plus = (xx >= -3 && xx <= 3 && yy >= -1 && yy <= 1) ||
-                                      (yy >= -3 && yy <= 3 && xx >= -1 && xx <= 1);
-                    px(x0 + vx, y0 + vy, (border || plus) != dark);
-                }
             }
         }
     }
