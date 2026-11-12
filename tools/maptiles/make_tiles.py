@@ -199,6 +199,8 @@ def main():
     src.add_argument("--test", action="store_true")
     ap.add_argument("--overlay-url", help="second tile layer drawn on top (e.g. labels), same {z}/{x}/{y}")
     ap.add_argument("--bbox")
+    ap.add_argument("--bboxes", help="file with one MINLON,MINLAT,MAXLON,MAXLAT per line (e.g. a road "
+                                     "corridor); tiles of all boxes, each once")
     ap.add_argument("--center")
     ap.add_argument("--radius-km", type=float, default=2.0)
     ap.add_argument("--zoom", default="12-16")
@@ -215,13 +217,17 @@ def main():
     ap.add_argument("--home-only", action="store_true", help="only write home.txt, no tiles")
     a = ap.parse_args()
 
-    if a.bbox:
+    boxes = None
+    if a.bboxes:
+        boxes = [tuple(float(v) for v in ln.split(",")) for ln in open(a.bboxes) if ln.strip() and ln[0] != "#"]
+        bbox = (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+    elif a.bbox:
         bbox = tuple(float(v) for v in a.bbox.split(","))
     elif a.center:
         lat, lon = (float(v) for v in a.center.split(","))
         bbox = bbox_from_center(lat, lon, a.radius_km)
     else:
-        sys.exit("give --bbox or --center")
+        sys.exit("give --bbox, --bboxes or --center")
     zooms = parse_zoom(a.zoom)
     root = os.path.join(a.out, "ratdeckpro", "maps")
     home = os.path.join(root, "home.txt")
@@ -238,8 +244,15 @@ def main():
         return
     jobs = []
     for z in zooms:
-        xs, ys = tile_range(bbox, z)
-        jobs += [(z, x, y) for x in xs for y in ys]
+        if boxes:
+            seen = set()
+            for b in boxes:
+                xs, ys = tile_range(b, z)
+                seen |= {(x, y) for x in xs for y in ys}
+            jobs += [(z, x, y) for x, y in sorted(seen)]
+        else:
+            xs, ys = tile_range(bbox, z)
+            jobs += [(z, x, y) for x in xs for y in ys]
     print("%d tiles over zoom %s (%.1f MB on the card)" % (len(jobs), a.zoom, len(jobs) * (8200 / 1e6)))
     if len(jobs) > a.max_tiles:
         sys.exit("more than --max-tiles %d; shrink the area or zoom range" % a.max_tiles)
