@@ -48,15 +48,20 @@ multicast), so they can message each other.
 | **Restart in the middle** | Kill and restart a sim at random points while it saves | Boot always works; no broken records; outbox recovered |
 | **Memory-check build** | Build the simulator with AddressSanitizer / UndefinedBehaviorSanitizer and run all of the above | Buffer overruns, use-after-free, leaks that do not crash every time |
 
-Needed first (to build):
-- A `heap` heartbeat line on the console every minute (free heap, largest block,
-  lowest-ever free, PSRAM free, outbox count, uptime). The PC side logs it and draws a
-  trend; the same line is used on the units.
-- A random-key script command (`monkey <minutes> <seed>`) in the simulator, so a failing
-  run can be repeated with the same seed.
-- A two-sim ping-pong runner (PC script) that counts sent/received/delivered and prints a
-  PASS/FAIL summary.
-- A sanitizer build option for the simulator.
+Tools:
+- DONE: `hb <s>` heartbeat line: uptime, free heap / internal / lowest-ever / largest block,
+  PSRAM, outbox, unread, conversations, `inc` (new incoming messages saved since boot),
+  flash %, messages removed for space; in the simulator also `proc` (the process's real
+  memory in KB, since the simulated heap numbers are fixed).
+- DONE: `msgstat <peer>`: a conversation's records by direction and status, plus the
+  numbered test messages received (count, duplicates, gaps).
+- DONE: `tools/stress/pingpong.py`: two simulators (own TCP ports and own radio channel via
+  `RS_SIM_AIR_PORT`, so other simulators on the PC do not interfere) or two units
+  (`--ports COM5 COM9`); numbered messages both ways, waits for the outboxes to empty,
+  checks with `msgstat` + `hb`, PASS/FAIL in `summary.txt`. `--flashcap N` / `--flashkb`
+  for the full-storage path.
+- TODO: a random-key script command (`monkey <minutes> <seed>`), repeatable by seed.
+- TODO: a sanitizer build option for the simulator.
 
 ## 3. Layer 2: real units (24-72 hours)
 
@@ -134,3 +139,13 @@ Results go in a table at the end of this file (date, build, layer, hours, result
 |---|---|---|---|---|---|
 | 2026-11-12 | 1dcbd88 | Full flash, simulator (`fullflash*.txt`) | - | PASS | 1,500 msgs in 2 MB: 1,142 oldest removed, no failed writes; refusal at 93 % with nothing removable |
 | 2026-11-12 | (flashcap) | Small limit, simulator (`flashcap.txt`, 8 MB flash, `flashcap 100`) | - | PASS | 300 msgs of 50 chars: removal from message 65, 227 removed in 32 passes of 25-100 ms, 0 failed |
+| 2026-11-12 | (ping-pong) | Ping-pong, simulator, every ~8 s each way | 0.05 | PASS | 20 + 22 msgs, all arrived once, all delivered, no restart |
+| 2026-11-12 | (ping-pong) | Ping-pong overload, every ~3 s each way (more than SF11 airtime allows) | 0.07 | PASS | 41 + 40 msgs all delivered; queues drained in ~210 s; 14-16 sends per side refused by the 3 s send spacing; one send took 16 s to be accepted (console/UI blocked meanwhile) |
+| 2026-11-12 | (ping-pong) | Ping-pong overload + `flashcap 30` | 0.07 | PASS after 2 fixes | Found: (1) removal took outgoing "sent" (no proof yet) records the engine may still retry -> now only delivered/failed outgoing are removed; (2) the new-message beep keyed on a rising unread count, so a message whose save also removed old unread ones gave no beep -> now keyed on saved incoming messages. After: 40 + 41 arrived, 0 dup, no restart |
+
+Open findings:
+- A send can block the console (and the UI) for up to ~16-24 s when the radio is busy
+  (sendMessage retries "busy" inside the main loop). Look at doing the retry in the
+  background with a "sending..." state.
+- Under load, retried messages arrive late and the thread shows them in arrival order
+  (e.g. "8" below "40"). Consider ordering threads by the sender's timestamp.

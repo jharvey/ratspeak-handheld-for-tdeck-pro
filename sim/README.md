@@ -135,6 +135,10 @@ to `build\simdata\<name>\shots\`. One command per line, `#` for comments:
 | `battery <0-100>` / `usb on\|off` / `full on\|off` / `gps on\|off` | change the hardware |
 | `sd in\|out` | insert / remove the SD card (seen at the firmware's next mount); `--nosd` (or `set SIM_ARGS=--nosd` for run-script) starts with the slot empty |
 
+Radio channel: the simulated air is UDP multicast port 47999; `set RS_SIM_AIR_PORT=<port>`
+gives a group of simulators its own channel (the stress runner `tools/stress/pingpong.py`
+uses 48101 and TCP 5701/5702, so it can run beside other simulators).
+
 Flash size: `--flashkb <KB>` (default 8064, the device partition). The simulated LittleFS
 counts 4 KB blocks per file and 2 blocks per folder, and a write that needs a block past
 the size fails, like the real flash. `scripts/fullflash.txt` (`--flashkb 2048`) and

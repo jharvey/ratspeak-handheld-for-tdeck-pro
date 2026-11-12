@@ -174,6 +174,7 @@ void MessageStore::settle(const Request& request, const Result& result) noexcept
         request.operation == Operation::ReadConversationPage || request.operation == Operation::ReadConversation ||
         request.operation == Operation::ReadPending) return;
     if (result.duplicate) return;
+    if (request.operation == Operation::CreateIncoming) ++_incomingCommitted;
     // Only committed aggregate deltas and invalidation live here. There is no
     // presentation cache or allocation between persistence and result visibility.
     if ((request.operation == Operation::CreateIncoming || request.operation == Operation::CreateOutgoing ||

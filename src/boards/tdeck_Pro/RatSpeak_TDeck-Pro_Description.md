@@ -613,6 +613,10 @@ on the device). Simulator (`--flashkb 2048`, 4 conversations): 1,500 messages sa
 oldest 1,142 removed in 40 passes of ~0.2 s, no failed writes. Before this change a full
 flash failed every later write (messages, announce order, ratchets) without a word.
 Console `flash` (use and removal stats); bench `msgfill <count> [conversations] [bytes]`.
+Outgoing messages are only removed once delivered or failed (a "sent" one may still be
+retried). The new-message beep follows saved incoming messages, not the unread count, so it
+still sounds when a save also removed old unread messages. Stress tests: `Stress_test_plan.md`,
+`tools/stress/pingpong.py` (two devices, numbered messages, `hb` heartbeat, `msgstat`).
 
 ---
 
@@ -724,6 +728,8 @@ the device does not light-sleep.
 | `rmconv [<peer>\|all]` | bench: list conversations / delete one / delete all |
 | `flash` / `msgfill <n> [conv] [bytes]` | flash use + old-message removal stats / bench: store n fake messages (§8.3) |
 | `flashcap <n>` / `flashcap 0` | stress test: old-message removal starts after ~n more messages (RAM only, §8.3) |
+| `hb` / `hb <s>` / `hb 0` | stress-test heartbeat line (memory, outbox, unread, saved incoming, flash) once / every s seconds / off |
+| `msgstat <peer>` | stress test: a conversation's records by direction and status, numbered test messages (count, duplicates, gaps) |
 | `FORMAT` | erase and format the data partition |
 | `@…` | screen-mirror protocol (§10.3) |
 
@@ -801,3 +807,4 @@ entry mode.
 | 0.8 | Message folders split into 64-record subfolders, moved at boot (COM5 boot 98 → 29.8 s, proof 4–5 s); RTC drift measured (~2.9 s/day); `rmconv` bench command |
 | 0.9 | Offline map (§8.1) with the PC tile tool; SD card on the shared SPI lock, optional message archive (§8.2); GPS position parsed |
 | 0.10 | Full flash handled (§8.3): oldest-first removal, refusal with a reserve, notices; simulator flash size limit (`--flashkb`) |
+| 0.11 | Thread status labels fixed (sent / delivered were swapped, failed showed "s5"); new-message beep no longer missed when old messages are removed; stress tools (`hb`, `msgstat`, `flashcap`, `tools/stress/pingpong.py`) |

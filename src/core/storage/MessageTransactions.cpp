@@ -1258,7 +1258,9 @@ uint64_t MessageTransactions::evictOldest(uint64_t bytes, int32_t& unreadDelta) 
         key.counter = victim.counter; key.incoming = victim.incoming;
         StoredRecordHeader header;
         if (load(key, document, header) != Error::None) continue;
-        if (!header.incoming && header.status < 3) continue;   // draft / queued / sending: keep
+        // Outgoing: only finished records (4 delivered, 5 failed). A "sent" record (3) may still
+        // be retried by the engine, which needs its body: removing it lost the message.
+        if (!header.incoming && header.status != 4 && header.status != 5) continue;
         // With the SD archive on, flash is a cache: drop a copy only when the card holds it.
         if (mirrored && !retainedCopy(key, 1, document)) continue;
         char primary[128], backup[128]; path(key, 0, primary); path(key, 0, backup, ".bak");
@@ -1267,6 +1269,10 @@ uint64_t MessageTransactions::evictOldest(uint64_t bytes, int32_t& unreadDelta) 
         char shard[128]; recordDirectory(key, 0, shard); _flash->removeDir(shard);   // only if empty
         freed += 4096u * (hadBackup ? 2u : 1u);
         ++spaceStats().removed;
+#if defined(SIMULATOR)
+        Serial.printf("[EVICT] #%lu %s status %u%c", (unsigned long)key.counter, header.incoming ? "in" : "out",
+                      (unsigned)header.status, 10);
+#endif
         if (!mirrored && header.incoming && !header.read && unreadDelta > INT32_MIN) --unreadDelta;
         invalidateSummary(key.peer);
         dropIdIndex(key.peer);

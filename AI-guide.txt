@@ -174,6 +174,9 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
   flash                flash use + oldest-message removal stats
   msgfill <n> [conv] [bytes]   bench: store n fake incoming messages (full-flash test)
   flashcap <n> | flashcap 0    stress test: message upkeep acts as if flash fills after ~n more msgs (RAM only)
+  hb | hb <s> | hb 0   stress heartbeat line (heap, outbox, unread, inc = saved incoming, flash, sim: proc KB)
+  msgstat <peer>       stress: records by direction/status + numbered "PP <tag> <n>" msgs (count, dup, gap)
+  tools/stress/pingpong.py  two sims (own TCP ports + RS_SIM_AIR_PORT radio channel) or --ports COMx COMy
   sdinfo | sdarc 0|1   SD status / message archive setting (applies at next boot)
   maptest <lat> <lon>  bench: write 18 grid test tiles (z14-15) around a point to the SD card
   ev | ev 0       bench: RAM event trace (rx/tx/offer/txdone/msg-in, dup-scan/dup-idx/commit ms,

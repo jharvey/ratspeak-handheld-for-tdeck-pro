@@ -1,6 +1,8 @@
 #include "hw/AirLink.h"
 
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <random>
 #include <thread>
@@ -22,7 +24,18 @@ typedef int SOCKET;
 namespace sim::air {
 namespace {
 constexpr const char* kGroup = "239.255.42.99";
-constexpr uint16_t kPort = 47999;
+constexpr uint16_t kDefaultPort = 47999;
+// RS_SIM_AIR_PORT picks another "channel" (UDP port), so separate test pairs on one PC
+// (e.g. a stress runner beside an interactive pair) do not hear each other.
+uint16_t airPort() {
+    static const uint16_t port = [] {
+        const char* v = getenv("RS_SIM_AIR_PORT");
+        const long n = v ? strtol(v, nullptr, 10) : 0;
+        return n > 1024 && n < 65536 ? uint16_t(n) : kDefaultPort;
+    }();
+    return port;
+}
+char g_address[40] = "";
 constexpr uint32_t kMagic = 0x4D495352;   // "RSIM"
 
 #pragma pack(push, 1)
@@ -34,7 +47,10 @@ SOCKET g_sock = INVALID_SOCKET;
 uint32_t g_self = 0;
 }  // namespace
 
-const char* address() { return "udp://239.255.42.99:47999"; }
+const char* address() {
+    if (!g_address[0]) snprintf(g_address, sizeof(g_address), "udp://%s:%u", kGroup, (unsigned)airPort());
+    return g_address;
+}
 uint32_t selfId() { return g_self; }
 
 bool start(std::function<void(Frame&&)> onFrame) {
@@ -48,7 +64,7 @@ bool start(std::function<void(Frame&&)> onFrame) {
     int yes = 1;
     setsockopt(g_sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof(yes));
     sockaddr_in a{};
-    a.sin_family = AF_INET; a.sin_port = htons(kPort); a.sin_addr.s_addr = htonl(INADDR_ANY);
+    a.sin_family = AF_INET; a.sin_port = htons(airPort()); a.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(g_sock, (sockaddr*)&a, sizeof(a)) != 0) { closesocket(g_sock); g_sock = INVALID_SOCKET; return false; }
     ip_mreq m{};
     inet_pton(AF_INET, kGroup, &m.imr_multiaddr);
@@ -85,7 +101,7 @@ void send(const Frame& f) {
     memcpy(buf.data(), &h, sizeof(h));
     memcpy(buf.data() + sizeof(h), f.payload.data(), f.payload.size());
     sockaddr_in a{};
-    a.sin_family = AF_INET; a.sin_port = htons(kPort);
+    a.sin_family = AF_INET; a.sin_port = htons(airPort());
     inet_pton(AF_INET, kGroup, &a.sin_addr);
     sendto(g_sock, (const char*)buf.data(), (int)buf.size(), 0, (sockaddr*)&a, sizeof(a));
 }

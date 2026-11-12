@@ -81,6 +81,7 @@ extern void keyboardSetNumLayer(bool on);
 
 #if defined(SIMULATOR)
 namespace sim { void setPowerInfo(const char* line); }   // side panel (sim/shim)
+namespace sim { size_t processBytes(); }                 // real process memory (sim/shim)
 #endif
 
 namespace standalone {
@@ -1482,12 +1483,17 @@ void loadHistory(const uint8_t peer[16]) {
                 if ((unsigned char)h.text[k] < 32 || (unsigned char)h.text[k] > 126) h.text[k] = '?';
         }
         if (!h.incoming) {
+            // Stored value = LXMFStatus: 0 draft, 1 queued, 2 sending, 3 sent (on air, no proof
+            // yet), 4 delivered (proof received), 5 failed, 6 unconfirmed. (Until 2026-11-12 this
+            // was off by one: sent showed "delivered" and delivered showed "sent".)
             switch (hdr.status) {
-                case 0:  snprintf(h.status, sizeof(h.status), "queued"); break;
-                case 1:  snprintf(h.status, sizeof(h.status), "sending"); break;
-                case 2:
-                case 4:  snprintf(h.status, sizeof(h.status), "sent"); break;
-                case 3:  snprintf(h.status, sizeof(h.status), "delivered"); break;
+                case 0:
+                case 1:  snprintf(h.status, sizeof(h.status), "queued"); break;
+                case 2:  snprintf(h.status, sizeof(h.status), "sending"); break;
+                case 3:  snprintf(h.status, sizeof(h.status), "sent"); break;
+                case 4:  snprintf(h.status, sizeof(h.status), "delivered"); break;
+                case 5:  snprintf(h.status, sizeof(h.status), "failed"); break;
+                case 6:  snprintf(h.status, sizeof(h.status), "no proof"); break;
                 default: snprintf(h.status, sizeof(h.status), "s%u", (unsigned)hdr.status); break;
             }
         }
@@ -3542,6 +3548,36 @@ void flashSpaceTick() {
     }
 }
 
+// Stress-test heartbeat ("hb <s>"): one line with memory, queue and storage state, so a
+// PC logger can spot slow leaks, stuck outboxes and restarts over long runs.
+uint32_t g_hbEveryMs = 0;
+void heartbeatPrint() {
+    const auto& sp = handheld::storage::MessageTransactions::spaceStats();
+    Serial.printf("[HB] up=%lu heap=%u int=%u intmin=%u intblk=%u psram=%u psmin=%u q=%d unread=%d "
+                  "conv=%u inc=%lu flash=%u rm=%lu full=%d",
+                  (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                  (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                  (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
+                  g_protoReady ? g_proto.lxmfQueuedCount() : -1,
+                  g_storeReady ? g_msgStore.totalUnreadCount() : -1,
+                  g_storeReady ? (unsigned)g_msgStore.totalConversations() : 0u,
+                  g_storeReady ? (unsigned long)g_msgStore.incomingCommitted() : 0ul,
+                  (unsigned)sp.usedPct, (unsigned long)sp.removed, sp.full ? 1 : 0);
+#if defined(SIMULATOR)
+    Serial.printf(" proc=%u", (unsigned)(::sim::processBytes() >> 10));
+#endif
+    Serial.printf("\n");
+}
+void heartbeatTick() {
+    static uint32_t at = 0;
+    if (!g_hbEveryMs || (at && millis() - at < g_hbEveryMs)) return;
+    at = millis() | 1;
+    heartbeatPrint();
+}
+
 void mapTick() {
     if (!mapview::isOpen()) return;
     mapFeedPosition();
@@ -4334,6 +4370,7 @@ void powerTick() {
     peerClockTick();
     mapTick();
     flashSpaceTick();
+    heartbeatTick();
     powerGpsTick();
     powerTouchTick();
     energyAccountAwake();
@@ -4830,6 +4867,76 @@ void handleSerialLine(char* p) {
                           done && r.outcome == Outcome::Committed ? "deleted" : "failed");
         }
         requestRedraw();
+    } else if (!strcmp(p, "hb") || !strncmp(p, "hb ", 3)) {
+        // Stress-test heartbeat: "hb" prints one line, "hb <s>" every s seconds, "hb 0" off.
+        if (p[2]) g_hbEveryMs = (uint32_t)atol(p + 3) * 1000;
+        heartbeatPrint();
+    } else if (!strncmp(p, "msgstat ", 8) && strlen(p) >= 8 + 32) {
+        // Stress test: "msgstat <peer>" counts that conversation's records by direction and
+        // status, and checks numbered test messages ("PP <tag> <n>") received from the peer:
+        // how many, duplicates, gaps between the lowest and highest number.
+        using namespace handheld::storage;
+        const std::string peerHex(p + 8, 32);
+        uint8_t peer[16];
+        for (int b = 0; b < 16; b++) { unsigned v = 0; sscanf(p + 8 + 2 * b, "%2x", &v); peer[b] = (uint8_t)v; }
+        uint32_t in = 0, out = 0, st[8] = {};
+        std::vector<uint32_t> nums;
+        HistoryEntry cursor{};
+        bool more = true, ok = true;
+        while (more && ok) {
+            auto sub = g_msgStore.requestHistoryPage(peerHex, cursor, 48, HistoryDirection::Before);
+            MessageStore::Result res;
+            HistoryEntry entries[48];
+            size_t n = 0;
+            ok = sub.accepted() && waitResult(sub.ticket, res, 2000) && res.outcome == Outcome::Committed &&
+                 res.error == Error::None;
+            if (ok) {
+                n = std::min(res.length / sizeof(HistoryEntry), (size_t)48);
+                if (!g_msgStore.readPayload(sub.ticket, entries, n * sizeof(HistoryEntry))) n = 0;
+                more = res.more && n > 0;
+            }
+            if (sub.accepted()) g_msgStore.releaseResult(sub.ticket);
+            if (!ok || !n) break;
+            cursor = entries[0];
+            for (size_t i = 0; i < n; i++) {
+                RecordKey key{};
+                memcpy(key.peer, peer, 16); key.counter = entries[i].counter; key.incoming = entries[i].incoming;
+                auto rs = g_msgStore.requestRecord(key, 0, 160);
+                MessageStore::Result rr;
+                uint8_t buf[160];
+                size_t got = 0;
+                if (rs.accepted() && waitResult(rs.ticket, rr, 2000) && rr.outcome == Outcome::Committed &&
+                    rr.error == Error::None) {
+                    got = std::min((size_t)rr.length, sizeof(buf));
+                    if (!g_msgStore.readPayload(rs.ticket, buf, got)) got = 0;
+                }
+                if (rs.accepted()) g_msgStore.releaseResult(rs.ticket);
+                if (got < sizeof(StoredRecordHeader)) continue;
+                StoredRecordHeader hdr;
+                memcpy(&hdr, buf, sizeof(hdr));
+                if (!hdr.incoming) { out++; st[hdr.status & 7]++; continue; }
+                in++;
+                size_t off = sizeof(hdr) + hdr.titleLength, len = hdr.contentLength;
+                if (off >= got) continue;
+                if (off + len > got) len = got - off;
+                char text[48] = {};
+                memcpy(text, buf + off, std::min(len, sizeof(text) - 1));
+                char tag[16]; unsigned num = 0;
+                if (sscanf(text, "PP %15s %u", tag, &num) == 2) nums.push_back(num);
+            }
+        }
+        std::sort(nums.begin(), nums.end());
+        uint32_t dups = 0, gaps = 0;
+        for (size_t i = 1; i < nums.size(); i++) {
+            if (nums[i] == nums[i - 1]) dups++;
+            else if (nums[i] > nums[i - 1] + 1) gaps += nums[i] - nums[i - 1] - 1;
+        }
+        Serial.printf("[STAT] %s %s in=%lu out=%lu queued=%lu sending=%lu sent=%lu delivered=%lu failed=%lu "
+                      "noproof=%lu pp=%u ppmin=%lu ppmax=%lu dup=%lu gap=%lu\n", peerHex.c_str(), ok ? "ok" : "ERROR",
+                      (unsigned long)in, (unsigned long)out, (unsigned long)(st[0] + st[1]), (unsigned long)st[2],
+                      (unsigned long)st[3], (unsigned long)st[4], (unsigned long)st[5], (unsigned long)st[6],
+                      (unsigned)nums.size(), (unsigned long)(nums.empty() ? 0 : nums.front()),
+                      (unsigned long)(nums.empty() ? 0 : nums.back()), (unsigned long)dups, (unsigned long)gaps);
     } else if (!strcmp(p, "flash")) {
         if (handheld::storage::MessageTransactions::spaceStats().capBytes)
             Serial.printf("[FLASH] stress-test cap %lu KB (flashcap)\n",
@@ -5004,11 +5111,12 @@ void watchBattery() {
 
 void watchMessages() {
     if (!g_storeReady) return;
-    static int lastUnread = -1;
+    // Alert on newly saved incoming messages (not on a rising unread count: a save that also
+    // removed old unread messages for space leaves the count flat and the alert was missed).
+    static uint32_t lastIncoming = 0;
     static uint32_t lastRev = 0, lastRedraw = 0;
-    const int unread = g_msgStore.totalUnreadCount();
-    if (lastUnread >= 0 && unread > lastUnread) notifyInbound();
-    lastUnread = unread;
+    const uint32_t incoming = g_msgStore.incomingCommitted();
+    if (incoming != lastIncoming) { lastIncoming = incoming; notifyInbound(); }
 
     const uint32_t rev = g_msgStore.revision();
     if (rev == lastRev || g_idleActive) return;

@@ -74,6 +74,9 @@ public:
     bool updateMessageStatusByCounter(const std::string& peerHex, uint32_t counter, bool incoming, LXMFStatus newStatus);
 
     int totalUnreadCount() const;
+    // New (non-duplicate) incoming messages committed since boot. The unread total cannot
+    // tell "a message arrived" once old unread messages are removed for space in the same save.
+    uint32_t incomingCommitted() const { return _incomingCommitted; }
     uint32_t revision() const { return _revision; }
     // Structural history changes only; MAX means freshness cannot be inferred
     // by equality. Adapters must expose unavailable freshness/explicit refresh.
@@ -106,6 +109,7 @@ private:
     uint64_t _settledThrough = 0;
     uint32_t _totalConversations = 0;
     int _totalUnread = 0;
+    uint32_t _incomingCommitted = 0;
     uint32_t _revision = 0;
     uint32_t _historyRevision = 0;
 };
