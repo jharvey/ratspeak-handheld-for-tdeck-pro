@@ -3529,7 +3529,7 @@ void flashSpaceTick() {
     if (sp.full) {
         if (!fullAt || millis() - fullAt >= 600000) {
             // Deleting conversations frees space without a new save to notice it: re-check.
-            const size_t total = g_flash.totalBytes(), used = g_flash.usedBytes();
+            const uint64_t total = sp.effectiveTotal(g_flash.totalBytes()), used = g_flash.usedBytes();
             if (total && (uint64_t)used * 100 / total < handheld::storage::MessageTransactions::SpaceRefusePct) {
                 sp.full = false; sp.usedPct = (uint8_t)((uint64_t)used * 100 / total);
             } else { fullAt = millis() | 1; toast("Storage full: msgs refused"); return; }
@@ -4831,6 +4831,9 @@ void handleSerialLine(char* p) {
         }
         requestRedraw();
     } else if (!strcmp(p, "flash")) {
+        if (handheld::storage::MessageTransactions::spaceStats().capBytes)
+            Serial.printf("[FLASH] stress-test cap %lu KB (flashcap)\n",
+                          (unsigned long)(handheld::storage::MessageTransactions::spaceStats().capBytes >> 10));
         Serial.printf("[FLASH] used %u of %u KB (%u%%)\n", (unsigned)(g_flash.usedBytes() >> 10),
                       (unsigned)(g_flash.totalBytes() >> 10),
                       g_flash.totalBytes() ? (unsigned)(100ull * g_flash.usedBytes() / g_flash.totalBytes()) : 0u);
@@ -4840,6 +4843,20 @@ void handleSerialLine(char* p) {
                       (unsigned long)sp.passes, (unsigned)handheld::storage::MessageTransactions::SpaceHighPct,
                       (unsigned)handheld::storage::MessageTransactions::SpaceLowPct,
                       (unsigned)handheld::storage::MessageTransactions::SpaceRefusePct);
+    } else if (!strncmp(p, "flashcap", 8) && (p[8] == 0 || p[8] == ' ')) {
+        // Bench / stress test (RAM only, cleared by a restart): "flashcap <n>" makes the message
+        // upkeep start removing after about <n> more messages (treats the flash as smaller);
+        // "flashcap 0" = real size. Other files still use the whole flash.
+        auto& sp = handheld::storage::MessageTransactions::spaceStats();
+        const long n = p[8] ? atol(p + 9) : -1;
+        if (n == 0) sp.capBytes = 0;
+        else if (n > 0) {
+            const uint64_t used = g_flash.usedBytes();
+            sp.capBytes = (used + (uint64_t)n * 4096) * 100 / handheld::storage::MessageTransactions::SpaceHighPct;
+        }
+        sp.checkEvery = 0; sp.sinceCheck = 0;   // re-read at the next save
+        Serial.printf("[FLASH] message cap %s%lu KB (real %u KB)\n", sp.capBytes ? "" : "off, ",
+                      (unsigned long)(sp.capBytes >> 10), (unsigned)(g_flash.totalBytes() >> 10));
     } else if (!strncmp(p, "msgfill ", 8)) {
         // Bench (full-flash test): "msgfill <count> [peers] [bytes]" stores <count> fake incoming
         // messages spread over [peers] fake conversations through the normal save path. Stops at

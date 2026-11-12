@@ -173,6 +173,7 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
   map | map <lat> <lon> [z] | map close   offline map (key L on list screens; tiles on SD)
   flash                flash use + oldest-message removal stats
   msgfill <n> [conv] [bytes]   bench: store n fake incoming messages (full-flash test)
+  flashcap <n> | flashcap 0    stress test: message upkeep acts as if flash fills after ~n more msgs (RAM only)
   sdinfo | sdarc 0|1   SD status / message archive setting (applies at next boot)
   maptest <lat> <lon>  bench: write 18 grid test tiles (z14-15) around a point to the SD card
   ev | ev 0       bench: RAM event trace (rx/tx/offer/txdone/msg-in, dup-scan/dup-idx/commit ms,

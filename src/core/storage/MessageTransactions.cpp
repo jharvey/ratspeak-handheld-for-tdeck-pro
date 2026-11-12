@@ -1188,7 +1188,7 @@ bool MessageTransactions::makeRoom(int32_t& unreadDelta) {
     if (!_flash || !_flash->isReady()) return true;
     if (stats.usedPct < SpaceHighPct && stats.checkEvery && ++stats.sinceCheck < stats.checkEvery) return true;
     stats.sinceCheck = 0;
-    const uint64_t total = _flash->totalBytes();
+    const uint64_t total = stats.effectiveTotal(_flash->totalBytes());
     if (!total) return true;
     stats.checkEvery = uint16_t(std::max<uint64_t>(1, std::min<uint64_t>(64, total / 100 / SpaceCreateCost)));
     uint64_t used = _flash->usedBytes();

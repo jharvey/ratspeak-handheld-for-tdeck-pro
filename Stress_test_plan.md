@@ -4,6 +4,19 @@ Draft, 2026-11-12. Goal: before wider use, show that the handheld keeps working 
 under heavy, messy use: no crashes or restarts, no slow memory loss, no lost or stuck
 messages, and a sensible outcome whenever something fills up or goes away.
 
+**Small limits first, then normal limits.** Every limit (flash full, SD full, outbox,
+contacts) is first tested with a tiny limit so it is hit within minutes, not days. Only
+when the short runs pass do the long runs use the normal limits. Two ways to get there fast:
+
+- **Shrink the limit:** `flashcap <n>` (console, RAM only, a restart clears it) makes the
+  message upkeep act as if the flash fills after about *n* more messages. In the simulator
+  `--flashkb <KB>` shrinks the whole flash. `flashcap 100` + 300 messages: removal started
+  after 65 messages (new conversation folders also take space), 227 removed, 0 failed saves
+  (`sim/scripts/flashcap.txt`).
+- **Preload:** `msgfill <n> [conversations] [bytes]` stores *n* fake messages through the
+  normal save path in seconds, so a unit can start a test already near full and overflow
+  after the next ~100 real messages.
+
 Three layers, cheapest first. Most bugs should be found in the simulator, so the units
 are only needed for what the simulator cannot model (radio, real flash timing, power).
 
@@ -31,7 +44,7 @@ multicast), so they can message each other.
 | **Message ping-pong** | Two sims (`alice`, `bob`); a script sends `msg <peer> <text>` both ways every few seconds, with a counter in the text, for 8+ hours | Every counter arrives once and is shown delivered; outbox drains; no restart |
 | **Random keys ("monkey")** | Script presses random keys with weights: open/close the map (L), zoom (Z/X), pan (WASD), menus, settings, compose, back. Avoids only factory reset / identity erase | Crashes, hangs, screen stuck, slow growth in frame time |
 | **Map tour** | Script walks the map: every zoom level, pans across tile edges, missing tiles, SD removed and re-inserted (`sd out` / `sd in`) | Crash on missing/damaged tiles; tile cache leaks |
-| **Small storage** | Ping-pong and monkey with `--flashkb 1024` and a nearly full simulated SD card | Full-flash path every few minutes: removal, refusal, recovery after deleting conversations |
+| **Small storage** | Ping-pong and monkey with `--flashkb 1024` (or `flashcap 100`) and a nearly full simulated SD card | Full-flash path every few minutes: removal, refusal, recovery after deleting conversations |
 | **Restart in the middle** | Kill and restart a sim at random points while it saves | Boot always works; no broken records; outbox recovered |
 | **Memory-check build** | Build the simulator with AddressSanitizer / UndefinedBehaviorSanitizer and run all of the above | Buffer overruns, use-after-free, leaks that do not crash every time |
 
@@ -61,6 +74,8 @@ console at once and logs everything to one file per unit.
   saves it so the crash location can be decoded.
 - **TX power:** keep every unit whose antenna status is unknown at -9 dBm (see
   AI-guide.txt for which units).
+- **Short first:** a 1-2 h run with `flashcap 100` (or a `msgfill` preload) so the flash
+  limit is crossed many times; then the long runs at normal limits.
 - **Pass:** as in §1, over at least 24 h; then one 72 h run before a release.
 
 ## 4. Layer 3: nasty cases (once each, by hand or scripted)
@@ -94,3 +109,4 @@ Results go in a table at the end of this file (date, build, layer, hours, result
 | Date | Build | Test | Hours | Result | Notes |
 |---|---|---|---|---|---|
 | 2026-11-12 | 1dcbd88 | Full flash, simulator (`fullflash*.txt`) | - | PASS | 1,500 msgs in 2 MB: 1,142 oldest removed, no failed writes; refusal at 93 % with nothing removable |
+| 2026-11-12 | (flashcap) | Small limit, simulator (`flashcap.txt`, 8 MB flash, `flashcap 100`) | - | PASS | 300 msgs of 50 chars: removal from message 65, 227 removed in 32 passes of 25-100 ms, 0 failed |

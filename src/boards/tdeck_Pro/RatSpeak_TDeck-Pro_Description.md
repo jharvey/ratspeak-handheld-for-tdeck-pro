@@ -723,6 +723,7 @@ the device does not light-sleep.
 | `maptest <lat> <lon>` | bench: write 18 grid test tiles around a point to the card |
 | `rmconv [<peer>\|all]` | bench: list conversations / delete one / delete all |
 | `flash` / `msgfill <n> [conv] [bytes]` | flash use + old-message removal stats / bench: store n fake messages (§8.3) |
+| `flashcap <n>` / `flashcap 0` | stress test: old-message removal starts after ~n more messages (RAM only, §8.3) |
 | `FORMAT` | erase and format the data partition |
 | `@…` | screen-mirror protocol (§10.3) |
 

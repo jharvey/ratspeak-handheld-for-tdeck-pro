@@ -64,8 +64,11 @@ public:
     // written: a create costs at most ~8 KB (record block + a new shard folder).
     static constexpr uint32_t SpaceCreateCost = 8192;
     static constexpr uint32_t KeepPerConversation = 10;  // newest records never removed for space
+    // capBytes: bench/stress-test override (RAM only): message upkeep treats the flash as
+    // this size, so removal and refusal happen after ~100 messages instead of ~1,600.
     struct SpaceStats { uint8_t usedPct = 0; bool full = false; uint16_t sinceCheck = 0, checkEvery = 0;
-                        uint32_t removed = 0, passes = 0; };
+                        uint32_t removed = 0, passes = 0; uint64_t capBytes = 0;
+                        uint64_t effectiveTotal(uint64_t real) const { return capBytes && capBytes < real ? capBytes : real; } };
     static SpaceStats& spaceStats() { static SpaceStats s; return s; }
 
 private:

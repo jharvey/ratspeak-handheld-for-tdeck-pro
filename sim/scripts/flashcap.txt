@@ -1,0 +1,14 @@
+# Fast full-flash check on the normal 8 MB flash: "flashcap 100" makes removal start after
+# about 100 messages, then 300 fake 50-character messages go through the normal save path.
+# Run: run-script.bat scripts\flashcap.txt flashcap fresh
+wait 9000
+serial flashcap 100
+expect 3000 [FLASH] message cap
+serial msgfill 300 4 50
+expect 120000 [FILL] saved 300, failed 0
+serial flash
+expect 3000 removed for space
+serial rmconv
+wait 2000
+devshot flashcap_home.png
+quit
