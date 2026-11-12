@@ -703,6 +703,18 @@ centres on it, the diamond is selected, a dashed line runs from your position to
 bottom line reads `W2 BALLFIELD 2.1km SW`. **Del** twice removes the selected one. Up to 32
 (NVS rs_wpt); **S.1.9 Waypoints** lists them with distance (Enter = show on the map).
 
+**Find a place:** on the map **F**, type the start of a name (add a state to narrow it:
+`knoxville tn`), Enter: the 6 nearest matches with kind and distance (`2 Knoxville, PA /
+town 246km SE`); a digit jumps there; **P** right after saves it as a waypoint with that
+name; **^** closes the list. Index on the card: `<SD>/ratdeckpro/places/<letter>.txt`
+from USGS GNIS (public domain): every US town plus summits, lakes, islands, bays, falls,
+gaps, capes and beaches for the route states (252k places, 9.2 MB):
+
+```
+python tools/places/make_places.py --gnis DomesticNames_National_Text.zip --out sdcard
+python tools/sdcard/push_files.py --port COM5 --dest /places sdcard/ratdeckpro/places/*.txt
+```
+
 **Track (breadcrumbs):** **S.1.10** on/off. A point is added when the GPS fix has moved more
 than 25 m; in Balanced / Saver the GPS is woken about every 2 minutes for it (sparser
 points, small battery cost). The last 1000 points are drawn as a dotted line; all of them

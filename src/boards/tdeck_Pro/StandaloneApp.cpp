@@ -1545,6 +1545,7 @@ bool cardIsSaved(const uint8_t hash[16]) {
 
 bool cardOffered() { return g_threadCard.valid && !cardIsSaved(g_threadCard.hash); }
 
+extern char g_placeLast[28];                 // place search (map F): last place jumped to
 // Waypoints + track data (functions in "Waypoints + breadcrumb track" below).
 struct Wpt { float lat, lon; char name[16]; uint32_t at; };
 constexpr int kWptMax = 32;
@@ -1908,7 +1909,8 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              TcpHost, TcpPort,
                              MapNum,                            // contact page: map number
                              WptName,                           // map P: waypoint name
-                             LibFind };                         // library: find text
+                             LibFind,                           // library: find text
+                             PlaceFind };                       // map F: place name
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -4301,15 +4303,22 @@ void mapContactsFeed();
 extern int g_mapSel;
 extern int g_wptSel;
 bool wptInfo(char* out, size_t n);
+extern bool g_placeOpen;
+extern int g_placeN;
+void renderPlaces();
+constexpr int kPlaceShowFwd = 6;
 
 void renderMapHeader() {
     char st[64];
-    if (g_mapSel >= 0) snprintf(st, sizeof(st), "T next  #+Enter chat  C me");   // what to press
+    if (g_placeOpen) snprintf(st, sizeof(st), "Places: 1-%d go  ^ back", g_placeN < kPlaceShowFwd ? g_placeN : kPlaceShowFwd);
+    else if (g_mapSel >= 0) snprintf(st, sizeof(st), "T next  #+Enter chat  C me");   // what to press
     else if (g_wptSel >= 0) snprintf(st, sizeof(st), "N next  Del remove  C me");
     else mapview::status(st, sizeof(st));
     drawHeader(st, false);
     char pos[56];
+    if (g_placeOpen) renderPlaces();
     if (g_entry == Entry::WptName) snprintf(pos, sizeof(pos), "Name: %s_", g_buf);
+    else if (g_entry == Entry::PlaceFind) snprintf(pos, sizeof(pos), "Find place: %s_", g_buf);
     else if (g_toast[0]) snprintf(pos, sizeof(pos), "%s", g_toast);               // key hints
     else if (wptInfo(pos, sizeof(pos))) {}
     else if (g_mapNum) snprintf(pos, sizeof(pos), "open chat #%d_  (Enter)", g_mapNum);
@@ -4916,7 +4925,8 @@ void wptStartMark() {
     if (g_wptCount >= kWptMax) { toast("Max %d waypoints", kWptMax); return; }
     mapview::getCentre(g_wptNewLat, g_wptNewLon);
     char def[16];
-    snprintf(def, sizeof(def), "WP%d", g_wptCount + 1);
+    if (g_placeLast[0]) { strlcpy(def, g_placeLast, sizeof(def)); g_placeLast[0] = 0; }   // saved from F
+    else snprintf(def, sizeof(def), "WP%d", g_wptCount + 1);
     startEntry(Entry::WptName, def);
     g_entryReplace = true;                   // Enter keeps "WP3", the first key replaces it
 }
@@ -5081,6 +5091,155 @@ int wptFeed(mapview::Marker* m, int n) {
     if (g_wptSel >= 0 && g_wptSel < g_wptCount) mapview::setGuide(true, g_wpt[g_wptSel].lat, g_wpt[g_wptSel].lon);
     else mapview::setGuide(false);
     return n;
+}
+
+// ---- Place search (map key F) ----------------------------------------------------------
+// Index on the SD card: <SD>/ratdeckpro/places/<first letter>.txt, lines
+// "Name|lat|lon|K|ST" sorted by name (tools/places/make_places.py, USGS GNIS: every US
+// town + summits, lakes, islands ... for the route states). F on the map: type the start
+// of a name, Enter: the 8 nearest matches (to you, else the map centre) as a list; a digit
+// jumps there; P right after saves it as a waypoint with that name. ^ closes the list.
+struct Place { char name[28]; float lat, lon; char kind, st[3]; };
+constexpr int kPlaceShow = 6, kPlaceKeep = 48;
+Place g_placeRes[kPlaceKeep];
+int g_placeN = 0;
+bool g_placeOpen = false;
+char g_placeLast[28] = "";                   // name of the last place jumped to (P default)
+
+const char* placeKindName(char k) {
+    switch (k) {
+        case 'P': return "town"; case 'S': return "summit"; case 'L': return "lake"; case 'I': return "island";
+        case 'B': return "bay"; case 'F': return "falls"; case 'G': return "gap"; case 'C': return "cape";
+        case 'H': return "beach"; default: return "";
+    }
+}
+
+void placeSearch(const char* q0) {
+    g_placeN = 0;
+    // "knoxville tn": a last word of two letters filters by state.
+    char q[28], stateF[3] = "";
+    strlcpy(q, q0, sizeof(q));
+    size_t ql = strlen(q);
+    while (ql && q[ql - 1] == ' ') q[--ql] = 0;
+    if (ql > 3 && q[ql - 3] == ' ' && isalpha((unsigned char)q[ql - 2]) && isalpha((unsigned char)q[ql - 1])) {
+        stateF[0] = (char)toupper((unsigned char)q[ql - 2]);
+        stateF[1] = (char)toupper((unsigned char)q[ql - 1]);
+        q[ql - 3] = 0;
+        ql -= 3;
+    }
+    if (!ql) return;
+    char low[28];
+    size_t k = 0;
+    for (; k < ql && k < sizeof(low) - 1; k++) low[k] = (char)tolower((unsigned char)q[k]);
+    low[k] = 0;
+    const char c0 = (low[0] >= 'a' && low[0] <= 'z') ? low[0] : '0';
+    char path[64];
+    snprintf(path, sizeof(path), "%s/places/%c.txt", SD_PATH_ROOT, c0);
+    if (!sdMount()) { toast("No SD card"); return; }
+    File f = g_sdStore.openFile(path, FILE_READ);
+    if (!f) { toast("No place index on the card"); return; }
+    double ola = 0, olo = 0;
+    if (!ownPosition(ola, olo)) mapview::getCentre(ola, olo);
+    char line[96];
+    const uint32_t t0 = millis();
+    static uint8_t rb[2048];                 // buffered line reader (works on the simulator too)
+    int rpos = 0, rlen = 0;
+    auto readLine = [&](char* out, size_t cap) -> bool {
+        size_t n = 0;
+        for (;;) {
+            if (rpos >= rlen) {
+                rlen = f.read(rb, sizeof(rb));
+                rpos = 0;
+                if (rlen <= 0) { out[n] = 0; return n > 0; }
+            }
+            const char ch = (char)rb[rpos++];
+            if (ch == '\n') { out[n] = 0; return true; }
+            if (n < cap - 1) out[n++] = ch;
+        }
+    };
+    while (readLine(line, sizeof(line))) {
+        size_t i = 0;                        // compare the name's start, case-insensitive
+        while (i < k && line[i] && line[i] != '|' && tolower((unsigned char)line[i]) == low[i]) i++;
+        if (i < k) {
+            // sorted by name: once past the query, stop
+            if (line[i] && line[i] != '|' && tolower((unsigned char)line[i]) > low[i]) break;
+            continue;
+        }
+        Place p{};
+        char* s1 = strchr(line, '|');
+        if (!s1) continue;
+        *s1 = 0;
+        float la = 0, lo = 0;
+        char kind = 0, st[3] = "";
+        if (sscanf(s1 + 1, "%f|%f|%c|%2s", &la, &lo, &kind, st) < 3) continue;
+        if (stateF[0] && strcmp(st, stateF) != 0) continue;
+        strlcpy(p.name, line, sizeof(p.name));
+        p.lat = la; p.lon = lo; p.kind = kind;
+        strlcpy(p.st, st, sizeof(p.st));
+        if (g_placeN < kPlaceKeep) g_placeRes[g_placeN++] = p;
+        else {                               // keep the nearest kPlaceKeep
+            int far = 0;
+            double fd = -1;
+            for (int j = 0; j < kPlaceKeep; j++) {
+                const double d = metersBetween(ola, olo, g_placeRes[j].lat, g_placeRes[j].lon);
+                if (d > fd) { fd = d; far = j; }
+            }
+            if (metersBetween(ola, olo, la, lo) < fd) g_placeRes[far] = p;
+        }
+        if ((g_placeN & 63) == 0) yield();
+    }
+    f.close();
+    for (int a2 = 1; a2 < g_placeN; a2++)    // nearest first
+        for (int b = a2; b > 0 && metersBetween(ola, olo, g_placeRes[b].lat, g_placeRes[b].lon) <
+                                      metersBetween(ola, olo, g_placeRes[b - 1].lat, g_placeRes[b - 1].lon); b--)
+            std::swap(g_placeRes[b], g_placeRes[b - 1]);
+    Serial.printf("[PLACE] \"%s\"%s%s: %d match%s in %lu ms\n", q, stateF[0] ? " in " : "", stateF, g_placeN,
+                  g_placeN == 1 ? "" : "es",
+                  (unsigned long)(millis() - t0));
+    if (!g_placeN) { toast("No place: %.16s", q); return; }
+    g_placeOpen = true;
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void placeJump(int i) {
+    if (i < 0 || i >= g_placeN || i >= kPlaceShow) return;
+    const Place& p = g_placeRes[i];
+    g_placeOpen = false;
+    g_mapSel = -1;
+    g_wptSel = -1;
+    mapview::centreOn(p.lat, p.lon);
+    mapview::fitZoom();
+    strlcpy(g_placeLast, p.name, sizeof(g_placeLast));
+    Serial.printf("[PLACE] go %s %s %.5f,%.5f\n", p.name, p.st, p.lat, p.lon);
+    toast("%.16s %s  (P = save)", p.name, p.st);
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void placeKey(const KeyEvent& ev) {
+    const char c = ev.character;
+    if (ev.up) { g_placeOpen = false; g_fullRefreshReq = true; requestRedraw(); return; }
+    if (c >= '1' && c <= '6') { placeJump(c - '1'); return; }
+    if (ev.enter) { placeJump(0); return; }
+}
+
+// Results list in place of the map (renderMapHeader draws it; stampMap skips the map).
+void renderPlaces() {
+    double ola = 0, olo = 0;
+    const bool own = ownPosition(ola, olo);
+    const int rowH = 34;                     // 6 x 34 = 204 px: two lines per place
+    for (int i = 0; i < g_placeN && i < kPlaceShow; i++) {
+        const Place& p = g_placeRes[i];
+        char t[48], d[24] = "", k[40];
+        if (own) distText(ola, olo, p.lat, p.lon, d, sizeof(d));
+        snprintf(t, sizeof(t), "%d %s, %s", i + 1, p.name, p.st);
+        snprintf(k, sizeof(k), "   %s  %s", placeKindName(p.kind), d);
+        const int y = LIST_TOP + i * rowH;
+        text(4, y, t, true, W - 8);
+        text(4, y + 16, k, false, W - 8);
+        fillRect(4, y + rowH - 1, W - 8, 1);
+    }
 }
 
 // Map keys for waypoints. Returns true if used.
@@ -5620,7 +5779,7 @@ void render() {
     drawBottomBar();
     drawMenuOverlay();
     lv_refr_now(nullptr);
-    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen) stampMap();   // after LVGL's clear
+    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_placeOpen) stampMap();   // after LVGL's clear
     const uint32_t t1 = millis();
     // Clear the request first: keys queued during the panel refresh may ask again.
     g_redraw = false;
@@ -5937,6 +6096,7 @@ void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
     if (g_shareActive && !entryActive()) { g_shareActive = false; toast("Share cancelled"); return; }
+    if (g_placeOpen && !entryActive()) { g_placeOpen = false; g_fullRefreshReq = true; requestRedraw(); return; }
     if (g_libOpen && !entryActive()) {
         if (g_libReading) { g_libReading = false; requestRedraw(); } else libClose();
         return;
@@ -6020,6 +6180,13 @@ void commitEntry() {
         if (v < lo[g_entryArg] || v > hi[g_entryArg]) { toast("Out of range %d-%d", lo[g_entryArg], hi[g_entryArg]); return; }
         g_rtc[g_entryArg] = (int)v;
         endEntry();
+        return;
+    }
+    case Entry::PlaceFind: {
+        char what[28];
+        strlcpy(what, g_buf, sizeof(what));
+        endEntry();
+        placeSearch(what);
         return;
     }
     case Entry::LibFind: {
@@ -6190,7 +6357,8 @@ void entryKey(const KeyEvent& ev) {
     if (ev.space) {
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) c = '.';
         else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass || passEntry(g_entry) ||
-                 g_entry == Entry::Search || g_entry == Entry::WptName || g_entry == Entry::LibFind) c = ' ';
+                 g_entry == Entry::Search || g_entry == Entry::WptName || g_entry == Entry::LibFind ||
+                 g_entry == Entry::PlaceFind) c = ' ';
     } else if (ev.fn) {
         if (passEntry(g_entry)) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
         if (g_entry == Entry::Message && g_threadOpen) { g_tmenuOpen = true; g_tmenuSel = 0; requestRedraw(); return; }
@@ -6293,7 +6461,9 @@ void handleKey(const KeyEvent& ev) {
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
     if (mapview::isOpen()) {
         const char mc = (char)toupper((unsigned char)ev.character);
+        if (g_placeOpen) { placeKey(ev); return; }            // place results list (digits = go)
         if (mapNumberKey(ev)) return;                         // "12" Enter: open chat #12
+        if (mc == 'F') { startEntry(Entry::PlaceFind); return; }   // find a place
         if (wptMapKey(ev)) return;                            // P mark, N next waypoint, Del
         if (mc == 'T') { mapCycleContact(); return; }        // next contact's last position
         if (mc == 'C' || ev.enter) g_mapSel = -1;             // back to own position
