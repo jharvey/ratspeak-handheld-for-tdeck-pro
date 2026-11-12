@@ -143,8 +143,12 @@ def main():
 
     dev = Dev(a.port)
     dev.drain(1.0)
-    dev.cmd("id")
-    m, _ = dev.wait(r"\[ID\] dest=([0-9a-f]{32})", 8)
+    m = None
+    for _ in range(8):                       # opening the port can reset a unit: allow its boot
+        dev.cmd("id")
+        m, _ = dev.wait(r"\[ID\] dest=([0-9a-f]{32})", 8)
+        if m:
+            break
     if not m:
         sys.exit("no answer to 'id' on %s" % a.port)
     dest = m.group(1)
