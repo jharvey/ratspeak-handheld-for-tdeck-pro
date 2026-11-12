@@ -4901,6 +4901,19 @@ void handleSerialLine(char* p) {
         // Stress-test heartbeat: "hb" prints one line, "hb <s>" every s seconds, "hb 0" off.
         if (p[2]) g_hbEveryMs = (uint32_t)atol(p + 3) * 1000;
         heartbeatPrint();
+    } else if (!strcmp(p, "msgidx") || !strcmp(p, "msgidx check")) {
+        // Record index: status; "check" also compares it with every record on flash.
+        char status[128];
+        g_msgStore.indexStatus(status, sizeof(status));
+        if (!strcmp(p, "msgidx")) { Serial.printf("[IDX] %s\n", status); return; }
+        uint32_t checked = 0, mismatches = 0;
+        bool ok = false;
+        for (int i = 0; i < 50 && !ok; i++) {   // the storage task may hold the lease briefly
+            ok = g_msgStore.indexVerify(checked, mismatches);
+            if (!ok) { pumpOnce(); delay(20); }
+        }
+        Serial.printf("[IDX] %s check=%s records=%lu mismatch=%lu\n", status, ok ? "ok" : "unavailable",
+                      (unsigned long)checked, (unsigned long)mismatches);
     } else if (!strncmp(p, "msgstat ", 8) && strlen(p) >= 8 + 32) {
         // Stress test: "msgstat <peer>" counts that conversation's records by direction and
         // status, and checks numbered test messages ("PP <tag> <n>") received from the peer:

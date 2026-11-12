@@ -58,7 +58,8 @@ bool MessageStore::begin(FlashStore* flash, SDStore* sd, bool externalStorageEna
         transactions().endStartupScan(false); releaseStartupSeeds();
         Serial.println("[MSGSTORE] Initialization deferred: insufficient memory"); return false;
     }
-    Serial.printf("[MSGSTORE] startup scan %lu ms (%lu conversations, %d pending outgoing)%c", millis() - scanStart,
+    Serial.printf("[MSGSTORE] startup %s %lu ms (%lu conversations, %d pending outgoing)%c",
+                  _startupFromIndex ? "from saved index" : "scan", millis() - scanStart,
                   (unsigned long)_totalConversations, transactions().pendingCached(), 10);
     {
         const auto& p = MessageTransactions::readProfile();
@@ -67,6 +68,18 @@ bool MessageStore::begin(FlashStore* flash, SDStore* sd, bool externalStorageEna
                       (unsigned long)(p.closeUs / 1000), (unsigned long)(p.listUs / 1000), 10);
     }
     return _writeQueue.begin(transactions(), STORAGE_DEFERRED_IO ? WriteQueue::Execution::Deferred : WriteQueue::Execution::Immediate);
+}
+
+void MessageStore::indexStatus(char* out, size_t size) const {
+    const auto stats = transactions().indexStats();
+    snprintf(out, size, "entries=%lu valid=%d saved=%d saves=%lu boot=%s loadms=%lu", (unsigned long)stats.entries,
+             int(stats.valid), int(stats.onDisk), (unsigned long)stats.saves, _startupFromIndex ? "index" : "scan",
+             (unsigned long)stats.loadMs);
+}
+
+bool MessageStore::indexVerify(uint32_t& checked, uint32_t& mismatches) {
+    handheld::assertDeviceOwner();
+    return transactions().indexVerify(checked, mismatches);
 }
 
 int MessageStore::messageCount(const std::string& peer) const {

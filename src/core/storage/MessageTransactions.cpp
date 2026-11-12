@@ -13,6 +13,78 @@
 
 namespace handheld::storage {
 
+namespace {
+constexpr const char* IndexPath = "/msgindex.bin";
+constexpr const char* IndexTemp = "/msgindex.tmp";
+constexpr uint32_t IndexMagic = 0x494D5352u;   // "RSMI"
+constexpr uint16_t IndexVersion = 1;
+constexpr size_t IndexRecentCap = 128;
+constexpr size_t IndexMaxFile = 1u << 20;
+uint64_t fnv64(const uint8_t* data, size_t length, uint64_t hash = 1469598103934665603ULL) {
+    for (size_t i = 0; i < length; ++i) { hash ^= data[i]; hash *= 1099511628211ULL; }
+    return hash;
+}
+uint64_t keyMix(uint32_t counter, bool incoming) {
+    uint64_t x = (uint64_t(counter) << 1) | (incoming ? 1u : 0u);
+    x ^= x >> 33; x *= 0xff51afd7ed558ccdULL; x ^= x >> 33; x *= 0xc4ceb9fe1a85ec53ULL; x ^= x >> 33;
+    return x;
+}
+template <typename T> void put(std::vector<uint8_t>& out, const T& value) {
+    const auto* bytes = reinterpret_cast<const uint8_t*>(&value); out.insert(out.end(), bytes, bytes + sizeof(T));
+}
+template <typename T> bool take(const std::vector<uint8_t>& in, size_t& at, T& value) {
+    if (at > in.size() || in.size() - at < sizeof(T)) return false;
+    memcpy(&value, in.data() + at, sizeof(T)); at += sizeof(T); return true;
+}
+}  // namespace
+
+struct MessageTransactions::RecordIndex {
+    // timestamp: as the firmware held it (the JSON copy can differ in the last digits); not
+    // used for decisions, the newest record is always read for its own timestamp and preview.
+    struct Entry { double timestamp; uint32_t counter, revision, idPrefix; uint16_t peer; uint8_t status, flags; };
+    static_assert(sizeof(Entry) == 24, "index entry layout is the file format");
+    enum : uint8_t { Incoming = 1, Read = 2, HasId = 4 };
+    struct Print { std::array<uint8_t, 16> peer; uint32_t count; uint64_t hash;
+                   bool operator==(const Print& o) const { return peer == o.peer && count == o.count && hash == o.hash; }
+                   bool operator<(const Print& o) const { return peer < o.peer; } };
+    using Id = std::array<uint8_t, 32>;
+    std::vector<std::array<uint8_t, 16>> peers;
+    std::vector<Entry> entries;
+    std::vector<std::pair<uint32_t, Id>> recent;
+    std::vector<Print> listed;              // what the boot listing found (initializeCounter)
+    bool listedOk = false, building = false, valid = false, used = false;
+    bool onDisk = true;                     // unknown at boot: removed before the first change
+    bool dirty = false;
+    uint32_t lastChangeMs = 0, saves = 0, loadMs = 0;
+
+    int peerSlot(const uint8_t peer[16], bool create) {
+        for (size_t i = 0; i < peers.size(); ++i) if (!memcmp(peers[i].data(), peer, 16)) return int(i);
+        if (!create || peers.size() >= UINT16_MAX) return -1;
+        std::array<uint8_t, 16> p; memcpy(p.data(), peer, 16); peers.push_back(p); return int(peers.size() - 1);
+    }
+    Entry* find(int slot, uint32_t counter, bool incoming) {
+        for (auto& e : entries)
+            if (e.peer == slot && e.counter == counter && bool(e.flags & Incoming) == incoming) return &e;
+        return nullptr;
+    }
+    std::vector<Print> prints() const {
+        std::vector<Print> out;
+        for (size_t s = 0; s < peers.size(); ++s) {
+            Print p{peers[s], 0, 0};
+            for (const auto& e : entries) if (e.peer == s) { ++p.count; p.hash += keyMix(e.counter, e.flags & Incoming); }
+            if (p.count) out.push_back(p);
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+    void clear() {
+        std::vector<std::array<uint8_t, 16>>().swap(peers); std::vector<Entry>().swap(entries);
+        std::vector<std::pair<uint32_t, Id>>().swap(recent);
+    }
+};
+
+MessageTransactions::RecordIndex& MessageTransactions::recordIndex() { static RecordIndex index; return index; }
+
 static bool historyLess(HistoryEntry a, HistoryEntry b) {
     return a.counter < b.counter || (a.counter == b.counter && a.incoming < b.incoming);
 }
@@ -57,6 +129,8 @@ void MessageTransactions::beginStartupScan() {
     auto& state = idIndexState();
     dropPending();
     state.startup = true; state.pendingOverflow = false;
+    auto& ix = recordIndex();
+    ix.clear(); ix.valid = false; ix.building = !_external;
 }
 
 void MessageTransactions::endStartupScan(bool complete) {
@@ -64,6 +138,12 @@ void MessageTransactions::endStartupScan(bool complete) {
     state.startup = false;
     state.pendingValid = complete && !state.pendingOverflow;
     if (!state.pendingValid) dropPending();
+    auto& ix = recordIndex();
+    if (ix.building) {
+        ix.building = false; ix.valid = complete;
+        if (!complete) ix.clear();
+        ix.dirty = complete; ix.lastChangeMs = millis();   // saved after the first quiet spell
+    }
 }
 
 MessageTransactions::IdIndexState& MessageTransactions::idIndexState() {
@@ -291,12 +371,13 @@ bool MessageTransactions::nextFlashRecordTimed(Cursor& cursor, RecordKey& key) {
         if (failure) { cursor.error = toError(failure); return false; }
         // Names-only pre-pass: does any record in this shard have a .bak copy?
         bool backups = false;
-        while (_flash->nextName(cursor.names, name, sizeof(name), isDir, failure)) {
+        if (!cursor.namesOnly) while (_flash->nextName(cursor.names, name, sizeof(name), isDir, failure)) {
             uint32_t counter = 0; bool incoming = false;
             if (!isDir && strlen(name) == 24 && filename(name, counter, incoming)) { backups = true; break; }
         }
         if (failure) { cursor.error = toError(failure); return false; }
         cursor.flashBackups |= backups;
+        if (cursor.namesOnly) continue;   // names already open at the first entry
         failure = _flash->openNames(shard, cursor.names);
         if (failure && failure != ENOENT) { cursor.error = toError(failure); return false; }
     }
@@ -590,19 +671,27 @@ bool MessageTransactions::initializeCounter() {
     if (!preferences.begin(NVS_NS_MSG, false)) return false;
     _nextCounter = std::max(uint32_t(1), preferences.getUInt("msgctr", 0));
     preferences.end(); _reservedThrough = _nextCounter;
-    // Always reconcile the persisted ceiling with imported/recovered files.
+    // Always reconcile the persisted ceiling with imported/recovered files. The same
+    // names-only listing fingerprints each conversation for the saved record index.
+    auto& ix = recordIndex();
+    ix.listedOk = false; std::vector<RecordIndex::Print>().swap(ix.listed);
     char previous[33] = {}, peerHex[33]; Error scanError = Error::None;
     while (nextPeer(previous, peerHex, scanError)) {
         memcpy(previous, peerHex, 33); uint8_t peer[16]; decodeHex(peerHex, 32, peer, 16);
-        Cursor cursor; beginRecords(cursor, peer); RecordKey key;
+        Cursor cursor; beginRecords(cursor, peer); cursor.namesOnly = true; RecordKey key;
         if (cursor.cutoff == UINT32_MAX) { _nextCounter = UINT32_MAX; return true; }
         _nextCounter = std::max(_nextCounter, cursor.cutoff + 1);
+        RecordIndex::Print print{}; memcpy(print.peer.data(), peer, 16);
         while (nextRecord(cursor, key)) {
             if (key.counter == UINT32_MAX) { _nextCounter = UINT32_MAX; return true; }
             _nextCounter = std::max(_nextCounter, key.counter + 1);
+            ++print.count; print.hash += keyMix(key.counter, key.incoming);
         }
         if (cursor.error != Error::None) return false;
+        if (print.count) { try { ix.listed.push_back(print); } catch (const std::bad_alloc&) { return false; } }
     }
+    std::sort(ix.listed.begin(), ix.listed.end());
+    ix.listedOk = scanError == Error::None;
     return scanError == Error::None;
 }
 
@@ -650,6 +739,13 @@ Error MessageTransactions::commit(const RecordKey& key, MessageDocument& documen
         committed |= outcome.committed;
         if (!outcome.committed) error = outcome.error;
     }
+    if (result.flash.committed) {
+        StoredRecordHeader header;
+        if (recordHeader(document.document(), header)) { header.counter = key.counter; indexUpsert(key, header); }
+        else indexInvalidate("unreadable record written");
+    } else if (result.flash.attempted && !(creating && result.flash.error == Error::Stale)) {
+        indexInvalidate("record write failed");
+    }
     return committed ? Error::None : error;
 }
 
@@ -689,6 +785,33 @@ void MessageTransactions::create(const Request& request, uint8_t* bytes, Result&
         }
     }
     bool scanned = false;
+    if (!findIdIndex(request.key.peer, false) && indexUsable()) {
+        // Record index: the message-ID prefixes are already known, no record is read.
+        auto& ix = recordIndex(); const int slot = ix.peerSlot(request.key.peer, false);
+        std::vector<uint64_t> built; bool indexing = true;
+        uint32_t hits[8]; size_t count = 0; bool overflow = false;
+        if (slot >= 0) for (const auto& e : ix.entries) {
+            if (e.peer != slot) continue;
+            conversationExists = true;
+            if (!(e.flags & RecordIndex::Incoming) || !(e.flags & RecordIndex::HasId)) continue;
+            if (dedupe && e.idPrefix == wanted) { if (count < 8) hits[count++] = e.counter; else overflow = true; }
+            try {
+                if (built.size() >= IdIndexMax) { indexing = false; std::vector<uint64_t>().swap(built); }
+                else if (indexing) built.push_back((uint64_t(e.idPrefix) << 32) | e.counter);
+            } catch (const std::bad_alloc&) { indexing = false; std::vector<uint64_t>().swap(built); }
+        }
+        if (!overflow) {
+            for (size_t i = 0; i < count; ++i) {
+                RecordKey key; memcpy(key.peer, request.key.peer, 16); key.counter = hits[i]; key.incoming = true;
+                StoredRecordHeader header;
+                const auto error = load(key, document, header);
+                if (error == Error::Allocation || error == Error::Read) { result.error = error; return; }
+                if (duplicateOf(key, error, header)) return;
+            }
+            if (indexing) installIdIndex(request.key.peer, std::move(built), conversationExists);
+        }
+        if (overflow || !indexing) conversationExists = false;   // fall through to the full scan below
+    }
     if (!findIdIndex(request.key.peer, false)) {
         scanned = true;
         std::vector<uint64_t> built; bool indexing = dedupe;
@@ -766,9 +889,20 @@ void MessageTransactions::markRead(const Request& request, Result& result) {
     if (deletedThrough(request.key.peer) == UINT32_MAX) { result.error = Error::Stale; return; }
     Cursor cursor; beginRecords(cursor, request.key.peer); RecordKey key;
     MessageDocument document; StoredRecordHeader header; Error failure = Error::None;
-    while (nextRecord(cursor, key)) {
+    // Record index: visit only the records it shows unread instead of reading them all.
+    std::vector<RecordKey> unreadKeys; size_t nextUnread = 0; const bool fromIndex = indexUsable();
+    if (fromIndex) {
+        auto& ix = recordIndex(); const int slot = ix.peerSlot(request.key.peer, false);
+        if (slot >= 0) for (const auto& e : ix.entries)
+            if (e.peer == slot && (e.flags & RecordIndex::Incoming) && !(e.flags & RecordIndex::Read)) {
+                RecordKey k; memcpy(k.peer, request.key.peer, 16); k.counter = e.counter; k.incoming = true;
+                unreadKeys.push_back(k);
+            }
+    }
+    while (fromIndex ? nextUnread < unreadKeys.size() : nextRecord(cursor, key)) {
+        if (fromIndex) key = unreadKeys[nextUnread++];
         if (!key.incoming || (request.key.counter && key.counter > request.key.counter)) continue;
-        const auto error = load(key, document, header, &cursor);
+        const auto error = load(key, document, header, fromIndex ? nullptr : &cursor);
         if (error != Error::None) { failure = error; continue; }
         if (header.read) continue;
         if (header.revision == UINT32_MAX) { failure = Error::RevisionExhausted; continue; }
@@ -829,7 +963,8 @@ void MessageTransactions::erase(const Request& request, Result& result) {
         if (!store.isReady()) { outcome.error = Error::Unavailable; continue; }
         directory(request.key.peer, which, parent);
         if (which == 0) {
-            if (!eraseFlashPeer(parent)) outcome.error = Error::Write;
+            if (!eraseFlashPeer(parent)) { outcome.error = Error::Write; indexInvalidate("conversation delete incomplete"); }
+            else indexDropPeer(request.key.peer);
             continue;
         }
         File dir;
@@ -919,6 +1054,7 @@ Error MessageTransactions::summarize(const uint8_t peer[16], ConversationView& r
         if (latestRevision) *latestRevision = summary->revision;
         return Error::None;
     }
+    if (!recent && indexUsable()) return summaryFromIndex(peer, row, selector, latestRevision);
     memcpy(row.peer, peer, 16); memcpy(selector.cursor.peer, peer, 16);
     Cursor cursor; beginRecords(cursor, peer);
     MessageDocument document; StoredRecordHeader header; RecordKey key;
@@ -928,6 +1064,7 @@ Error MessageTransactions::summarize(const uint8_t peer[16], ConversationView& r
     while (nextRecord(cursor, key)) {
         const auto error = load(key, document, header, &cursor);
         if (error != Error::None) return error;
+        if (startup) indexUpsert(key, header);
         if (startup) {
             if (!header.incoming && (header.status == 1 || header.status == 2)) notePending(key, true);
             if (seeding && header.incoming && header.hasMessageId) {
@@ -1005,6 +1142,15 @@ void MessageTransactions::conversationPage(const Request& request, uint8_t* byte
         // tombstones, so a failed read is never certified as a current page.
         if (const auto* summary = findSummary(peer)) {
             memcpy(latest.peer, peer, 16); latest.counter = summary->counter; latest.incoming = summary->incoming;
+        } else if (indexUsable()) {
+            auto& ix = recordIndex(); const int slot = ix.peerSlot(peer, false);
+            memcpy(latest.peer, peer, 16);
+            if (slot >= 0) for (const auto& e : ix.entries) {
+                const bool incoming = e.flags & RecordIndex::Incoming;
+                if (e.peer == slot && (!latest.counter || historyLess({latest.counter, latest.incoming}, {e.counter, incoming}))) {
+                    latest.counter = e.counter; latest.incoming = incoming;
+                }
+            }
         } else {
             Cursor records; beginRecords(records, peer);
             RecordKey key;
@@ -1105,8 +1251,18 @@ void MessageTransactions::history(const Request& request, uint8_t* bytes, size_t
     const HistoryEntry boundary{request.key.counter, request.key.incoming};
     const size_t limit = std::min(size_t(48), capacity / sizeof(HistoryEntry));
     if (!limit) { result.error = Error::InvalidRecord; return; }
-    Cursor cursor; beginRecords(cursor, request.key.peer); RecordKey key; size_t count = 0;
-    while (nextRecord(cursor, key)) {
+    Cursor cursor; RecordKey key; size_t count = 0;
+    const bool fromIndex = indexUsable();
+    std::vector<HistoryEntry> indexed; size_t nextIndexed = 0;
+    if (fromIndex) {
+        auto& ix = recordIndex(); const int slot = ix.peerSlot(request.key.peer, false);
+        try {
+            if (slot >= 0) for (const auto& e : ix.entries)
+                if (e.peer == slot) indexed.push_back({e.counter, bool(e.flags & RecordIndex::Incoming)});
+        } catch (const std::bad_alloc&) { result.error = Error::Allocation; return; }
+    } else beginRecords(cursor, request.key.peer);
+    while (fromIndex ? nextIndexed < indexed.size() : nextRecord(cursor, key)) {
+        if (fromIndex) { key.counter = indexed[nextIndexed].counter; key.incoming = indexed[nextIndexed].incoming; ++nextIndexed; }
         if (result.total < UINT32_MAX) ++result.total;
         const HistoryEntry entry{key.counter, key.incoming};
         if (boundary.counter && !(before ? historyLess(entry, boundary) : historyLess(boundary, entry))) continue;
@@ -1265,7 +1421,10 @@ uint64_t MessageTransactions::evictOldest(uint64_t bytes, int32_t& unreadDelta) 
         if (mirrored && !retainedCopy(key, 1, document)) continue;
         char primary[128], backup[128]; path(key, 0, primary); path(key, 0, backup, ".bak");
         const bool hadBackup = store.exists(backup);
-        if ((store.exists(primary) && !store.remove(primary)) || (hadBackup && !store.remove(backup))) continue;
+        if ((store.exists(primary) && !store.remove(primary)) || (hadBackup && !store.remove(backup))) {
+            indexInvalidate("old message removal failed"); continue;
+        }
+        indexRemove(key);
         char shard[128]; recordDirectory(key, 0, shard); _flash->removeDir(shard);   // only if empty
         freed += 4096u * (hadBackup ? 2u : 1u);
         ++spaceStats().removed;
@@ -1282,6 +1441,7 @@ uint64_t MessageTransactions::evictOldest(uint64_t bytes, int32_t& unreadDelta) 
 }
 
 void MessageTransactions::trim(const Request& request, Result& result) {
+    indexInvalidate("trim");
     if (deletedThrough(request.key.peer) == UINT32_MAX) { result.error = Error::Stale; return; }
     MessageDocument document;
     // Recover only known atomic artifacts. A valid backup newer than its
@@ -1417,6 +1577,7 @@ void MessageTransactions::execute(const Request& request, uint8_t* bytes, size_t
         request.operation != Operation::ReadConversation) {
         if (_mutationEpoch == UINT64_MAX) { result.error = Error::RevisionExhausted; return; }
         ++_mutationEpoch;
+        indexBeforeMutation();
         // Invalidate before attempting a write: partial mirrors, failed cleanup
         // and exceptions can all change persistent state even on failure.
         invalidateSummary(request.key.peer);
@@ -1464,6 +1625,286 @@ void MessageTransactions::execute(const Request& request, uint8_t* bytes, size_t
         break;
     default: dropPending();
     }
+}
+
+} // namespace handheld::storage
+
+// ---- record index (see MessageTransactions.h) ----------------------------------------------
+namespace handheld::storage {
+
+
+bool MessageTransactions::indexUsable() const { const auto& ix = recordIndex(); return ix.valid && !_external; }
+
+MessageTransactions::IndexStats MessageTransactions::indexStats() {
+    const auto& ix = recordIndex();
+    IndexStats s; s.entries = uint32_t(ix.entries.size()); s.saves = ix.saves; s.loadMs = ix.loadMs;
+    s.valid = ix.valid && !_external; s.onDisk = ix.onDisk; s.used = ix.used; return s;
+}
+
+void MessageTransactions::indexInvalidate(const char* why) {
+    auto& ix = recordIndex();
+    if (ix.valid || ix.building) Serial.printf("[MSGSTORE] record index off until the next boot scan: %s%c", why, 10);
+    ix.valid = ix.building = false; ix.clear();
+}
+
+void MessageTransactions::indexNoteRecent(uint32_t counter, const uint8_t id[32]) {
+    auto& recent = recordIndex().recent;
+    for (auto& r : recent) if (r.first == counter) { memcpy(r.second.data(), id, 32); return; }
+    RecordIndex::Id copy; memcpy(copy.data(), id, 32);
+    if (recent.size() < IndexRecentCap) { recent.push_back({counter, copy}); return; }
+    auto oldest = std::min_element(recent.begin(), recent.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    if (counter > oldest->first) *oldest = {counter, copy};
+}
+
+void MessageTransactions::indexUpsert(const RecordKey& key, const StoredRecordHeader& header) {
+    auto& ix = recordIndex();
+    if (!(ix.valid || ix.building) || _external) return;
+    try {
+        const int slot = ix.peerSlot(key.peer, true);
+        if (slot < 0) { indexInvalidate("too many conversations"); return; }
+        RecordIndex::Entry entry{header.timestamp, key.counter, header.revision, 0, uint16_t(slot), header.status,
+            uint8_t((key.incoming ? RecordIndex::Incoming : 0) | (header.read ? RecordIndex::Read : 0) |
+                    (header.hasMessageId ? RecordIndex::HasId : 0))};
+        if (header.hasMessageId) entry.idPrefix = uint32_t(idEntry(header.messageId, 0) >> 32);
+        if (auto* existing = ix.find(slot, key.counter, key.incoming)) *existing = entry;
+        else ix.entries.push_back(entry);
+        if (header.hasMessageId) indexNoteRecent(key.counter, header.messageId);
+    } catch (const std::bad_alloc&) { indexInvalidate("no memory"); }
+}
+
+void MessageTransactions::indexRemove(const RecordKey& key) {
+    auto& ix = recordIndex();
+    if (!ix.valid) return;
+    const int slot = ix.peerSlot(key.peer, false);
+    if (slot < 0) return;
+    if (auto* e = ix.find(slot, key.counter, key.incoming)) { *e = ix.entries.back(); ix.entries.pop_back(); }
+}
+
+void MessageTransactions::indexDropPeer(const uint8_t peer[16]) {
+    auto& ix = recordIndex();
+    if (!ix.valid) return;
+    const int slot = ix.peerSlot(peer, false);
+    if (slot < 0) return;
+    ix.entries.erase(std::remove_if(ix.entries.begin(), ix.entries.end(),
+                                    [slot](const RecordIndex::Entry& e) { return e.peer == slot; }), ix.entries.end());
+}
+
+void MessageTransactions::indexBeforeMutation() {
+    auto& ix = recordIndex();
+    if (_external && ix.valid) indexInvalidate("SD archive on");
+    if (ix.onDisk && _flash && _flash->isReady()) {
+        if (_flash->exists(IndexPath)) _flash->remove(IndexPath);
+        if (_flash->exists(IndexPath)) { if (ix.valid) indexInvalidate("could not remove the saved index"); }
+        else ix.onDisk = false;
+    }
+    ix.dirty = true; ix.lastChangeMs = millis();
+}
+
+Error MessageTransactions::summaryFromIndex(const uint8_t peer[16], ConversationView& row, ConversationSelector& selector,
+                                            uint32_t* latestRevision) {
+    auto& ix = recordIndex();
+    row = {}; selector = {};
+    if (latestRevision) *latestRevision = 0;
+    memcpy(row.peer, peer, 16); memcpy(selector.cursor.peer, peer, 16);
+    const int slot = ix.peerSlot(peer, false);
+    const RecordIndex::Entry* newest = nullptr;
+    if (slot >= 0) for (const auto& e : ix.entries) {
+        if (e.peer != slot) continue;
+        const bool incoming = e.flags & RecordIndex::Incoming;
+        if (row.totalCount < UINT32_MAX) ++row.totalCount;
+        if (!newest || historyLess({newest->counter, bool(newest->flags & RecordIndex::Incoming)}, {e.counter, incoming})) newest = &e;
+        if (incoming && !(e.flags & RecordIndex::Read) && row.unreadCount < UINT32_MAX) ++row.unreadCount;
+        if (!incoming) {
+            if (!(row.flags & ConversationView::HasOutgoing) || e.counter >= row.lastOutgoingCounter) {
+                row.flags |= ConversationView::HasOutgoing;
+                row.lastOutgoingCounter = e.counter; row.outgoingRevision = e.revision;
+                row.status = row.durableStatus = e.status;
+            }
+            if ((e.status == 1 || e.status == 2) && row.pendingCount < UINT16_MAX) ++row.pendingCount;
+            if (e.status == 5 && row.failedCount < UINT16_MAX) ++row.failedCount;
+        }
+    }
+    if (!newest) return Error::None;
+    RecordKey key; memcpy(key.peer, peer, 16); key.counter = newest->counter; key.incoming = newest->flags & RecordIndex::Incoming;
+    MessageDocument document; StoredRecordHeader header;
+    const auto error = load(key, document, header);
+    if (error != Error::None) return error;
+    selector.counter = key.counter; selector.incoming = key.incoming;
+    selector.cursor.timestamp = row.timestamp = header.timestamp;
+    row.flags = (row.flags & ~ConversationView::LastIncoming) | (header.incoming ? ConversationView::LastIncoming : 0);
+    const auto content = document.document()["content"].as<JsonString>();
+    conversationPreview(row, content.c_str(), content.size());
+    if (latestRevision) *latestRevision = header.revision;
+    rememberSummary(row, selector, header.revision);
+    return Error::None;
+}
+
+bool MessageTransactions::startupFromIndex(uint32_t& conversations, int& unread, RecentIds& recentOut) {
+    auto& ix = recordIndex();
+    const uint32_t started = millis();
+    conversations = 0; unread = 0; recentOut.clear();
+    if (_external || !ix.listedOk || !_flash || !_flash->isReady()) return false;
+    std::vector<uint8_t> data;
+    {
+        FlashStore::RecordFile file;
+        const int opened = _flash->openRecord(IndexPath, file);
+        if (opened == ENOENT) { Serial.printf("[MSGSTORE] no saved record index: full scan%c", 10); return false; }
+        if (opened || !file.size() || file.size() > IndexMaxFile) return false;
+        try { data.resize(file.size()); } catch (const std::bad_alloc&) { return false; }
+        if (file.read(data.data(), data.size()) != data.size()) return false;
+    }
+    if (data.size() < 8 + 16) return false;
+    uint64_t stored; memcpy(&stored, data.data() + data.size() - 8, 8);
+    if (fnv64(data.data(), data.size() - 8) != stored) {
+        Serial.printf("[MSGSTORE] saved record index damaged: full scan%c", 10); return false;
+    }
+    size_t at = 0; uint32_t magic = 0, peerCount = 0, entryCount = 0, recentCount = 0; uint16_t version = 0, entrySize = 0;
+    if (!take(data, at, magic) || !take(data, at, version) || !take(data, at, entrySize) || magic != IndexMagic ||
+        version != IndexVersion || entrySize != sizeof(RecordIndex::Entry) || !take(data, at, peerCount)) return false;
+    RecordIndex loaded;
+    try {
+        for (uint32_t i = 0; i < peerCount; ++i) {
+            std::array<uint8_t, 16> p; if (!take(data, at, p)) return false;
+            loaded.peers.push_back(p);
+        }
+        if (!take(data, at, entryCount)) return false;
+        for (uint32_t i = 0; i < entryCount; ++i) {
+            RecordIndex::Entry e; if (!take(data, at, e) || e.peer >= peerCount) return false;
+            loaded.entries.push_back(e);
+        }
+        if (!take(data, at, recentCount) || recentCount > IndexRecentCap) return false;
+        for (uint32_t i = 0; i < recentCount; ++i) {
+            std::pair<uint32_t, RecordIndex::Id> r; if (!take(data, at, r.first) || !take(data, at, r.second)) return false;
+            loaded.recent.push_back(r);
+        }
+    } catch (const std::bad_alloc&) { return false; }
+    if (at != data.size() - 8) return false;
+    std::vector<uint8_t>().swap(data);
+    // The saved index must describe exactly the records the boot listing found (other
+    // firmware, a power cut before the file was removed, or a copied folder all differ).
+    const auto saved = loaded.prints();
+    if (!(saved == ix.listed)) {
+        Serial.printf("[MSGSTORE] saved record index does not match the files (%u vs %u conversations): full scan%c",
+                      (unsigned)saved.size(), (unsigned)ix.listed.size(), 10);
+        return false;
+    }
+    ix.peers = std::move(loaded.peers); ix.entries = std::move(loaded.entries); ix.recent = std::move(loaded.recent);
+    ix.valid = true; ix.building = false; ix.onDisk = true; ix.dirty = false; ix.used = true;
+    // Summaries (one record read per conversation, for its preview), pending sends,
+    // duplicate-ID seeds: the same results the full scan produces.
+    auto& state = idIndexState();
+    dropPending();
+    std::vector<RecordKey> pendingKeys;
+    std::vector<std::array<uint8_t, 16>> order(ix.peers);
+    std::sort(order.begin(), order.end());
+    for (const auto& peer : order) {
+        const int slot = ix.peerSlot(peer.data(), false);
+        std::vector<uint64_t> ids; bool seeding = true, any = false;
+        for (const auto& e : ix.entries) {
+            if (e.peer != slot) continue;
+            any = true;
+            const bool incoming = e.flags & RecordIndex::Incoming;
+            if (!incoming && (e.status == 1 || e.status == 2)) {
+                RecordKey key; memcpy(key.peer, peer.data(), 16); key.counter = e.counter; key.incoming = false;
+                pendingKeys.push_back(key);
+            }
+            if (seeding && incoming && (e.flags & RecordIndex::HasId)) {
+                if (ids.size() >= IdIndexMax) { seeding = false; std::vector<uint64_t>().swap(ids); }
+                else ids.push_back((uint64_t(e.idPrefix) << 32) | e.counter);
+            }
+        }
+        if (!any) continue;
+        ConversationView row; ConversationSelector selector;
+        if (summaryFromIndex(peer.data(), row, selector, nullptr) != Error::None) {
+            indexInvalidate("a saved conversation could not be read"); clearSummaries(); return false;
+        }
+        if (!row.totalCount) continue;
+        if (conversations < UINT32_MAX) ++conversations;
+        const int count = int(std::min(row.unreadCount, uint32_t(INT_MAX)));
+        unread = count > INT_MAX - unread ? INT_MAX : unread + count;
+        if (seeding) installIdIndex(peer.data(), std::move(ids), true);
+    }
+    if (pendingKeys.size() <= PendingMax) {
+        std::sort(pendingKeys.begin(), pendingKeys.end(), pendingLess);
+        state.pending = std::move(pendingKeys); state.pendingValid = true;
+    }
+    for (const auto& r : ix.recent) {
+        char hex[65]; encodeHex(r.second.data(), 32, hex); recentOut.push_back({r.first, hex});
+    }
+    ix.loadMs = millis() - started;
+    return true;
+}
+
+bool MessageTransactions::saveIndexIfIdle(uint32_t quietMs) {
+    auto& ix = recordIndex();
+    if (!ix.valid || _external || !ix.dirty || millis() - ix.lastChangeMs < quietMs) return false;
+    if (!_flash || !_flash->isReady()) return false;
+    StorageLease lease;
+    if (!lease.held()) return false;   // the storage task is busy: try on a later poll
+    const uint32_t started = millis();
+    std::vector<uint8_t> out;
+    try {
+        std::vector<std::pair<uint32_t, RecordIndex::Id>> live;
+        for (const auto& r : ix.recent)
+            for (const auto& e : ix.entries) if (e.counter == r.first) { live.push_back(r); break; }
+        ix.recent = live;
+        out.reserve(16 + ix.peers.size() * 16 + ix.entries.size() * sizeof(RecordIndex::Entry) + live.size() * 36 + 8);
+        put(out, IndexMagic); put(out, IndexVersion); put(out, uint16_t(sizeof(RecordIndex::Entry)));
+        put(out, uint32_t(ix.peers.size()));
+        for (const auto& p : ix.peers) put(out, p);
+        put(out, uint32_t(ix.entries.size()));
+        for (const auto& e : ix.entries) put(out, e);
+        put(out, uint32_t(live.size()));
+        for (const auto& r : live) { put(out, r.first); put(out, r.second); }
+        put(out, fnv64(out.data(), out.size()));
+    } catch (const std::bad_alloc&) { return false; }
+    _flash->remove(IndexTemp);
+    if (!_flash->writeDirect(IndexTemp, out.data(), out.size())) {
+        _flash->remove(IndexTemp); ix.lastChangeMs = millis();   // e.g. flash full: retry after another quiet spell
+        return false;
+    }
+    if (_flash->exists(IndexPath)) _flash->remove(IndexPath);
+    if (!_flash->rename(IndexTemp, IndexPath)) { _flash->remove(IndexTemp); ix.lastChangeMs = millis(); return false; }
+    ix.onDisk = true; ix.dirty = false; ++ix.saves;
+    Serial.printf("[MSGSTORE] record index saved: %u records, %u bytes, %lu ms%c", (unsigned)ix.entries.size(),
+                  (unsigned)out.size(), (unsigned long)(millis() - started), 10);
+    return true;
+}
+
+// Stress-test check: the index against the records themselves (lists and reads every one).
+bool MessageTransactions::indexVerify(uint32_t& checked, uint32_t& mismatches) {
+    checked = mismatches = 0;
+    auto& ix = recordIndex();
+    if (!indexUsable()) return false;
+    StorageLease lease;
+    if (!lease.held()) return false;
+    size_t seen = 0;
+    char after[33] = {}, peerHex[33]; Error scanError = Error::None;
+    while (nextPeer(after, peerHex, scanError)) {
+        memcpy(after, peerHex, 33); uint8_t peer[16]; decodeHex(peerHex, 32, peer, 16);
+        const int slot = ix.peerSlot(peer, false);
+        Cursor cursor; MessageDocument document; beginRecords(cursor, peer, &document); RecordKey key;
+        while (nextRecord(cursor, key)) {
+            ++checked;
+            StoredRecordHeader header;
+            const auto* e = slot >= 0 ? ix.find(slot, key.counter, key.incoming) : nullptr;
+            if (!e) { ++mismatches; Serial.printf("[IDX] missing #%lu%c", (unsigned long)key.counter, 10); continue; }
+            ++seen;
+            if (load(key, document, header, &cursor) != Error::None) continue;
+            if (e->status != header.status || e->revision != header.revision ||
+                bool(e->flags & RecordIndex::Read) != header.read) {   // timestamp: JSON rounding, not used
+                ++mismatches;
+                Serial.printf("[IDX] differs #%lu status %u/%u rev %lu/%lu read %d/%d%c", (unsigned long)key.counter,
+                              (unsigned)e->status, (unsigned)header.status, (unsigned long)e->revision,
+                              (unsigned long)header.revision, int(bool(e->flags & RecordIndex::Read)), int(header.read), 10);
+            }
+        }
+    }
+    if (seen != ix.entries.size()) {
+        mismatches += uint32_t(ix.entries.size() > seen ? ix.entries.size() - seen : seen - ix.entries.size());
+        Serial.printf("[IDX] index holds %u records, flash %u%c", (unsigned)ix.entries.size(), (unsigned)seen, 10);
+    }
+    return scanError == Error::None;
 }
 
 } // namespace handheld::storage

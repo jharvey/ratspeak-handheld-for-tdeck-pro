@@ -9,7 +9,11 @@ instead. After every restart it checks:
   - the identity (destination hash) never changes;
   - no saved message is lost: the records now on flash >= records before the cycle +
     saves the heartbeat had confirmed before the kill;
-  - every listed record is readable (msgstat bad=0).
+  - every listed record is readable (msgstat bad=0);
+  - the record index matches the records on flash (msgidx check mismatch=0).
+Some cycles stay quiet for 25-40 s instead (the firmware saves its record index after 30 s
+without a change) and are cut then: the next boot loads the saved index, or, when the cut
+fell inside the save, falls back to the full scan.
 
   python tools/stress/powercut.py --cycles 100
   python tools/stress/powercut.py --cycles 30 --flashkb 1024     (full-flash removal too)
@@ -50,6 +54,7 @@ def main():
     ap.add_argument("--cycles", type=int, default=50)
     ap.add_argument("--flashkb", type=int, default=0)
     ap.add_argument("--boot-kill", type=float, default=0.15, help="share of cycles killed during boot")
+    ap.add_argument("--quiet", type=float, default=0.25, help="share of cycles cut while idle (index save)")
     ap.add_argument("--out", default=os.path.join(ROOT, "sim", "build", "powercut"))
     ap.add_argument("--tcp", type=int, default=5711)
     ap.add_argument("--air", type=int, default=48111)
@@ -69,7 +74,8 @@ def main():
     records = 0          # records known to be on flash before this cycle
     failures = []
     boot_times = []
-    kills_in_boot = kills_in_save = 0
+    kills_in_boot = kills_in_save = kills_quiet = 0
+    index_boots = 0
     for cycle in range(1, a.cycles + 1):
         log = os.path.join(a.out, "cycle_%03d.log" % cycle)
         dev = SimDevice("pcut", a.tcp, data, log, a.flashkb, a.air)
@@ -91,6 +97,8 @@ def main():
             boot_times.append(time.time() - t0)
             with dev.lock:
                 text = "\n".join(dev.lines)
+            if "startup from saved index" in text:
+                index_boots += 1
             if "Initialization deferred" in text:
                 problems.append("message store did not start: " +
                                 re.search(r".*Initialization deferred.*", text).group(0))
@@ -127,9 +135,25 @@ def main():
                 if not ok:
                     problems.append("msgstat did not answer after rmconv")
                     raise RuntimeError
+            m = dev.command("msgidx check", r"\[IDX\].*check=.*", 120)
+            if not m:
+                problems.append("msgidx check did not answer")
+            else:
+                kv = parse_kv(m.group(0))
+                if kv.get("valid") == "1" and kv.get("check") == "ok" and kv.get("mismatch", "0") != "0":
+                    problems.append("record index differs from flash: " + m.group(0))
+            if problems:
+                raise RuntimeError
             if dev.proc.poll() is not None:
                 problems.append("simulator exited by itself, code 0x%X" % (dev.proc.returncode & 0xFFFFFFFF))
                 raise RuntimeError
+            if random.random() < a.quiet:
+                # Idle: the index is saved after 30 s without a change; cut before, during or after.
+                time.sleep(random.uniform(25.0, 40.0))
+                kills_quiet += 1
+                dev.proc.kill()
+                dev.proc.wait(10)
+                continue
             # Save burst, then the power cut at a random moment inside it.
             dev.send("hb 1")
             dev.send("msgfill %d %d %d" % (random.randint(40, 200), PEERS, random.choice([20, 120, 600])))
@@ -161,8 +185,9 @@ def main():
         if failures and failures[-1][0] == cycle and any("boot" in p or "start" in p for p in failures[-1][1]):
             break  # a unit that no longer boots: stop and keep the data folder for a look
 
-    lines = ["simulator: %s" % SIM, "power-cut test: %d cycles (%d killed during boot, %d during saves), seed %d%s" % (
-        cycle, kills_in_boot, kills_in_save, a.seed, ", flashkb %d" % a.flashkb if a.flashkb else ""),
+    lines = ["simulator: %s" % SIM, "power-cut test: %d cycles (%d killed during boot, %d during saves, %d while idle), seed %d%s" % (
+        cycle, kills_in_boot, kills_in_save, kills_quiet, a.seed, ", flashkb %d" % a.flashkb if a.flashkb else ""),
+        "boots from the saved record index: %d" % index_boots,
         "records at the end: %d; boot time %.1f-%.1f s" % (
             records, min(boot_times) if boot_times else 0, max(boot_times) if boot_times else 0)]
     for c, p in failures:

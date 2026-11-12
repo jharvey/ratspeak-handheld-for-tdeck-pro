@@ -77,6 +77,10 @@ public:
     // New (non-duplicate) incoming messages committed since boot. The unread total cannot
     // tell "a message arrived" once old unread messages are removed for space in the same save.
     uint32_t incomingCommitted() const { return _incomingCommitted; }
+    // Record index (see MessageTransactions.h): "entries=N valid=0|1 saved=0|1 saves=N boot=index|scan".
+    void indexStatus(char* out, size_t size) const;
+    // Stress tests: compare the index with every record on flash (slow).
+    bool indexVerify(uint32_t& checked, uint32_t& mismatches);
     uint32_t revision() const { return _revision; }
     // Structural history changes only; MAX means freshness cannot be inferred
     // by equality. Adapters must expose unavailable freshness/explicit refresh.
@@ -110,6 +114,7 @@ private:
     uint32_t _totalConversations = 0;
     int _totalUnread = 0;
     uint32_t _incomingCommitted = 0;
+    bool _startupFromIndex = false;
     uint32_t _revision = 0;
     uint32_t _historyRevision = 0;
 };

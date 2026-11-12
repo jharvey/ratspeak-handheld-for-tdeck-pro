@@ -146,6 +146,9 @@ void MessageStore::poll() {
         _settledThrough = ticket.sequence;
         if (_deleteFence == ticket) _deleteFence = {};
     }
+    // Save the record index after 30 s without a change (skipped while the storage task works).
+    static uint32_t lastTry = 0;
+    if (millis() - lastTry >= 1000) { lastTry = millis(); transactions().saveIndexIfIdle(30000); }
 }
 
 bool MessageStore::peekResult(Ticket ticket, Result& result, Request* request) const {

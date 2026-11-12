@@ -68,7 +68,8 @@ Tools:
 - DONE: checked simulator build: `simuild-sim.bat checked` -> `simuild-checked`
   (undefined-behaviour + array-bounds traps, libstdc++ assertions, stack protector,
   _FORTIFY_SOURCE). MinGW GCC has no AddressSanitizer, so heap use-after-free is not
-  caught. Runners use it with `set RS_SIM_EXE=...\simuild-checkedatspeak-sim.exe`.
+  caught. Runners use it with `set RS_SIM_EXE=...\simuild-checked
+atspeak-sim.exe`.
 - TODO: a random-key script command (`monkey <minutes> <seed>`), repeatable by seed.
 
 ## 3. Layer 2: real units (24-72 hours)
@@ -120,7 +121,8 @@ What is designed for this today (to prove, not assume):
 - An incoming message's delivery proof is only sent after it is saved, so a cut before
   the save makes the sender retry instead of losing it.
 - Settings, TX power, identity: NVS / atomic files.
-- Map copies and downloads on the PC side resume from the NAS (`M:atspeak-maps\STATUS.txt`).
+- Map copies and downloads on the PC side resume from the NAS (`M:
+atspeak-maps\STATUS.txt`).
 
 Tests:
 | Test | How | Pass |
@@ -164,11 +166,15 @@ Fixed findings:
 | 2026-11-12 | (checked) | Power cuts, checked build | 40 cycles | PASS | 6 cuts in boot, 34 during saves; 1,323 records, none lost or unreadable, identity kept |
 | 2026-11-12 | (powercut) | Power cuts, tiny flash (`--flashkb 1024`, removal active) | 40 cycles | PASS | 9 cuts in boot, 31 during saves; no unreadable record, always boots |
 | 2026-11-12 | (powercut) | Power cuts, normal flash | 120 cycles | PASS | 13 cuts in boot, 107 during saves (bursts of 40-200 saves, 20-600 byte messages); no saved message lost, none unreadable, identity kept, boot 5.5-16 s. (A first run reported "lost" records above ~1,400: that was the firmware's own removal at 85 %, not a loss; the runner now clears the test conversations at 1,000.) |
+| 2026-11-12 | (index) | Boot with 1,400 messages, saved record index | 2 boots | PASS | record opens at boot 1,400 -> 8, message start 1.5 s -> 0.2 s; `msgidx check` 0 mismatches |
+| 2026-11-12 | (index) | Power cuts with record index, normal flash | 60 cycles | PASS | 9 cuts in boot, 36 during saves, 15 while idle (around the 30 s index save); 14 boots from the saved index; index matched flash every cycle |
+| 2026-11-12 | (index) | Power cuts with record index, tiny flash (`--flashkb 1024`) | 30 cycles | PASS | removal active; 7 boots from the saved index; index matched flash every cycle |
+| 2026-11-12 | (index) | Ping-pong 8 min with record index | 0.13 | PASS | 51 + 50 msgs, all delivered; index matched flash on both sides |
 
 Open findings:
-- Boot time grows with stored messages (startup scan reads every record): simulator 5 s
-  empty -> 22-39 s at ~1,300-1,400 records; on COM5 it was 29.8 s at 376 records, so a
-  unit near the 85 % mark (~1,400 messages) could take over a minute to boot. Look at a
-  cached summary / index written at shutdown or after each change.
+- FIXED (simulator) 2026-11-12: boot time grew with stored messages (the startup scan opened
+  every record: ~36 ms each on COM5, 376 records = ~16 s; near the 85 % mark it would have
+  passed a minute). A saved record index now replaces the scan when it matches the file
+  names (Description §8.4). Still to do: measure boot on a unit with ~1,000 messages.
 - Under load, retried messages arrive late and the thread shows them in arrival order
   (e.g. "8" below "40"). Consider ordering threads by the sender's timestamp.

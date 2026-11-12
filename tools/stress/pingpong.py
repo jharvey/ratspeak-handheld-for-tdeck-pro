@@ -63,7 +63,8 @@ class Device:
             while b"\n" in buf:
                 raw, buf = buf.split(b"\n", 1)
                 line = raw.decode("utf-8", "replace").rstrip("\r")
-                stamp = time.strftime("%H:%M:%S")
+                now = time.time()
+                stamp = time.strftime("%H:%M:%S", time.localtime(now)) + ".%03d" % (now % 1 * 1000)
                 with self.lock:
                     self.lines.append(line)
                     if "[MAIN] setup" in line:
@@ -299,6 +300,13 @@ def main():
             if hbs:
                 report.append("     first %s" % hbs[0])
                 report.append("     last  %s" % (hb.group(0) if hb else hbs[-1]))
+            # Record index vs the records on flash (firmware that has the index).
+            ix = d.command("msgidx check", r"\[IDX\].*check=.*", 180)
+            if ix:
+                kv = parse_kv(ix.group(0))
+                good = not (kv.get("valid") == "1" and kv.get("check") == "ok" and kv.get("mismatch", "0") != "0")
+                report.append("     %s index: %s" % ("OK  " if good else "FAIL", ix.group(0)))
+                ok &= good
         report.append("RESULT: %s" % ("PASS" if ok else "FAIL"))
         text = "\n".join(report)
         print(text)

@@ -51,6 +51,13 @@ START HERE (handoff 2026-11-11)
   duplicate-ID index (MessageTransactions IdIndex, 4 peers x 1024, seeded at boot), pending
   outgoing keys collected at boot (ReadPending = one load) -> save+proof 1.3 s, send->proof 7 s,
   no "rejected 8" (Recovering) after boot. ev marks: dup-scan/dup-idx/commit (ms), recovered.
+  DONE 2026-11-12 (sim): record index (MessageTransactions RecordIndex, 24 B/record, RAM/PSRAM)
+  kept by commit/evict/erase hooks, saved to /msgindex.bin after 30 s quiet (MessageStore::poll),
+  deleted before the first mutation after a save (execute -> indexBeforeMutation). Boot:
+  initializeCounter's names-only listing fingerprints each peer (count + key hash); a matching
+  file replaces the full scan (startupFromIndex: 1 open per peer for the preview). SD archive on
+  -> index off. Trim -> index off until next boot. Console msgidx / msgidx check; powercut.py and
+  pingpong.py check it. Sim 1,400 records: 1,400 opens -> 8. Not yet measured on a unit.
   RESOLVED: "duty-cycle reply misses" were a test artifact (proofs waited for the slow save). (1) measure the board floor - the BQ27220 gauge cannot resolve 0-5 mA. Rig
   software is READY: tools/inalogger (ESP32-C3 SuperMini + INA226 firmware, log.py PC
   logger; builds, selftest passes, not run on hardware). Needs the parts (README) and
@@ -178,6 +185,7 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
   msgstat <peer>       stress: records by direction/status + numbered "PP <tag> <n>" msgs (count, dup, gap)
   tools/stress/pingpong.py  two sims (own TCP ports + RS_SIM_AIR_PORT radio channel) or --ports COMx COMy
   tools/stress/powercut.py  kill/restart the sim during saves/boot, check nothing saved is lost
+  msgidx [check]       record index status / compare with every record on flash
   simuild-sim.bat checked  UB/bounds traps + libstdc++ assertions build (RS_SIM_EXE for the runners)
   sdinfo | sdarc 0|1   SD status / message archive setting (applies at next boot)
   maptest <lat> <lon>  bench: write 18 grid test tiles (z14-15) around a point to the SD card

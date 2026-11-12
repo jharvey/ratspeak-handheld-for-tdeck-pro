@@ -618,6 +618,30 @@ retried). The new-message beep follows saved incoming messages, not the unread c
 still sounds when a save also removed old unread messages. Stress tests: `Stress_test_plan.md`,
 `tools/stress/pingpong.py` (two devices, numbered messages, `hb` heartbeat, `msgstat`).
 
+### 8.4 Boot with many messages: record index — Works in the simulator
+
+Boot used to open every saved message to count unread ones, find unsent ones and seed the
+duplicate check. On the unit each open costs ~36 ms, so 376 messages took ~16 s of a 29.8 s
+boot, and a store near the 85 % mark (~1,400 messages) would have taken over a minute.
+
+Now the firmware keeps a **record index** in RAM: for every message on flash its number,
+direction, status, read flag, revision and the start of its message ID (24 bytes each, ~34 KB
+for 1,400). Every save, status change, read mark, removal and conversation delete updates it.
+After **30 s without a change** it is written to `/msgindex.bin` (one file, checksummed). The
+file is deleted before the first change after it was written, so after a power cut there is
+either a current index or none.
+
+At boot the message folders are listed once (names only, no file opened). When the listing
+matches the saved index (same messages in every conversation), boot uses the index and opens
+one message per conversation (for the preview line). Otherwise (no file, a power cut during a
+change, older firmware wrote messages in between) boot reads every message as before and
+builds the index from that, so the next boot is fast again. Opening a thread, the inbox list,
+"mark read" and the duplicate check also use the index instead of reading messages.
+
+Simulator, 1,400 messages: 1,400 opens -> 8, message start 1.5 s -> 0.2 s. The index is off
+while the SD archive is on (flash then only holds a cache of the card). Console `msgidx`
+(status) and `msgidx check` (compare with every message on flash; stress tests).
+
 ---
 
 ## 9. Hardware notes (T-DeckPro V1.1, 25-09-15)
@@ -730,6 +754,7 @@ the device does not light-sleep.
 | `flashcap <n>` / `flashcap 0` | stress test: old-message removal starts after ~n more messages (RAM only, §8.3) |
 | `hb` / `hb <s>` / `hb 0` | stress-test heartbeat line (memory, outbox, unread, saved incoming, flash) once / every s seconds / off |
 | `msgstat <peer>` | stress test: a conversation's records by direction and status, numbered test messages (count, duplicates, gaps) |
+| `msgidx` / `msgidx check` | record index status (§8.4) / compare it with every message on flash |
 | `FORMAT` | erase and format the data partition |
 | `@…` | screen-mirror protocol (§10.3) |
 
@@ -785,6 +810,7 @@ entry mode.
 | Offline map from SD tiles (§8.1) | Works: simulator and COM9 (test tiles); PC tile tool done; real map tiles need an MBTiles export or an allowed tile server |
 | SD card: shared-bus locking, message archive (§8.2) | Works on COM9 (32 GB card); archive off by default |
 | Full flash: oldest messages removed from 85 %, refused at 92 % (§8.3) | Works in the simulator; time the usage check (LittleFS walk) on a unit |
+| Fast boot with many messages: saved record index (§8.4) | Works in the simulator; measure boot on a unit with ~1,000 messages |
 | Idle password + vault unlock | Planned |
 | LoRa RX duty cycle in sleeping modes (§6.3) | Works: 14/14, ~13 → 8 mA asleep (gauge); reply latency same as continuous (the ~1 in 3 retries were a test artifact) |
 | Deep-sleep storage mode, GPS power-save | Planned |
@@ -809,3 +835,4 @@ entry mode.
 | 0.10 | Full flash handled (§8.3): oldest-first removal, refusal with a reserve, notices; simulator flash size limit (`--flashkb`) |
 | 0.11 | Thread status labels fixed (sent / delivered were swapped, failed showed "s5"); new-message beep no longer missed when old messages are removed; stress tools (`hb`, `msgstat`, `flashcap`, `tools/stress/pingpong.py`) |
 | 0.12 | Sending no longer freezes the screen when the radio is busy (was up to 16-24 s): busy or within 3 s of the last send, the message goes to the outbox ("Queued: radio busy") and is sent in the background, in order |
+| 0.13 | Boot no longer opens every saved message: a record index (saved after 30 s without a change, checked against the file names at boot) replaces the scan (§8.4); opening threads and mark-read use it too |

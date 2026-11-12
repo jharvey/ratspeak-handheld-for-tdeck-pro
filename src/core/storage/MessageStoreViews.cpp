@@ -12,6 +12,16 @@ bool MessageStore::loadStartupMetadata() {
     _startupRecentMessageIds.clear();
     int unread = 0; uint32_t total = 0;
     char after[33] = {}, peer[33]; MessageTransactions::RecentIds recent;
+    // Saved record index (current and matching the files on flash): no record scan.
+    if (transactions().startupFromIndex(total, unread, recent)) {
+        _startupFromIndex = true;
+        for (const auto& item : recent)
+            if (std::find(_startupRecentMessageIds.begin(), _startupRecentMessageIds.end(), item.second) == _startupRecentMessageIds.end())
+                _startupRecentMessageIds.push_back(item.second);
+        _totalConversations = total; _totalUnread = unread;
+        return true;
+    }
+    _startupFromIndex = false;
     Error scanError = Error::None;
     transactions().beginStartupScan();
     // Preserve the established lexical peer/counter tie order for boot hints.

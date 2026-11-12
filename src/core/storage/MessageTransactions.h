@@ -31,6 +31,7 @@ public:
         uint8_t medium = 0;
         bool opened = false;
         bool flashBackups = false;    // a shard visited so far holds a .bak record copy (sticky)
+        bool namesOnly = false;       // caller never loads records: skip the .bak pre-pass
         Error error = Error::None;
     };
     // Caller holds an explicit filesystem lease. No retained filename vector.
@@ -70,6 +71,19 @@ public:
                         uint32_t removed = 0, passes = 0; uint64_t capBytes = 0;
                         uint64_t effectiveTotal(uint64_t real) const { return capBytes && capBytes < real ? capBytes : real; } };
     static SpaceStats& spaceStats() { static SpaceStats s; return s; }
+
+    // Record index: every flash record's header (counter, direction, status, read flag,
+    // revision, timestamp, message-ID prefix) in RAM, kept current by every write, and
+    // saved to flash (/msgindex.bin) after a quiet spell. Boot then reads one file instead
+    // of opening every record (~36 ms each on the unit), once the record names listed at
+    // boot match the saved index. The file is removed before the first change after it was
+    // saved, so a power cut leaves either a current index or none (then a full scan).
+    // Off while the SD archive is on (flash is then only a cache of the card).
+    bool startupFromIndex(uint32_t& conversations, int& unread, RecentIds& recent);
+    bool saveIndexIfIdle(uint32_t quietMs);   // owner; true when it wrote the file
+    struct IndexStats { uint32_t entries = 0, saves = 0, loadMs = 0; bool valid = false, onDisk = false, used = false; };
+    IndexStats indexStats();
+    bool indexVerify(uint32_t& checked, uint32_t& mismatches);   // owner; stress tests
 
 private:
     struct Summary {
@@ -164,6 +178,16 @@ private:
     bool reserveCounter(uint32_t&);
     bool retainedCopy(const RecordKey&, unsigned medium, MessageDocument&);
     bool initializeCounter();
+    struct RecordIndex;
+    static RecordIndex& recordIndex();
+    void indexUpsert(const RecordKey&, const StoredRecordHeader&);
+    void indexRemove(const RecordKey&);
+    void indexDropPeer(const uint8_t peer[16]);
+    void indexInvalidate(const char* why);
+    void indexNoteRecent(uint32_t counter, const uint8_t id[32]);
+    bool indexUsable() const;
+    Error summaryFromIndex(const uint8_t peer[16], ConversationView&, ConversationSelector&, uint32_t* latestRevision);
+    void indexBeforeMutation();
     uint32_t deletedThrough(const uint8_t peer[16], MessageDocument&, uint8_t* markerState = nullptr,
                             Error* markerError = nullptr);
     FlashStore* _flash = nullptr;
