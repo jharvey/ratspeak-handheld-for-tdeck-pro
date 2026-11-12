@@ -1,0 +1,28 @@
+# Run after scripts\lock.txt on the same device (no "fresh"): a set password locks the
+# device at boot (the vault stays sealed until it is typed), then remove the password.
+expect 60000 [LOCK] boot locked (password set)
+expect 60000 [BOOT] ready
+wait 1500
+shot lockboot-01.png
+serial s
+expect 3000 [CMD] locked
+type Secret9
+key ENTER
+expect 5000 [LOCK] unlocked
+# Settings > Screen > Idle splash > Remove password (needs the current one).
+key M
+wait 800
+key S
+wait 800
+key 3
+wait 800
+key 2
+wait 800
+key 6
+type Secret9
+key ENTER
+expect 5000 [LOCK] password removed
+serial lock
+expect 3000 password=0 idleMode=1
+shot lockboot-02-removed.png
+quit

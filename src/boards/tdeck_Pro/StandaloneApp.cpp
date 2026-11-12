@@ -112,7 +112,7 @@ constexpr const char* kDefaultSelfName = "MyRatSpeakPro";
 struct Config {
     bool     dark        = false;   // false = white paper, true = black ink
     int      tz          = 0;       // index into kTz
-    uint8_t  idleMode    = 1;       // 0 off, 1 on (no password)
+    uint8_t  idleMode    = 1;       // 0 off, 1 on (no password), 2 on + password lock
     uint32_t idleSecs    = 30;      // 10..99999
     bool     beep        = true;
     bool     vibe        = true;
@@ -205,7 +205,7 @@ void loadConfig() {
     p.end();
 
     if (g_cfg.tz < 0 || g_cfg.tz >= kTzCount) g_cfg.tz = 0;
-    if (g_cfg.idleMode > 1) g_cfg.idleMode = 1;
+    if (g_cfg.idleMode > 2) g_cfg.idleMode = 1;   // 2 = on + password (needs a vault password)
     if (g_cfg.idleSecs < 10 || g_cfg.idleSecs > 99999) g_cfg.idleSecs = 30;
     if (g_cfg.volume > 100) g_cfg.volume = 80;
 
@@ -1686,7 +1686,8 @@ bool    g_threadOpen = false;
 uint8_t g_threadPeer[16];
 
 // Entry mode: one text buffer, one owner.
-enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, Longitude, WifiPass };
+enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, Longitude, WifiPass,
+                             PassOld, PassNew, PassConfirm };   // Pass*: lock password (arg = purpose)
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -1695,6 +1696,7 @@ char    g_buf[BUF_CAP + 1] = "";
 size_t  g_bufLen = 0;
 
 bool entryActive() { return g_entry != Entry::None; }
+bool passEntry(Entry e) { return e == Entry::PassOld || e == Entry::PassNew || e == Entry::PassConfirm; }
 bool browseMode()  { return !entryActive(); }
 bool entryNumeric() {
     return g_entry == Entry::RtcField || g_entry == Entry::IdleSecs ||
@@ -1755,8 +1757,12 @@ void startEntry(Entry kind, const char* initial = nullptr, int arg = 0) {
     requestRedraw();
 }
 
+char g_passNew[33] = "";            // lock password typed once, waiting for the repeat
+
 void endEntry() {
     g_entry = Entry::None;
+    memset(g_buf, 0, sizeof(g_buf));     // may have held a password
+    memset(g_passNew, 0, sizeof(g_passNew));
     bufClear();
     syncNumLayer();
     requestRedraw();
@@ -2300,6 +2306,138 @@ void clearRoot() {
 // 6. Screens
 // =============================================================================
 
+// ---- Idle password lock (Settings > Screen > Idle splash) ----------------------------
+// The lock password IS the SecretVault password: setting one makes the vault start
+// locked at every boot (saved WiFi passwords stay sealed until it is typed), and idle
+// mode 2 also locks after the idle timeout. LoRa / LXMF keep running while locked;
+// the screen shows only the time, battery and the unread count. Wrong tries:
+// 3 free, then 30 s, 60 s ... 16 min between tries (count kept in NVS rs_lock).
+bool     g_locked = false;
+char     g_lockBuf[33] = "";
+size_t   g_lockLen = 0;
+uint8_t  g_lockFails = 0;
+uint32_t g_lockUntil = 0;           // millis(): no tries before this (0 = none)
+constexpr uint8_t  kLockFreeTries = 3;
+constexpr uint32_t kLockPromptMs = 30000;   // prompt without keys -> back to the splash
+constexpr size_t   kLockPassMin = 4, kLockPassMax = 32;
+constexpr const char* kLockDefaultPassword = "ratspeak";   // set when mode 2 is picked with no password
+
+bool lockHasPassword() { return !vault::usingDefaultPassword(); }
+bool lockOnIdle()      { return g_cfg.idleMode == 2 && lockHasPassword(); }
+
+uint32_t lockWaitS() {
+    if (!g_lockUntil) return 0;
+    const int32_t left = (int32_t)(g_lockUntil - millis());
+    if (left <= 0) { g_lockUntil = 0; return 0; }
+    return (uint32_t)(left + 999) / 1000;
+}
+
+void lockSaveFails() {
+    Preferences p;
+    if (p.begin("rs_lock", false)) { p.putUChar("fails", g_lockFails); p.end(); }
+}
+
+void lockArmDelay() {
+    if (g_lockFails < kLockFreeTries) { g_lockUntil = 0; return; }
+    int sh = g_lockFails - kLockFreeTries;
+    if (sh > 5) sh = 5;
+    g_lockUntil = millis() + (30000UL << sh);
+    if (!g_lockUntil) g_lockUntil = 1;
+}
+
+void lockLoadFails() {
+    Preferences p;
+    if (p.begin("rs_lock", true)) { g_lockFails = p.getUChar("fails", 0); p.end(); }
+    lockArmDelay();                    // a reboot does not reset the wait
+}
+
+// Wrong password typed (lock prompt or Settings "current password").
+void lockNoteWrong() {
+    if (g_lockFails < 250) g_lockFails++;
+    lockSaveFails();
+    lockArmDelay();
+    Serial.printf("[LOCK] wrong password (%u in a row, wait %u s)\n", (unsigned)g_lockFails, (unsigned)lockWaitS());
+}
+
+void lockNoteRight() {
+    if (g_lockFails) { g_lockFails = 0; lockSaveFails(); }
+    g_lockUntil = 0;
+}
+
+void lockWipe() { memset(g_lockBuf, 0, sizeof(g_lockBuf)); g_lockLen = 0; }
+
+void enterIdle();
+void wifiLoad();
+
+void lockNow() {
+    if (!lockHasPassword()) return;
+    g_locked = true;
+    lockWipe();
+    Serial.println("[LOCK] locked");
+    enterIdle();
+}
+
+void lockTry() {
+    if (lockWaitS() || !g_lockLen) { requestRedraw(); return; }
+    const bool vaultWasLocked = !vault::unlocked();
+    const bool ok = vault::unlock(g_lockBuf);   // derives the key, or checks it when unlocked
+    lockWipe();
+    if (!ok) { lockNoteWrong(); requestRedraw(); return; }
+    lockNoteRight();
+    g_locked = false;
+    if (vaultWasLocked) wifiLoad();            // saved WiFi passwords readable now
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.println("[LOCK] unlocked");
+}
+
+void lockKey(const KeyEvent& ev) {
+    if (ev.up) {                               // ^ = clear, again = back to the splash
+        if (g_lockLen) lockWipe(); else enterIdle();
+        requestRedraw();
+        return;
+    }
+    if (ev.enter) { lockTry(); return; }
+    if (ev.del) { if (g_lockLen) g_lockBuf[--g_lockLen] = 0; requestRedraw(); return; }
+    if (ev.fn) return;
+    char c = ev.space ? ' ' : ev.character;
+    if (c < 32 || c > 126) return;
+    if (ev.alt && isalpha((unsigned char)c)) c = isupper((unsigned char)c) ? (char)tolower(c) : (char)toupper(c);
+    if (lockWaitS()) { requestRedraw(); return; }
+    if (g_lockLen >= kLockPassMax) return;
+    g_lockBuf[g_lockLen++] = c;
+    g_lockBuf[g_lockLen] = 0;
+    requestRedraw();
+}
+
+void renderLock() {
+    label(0, 80, W, 22, "RatSpeak", true);
+    label(0, 102, W, 18, g_selfName);
+    label(0, 128, W, 22, "LOCKED", true);
+    const int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
+    char line[48];
+    if (unread > 0) snprintf(line, sizeof(line), "%d unread message%s", unread, unread == 1 ? "" : "s");
+    else            snprintf(line, sizeof(line), "No new messages");
+    label(0, 150, W, 18, line, unread > 0);
+    label(0, 184, W, 18, "Type password, Enter");
+    box(20, 206, W - 40, 30, 2);
+    size_t n = g_lockLen < 24 ? g_lockLen : 24;
+    for (size_t i = 0; i < n; i++) line[i] = '*';
+    line[n] = '_'; line[n + 1] = 0;
+    label(20, 206, W - 40, 30, line, true);
+    const uint32_t wait = lockWaitS();
+    if (wait) {
+        snprintf(line, sizeof(line), "Wrong %u times: wait %u s", (unsigned)g_lockFails, (unsigned)wait);
+        g_redrawAt = millis() + (wait > 5 ? 5000 : wait * 1000 + 50);   // count down
+    } else if (g_lockFails) {
+        snprintf(line, sizeof(line), "Wrong password (%u)", (unsigned)g_lockFails);
+    } else {
+        line[0] = 0;
+    }
+    label(0, 244, W, 18, line, true);
+    label(0, 292, W, 18, "^ clear / back to splash");
+}
+
 // ---- Settings pages: single source of truth --------------------------------------
 enum RowKind : uint8_t { RK_MENU, RK_TOGGLE, RK_INFO, RK_ACTION, RK_ENTRY, RK_PICK };
 const char* kKindName[] = {"Menu", "Toggle", "Info", "Action", "Entry", "Pick"};
@@ -2357,6 +2495,13 @@ const char* editingSub(Entry kind, int arg = 0) {
     static char s[34];
     if (g_entry != kind || (kind == Entry::RtcField && g_entryArg != arg)) return nullptr;
     constexpr size_t kShow = 27;                 // keep the cursor end visible
+    if (passEntry(kind)) {                       // lock password: never shown
+        size_t n = g_bufLen < kShow ? g_bufLen : kShow;
+        s[0] = '>';
+        for (size_t i = 0; i < n; i++) s[1 + i] = '*';
+        s[1 + n] = '_'; s[2 + n] = 0;
+        return s;
+    }
     if (g_bufLen > kShow) snprintf(s, sizeof(s), ">..%s_", g_buf + g_bufLen - (kShow - 2));
     else                  snprintf(s, sizeof(s), ">%s_", g_buf);
     return s;
@@ -2619,14 +2764,26 @@ void buildSettingsRows(Page p) {
         srow(RK_TOGGLE, "Key backlight", "%s", g_cfg.kbLight ? "ON" : "OFF");
         break;
 
-    case PG_IDLE:
+    case PG_IDLE: {
+        const bool pw = lockHasPassword();
         srow(RK_PICK, "Off", "%s", g_cfg.idleMode == 0 ? "(current)" : "");
         srow(RK_PICK, "On, no password", "%s", g_cfg.idleMode == 1 ? "(current)" : "");
-        srow(RK_INFO, "On + password", "TBD (key: %s)", vault::status());
+        srow(RK_PICK, "On + password", "%s", lockOnIdle() ? "(current)" : pw ? "" : "password: ratspeak");
         e = editingSub(Entry::IdleSecs);
         if (e) srow(RK_ENTRY, "Timeout (10-99999 s)", "%s", e);
         else   srow(RK_ENTRY, "Timeout (10-99999 s)", "%u s", (unsigned)g_cfg.idleSecs);
+        if (passEntry(g_entry)) {
+            const char* t = g_entry == Entry::PassOld ? "Current password"
+                          : g_entry == Entry::PassNew ? "New pw (4-32)" : "Repeat new pw";
+            srow(RK_ENTRY, t, "%s", editingSub(g_entry));
+        } else {
+            srow(RK_ENTRY, pw ? "Change password" : "Set password", "%s",
+                 pw ? "set; asked at every boot" : "none (vault default key)");
+        }
+        srow(RK_ACTION, "Remove password", "%s", pw ? "Enter = remove" : "-");
+        srow(RK_ACTION, "Lock now", "%s", pw ? "Enter = lock" : "set a password first");
         break;
+    }
 
     case PG_BATTERY:
         if (g_bat.valid) srow(RK_INFO, "Voltage", "%.3f V", g_bat.volts);
@@ -2969,9 +3126,31 @@ void activateSetting(int idx) {
         break;
 
     case PG_IDLE:
-        if (idx == 0 || idx == 1) { g_cfg.idleMode = (uint8_t)idx; saveConfig(); requestRedraw(); }
-        else if (idx == 2) toast("Password lock: TBD");
-        else if (idx == 3) { char s[8]; snprintf(s, sizeof(s), "%u", (unsigned)g_cfg.idleSecs); startEntry(Entry::IdleSecs, s); }
+        if (idx == 0 || idx == 1) {
+            g_cfg.idleMode = (uint8_t)idx;
+            saveConfig();
+            if (lockHasPassword()) toast("Boot still asks password");
+            requestRedraw();
+        } else if (idx == 2) {
+            if (lockHasPassword()) { g_cfg.idleMode = 2; saveConfig(); toast("Locks after %u s idle", (unsigned)g_cfg.idleSecs); }
+            else if (vault::setPassword(kLockDefaultPassword)) {   // user's choice: starts as "ratspeak"
+                wifiSaveAll();                   // re-seal saved WiFi passwords with the new key
+                lockNoteRight();
+                g_cfg.idleMode = 2;
+                saveConfig();
+                Serial.println("[LOCK] password set (default)");
+                toast("Lock on, pw: %s", kLockDefaultPassword);
+            } else toast("Vault error");
+        } else if (idx == 3) {
+            char s[8]; snprintf(s, sizeof(s), "%u", (unsigned)g_cfg.idleSecs); startEntry(Entry::IdleSecs, s);
+        } else if (idx == 4) {
+            startEntry(lockHasPassword() ? Entry::PassOld : Entry::PassNew, nullptr, 0);
+        } else if (idx == 5) {
+            if (lockHasPassword()) { g_sel = 4; startEntry(Entry::PassOld, nullptr, 1); }
+            else toast("No password set");
+        } else if (idx == 6) {
+            if (lockHasPassword()) lockNow(); else toast("Set a password first");
+        }
         break;
 
     case PG_BATTERY:
@@ -3536,9 +3715,21 @@ void stampMap() {
     g_display.markDirty();
 }
 
+
 void render() {
     const uint32_t t0 = millis();
     clearRoot();
+    if (g_locked) {                    // nothing else is drawn (no touch targets either)
+        renderLock();
+        lv_refr_now(nullptr);
+        drawLogo(W / 2, 36);
+        g_redraw = false;
+        if (g_fullRefreshReq) { g_fullRefreshReq = false; g_display.fullRefresh(); }
+        else g_display.refreshIfDirty();
+        keyboardSetNumLayer(false);
+        Serial.printf("[UI] lock frame %ums\n", (unsigned)(millis() - t0));
+        return;
+    }
     if (g_threadOpen)                  renderThread();
     else if (g_entry == Entry::Name)   renderRename();
     else if (mapview::isOpen())        renderMapHeader();
@@ -3609,7 +3800,7 @@ void paintIdle() {
              (unsigned long)((s / 3600UL) % 24UL), (unsigned long)((s / 60UL) % 60UL));
     label(0, y0 + 8 * step, W, 16, line);
     label(0, y0 + 9 * step, W, 18, g_selfName, true);
-    label(0, 292, W, 22, "press a KEY to wake", true);
+    label(0, 292, W, 22, g_locked ? "LOCKED | press a key" : "press a KEY to wake", true);
 
     lv_refr_now(nullptr);
     drawLogo(W / 2, 36);     // stamped after LVGL so the clear does not wipe it
@@ -3863,6 +4054,55 @@ void commitEntry() {
         endEntry();
         return;
     }
+    case Entry::PassOld: {                       // arg 0 = change, 1 = remove
+        if (lockWaitS()) { toast("Wrong too often: wait %u s", (unsigned)lockWaitS()); return; }
+        if (!vault::checkPassword(g_buf)) { lockNoteWrong(); endEntry(); toast("Wrong password"); return; }
+        lockNoteRight();
+        if (g_entryArg == 1) {
+            endEntry();
+            if (!vault::setPassword(nullptr)) { toast("Vault error"); return; }
+            wifiSaveAll();                       // re-seal saved WiFi passwords with the new key
+            if (g_cfg.idleMode == 2) { g_cfg.idleMode = 1; saveConfig(); }
+            Serial.println("[LOCK] password removed");
+            toast("Password removed");
+            return;
+        }
+        const int arg = g_entryArg;
+        startEntry(Entry::PassNew, nullptr, arg);
+        return;
+    }
+    case Entry::PassNew: {                       // arg 0 = set/change, 2 = then lock on idle
+        if (g_bufLen < kLockPassMin) { toast("Password: 4+ chars"); return; }
+        char keep[33];
+        strlcpy(keep, g_buf, sizeof(keep));
+        const int arg = g_entryArg;
+        startEntry(Entry::PassConfirm, nullptr, arg);   // startEntry keeps g_passNew
+        memcpy(g_passNew, keep, sizeof(g_passNew));
+        memset(keep, 0, sizeof(keep));
+        return;
+    }
+    case Entry::PassConfirm: {
+        if (strcmp(g_buf, g_passNew) != 0) {
+            const int arg = g_entryArg;
+            endEntry();
+            startEntry(Entry::PassNew, nullptr, arg);
+            toast("No match: type it again");
+            return;
+        }
+        char pw[33];
+        strlcpy(pw, g_passNew, sizeof(pw));
+        const int arg = g_entryArg;
+        endEntry();
+        const bool ok = vault::setPassword(pw);
+        memset(pw, 0, sizeof(pw));
+        if (!ok) { toast("Vault error"); return; }
+        wifiSaveAll();                           // re-seal saved WiFi passwords with the new key
+        lockNoteRight();
+        if (arg == 2) { g_cfg.idleMode = 2; saveConfig(); }
+        Serial.println("[LOCK] password set");
+        toast(arg == 2 ? "Password set; lock on" : "Password set");
+        return;
+    }
     case Entry::WifiPass: {
         if (g_bufLen > 0 && g_bufLen < 8) { toast("Password: 8+ chars"); return; }
         if (g_bufLen > WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
@@ -3908,7 +4148,7 @@ void entryKey(const KeyEvent& ev) {
     char c = 0;
     if (ev.space) {
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) c = '.';
-        else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass) c = ' ';
+        else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass || passEntry(g_entry)) c = ' ';
     } else if (ev.fn) {
         if (entryNumeric()) c = '0';          // MIC (+SYM) types 0 in number fields
     } else {
@@ -3926,6 +4166,7 @@ void entryKey(const KeyEvent& ev) {
     }
     if (g_entry == Entry::Name && g_bufLen >= 23) { toast("Max 23 chars"); return; }
     if (g_entry == Entry::WifiPass && g_bufLen >= WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
+    if (passEntry(g_entry) && g_bufLen >= kLockPassMax) { toast("Max 32 chars"); return; }
     bufAppend(c);
     // Show it on the next frame. Keys typed while that frame is on the panel are
     // queued by onPanelBusy() and land together in the frame after.
@@ -3970,10 +4211,11 @@ void handleKey(const KeyEvent& ev) {
         noteInput();
         g_fullRefreshReq = true;
         requestRedraw();
-        Serial.println("[IDLE] wake");
+        Serial.println(g_locked ? "[IDLE] wake (locked)" : "[IDLE] wake");
         return;
     }
     noteInput();
+    if (g_locked) { lockKey(ev); return; }
     if (ev.up) { goBack(); return; }                          // lone Shift = ^
     if (g_menuOpen) { menuKey(ev); return; }
     if (entryActive()) { entryKey(ev); return; }
@@ -4041,7 +4283,7 @@ bool cst328Read(int16_t& x, int16_t& y) {
 }
 
 void handleTouch(int16_t x, int16_t y) {
-    if (g_idleActive) return;                 // doc: key-only wake
+    if (g_idleActive || g_locked) return;     // doc: key-only wake; no touch while locked
     noteInput();
     const Hit* hit = nullptr;
     for (int i = g_hitCount - 1; i >= 0; i--) {      // last drawn = topmost
@@ -4545,7 +4787,20 @@ void mirrorTick() {
 void handleSerialLine(char* p) {
     while (*p == ' ') p++;
     if (!*p) return;
-    if (p[0] == '@') { handleRemoteLine(p + 1); return; }
+    if (p[0] == '@') { handleRemoteLine(p + 1); return; }   // keys still meet the lock prompt
+    if (g_locked) {                       // locked: status only, nothing that reads or changes data
+        static const char* kOk[] = {"pw", "clk", "id", "lock", "ev", "rl", "sdinfo", "energy"};
+        bool ok = false;
+        for (const char* k : kOk) ok |= !strcmp(p, k);
+        if (!ok) { Serial.println("[CMD] locked: unlock on the device first"); return; }
+    }
+    if (!strncmp(p, "lock", 4) && (p[4] == 0 || p[4] == ' ')) {
+        if (!strcmp(p, "lock now")) lockNow();
+        Serial.printf("[LOCK] locked=%d password=%d idleMode=%u fails=%u wait=%us vault=%s\n", g_locked,
+                      lockHasPassword(), (unsigned)g_cfg.idleMode, (unsigned)g_lockFails, (unsigned)lockWaitS(),
+                      vault::status());
+        return;
+    }
     if ((p[0] == 't' || p[0] == 'T') && p[1] == ':') {
         if (!g_threadOpen) { Serial.println("[CMD] open a thread first"); return; }
         if (sendMessage(g_threadPeer, p + 2)) loadHistory(g_threadPeer);
@@ -4923,6 +5178,7 @@ void watchMessages() {
     static uint32_t lastRev = 0, lastRedraw = 0;
     const int unread = g_msgStore.totalUnreadCount();
     if (lastUnread >= 0 && unread > lastUnread) notifyInbound();
+    if (g_locked && !g_idleActive && unread != lastUnread) requestRedraw();   // lock prompt count
     lastUnread = unread;
 
     const uint32_t rev = g_msgStore.revision();
@@ -4974,8 +5230,16 @@ void watchClockAndToast() {
 
 void watchIdle() {
     if (g_idleActive) { updateIdle(); return; }
-    if (g_cfg.idleMode == 0 || g_bufLen) return;      // never hide an unsent draft
-    if (millis() - g_lastInputMs >= g_cfg.idleSecs * 1000UL) enterIdle();
+    if (g_locked) {                                    // prompt left alone -> splash
+        if (millis() - g_lastInputMs >= kLockPromptMs) { lockWipe(); enterIdle(); }
+        return;
+    }
+    if (g_cfg.idleMode == 0) return;
+    const bool lockIt = lockOnIdle();                  // the draft stays in its buffer
+    if (g_bufLen && !lockIt) return;                   // never hide an unsent draft
+    if (millis() - g_lastInputMs >= g_cfg.idleSecs * 1000UL) {
+        if (lockIt) lockNow(); else enterIdle();
+    }
 }
 
 }  // namespace
@@ -5081,8 +5345,10 @@ bool begin() {
     powerApply(true);                     // CPU clock, LoRa, WiFi, key light for the mode
     powerGpsTick();                       // decides whether the GPS starts powered
     gpsApplyPower();
-    vault::begin();                       // default password, applied automatically for now
-    wifiLoad();
+    vault::begin();                       // custom password -> stays locked until typed
+    lockLoadFails();
+    if (lockHasPassword()) { g_locked = true; Serial.println("[LOCK] boot locked (password set)"); }
+    if (vault::unlocked()) wifiLoad();    // else after unlock (lockTry)
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
     noteInput();
     goScreen(SCR_HOME);

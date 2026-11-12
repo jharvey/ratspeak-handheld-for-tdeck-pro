@@ -1,0 +1,93 @@
+# Idle password lock (Settings S.3.2). Run with a fresh device:
+#   run-script.bat scripts\lock.txt lock fresh
+# then scripts\lock_boot.txt on the same device name (no "fresh"): it boots locked.
+expect 60000 [BOOT] ready
+wait 1500
+key M
+wait 800
+key S
+wait 800
+key 3
+wait 800
+key 2
+wait 800
+# Row 3 "On + password" with no password: password becomes "ratspeak", lock on idle.
+key 3
+expect 5000 [LOCK] password set (default)
+shot lock-01-idle-page.png
+# Row 5: change it (current, new, repeat).
+key 5
+type ratspeak
+key ENTER
+wait 600
+type Secret9
+key ENTER
+wait 400
+shot lock-02-repeat.png
+type Secret9
+key ENTER
+expect 5000 [LOCK] password set
+# Lock now, wake: the prompt, not the app.
+serial lock now
+expect 3000 [LOCK] locked
+wait 1500
+shot lock-03-splash.png
+key A
+expect 3000 [IDLE] wake (locked)
+wait 800
+type wrong
+key ENTER
+expect 5000 [LOCK] wrong password (1 in a row
+shot lock-04-wrong.png
+# The console is closed while locked (status commands only).
+serial rmconv
+expect 3000 [CMD] locked
+serial pw
+wait 500
+# The old password no longer works; the new one does.
+type ratspeak
+key ENTER
+expect 5000 [LOCK] wrong password (2 in a row
+type Secret9
+key ENTER
+expect 5000 [LOCK] unlocked
+shot lock-05-unlocked.png
+# Lockout: three wrong tries -> 30 s wait, even the right password is refused.
+serial lock now
+expect 3000 [LOCK] locked
+key A
+wait 800
+type bad1
+key ENTER
+expect 5000 wrong password (1
+type bad2
+key ENTER
+expect 5000 wrong password (2
+type bad3
+key ENTER
+expect 5000 wrong password (3 in a row, wait 30 s)
+wait 800
+shot lock-06-lockout.png
+type Secret9
+key ENTER
+wait 2000
+serial lock
+expect 3000 [LOCK] locked=1
+# (a key now and then keeps the prompt open; it falls back to the splash after 30 s)
+wait 15000
+key BKSP
+wait 14000
+type Secret9
+key ENTER
+expect 5000 [LOCK] unlocked
+# Idle timeout 10 s locks by itself.
+key 4
+key BKSP
+key BKSP
+key BKSP
+type 10
+key ENTER
+wait 500
+key G
+expect 20000 [LOCK] locked
+quit
