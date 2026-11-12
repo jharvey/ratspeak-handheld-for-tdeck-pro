@@ -102,6 +102,8 @@ UI / UX
 
 Robustness to verify (before the stress-test pass)
 -------------------------------------------------
+- Stress-test plan (simulator soak, 24-72 h unit runs, nasty cases, pass criteria):
+  Stress_test_plan.md
 - DONE (sim) - FULL FLASH: before, every later write failed silently (messages, announce
   order, ratchets); boot still worked; refused incoming saves are not lost (proof only after
   a save). Now: oldest-first removal from 85% to 80% (newest 10 per conversation kept),
