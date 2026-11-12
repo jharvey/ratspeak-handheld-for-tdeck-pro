@@ -259,7 +259,7 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
     // Markers (contacts), drawn last so nothing covers them: number in 2x 5x7 digits
     // (10x14 px) on a white centre, black ring (3 px fresh / 1 px old), white halo;
     // selected: black centre, white number. Overlapping markers: the
-    // lowest number is drawn, as "1+" (more here); the rest hidden. A selected one under
+    // lowest number is drawn, with a boxed "+" (more here); the rest hidden. A selected one under
     // it makes that tag show selected.
     auto radius = [](const Marker& mk) { return 12 + (mk.fresh ? 3 : 1) + 2; };
     auto before = [](const Marker& a, const Marker& b) { return a.number < b.number; };   // low number wins
@@ -303,14 +303,14 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
         g_markerOn[i] = cx >= 0 && cy >= 0 && cx < w && cy < h;
         if (cx < -16 || cy < -16 || cx >= w + 16 || cy >= h + 16) continue;
         const Marker& mk = g_markers[i];
-        char num[5];                         // "1", "12", "1+", "12+" (more contacts here)
-        snprintf(num, sizeof(num), "%u%s", (unsigned)(mk.number % 100), mk.more ? "+" : "");
+        char num[4];
+        snprintf(num, sizeof(num), "%u", (unsigned)(mk.number % 100));
         const int nd = (int)strlen(num), tw = nd * 12 - 2;          // 10 px glyph + 2 px gap
         const bool sel = showSel[i];
         // Tag (user's sketch): white centre with the black number, a black ring, a white
         // halo outermost. Ring 3 px = fresh position (< 1 h), 1 px = older. Selected: the
         // centre turns black with a white number.
-        const int rIn = nd > 2 ? 18 : nd > 1 ? 12 : 9;           // white centre (glyphs fit)
+        const int rIn = nd > 1 ? 12 : 9;                         // white centre (digits fit)
         const int rRing = rIn + (mk.fresh ? 3 : 1), rOut = rRing + 2;
         for (int yy = -rOut; yy <= rOut; yy++) {
             for (int xx = -rOut; xx <= rOut; xx++) {
@@ -333,6 +333,19 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
                     black = false;                                // white halo (outermost)
                 }
                 px(x0 + vx, y0 + vy, black != dark);
+            }
+        }
+        if (mk.more) {                       // "+" badge, upper right: 11x11 white box, black plus
+            const int bx = cx + rIn + 1, by = cy - rIn - 1;
+            for (int yy = -5; yy <= 5; yy++) {
+                for (int xx = -5; xx <= 5; xx++) {
+                    const int vx = bx + xx, vy = by + yy;
+                    if (vx < 0 || vy < 0 || vx >= w || vy >= h) continue;
+                    const bool border = xx == -5 || xx == 5 || yy == -5 || yy == 5;
+                    const bool plus = (xx >= -3 && xx <= 3 && yy >= -1 && yy <= 1) ||
+                                      (yy >= -3 && yy <= 3 && xx >= -1 && xx <= 1);
+                    px(x0 + vx, y0 + vy, (border || plus) != dark);
+                }
             }
         }
     }

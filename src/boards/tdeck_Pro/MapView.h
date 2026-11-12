@@ -58,7 +58,7 @@ bool key(char c, bool enter);
 // Other positions (contacts' last shared locations): a tag with the contact's number
 // (1-99) on a white centre, black ring (thick = fresh position, thin = old), white halo;
 // selected = black centre. Markers that overlap on screen: only the lowest number is
-// drawn, as "1+" (more here), shown selected if a hidden one is selected. Copied (at most
+// drawn, with a small boxed "+" (more here), shown selected if a hidden one is selected. Copied (at most
 // kMaxMarkers). markerScreen() gives where marker i was drawn by the last draw(),
 // relative to the draw rectangle; false when hidden or off the view.
 constexpr int kMaxMarkers = 16;
