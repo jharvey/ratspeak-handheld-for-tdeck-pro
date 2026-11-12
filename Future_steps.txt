@@ -119,6 +119,11 @@ UI / UX
   data (TIGER/Line roads, NHD water, GNIS names in the US; NRCan CanVec in Canada; OSM
   extracts where the licence fits) with the render_world.py approach, fast and offline.
   Master copy on the NAS (M:atspeak-maps); cards hold the travel set.
+- Reference library on the device (user asked 2026-11-12): a "Library" screen that reads
+  plain-text files from <SD>/ratdeckpro/library/ (paged, find with F): frequency quick
+  reference, NOAA Weather Radio list nearest to the GPS position, GhostNet / JS8Call notes,
+  first aid etc. Source copies are on the NAS (M:atspeak-info; PDFs need a text
+  extract first - the e-ink panel cannot render PDF). Push them with push_tiles-style sdput.
 - RF coverage prediction (user asked 2026-11-12): Longley-Rice / ITM point-to-point and area
   coverage for LoRa links from the 3DEP elevation now on the NAS (M:atspeak-maps\dem: 10 m
   around 04095, 30 m home/corridor/TN/NC, then the lower 48; Canada next: NRCan CDEM/HRDEM,
