@@ -669,6 +669,8 @@ The map's bottom line shows the GPS position (`43.64012,-70.92011 8sat`, or `old
 for the last fix and its age). World overview zoom 0–7 (country, state / province borders
 and names, big cities) is drawn from Natural Earth (public domain) by
 `tools/maptiles/render_world.py`; USGS topo takes over from zoom 8.
+Cards are best formatted with 8 KB clusters (console `sdformat 8192 ERASE-ALL`, erases
+the card): a header-less 8 KB tile then takes exactly 8 KB instead of 32 KB.
 Tiles can go onto the card over USB with the card left in the unit:
 `tools/maptiles/push_tiles.py` (console `sdput`, about 7 tiles/s; `sdls` lists a folder). **W A S D** pan half a screen, **Z / X**
 zoom, **C** or **Enter** returns to your position, **Shift (^)** closes. The header shows

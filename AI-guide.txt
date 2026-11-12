@@ -194,6 +194,10 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
                   "[SDPUT] ready", then reads <len> raw bytes -> "[SDPUT] ok|err".
                   Use tools/maptiles/push_tiles.py (~7 tiles/s; USB RX queue raised
                   to 17 KB in main.cpp, the 256-byte default dropped bytes)
+  sdformat <bytes> ERASE-ALL   FAT32 with that cluster size (8192 for maps: one
+                  header-less 8 KB tile = one cluster), then restart. COM5/COM6/COM9
+                  cards formatted 8 KB on 2026-11-12 (backups of their few non-map files
+                  were taken first). sdinfo prints FAT type / cluster / free.
   sdls [/path]    list an SD folder (absolute card path; sdlsa = all entries, for tools)
   sdget </path>   read an SD file (<= 16 KB): "[SDGET] <len> <crc32>" + raw bytes
                   (tools/maptiles/copy_tiles.py: card-to-card copy through the PC)

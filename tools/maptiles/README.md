@@ -33,7 +33,14 @@ Card to card, both units on USB, nothing kept on the PC (about 4-5 tiles/s):
 python copy_tiles.py --from COM9 --to COM6 --zoom 13
 ```
 
-About 7 tiles/s (a 6,000-tile set takes 15 min). Progress is kept per unit in
+About 7 tiles/s (a 6,000-tile set takes 15 min).
+
+**Card format.** Stock 32 GB cards come FAT32 with 32 KB clusters: every 8 KB tile then
+takes 32 KB. `push_tiles.py` / `copy_tiles.py` send tiles without their 8-byte header
+(exactly 8192 bytes; firmware from 2026-11-12 reads both), and the console command
+`sdformat 8192 ERASE-ALL` reformats the card in the unit with 8 KB clusters (one tile =
+one cluster; ~3.5 million tiles on a 29.5 GB card). It erases the card and restarts the
+unit; back up anything else first (`sdls`, `sdget`). `sdinfo` shows the cluster size. Progress is kept per unit in
 `sdcard/pushed_<dest>.txt`; it stops when the card has less than 200 MB free. On a
 32 KB-cluster FAT32 card each 8 KB tile takes 32 KB. Console `sdls /ratdeckpro/maps`
 lists what is on the card.
