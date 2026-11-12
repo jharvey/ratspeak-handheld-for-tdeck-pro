@@ -278,7 +278,9 @@ S     Settings                      ← M then S
 ├── S.3   Screen & I/O
 │   ├── S.3.1  Theme                White paper / Black ink
 │   ├── S.3.2  Idle splash          Off / On (no password) / On + password / timeout /
-│   │                               set-change password / remove / lock now (§1.2c)
+│   │                               set-change password / remove / lock now (§1.2c) /
+│   │                               idle screen: splash or MAP around you (time, battery %,
+│   │                               unread on top; GPS / saved / card home position, zoom 13)
 │   └── S.3.3  Key backlight        (a power mode may hold it off)
 ├── S.4   Power                     energy modes (§6)
 │   ├── S.4.1  Full power
@@ -301,7 +303,8 @@ S     Settings                      ← M then S
 │                                   Switch (restart) / Erase (key deleted; the active one is
 │                                   replaced by a new identity first). Enter twice to confirm.
 ├── S.7   LoRa                      915 MHz; link preset (Long Fast / Long Slow / Medium / Fast Short)
-├── S.8   Alerts                    beep, vibrate, volume, test
+├── S.8   Alerts                    beep, vibrate, volume 0 (silent) / 20 … 80 (default) / 100 %
+│                                   (plays the new level), test
 ├── S.9   Diagnostics               paths/links, LXMF queue, peers, uptime
 └── S.10  Storage  (key 0)          heap, PSRAM, flash, messages, SD card (+ S.10.5 SD), secrets key
 ```

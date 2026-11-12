@@ -121,7 +121,8 @@ struct Config {
     uint32_t idleSecs    = 30;      // 10..99999
     bool     beep        = true;
     bool     vibe        = true;
-    uint8_t  volume      = 80;
+    uint8_t  volume      = 80;      // 0..100 %, steps of 20; 80 spares the small speaker
+    bool     idleMap     = false;   // idle screen = map around your position
     bool     kbLight     = false;
     bool     gpsOn       = true;
     bool     gpsAutoSync = true;
@@ -200,6 +201,7 @@ void loadConfig() {
     g_cfg.beep        = p.getBool("beep", true);
     g_cfg.vibe        = p.getBool("vibe", true);
     g_cfg.volume      = p.getUChar("vol", 80);
+    g_cfg.idleMap     = p.getBool("idleMap", false);
     g_cfg.kbLight     = p.getBool("kbl", false);
     g_cfg.gpsOn       = p.getBool("gps", true);
     g_cfg.gpsAutoSync = p.getBool("gpsSync", true);
@@ -233,6 +235,7 @@ void saveConfig() {
     p.putBool("beep", g_cfg.beep);
     p.putBool("vibe", g_cfg.vibe);
     p.putUChar("vol", g_cfg.volume);
+    p.putBool("idleMap", g_cfg.idleMap);
     p.putBool("kbl", g_cfg.kbLight);
     p.putBool("gps", g_cfg.gpsOn);
     p.putBool("gpsSync", g_cfg.gpsAutoSync);
@@ -3141,6 +3144,7 @@ void buildSettingsRows(Page p) {
         }
         srow(RK_ACTION, "Remove password", "%s", pw ? "Enter = remove" : "-");
         srow(RK_ACTION, "Lock now", "%s", pw ? "Enter = lock" : "set a password first");
+        srow(RK_TOGGLE, "Idle screen", "%s", g_cfg.idleMap ? "MAP around you" : "splash (logo)");
         break;
     }
 
@@ -3212,7 +3216,8 @@ void buildSettingsRows(Page p) {
     case PG_ALERTS:
         srow(RK_TOGGLE, "Beep on message", "%s", g_cfg.beep ? "ON" : "OFF");
         srow(RK_TOGGLE, "Vibrate on message", "%s", g_cfg.vibe ? "ON" : "OFF");
-        srow(RK_PICK, "Volume", "%u%%", (unsigned)g_cfg.volume);
+        srow(RK_PICK, "Volume", "%u%%%s", (unsigned)g_cfg.volume,
+             g_cfg.volume == 0 ? " (silent)" : g_cfg.volume == 80 ? " (default)" : g_cfg.volume == 100 ? " (max)" : "");
         srow(RK_ACTION, "Test alert", "Enter = play");
         break;
 
@@ -3548,6 +3553,11 @@ void activateSetting(int idx) {
             else toast("No password set");
         } else if (idx == 6) {
             if (lockHasPassword()) lockNow(); else toast("Set a password first");
+        } else if (idx == 7) {
+            g_cfg.idleMap = !g_cfg.idleMap;
+            saveConfig();
+            toast(g_cfg.idleMap ? "Idle: map (needs SD tiles)" : "Idle: splash");
+            requestRedraw();
         }
         break;
 
@@ -3603,9 +3613,10 @@ void activateSetting(int idx) {
         if (idx == 0) { g_cfg.beep = !g_cfg.beep; g_audio.setEnabled(g_cfg.beep); saveConfig(); requestRedraw(); }
         else if (idx == 1) { g_cfg.vibe = !g_cfg.vibe; saveConfig(); requestRedraw(); }
         else if (idx == 2) {
-            g_cfg.volume = g_cfg.volume >= 100 ? 20 : g_cfg.volume + 20;
+            g_cfg.volume = g_cfg.volume >= 100 ? 0 : (uint8_t)((g_cfg.volume / 20 + 1) * 20);   // 0..100 by 20
             g_audio.setVolume(g_cfg.volume);
             saveConfig();
+            if (g_cfg.volume && g_cfg.beep) g_audio.playMessage();   // hear the new level
             requestRedraw();
         } else if (idx == 3) {
             if (g_cfg.beep) g_audio.playMessage();
@@ -4637,7 +4648,10 @@ void spaced(const char* in, char* out, size_t n) {
     out[j] = 0;
 }
 
+bool paintIdleMap();
+
 void paintIdle() {
+    if (g_cfg.idleMap && paintIdleMap()) return;
     clearRoot();
     const int y0 = 76, step = 20;
     label(0, y0, W, 20, "RatSpeak", true);
@@ -4677,6 +4691,64 @@ void paintIdle() {
     g_idleShownUnread = unread;
     g_idleShownPct = pct;
     g_idleShownMin = millis() / 60000UL;
+}
+
+// Idle screen "map around you" (S.3.2 row 8): the map centred on the GPS fix, else the
+// saved position, else the card's home.txt, at zoom 13 (or the deepest level with tiles),
+// with time / battery / unread across the top. false = no position: the splash is shown.
+constexpr int kIdleMapTop = 38, kIdleMapBottom = 300, kIdleMapZoom = 13;
+
+bool paintIdleMap() {
+    double lat = 0, lon = 0;
+    bool have = false;
+    if (g_gpsPosValid) { lat = g_gpsLat; lon = g_gpsLon; have = true; }
+    else if (g_cfg.hasPos) { lat = g_cfg.lat; lon = g_cfg.lon; have = true; }
+    mapview::setReader(mapReadTile);
+    g_mapSdTried = false;
+    if (!have) {
+        char txt[48] = "";
+        int z = 0;
+        const size_t n = mapReadTile("/maps/home.txt", (uint8_t*)txt, sizeof(txt) - 1);
+        txt[n < sizeof(txt) ? n : sizeof(txt) - 1] = 0;
+        have = n && sscanf(txt, "%lf %lf %d", &lat, &lon, &z) >= 2;
+    }
+    if (!have) return false;
+    const bool wasOpen = mapview::isOpen();
+    if (!wasOpen) {
+        mapFeedPosition();
+        mapview::open(lat, lon, true, g_gpsPosValid);
+        mapview::setZoom(kIdleMapZoom);
+        mapview::fitZoom();
+    }
+
+    clearRoot();
+    char t[8], d[12], line[48];
+    fmtTime(t, sizeof(t));
+    fmtDate(d, sizeof(d));
+    const int pct = g_bat.valid ? g_bat.pct : -1;
+    const int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
+    box(0, 0, W, kIdleMapTop, 1);
+    if (unread > 0) snprintf(line, sizeof(line), "%s  %d%%%s  %d NEW", t, pct, g_bat.charging ? "+" : "", unread);
+    else snprintf(line, sizeof(line), "%s  %d%%%s  no new", t, pct, g_bat.charging ? "+" : "");
+    label(0, 0, W, 20, line, true);
+    snprintf(line, sizeof(line), "%.5s  %s", d, g_selfName);
+    label(0, 18, W, 18, line);
+    box(0, kIdleMapBottom, W, H - kIdleMapBottom, 1);
+    if (g_locked) {
+        label(0, kIdleMapBottom, W, H - kIdleMapBottom, "LOCKED | press a key", true);
+    } else {
+        char pos[56];
+        gpsPosText(pos, sizeof(pos));
+        label(0, kIdleMapBottom, W, H - kIdleMapBottom, pos);
+    }
+    lv_refr_now(nullptr);
+    mapview::draw(mapPixel, 0, kIdleMapTop, W, kIdleMapBottom - kIdleMapTop, g_cfg.dark);
+    g_display.markDirty();
+    if (!wasOpen) mapview::close();
+    g_idleShownUnread = unread;
+    g_idleShownPct = pct;
+    g_idleShownMin = millis() / 60000UL;
+    return true;
 }
 
 void enterIdle() {

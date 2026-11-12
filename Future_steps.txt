@@ -118,11 +118,20 @@ UI / UX
   Needs: a "Share maps" / "Receive maps" screen, region/zoom pick, progress, resume, and
   pack files (loose tiles make the receiving card's FAT writes the bottleneck either way).
   WiFi radio is shared with the client mode: pause it while sharing.
-- USB mass-storage mode (user asked 2026-11-12): show the SD card as a USB drive on the PC
+- NEXT (user asked again 2026-11-12) - USB mass-storage mode: show the SD card as a USB drive on the PC
   (ESP32-S3 TinyUSB MSC) so maps can be dragged on without a card reader. Needs the
   TinyUSB USB stack (ARDUINO_USB_MODE=0) instead of USB Serial/JTAG while in that mode, so
   the console and esptool auto-reset need care; a Settings > Storage "USB drive" toggle
   that reboots into MSC and back. Faster than sdput (bulk USB, no per-file round trip).
+- Map data for new users (user asked 2026-11-12): today maps need the PC tools (make_tiles /
+  render_world / push_tiles). Plan: ready-made map packs (pack-file format above) per
+  region - world overview, each US state, Canadian provinces, etc. - published as
+  downloads (GitHub releases or a RatSpeak map server) with an index; on the device a
+  Settings > Maps page: "Download maps" over WiFi (pick region + detail, shows size and card
+  space, resumes), plus "Share maps" unit-to-unit (WiFi item above) and the USB-drive mode
+  for PC users. Build the packs from public-domain sources only (USGS topo in the US,
+  Natural Earth worldwide, our own render of OSM vector data where policy allows) and say
+  the source/credit on the device.
 - Unit-to-unit USB (OTG) copy: the ESP32-S3 has USB OTG, but host mode must supply 5 V on
   VBUS to the other unit; the T-Deck Pro's USB-C is wired as a charge input, so check the
   schematic before planning this. Likely not possible without hardware changes; WiFi
@@ -155,8 +164,14 @@ Robustness to verify (before the stress-test pass)
 Audio / modes
 -------------
 - Voice / walkie-talkie mode: push-to-talk style over LoRa (or related path),
-  separate from text LXMF and from simple beep/vibrate alerts
-- DONE - in settings, add volum controls for the beeps (S.8 Alerts)
+  separate from text LXMF and from simple beep/vibrate alerts. User asked again 2026-11-12:
+  voice messages over Reticulum (record, Codec2 at 700-3200 bps, send as an LXMF audio
+  field like Sideband's FIELD_AUDIO so other clients can play it; LoRa airtime limits
+  length - a few seconds per message at low bitrate).
+- DONE - in settings, add volum controls for the beeps (S.8 Alerts): 0 (silent) / 20 / 40 /
+  60 / 80 (default, spares the speaker) / 100 %, plays the level when picked (2026-11-12).
+- DONE (sim) - idle screen = map around you (S.3.2 row 8): GPS / saved / card home position at
+  z13, time + battery + unread across the top, GPS line at the bottom (2026-11-12).
 - intergreate audio, perhaps https://codeberg.org/rfnxdev/partyline
 - text to audio, so it can read you a message. 
 
