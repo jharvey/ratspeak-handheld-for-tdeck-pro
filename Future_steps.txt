@@ -166,6 +166,13 @@ Team awareness, ATAK-style (user asked 2026-11-12, longer term)
   chosen contacts only; respects energy modes / check-in windows).
 - Waypoints / navigation: "go to" a marker: distance + bearing on screen; heading from GPS
   course over ground (no magnetometer, see Map heading).
+- Navigate to a contact (user asked 2026-11-12, e.g. hunting: "son is over that way 900 ft"):
+  needs the contact's auto-shared position. "Go to contact" screen: distance, compass
+  direction + degrees ("900 ft NE, 45 deg"), age of their last fix; an arrow relative to
+  your direction of travel while walking (GPS course; unreliable when slow/still); both on
+  the map, north up. Alert when they stop sharing / fix gets old. True facing direction
+  while still needs a magnetometer: confirm none on the board (I2C scan), else consider an
+  add-on magnetometer board.
 - Units setting (ft/mi or m/km), lat/lon or MGRS grid.
 - Interop: compact binary location/marker field in LXMF (Sideband-compatible telemetry where
   possible); later a gateway to ATAK / TAK (Cursor-on-Target XML) so phones running ATAK
