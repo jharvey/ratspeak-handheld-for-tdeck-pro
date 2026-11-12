@@ -32,7 +32,8 @@ import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SIM = os.path.join(ROOT, "sim", "build", "ratspeak-sim.exe")
+# RS_SIM_EXE selects another simulator build, e.g. sim/build-checked/ratspeak-sim.exe
+SIM = os.environ.get("RS_SIM_EXE") or os.path.join(ROOT, "sim", "build", "ratspeak-sim.exe")
 
 
 class Device:

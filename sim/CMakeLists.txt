@@ -22,6 +22,18 @@ set(RUST_LIB ${REPO}/protocol/target/release/libratspeak_protocol.a CACHE FILEPA
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network SerialPort)
 
+# Checked build (build-sim.bat checked -> simuild-checked): catches memory and logic
+# errors that do not always crash. MinGW GCC has no AddressSanitizer, so this uses what
+# it has: undefined-behaviour checks incl. array bounds (trap = the process stops at the
+# fault), libstdc++ assertions (out-of-range [], bad iterators, empty front()), stack
+# protector (buffer overruns on the stack) and _FORTIFY_SOURCE (overflowing memcpy/str*).
+option(SIM_CHECKED "Build the firmware with run-time checks" OFF)
+set(CHECK_FLAGS "")
+if(SIM_CHECKED)
+    set(CHECK_FLAGS -O1 -g -fno-omit-frame-pointer -fsanitize=undefined -fsanitize-undefined-trap-on-error
+        -fstack-protector-strong -D_FORTIFY_SOURCE=2 -D_GLIBCXX_ASSERTIONS)
+endif()
+
 # ---- Firmware-side compile settings (shared) -------------------------------------
 set(FW_DEFS
     SIMULATOR=1
@@ -51,7 +63,7 @@ file(GLOB_RECURSE LVGL_SRCS CONFIGURE_DEPENDS ${LVGL_DIR}/src/*.c)
 add_library(sim_lvgl STATIC ${LVGL_SRCS})
 target_compile_definitions(sim_lvgl PRIVATE ${FW_DEFS})
 target_include_directories(sim_lvgl PRIVATE ${FW_INCS})
-target_compile_options(sim_lvgl PRIVATE -w)
+target_compile_options(sim_lvgl PRIVATE -w ${CHECK_FLAGS})
 
 # ---- Firmware (real sources) + shims -----------------------------------------------
 set(FW_SRCS
@@ -86,7 +98,7 @@ target_compile_definitions(sim_firmware PRIVATE ${FW_DEFS})
 target_include_directories(sim_firmware PRIVATE ${FW_INCS} ${CMAKE_CURRENT_SOURCE_DIR})
 # newlib/POSIX extras + device clock for every firmware translation unit
 target_compile_options(sim_firmware PRIVATE -include sim_libc.h -fexceptions -Wno-unused-parameter
-    -Wno-missing-field-initializers -Wno-deprecated-declarations)
+    -Wno-missing-field-initializers -Wno-deprecated-declarations ${CHECK_FLAGS})
 target_link_libraries(sim_firmware PUBLIC ${RUST_LIB})
 if(WIN32)
     target_link_libraries(sim_firmware PUBLIC bcrypt ws2_32 userenv ntdll)
@@ -104,3 +116,4 @@ add_executable(ratspeak-sim
 target_link_libraries(ratspeak-sim PRIVATE "$<LINK_GROUP:RESCAN,sim_firmware,sim_lvgl>"
     Qt6::Widgets Qt6::Network Qt6::SerialPort)
 target_include_directories(ratspeak-sim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# (mingw-w64 provides the stack-protector / fortify runtime itself: no -lssp)

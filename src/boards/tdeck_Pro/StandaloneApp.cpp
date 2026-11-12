@@ -4909,7 +4909,7 @@ void handleSerialLine(char* p) {
         const std::string peerHex(p + 8, 32);
         uint8_t peer[16];
         for (int b = 0; b < 16; b++) { unsigned v = 0; sscanf(p + 8 + 2 * b, "%2x", &v); peer[b] = (uint8_t)v; }
-        uint32_t in = 0, out = 0, st[8] = {};
+        uint32_t in = 0, out = 0, st[8] = {}, bad = 0;   // bad = listed but unreadable
         std::vector<uint32_t> nums;
         HistoryEntry cursor{};
         bool more = true, ok = true;
@@ -4941,7 +4941,7 @@ void handleSerialLine(char* p) {
                     if (!g_msgStore.readPayload(rs.ticket, buf, got)) got = 0;
                 }
                 if (rs.accepted()) g_msgStore.releaseResult(rs.ticket);
-                if (got < sizeof(StoredRecordHeader)) continue;
+                if (got < sizeof(StoredRecordHeader)) { bad++; continue; }
                 StoredRecordHeader hdr;
                 memcpy(&hdr, buf, sizeof(hdr));
                 if (!hdr.incoming) { out++; st[hdr.status & 7]++; continue; }
@@ -4962,9 +4962,9 @@ void handleSerialLine(char* p) {
             else if (nums[i] > nums[i - 1] + 1) gaps += nums[i] - nums[i - 1] - 1;
         }
         Serial.printf("[STAT] %s %s in=%lu out=%lu queued=%lu sending=%lu sent=%lu delivered=%lu failed=%lu "
-                      "noproof=%lu pp=%u ppmin=%lu ppmax=%lu dup=%lu gap=%lu\n", peerHex.c_str(), ok ? "ok" : "ERROR",
+                      "noproof=%lu bad=%lu pp=%u ppmin=%lu ppmax=%lu dup=%lu gap=%lu\n", peerHex.c_str(), ok ? "ok" : "ERROR",
                       (unsigned long)in, (unsigned long)out, (unsigned long)(st[0] + st[1]), (unsigned long)st[2],
-                      (unsigned long)st[3], (unsigned long)st[4], (unsigned long)st[5], (unsigned long)st[6],
+                      (unsigned long)st[3], (unsigned long)st[4], (unsigned long)st[5], (unsigned long)st[6], (unsigned long)bad,
                       (unsigned)nums.size(), (unsigned long)(nums.empty() ? 0 : nums.front()),
                       (unsigned long)(nums.empty() ? 0 : nums.back()), (unsigned long)dups, (unsigned long)gaps);
     } else if (!strcmp(p, "flash")) {

@@ -60,8 +60,16 @@ Tools:
   (`--ports COM5 COM9`); numbered messages both ways, waits for the outboxes to empty,
   checks with `msgstat` + `hb`, PASS/FAIL in `summary.txt`. `--flashcap N` / `--flashkb`
   for the full-storage path.
+- DONE: `tools/stress/powercut.py`: kills the simulator at random moments (during saves,
+  sometimes during boot), restarts, checks boot, identity, no saved message lost
+  (records >= before + saves the heartbeat confirmed), every record readable (`msgstat`
+  bad=0); deletes the test conversations above 1,000 records so the firmware's own
+  removal at 85 % does not count as a loss. `--flashkb` for the full-flash path.
+- DONE: checked simulator build: `simuild-sim.bat checked` -> `simuild-checked`
+  (undefined-behaviour + array-bounds traps, libstdc++ assertions, stack protector,
+  _FORTIFY_SOURCE). MinGW GCC has no AddressSanitizer, so heap use-after-free is not
+  caught. Runners use it with `set RS_SIM_EXE=...\simuild-checkedatspeak-sim.exe`.
 - TODO: a random-key script command (`monkey <minutes> <seed>`), repeatable by seed.
-- TODO: a sanitizer build option for the simulator.
 
 ## 3. Layer 2: real units (24-72 hours)
 
@@ -152,6 +160,15 @@ Fixed findings:
   the 3 s spacing puts the message in the outbox (shown "queued", retried in the
   background every ~3 s, kept in NVS); "outbox full" (8) keeps the draft.
 
+| 2026-11-12 | (checked) | Ping-pong 6 min + `flashcap 40`, checked build | 0.1 | PASS | 59 + 60 msgs all arrived, no trap / assertion, no restart |
+| 2026-11-12 | (checked) | Power cuts, checked build | 40 cycles | PASS | 6 cuts in boot, 34 during saves; 1,323 records, none lost or unreadable, identity kept |
+| 2026-11-12 | (powercut) | Power cuts, tiny flash (`--flashkb 1024`, removal active) | 40 cycles | PASS | 9 cuts in boot, 31 during saves; no unreadable record, always boots |
+| 2026-11-12 | (powercut) | Power cuts, normal flash | 120 cycles | PASS | 13 cuts in boot, 107 during saves (bursts of 40-200 saves, 20-600 byte messages); no saved message lost, none unreadable, identity kept, boot 5.5-16 s. (A first run reported "lost" records above ~1,400: that was the firmware's own removal at 85 %, not a loss; the runner now clears the test conversations at 1,000.) |
+
 Open findings:
+- Boot time grows with stored messages (startup scan reads every record): simulator 5 s
+  empty -> 22-39 s at ~1,300-1,400 records; on COM5 it was 29.8 s at 376 records, so a
+  unit near the 85 % mark (~1,400 messages) could take over a minute to boot. Look at a
+  cached summary / index written at shutdown or after each change.
 - Under load, retried messages arrive late and the thread shows them in arrival order
   (e.g. "8" below "40"). Consider ordering threads by the sender's timestamp.
