@@ -130,6 +130,29 @@ Protocol / mesh
 - Path / link live tiles — expand diagnostics beyond partial N3
 - Cooperative vs standalone feature matrix freeze (what each env owns)
 
+Security: password, accounts, encrypted storage (user asked 2026-11-12)
+-----------------------------------------------------------------------
+- Now (ui-features branch): one device password; turning the lock on asks for the password
+  and a confirmation; no lock without a password.
+- Messages encrypted at rest under the password. Design: a random 256-bit data key (DEK)
+  encrypts every message record (AES-256-GCM, per-record nonce). The DEK is stored only
+  wrapped by a key derived from the password (PBKDF2/Argon2-style KDF, salt, high iteration
+  count). No password set = DEK wrapped by a built-in default password, so the format is the
+  same either way.
+  - Setting or changing the password re-wraps the DEK only: instant, no messages lost, no
+    need to re-encrypt every record. (Re-encrypting all records with a new DEK is optional,
+    e.g. after a suspected leak, done in the background like the folder migration.)
+  - First boot of the encrypting firmware: existing plain-text records are encrypted once
+    (migration at boot, like the shard move).
+  - Unlock at boot / after idle derives the key; while locked, incoming messages are still
+    received: store them sealed to a public key (X25519) so they can be written without the
+    password and opened after unlock.
+  - Covers flash and the SD archive. Identity / ratchet keys: decide whether they also go
+    under the DEK (then nothing decrypts or announces until the first unlock after boot).
+  - Forgotten password = messages are unrecoverable (say so in the UI); factory reset only.
+- User accounts (later): several users per device, each with its own password, DEK,
+  contacts and messages (and possibly own LXMF identity); one admin.
+
 Home Assistant integration (user asked 2026-11-12)
 --------------------------------------------------
 - Presence detector: HA knows when the handheld (its owner) is home / away. Routes, cheapest
