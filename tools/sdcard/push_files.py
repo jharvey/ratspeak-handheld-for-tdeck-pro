@@ -70,6 +70,13 @@ def main():
     paths = [p for pat in a.files for p in (glob.glob(pat) or [pat])]
     dev = Dev(a.port)
     dev.drain(1.0)
+    for _ in range(10):                      # opening the port can reset a unit: wait for its boot
+        dev.cmd("id")
+        m, _ = dev.wait(r"\[ID\] dest=([0-9a-f]{32})", 8)
+        if m:
+            break
+    else:
+        sys.exit("no answer to 'id' on " + a.port)
     bad = sum(0 if push_file(dev, p, a.dest) else 1 for p in paths)
     print("%d files, %d failed" % (len(paths), bad))
     sys.exit(1 if bad else 0)
