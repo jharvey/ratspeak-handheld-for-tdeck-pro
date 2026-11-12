@@ -62,7 +62,7 @@ START HERE (handoff 2026-11-11)
   COM9 asleep on battery +33 ppm (+2.9 s/day), COM5 awake on USB +28 ppm (+2.4 s/day), fit rms
   < 4 ms. The 1 min lead covers ~20 days without a peer clock sync. PC clock not verified.
 - UI features (2026-11-11, branch claude/ui-features-fb43b8): idle password lock (S.3.2;
-  lock password = vault password, default "ratspeak" when mode 3 is picked, boot lock,
+  lock password = vault password, mode 3 asks new + repeat when none is set, boot lock,
   lockout 3 free then 30 s..16 min, NVS rs_lock; console lock / lock now; locked console
   = status commands only), share contact (contact page 1 Message / 2 Rename / 3 Share;
   "Contact card: <name>\n<32 hex>" text, receiver Enter on empty draft saves), lists 48
@@ -70,7 +70,7 @@ START HERE (handoff 2026-11-11)
   rs_tcp, default off) and identity slots S.6.5 (new / switch / erase, Enter x2, restart).
   Console: ids, contact <hex> <name>. Sim scripts: lock(+_boot), share_a/_b, lists,
   inbox_pages, identity(+_after), id, more_box, map_menu.
-  2026-11-12: default lock password is "RATSPEAK" (keys type capitals unless Alt); MIC
+  2026-11-12: no default lock password any more: mode 3 with none asks new + repeat (^ cancels, lock stays off). MIC
   shows/hides a password while typing (settings fields + lock prompt). MENU row 6 "Map"
   (hotkey A, L still works); with no position the map opens on SD maps/home.txt
   ("lat lon zoom", make_tiles.py --home) and mapview::fitZoom() zooms out to the deepest

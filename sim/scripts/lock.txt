@@ -11,13 +11,42 @@ key 3
 wait 800
 key 2
 wait 800
-# Row 3 "On + password" with no password: password becomes "RATSPEAK", lock on idle.
+# Row 3 "On + password" with no password: asks for a new password + repeat first.
+# Back cancels and leaves the lock off.
 key 3
-expect 5000 [LOCK] password set (default)
+wait 600
+type ABCD
+key BACK
+wait 600
+serial lock
+expect 3000 password=0
+# Again: a repeat that does not match asks again; a match turns the lock on.
+key 3
+wait 600
+type FIRST1
+key MIC
+wait 400
+shot lock-00-new.png
+key ENTER
+wait 600
+type OTHER1
+key ENTER
+wait 800
+shot lock-00b-nomatch.png
+serial lock
+expect 3000 password=0
+type FIRST1
+key ENTER
+wait 600
+type FIRST1
+key ENTER
+expect 5000 [LOCK] password set
+serial lock
+expect 3000 password=1 idleMode=2
 shot lock-01-idle-page.png
 # Row 5: change it (current, new, repeat).
 key 5
-type RATSPEAK
+type FIRST1
 key MIC
 wait 400
 shot lock-01b-shown.png
@@ -51,7 +80,7 @@ expect 3000 [CMD] locked
 serial pw
 wait 500
 # The old password no longer works; the new one does.
-type RATSPEAK
+type FIRST1
 key ENTER
 expect 5000 [LOCK] wrong password (2 in a row
 type Secret9

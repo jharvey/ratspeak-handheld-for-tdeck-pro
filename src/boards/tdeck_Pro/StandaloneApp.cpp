@@ -2620,9 +2620,6 @@ uint32_t g_lockUntil = 0;           // millis(): no tries before this (0 = none)
 constexpr uint8_t  kLockFreeTries = 3;
 constexpr uint32_t kLockPromptMs = 30000;   // prompt without keys -> back to the splash
 constexpr size_t   kLockPassMin = 4, kLockPassMax = 32;
-// Set when mode 2 is picked with no password. Capitals: the keyboard types capitals
-// unless Alt is held, so this is what a plain key-by-key typing gives.
-constexpr const char* kLockDefaultPassword = "RATSPEAK";
 
 bool lockHasPassword() { return !vault::usingDefaultPassword(); }
 bool lockOnIdle()      { return g_cfg.idleMode == 2 && lockHasPassword(); }
@@ -3085,7 +3082,7 @@ void buildSettingsRows(Page p) {
         const bool pw = lockHasPassword();
         srow(RK_PICK, "Off", "%s", g_cfg.idleMode == 0 ? "(current)" : "");
         srow(RK_PICK, "On, no password", "%s", g_cfg.idleMode == 1 ? "(current)" : "");
-        srow(RK_PICK, "On + password", "%s%s", lockOnIdle() ? "(current)" : pw ? "" : "password: ", lockOnIdle() || pw ? "" : kLockDefaultPassword);
+        srow(RK_PICK, "On + password", "%s", lockOnIdle() ? "(current)" : pw ? "" : "asks for a password");
         e = editingSub(Entry::IdleSecs);
         if (e) srow(RK_ENTRY, "Timeout (10-99999 s)", "%s", e);
         else   srow(RK_ENTRY, "Timeout (10-99999 s)", "%u s", (unsigned)g_cfg.idleSecs);
@@ -3491,14 +3488,11 @@ void activateSetting(int idx) {
             requestRedraw();
         } else if (idx == 2) {
             if (lockHasPassword()) { g_cfg.idleMode = 2; saveConfig(); toast("Locks after %u s idle", (unsigned)g_cfg.idleSecs); }
-            else if (vault::setPassword(kLockDefaultPassword)) {   // user's choice: starts as "RATSPEAK"
-                wifiSaveAll();                   // re-seal saved WiFi passwords with the new key
-                lockNoteRight();
-                g_cfg.idleMode = 2;
-                saveConfig();
-                Serial.println("[LOCK] password set (default)");
-                toast("Lock on, pw: %s", kLockDefaultPassword);
-            } else toast("Vault error");
+            else {                               // no password yet: new + repeat, then lock on
+                g_sel = 4;                       // the password row shows the typing
+                startEntry(Entry::PassNew, nullptr, 2);
+                toast("Choose a password");
+            }
         } else if (idx == 3) {
             char s[8]; snprintf(s, sizeof(s), "%u", (unsigned)g_cfg.idleSecs); startEntry(Entry::IdleSecs, s);
         } else if (idx == 4) {

@@ -134,7 +134,7 @@ Robustness to verify (before the stress-test pass)
   files, show "storage full" instead of silently dropping.
 - Same for a full SD card (archive + map tiles).
 - DONE (sim + COM5) - idle screen password lock: S.3.2 "On + password" (password = vault password,
-  starts as "ratspeak"), boot lock, lockout after 3 wrong tries, messages keep arriving.
+  asked new + repeat when the lock is turned on), boot lock, lockout after 3 wrong tries, messages keep arriving.
   Next: optional fully blank splash (no time/unread) and a duress/wipe-after-N option. 
 - DONE - add manual refresh button, for ghosting issues. Do full screen refresh. 
 - DONE - add GPS clock displayed on idle screen / header. 

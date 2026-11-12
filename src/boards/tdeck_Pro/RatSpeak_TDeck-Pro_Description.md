@@ -80,9 +80,10 @@ Inbox, Contacts and Peers hold up to 48 rows, shown in pages: Contacts 10 rows (
 
 **M → S → 3 → 2** (Idle splash):
 
-- **3 On + password**: with no password yet, the password becomes **`RATSPEAK`** (capitals:
-  the keyboard types capitals unless **Alt** is held) and the device locks after the
-  idle timeout. Change it straight away with row 5.
+- **3 On + password**: with no password yet, it asks for a new password (4–32 chars), then
+  the same again; the lock turns on only when both match (no match: it says so and asks
+  again; **^** cancels and leaves the lock off). The keyboard types capitals unless
+  **Alt** is held.
 - **5 Set / Change password**: current password (when one is set), new (4–32 chars),
   repeat. Typed characters show as `*`; **MIC** shows / hides what you typed (also on
   the lock prompt; hidden again after each field).
