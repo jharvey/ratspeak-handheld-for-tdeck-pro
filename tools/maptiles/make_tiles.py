@@ -211,6 +211,11 @@ def main():
     ap.add_argument("--delay", type=float, default=1.0, help="seconds between URL downloads")
     ap.add_argument("--max-tiles", type=int, default=5000)
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--raw", action="store_true",
+                    help="write tiles without the 8-byte header (8192 bytes; firmware 2026-11-12+), "
+                         "exactly 8 KB on the PC too")
+    ap.add_argument("--skip-pushed", action="store_true",
+                    help="skip tiles that every unit already has (all pushed_<dest>.txt in --out)")
     ap.add_argument("--home", help="LAT,LON,ZOOM start view when the device has no position "
                     "(maps/home.txt; default: centre of this area at its lowest zoom, "
                     "written only if the card has no home.txt yet)")
@@ -266,10 +271,16 @@ def main():
         source = UrlSource(a.url, a.user_agent, a.delay)
     overlay = UrlSource(a.overlay_url, a.user_agent, a.delay) if a.overlay_url else None
 
+    have = set()
+    if a.skip_pushed and os.path.isdir(a.out):
+        logs = [os.path.join(a.out, f) for f in os.listdir(a.out)
+                if f.startswith("pushed_") and f.endswith(".txt") and ".preformat" not in f]
+        sets = [set(open(p).read().split()) for p in logs]
+        have = set.intersection(*sets) if sets else set()
     done = skipped = 0
     for z, x, y in jobs:
         path = os.path.join(root, str(z), str(x), "%d.rmt" % y)
-        if os.path.exists(path) and not a.overwrite:
+        if (os.path.exists(path) and not a.overwrite) or "/maps/%d/%d/%d.rmt" % (z, x, y) in have:
             skipped += 1
             continue
         if a.test:
@@ -282,7 +293,7 @@ def main():
             bits = image_to_bits(data, a.threshold, a.invert, over)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
-            f.write(HEADER + bits)
+            f.write(bits if a.raw else HEADER + bits)
         done += 1
         if done % 100 == 0:
             print("  %d / %d" % (done, len(jobs)))
