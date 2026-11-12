@@ -1,0 +1,57 @@
+# Inbox paging over more than one store page (16 conversations on the device; the app
+# uses 16 in the sim too). Sends to 20 made-up hashes (3 s apart, the send limit), then
+# Inbox: N N = page 3 of 3.  run-script.bat scripts\inbox_pages.txt inboxp fresh
+expect 60000 [BOOT] ready
+serial msg 00000000000000000000000000000101 hello 1
+wait 4200
+serial msg 00000000000000000000000000000102 hello 2
+wait 4200
+serial msg 00000000000000000000000000000103 hello 3
+wait 4200
+serial msg 00000000000000000000000000000104 hello 4
+wait 4200
+serial msg 00000000000000000000000000000105 hello 5
+wait 4200
+serial msg 00000000000000000000000000000106 hello 6
+wait 4200
+serial msg 00000000000000000000000000000107 hello 7
+wait 4200
+serial msg 00000000000000000000000000000108 hello 8
+wait 4200
+serial msg 00000000000000000000000000000109 hello 9
+wait 4200
+serial msg 0000000000000000000000000000010a hello 10
+wait 4200
+serial msg 0000000000000000000000000000010b hello 11
+wait 4200
+serial msg 0000000000000000000000000000010c hello 12
+wait 4200
+serial msg 0000000000000000000000000000010d hello 13
+wait 4200
+serial msg 0000000000000000000000000000010e hello 14
+wait 4200
+serial msg 0000000000000000000000000000010f hello 15
+wait 4200
+serial msg 00000000000000000000000000000110 hello 16
+wait 4200
+serial msg 00000000000000000000000000000111 hello 17
+wait 4200
+serial msg 00000000000000000000000000000112 hello 18
+wait 4200
+serial msg 00000000000000000000000000000113 hello 19
+wait 4200
+serial msg 00000000000000000000000000000114 hello 20
+wait 4200
+serial rmconv
+expect 5000 [MSG] conversation
+wait 2000
+key BACK
+wait 1500
+key I
+expect 5000 [LIST] 20 conversations
+wait 2000
+key N
+key N
+wait 1500
+shot inbox-p3.png
+quit

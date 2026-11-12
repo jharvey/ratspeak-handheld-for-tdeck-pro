@@ -1257,7 +1257,7 @@ void notifyInbound() {
 // 3. Peer rows, history, send
 // =============================================================================
 
-constexpr int MAX_ROWS = 10;      // Contacts 0..9; Inbox/Peers 1..9 (+1 spare)
+constexpr int MAX_ROWS = 48;      // list rows; shown in pages (Contacts 0..9, Inbox/Peers 1..9)
 struct PeerRow {
     uint8_t  peer[16];
     char     name[24];
@@ -1309,17 +1309,33 @@ int findRow(const uint8_t peer[16]) {
     return -1;
 }
 
+// List search (key F on Inbox / Contacts / Peers): rows whose name or hash contain the
+// text (any case). Cleared when the list screen changes or with ^.
+char g_filter[24] = "";
+
+bool containsNoCase(const char* hay, const char* needle) {
+    const size_t n = strlen(needle);
+    for (; *hay; hay++) {
+        size_t i = 0;
+        while (i < n && hay[i] && tolower((unsigned char)hay[i]) == tolower((unsigned char)needle[i])) i++;
+        if (i == n) return true;
+    }
+    return n == 0;
+}
+
 PeerRow* addRow(const uint8_t peer[16]) {
     if (g_rowCount >= MAX_ROWS || findRow(peer) >= 0) return nullptr;
-    PeerRow& r = g_rows[g_rowCount++];
+    PeerRow& r = g_rows[g_rowCount];
     memset(&r, 0, sizeof(r));
     memcpy(r.peer, peer, 16);
     r.self = isSelf(peer);
     peerName(peer, r.name, sizeof(r.name));
-    const DiscoveredNode* node = g_announceMgr.findNode(rs::Bytes(peer, 16));
-    r.saved = node && node->saved;
     char hex[33];
     hashToHex(peer, hex);
+    if (g_filter[0] && !containsNoCase(r.name, g_filter) && !containsNoCase(hex, g_filter)) return nullptr;
+    g_rowCount++;
+    const DiscoveredNode* node = g_announceMgr.findNode(rs::Bytes(peer, 16));
+    r.saved = node && node->saved;
     snprintf(r.sub, sizeof(r.sub), "%.24s", hex);
     return &r;
 }
@@ -1333,49 +1349,98 @@ bool waitResult(MessageStore::Ticket t, MessageStore::Result& res, int maxSpin =
     return false;
 }
 
-// Conversations (most recent first) with unread counts.
-void appendConversations(int limit) {
+// Conversations (most recent first) with unread counts. The store hands out pages of
+// up to ConversationPageCapacity (16 on the device); this walks up to `limit` with the
+// cursor. The result is cached until the store's revision changes, so typing a search
+// or coming back to the Inbox does not query the store again.
+struct ConvRow { uint8_t peer[16]; uint16_t unread; };
+ConvRow  g_convCache[MAX_ROWS];
+int      g_convCount = 0;
+uint32_t g_convRev = 0;
+bool     g_convValid = false;
+// Page size: the device store's (16 with async writes); the same in the simulator so
+// it walks the same multi-page path.
+constexpr int kConvPage = MessageStore::ConversationPageCapacity < 16 ? (int)MessageStore::ConversationPageCapacity : 16;
+
+int fetchConversationPage(handheld::storage::ConversationSelector* sel, int cap,
+                          const handheld::storage::ConversationCursor* after) {
     using namespace handheld::storage;
-    if (!g_storeReady || limit <= 0) return;
-    auto sub = g_msgStore.requestConversationPage({}, false, ConversationOrder::Recent,
-                                                  ConversationDirection::After, (uint8_t)limit);
+    const uint8_t lim = (uint8_t)std::min<int>(cap, kConvPage);
+    const ConversationCursor cur = after ? *after : ConversationCursor{};
+    auto sub = g_msgStore.requestConversationPage(cur, after != nullptr, ConversationOrder::Recent,
+                                                  ConversationDirection::After, lim);
     for (int a = 0; a < 8 && !sub.accepted(); a++) {
         unsigned r = (unsigned)sub.rejection;
         if (r != 1 && r != 8) break;            // only Busy / Recovering are worth retrying
         pumpFor(50, 12);
-        sub = g_msgStore.requestConversationPage({}, false, ConversationOrder::Recent,
-                                                 ConversationDirection::After, (uint8_t)limit);
+        sub = g_msgStore.requestConversationPage(cur, after != nullptr, ConversationOrder::Recent,
+                                                 ConversationDirection::After, lim);
     }
-    if (!sub.accepted()) { Serial.printf("[MSG] page rejected %u\n", (unsigned)sub.rejection); return; }
-
+    if (!sub.accepted()) { Serial.printf("[MSG] page rejected %u\n", (unsigned)sub.rejection); return -1; }
     MessageStore::Result res;
-    ConversationSelector sel[MAX_ROWS];
     size_t nSel = 0;
     if (waitResult(sub.ticket, res) && res.outcome == Outcome::Committed &&
         res.error == Error::None && res.length >= sizeof(ConversationSelector)) {
         nSel = res.length / sizeof(ConversationSelector);
-        if (nSel > (size_t)MAX_ROWS) nSel = MAX_ROWS;
+        if (nSel > (size_t)lim) nSel = lim;
         if (!g_msgStore.readPayload(sub.ticket, sel, nSel * sizeof(ConversationSelector))) nSel = 0;
     }
     g_msgStore.releaseResult(sub.ticket);
+    return (int)nSel;
+}
 
-    for (size_t i = 0; i < nSel; i++) {
-        if (isSelf(sel[i].cursor.peer)) continue;
-        uint16_t unread = 0;
-        if (sel[i].counter && sel[i].error == Error::None) {
-            auto d = g_msgStore.requestConversation(sel[i]);
-            if (d.accepted()) {
-                MessageStore::Result dres;
-                ConversationView view;
-                if (waitResult(d.ticket, dres) && dres.outcome == Outcome::Committed &&
-                    dres.error == Error::None && dres.length >= sizeof(ConversationView) &&
-                    g_msgStore.readPayload(d.ticket, &view, sizeof(view)))
-                    unread = (uint16_t)view.unreadCount;
-                g_msgStore.releaseResult(d.ticket);
+void loadConversations(int limit) {
+    using namespace handheld::storage;
+    const uint32_t t0 = millis();
+    g_convCount = 0;
+    g_convValid = false;
+    if (!g_storeReady) return;
+    const uint32_t rev = g_msgStore.revision();
+    static ConversationSelector sel[kConvPage];
+    ConversationCursor last{};
+    bool haveLast = false;
+    int pages = 0;
+    while (g_convCount < limit && pages < 8) {
+        const int n = fetchConversationPage(sel, limit - g_convCount, haveLast ? &last : nullptr);
+        if (n < 0) return;                      // keep "not valid": retried next time
+        pages++;
+        for (int i = 0; i < n && g_convCount < limit; i++) {
+            if (isSelf(sel[i].cursor.peer)) continue;
+            bool dup = false;
+            for (int k = 0; k < g_convCount && !dup; k++) dup = !memcmp(g_convCache[k].peer, sel[i].cursor.peer, 16);
+            if (dup) continue;
+            uint16_t unread = 0;
+            if (sel[i].counter && sel[i].error == Error::None) {
+                auto d = g_msgStore.requestConversation(sel[i]);
+                if (d.accepted()) {
+                    MessageStore::Result dres;
+                    ConversationView view;
+                    if (waitResult(d.ticket, dres) && dres.outcome == Outcome::Committed &&
+                        dres.error == Error::None && dres.length >= sizeof(ConversationView) &&
+                        g_msgStore.readPayload(d.ticket, &view, sizeof(view)))
+                        unread = (uint16_t)view.unreadCount;
+                    g_msgStore.releaseResult(d.ticket);
+                }
             }
+            memcpy(g_convCache[g_convCount].peer, sel[i].cursor.peer, 16);
+            g_convCache[g_convCount].unread = unread;
+            g_convCount++;
         }
-        if (PeerRow* r = addRow(sel[i].cursor.peer)) r->unread = unread;
+        if (n < kConvPage || n == 0) break;   // last page
+        last = sel[n - 1].cursor;
+        haveLast = true;
     }
+    g_convRev = rev;
+    g_convValid = true;
+    Serial.printf("[LIST] %d conversations in %lu ms (%d pages)\n", g_convCount,
+                  (unsigned long)(millis() - t0), pages);
+}
+
+void appendConversations(int limit) {
+    if (!g_storeReady || limit <= 0) return;
+    if (!g_convValid || g_convRev != g_msgStore.revision()) loadConversations(MAX_ROWS);
+    for (int i = 0; i < g_convCount && i < limit; i++)
+        if (PeerRow* r = addRow(g_convCache[i].peer)) r->unread = g_convCache[i].unread;
 }
 
 void appendAnnounced(bool savedOnly, bool withSignal) {
@@ -1478,6 +1543,7 @@ void loadHistory(const uint8_t peer[16]) {
     }
     int ri = findRow(peer);
     if (ri >= 0) g_rows[ri].unread = 0;
+    g_convValid = false;
 
     auto sub = g_msgStore.requestHistoryPage(peerHex, HistoryEntry{}, (uint8_t)HIST_ROWS,
                                              HistoryDirection::Before);
@@ -1755,7 +1821,8 @@ uint8_t g_threadPeer[16];
 
 // Entry mode: one text buffer, one owner.
 enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, Longitude, WifiPass,
-                             PassOld, PassNew, PassConfirm };   // Pass*: lock password (arg = purpose)
+                             PassOld, PassNew, PassConfirm,     // Pass*: lock password (arg = purpose)
+                             Search };                          // list filter (Inbox / Contacts / Peers)
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -3297,7 +3364,11 @@ void activateSetting(int idx) {
 }
 
 // ---- List screens (Inbox / Contacts / Peers) ------------------------------------
-int rowNumber(ScreenId s, int idx) { return s == SCR_CONTACTS ? idx : idx + 1; }
+// Lists are shown in pages that follow the selection: Contacts 10 rows (digits 0-9),
+// Inbox / Peers 9 rows (digits 1-9). Digits pick within the selected row's page;
+// N / B jump a page, G / V move across page edges.
+int pageSize(ScreenId s) { return s == SCR_CONTACTS ? 10 : 9; }
+int rowNumber(ScreenId s, int idx) { return s == SCR_CONTACTS ? idx % 10 : idx % 9 + 1; }
 
 void rememberSelection() {
     if (g_listSel >= 0 && g_listSel < g_rowCount) {
@@ -3309,9 +3380,8 @@ void rememberSelection() {
 void loadRows(ScreenId s) {
     g_rowCount = 0;
     if (s == SCR_INBOX) {
-        appendConversations(9);
+        appendConversations(MAX_ROWS);
         appendAnnounced(false, false);     // so a new peer can be messaged
-        if (g_rowCount > 9) g_rowCount = 9;
     } else if (s == SCR_CONTACTS) {
         if (g_haveSelf) {
             if (PeerRow* r = addRow(g_selfHash)) {
@@ -3322,7 +3392,6 @@ void loadRows(ScreenId s) {
         appendAnnounced(true, false);      // saved / named contacts
     } else if (s == SCR_PEERS) {
         appendAnnounced(false, true);
-        if (g_rowCount > 9) g_rowCount = 9;
     }
 
     // Restore selection by hash, else clamp.
@@ -3340,6 +3409,7 @@ void drawFooter() {
         const char* hint = "Enter=set  ^=cancel";
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) hint = "SPC=.  SYM+U=-";
         else if (g_entry == Entry::WifiPass) hint = "Alt+key=case  Enter=ok";
+        else if (g_entry == Entry::Search) hint = "Enter=keep  ^=clear";
         box(0, FOOT_Y, W, FOOT_H, 1);
         label(0, FOOT_Y - 1, W, FOOT_H, third[0] ? third : hint);
         return;
@@ -3375,26 +3445,40 @@ void drawHeader(const char* left, bool moreUp) {
 }
 
 void renderList() {
-    char hdr[32];
-    if (g_screen == SCR_INBOX) {
+    char hdr[48];
+    const int ps = pageSize(g_screen), pages = (g_rowCount + ps - 1) / ps;
+    char pg[12] = "";
+    if (pages > 1) snprintf(pg, sizeof(pg), " p%d/%d", g_listSel / ps + 1, pages);
+    // The window never mixes pages: it scrolls inside the selected row's page.
+    const int pStart = (g_listSel / ps) * ps, pEnd = std::min(pStart + ps, g_rowCount);
+    if (g_listScroll < pStart) g_listScroll = pStart;
+    if (g_listSel >= g_listScroll + VIS_ROWS) g_listScroll = g_listSel - VIS_ROWS + 1;
+    if (g_listScroll > std::max(pStart, pEnd - VIS_ROWS)) g_listScroll = std::max(pStart, pEnd - VIS_ROWS);
+    if (g_entry == Entry::Search) {
+        snprintf(hdr, sizeof(hdr), "Find: %s_ (%d)", g_buf, g_rowCount);
+    } else if (g_filter[0] && !g_shareActive) {
+        snprintf(hdr, sizeof(hdr), "\"%.10s\" %d%s", g_filter, g_rowCount, pg);
+    } else if (g_screen == SCR_INBOX) {
         int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
-        snprintf(hdr, sizeof(hdr), "Inbox  unread %02d", unread > 99 ? 99 : unread);
+        if (pages > 1) snprintf(hdr, sizeof(hdr), "Inbox%s new %d", pg, unread > 99 ? 99 : unread);
+        else           snprintf(hdr, sizeof(hdr), "Inbox  unread %02d", unread > 99 ? 99 : unread);
     } else if (g_shareActive) {
         char nm[24];
         peerName(g_sharePeer, nm, sizeof(nm));
         snprintf(hdr, sizeof(hdr), "Send %.12s to:", nm);
     } else {
-        snprintf(hdr, sizeof(hdr), "%s (%d)", screenName(g_screen), g_rowCount);
+        snprintf(hdr, sizeof(hdr), pages > 1 ? "%s %d%s" : "%s (%d)%s", screenName(g_screen), g_rowCount, pg);
     }
     drawHeader(hdr, g_listScroll > 0);
 
     if (g_rowCount == 0) {
-        const char* empty = g_screen == SCR_CONTACTS ? "No contacts - see Peers"
+        const char* empty = g_filter[0] || g_entry == Entry::Search ? "No match"
+                          : g_screen == SCR_CONTACTS ? "No contacts - see Peers"
                           : g_screen == SCR_PEERS    ? "No peers - Announce on Home"
                                                      : "No chats yet";
         text(8, LIST_TOP + 8, empty);
     }
-    for (int i = g_listScroll; i < g_rowCount && i < g_listScroll + VIS_ROWS; i++) {
+    for (int i = g_listScroll; i < pEnd && i < g_listScroll + VIS_ROWS; i++) {
         const PeerRow& r = g_rows[i];
         const int y = LIST_TOP + (i - g_listScroll) * ROW_H;
         char title[36];
@@ -4063,7 +4147,7 @@ void goScreen(ScreenId s) {
         g_sel = 0;
         g_scroll = 0;
     }
-    if (g_screen != s) g_listScroll = 0;
+    if (g_screen != s) { g_listScroll = 0; g_filter[0] = 0; }
     g_screen = s;
     if (s == SCR_INBOX || s == SCR_CONTACTS || s == SCR_PEERS) loadRows(s);
     requestRedraw();
@@ -4078,6 +4162,20 @@ void openMenu() {
 }
 
 void closeMenu() { g_menuOpen = false; requestRedraw(); }
+
+bool isListScreen(ScreenId s) { return s == SCR_INBOX || s == SCR_CONTACTS || s == SCR_PEERS; }
+
+void pageJump(int dir) {
+    if (!isListScreen(g_screen) || !g_rowCount) return;
+    const int ps = pageSize(g_screen), pages = (g_rowCount + ps - 1) / ps;
+    const int p = g_listSel / ps + dir;
+    if (p < 0 || p >= pages) { toast(dir > 0 ? "Last page" : "First page"); return; }
+    g_listSel = p * ps;
+    g_listScroll = g_listSel;
+    clampScroll(g_listSel, g_listScroll, g_rowCount);
+    rememberSelection();
+    requestRedraw();
+}
 
 void moveSelection(int delta) {
     if (g_screen == SCR_SETTINGS) {
@@ -4133,7 +4231,9 @@ void digitPressed(int d) {
         return;
     }
     if (g_screen == SCR_HOME) return;
-    int idx = (g_screen == SCR_CONTACTS) ? d : d - 1;
+    const int ps = pageSize(g_screen);
+    int idx = (g_listSel / ps) * ps + ((g_screen == SCR_CONTACTS) ? d : d - 1);
+    if (d == 0 && g_screen != SCR_CONTACTS) return;
     if (idx < 0 || idx >= g_rowCount) return;
     g_listSel = idx;
     clampScroll(g_listSel, g_listScroll, g_rowCount);
@@ -4143,6 +4243,7 @@ void digitPressed(int d) {
 
 void cancelEntry() {
     if (g_entry == Entry::Message) { closeThread(); return; }
+    if (g_entry == Entry::Search) { g_filter[0] = 0; endEntry(); loadRows(g_screen); return; }
     endEntry();
 }
 
@@ -4150,6 +4251,7 @@ void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
     if (g_shareActive && !entryActive()) { g_shareActive = false; toast("Share cancelled"); return; }
+    if (g_filter[0] && !entryActive() && isListScreen(g_screen)) { g_filter[0] = 0; loadRows(g_screen); requestRedraw(); return; }
     if (mapview::isOpen() && !entryActive()) { closeMap(); return; }
     if (entryActive())           { cancelEntry(); return; }
     if (g_screen == SCR_SETTINGS && g_navDepth > 0) { popPage(); return; }
@@ -4238,6 +4340,10 @@ void commitEntry() {
         endEntry();
         return;
     }
+    case Entry::Search:                          // keep the filter, back to browsing
+        endEntry();
+        Serial.printf("[LIST] filter \"%s\": %d rows\n", g_filter, g_rowCount);
+        return;
     case Entry::PassOld: {                       // arg 0 = change, 1 = remove
         if (lockWaitS()) { toast("Wrong too often: wait %u s", (unsigned)lockWaitS()); return; }
         if (!vault::checkPassword(g_buf)) { lockNoteWrong(); endEntry(); toast("Wrong password"); return; }
@@ -4322,17 +4428,27 @@ void bufAppend(char c) {
     g_buf[g_bufLen] = 0;
 }
 
+void searchChanged() {
+    strlcpy(g_filter, g_buf, sizeof(g_filter));
+    g_listSel = 0;
+    g_listScroll = 0;
+    g_rememberValid[g_screen] = false;
+    loadRows(g_screen);
+}
+
 void entryKey(const KeyEvent& ev) {
     if (ev.enter) { commitEntry(); return; }
     if (ev.del) {
         if (g_bufLen) g_buf[--g_bufLen] = 0;
+        if (g_entry == Entry::Search) searchChanged();
         requestRedraw();
         return;
     }
     char c = 0;
     if (ev.space) {
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) c = '.';
-        else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass || passEntry(g_entry)) c = ' ';
+        else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass || passEntry(g_entry) ||
+                 g_entry == Entry::Search) c = ' ';
     } else if (ev.fn) {
         if (entryNumeric()) c = '0';          // MIC (+SYM) types 0 in number fields
     } else {
@@ -4351,7 +4467,9 @@ void entryKey(const KeyEvent& ev) {
     if (g_entry == Entry::Name && g_bufLen >= 23) { toast("Max 23 chars"); return; }
     if (g_entry == Entry::WifiPass && g_bufLen >= WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
     if (passEntry(g_entry) && g_bufLen >= kLockPassMax) { toast("Max 32 chars"); return; }
+    if (g_entry == Entry::Search && g_bufLen >= sizeof(g_filter) - 1) return;
     bufAppend(c);
+    if (g_entry == Entry::Search) searchChanged();
     // Show it on the next frame. Keys typed while that frame is on the panel are
     // queued by onPanelBusy() and land together in the frame after.
     requestRedraw();
@@ -4386,6 +4504,11 @@ void browseKey(const KeyEvent& ev) {
             if (g_screen == SCR_HOME) activateCurrent();
             break;
         case 'L': openMap(); break;
+        case 'F':                                   // find: type to filter the list
+            if (isListScreen(g_screen)) { startEntry(Entry::Search, g_filter); }
+            break;
+        case 'N': pageJump(+1); break;
+        case 'B': pageJump(-1); break;
         default: break;
     }
 }
@@ -5216,17 +5339,18 @@ void handleSerialLine(char* p) {
     } else if (!strncmp(p, "rmconv", 6) && (p[6] == 0 || p[6] == ' ')) {
         // Bench: "rmconv" lists conversations; "rmconv <peer>" deletes one; "rmconv all" deletes all.
         using namespace handheld::storage;
+        constexpr int kRmMax = 10;
         std::vector<std::string> peers;
         if (p[6] == ' ' && strlen(p + 7) == 32) peers.push_back(p + 7);
         else {
             auto sub = g_msgStore.requestConversationPage({}, false, ConversationOrder::Recent,
-                                                          ConversationDirection::After, (uint8_t)MAX_ROWS);
+                                                          ConversationDirection::After, (uint8_t)kRmMax);
             MessageStore::Result res;
-            ConversationSelector sel[MAX_ROWS];
+            ConversationSelector sel[kRmMax];
             size_t n = 0;
             if (sub.accepted() && waitResult(sub.ticket, res) && res.outcome == Outcome::Committed &&
                 res.error == Error::None) {
-                n = std::min(res.length / sizeof(ConversationSelector), (size_t)MAX_ROWS);
+                n = std::min(res.length / sizeof(ConversationSelector), (size_t)kRmMax);
                 if (!g_msgStore.readPayload(sub.ticket, sel, n * sizeof(ConversationSelector))) n = 0;
             }
             if (sub.accepted()) g_msgStore.releaseResult(sub.ticket);
@@ -5247,6 +5371,17 @@ void handleSerialLine(char* p) {
                           done && r.outcome == Outcome::Committed ? "deleted" : "failed");
         }
         requestRedraw();
+    } else if (!strncmp(p, "contact ", 8) && strlen(p) > 8 + 32 + 1) {
+        // Bench: contact <32 hex dest> <name>  - save a contact (sim list / paging tests)
+        uint8_t h[16];
+        bool ok = true;
+        for (int i = 0; i < 16 && ok; i++) {
+            const int a = hexNib(p[8 + 2 * i]), b = hexNib(p[9 + 2 * i]);
+            ok = a >= 0 && b >= 0;
+            h[i] = (uint8_t)((a << 4) | b);
+        }
+        if (ok) { saveContactName(h, p + 8 + 32 + 1); if (isListScreen(g_screen)) loadRows(g_screen); requestRedraw(); }
+        else Serial.println("[CMD] contact <32 hex dest> <name>");
     } else if (!strcmp(p, "id")) {
         Serial.printf("[ID] dest=%s name=%s\n", g_destHex, g_selfName);
     } else if (!strncmp(p, "txp", 3) && (p[3] == ' ' || p[3] == 0)) {
