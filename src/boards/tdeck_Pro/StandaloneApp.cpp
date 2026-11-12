@@ -5368,7 +5368,84 @@ void mirrorTick() {
     mirror::tick(g_display.framebuffer(), g_display.width(), g_display.height(), st);
 }
 
-void sdputStart(const char* args);
+// ---- sdput: file upload to the SD card over USB (tools/maptiles/push_tiles.py) ---------
+// "sdput <len> <crc32 hex> <path>" (path under /ratdeckpro, e.g. /maps/9/150/180.rmt).
+// The device answers "[SDPUT] ready", then reads exactly <len> raw bytes (no line
+// parsing meanwhile), checks the CRC-32 and writes the file: "[SDPUT] ok" or
+// "[SDPUT] err <why>". Payload is sent only after "ready", so a refused command (locked,
+// bad args) never lets binary bytes reach the line parser.
+constexpr size_t kSdPutMax = 16384;
+uint8_t* g_putBuf = nullptr;
+size_t   g_putLen = 0, g_putGot = 0;
+uint32_t g_putCrc = 0, g_putAt = 0;
+char     g_putPath[96] = "";
+bool     g_putActive = false;
+
+uint32_t crc32Of(const uint8_t* d, size_t n) {
+    uint32_t c = 0xFFFFFFFFu;
+    for (size_t i = 0; i < n; i++) {
+        c ^= d[i];
+        for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+    }
+    return ~c;
+}
+
+void sdputStart(const char* args) {
+    unsigned long len = 0, crc = 0;
+    char rel[80] = "";
+    if (sscanf(args, "%lu %lx %79s", &len, &crc, rel) != 3 || !len || len > kSdPutMax || rel[0] != '/' ||
+        strstr(rel, "..")) {
+        Serial.println("[SDPUT] err usage: sdput <len 1-16384> <crc32 hex> </path under ratdeckpro>");
+        return;
+    }
+    if (!g_putBuf) {
+#if !defined(SIMULATOR)
+        g_putBuf = (uint8_t*)heap_caps_malloc(kSdPutMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+        if (!g_putBuf) g_putBuf = (uint8_t*)malloc(kSdPutMax);
+        if (!g_putBuf) { Serial.println("[SDPUT] err no memory"); return; }
+    }
+    if (!sdMount()) { Serial.println("[SDPUT] err no SD card"); return; }
+    g_putLen = len; g_putGot = 0; g_putCrc = (uint32_t)crc; g_putAt = millis();
+    snprintf(g_putPath, sizeof(g_putPath), "%s%s", SD_PATH_ROOT, rel);
+    g_putActive = true;
+    Serial.println("[SDPUT] ready");
+}
+
+void sdputFinish() {
+    g_putActive = false;
+    if (crc32Of(g_putBuf, g_putLen) != g_putCrc) { Serial.println("[SDPUT] err crc"); return; }
+    static char lastDir[96] = "";
+    char dir[96];
+    snprintf(dir, sizeof(dir), "%s", g_putPath);
+    if (char* slash = strrchr(dir, '/')) *slash = 0;
+    if (strcmp(dir, lastDir) != 0) {            // tiles arrive grouped by folder
+        if (!g_sdStore.ensureDir(dir)) { lastDir[0] = 0; Serial.println("[SDPUT] err mkdir"); return; }
+        snprintf(lastDir, sizeof(lastDir), "%s", dir);
+    }
+    if (!g_sdStore.writeSimple(g_putPath, g_putBuf, g_putLen)) { lastDir[0] = 0; Serial.println("[SDPUT] err write"); return; }
+    Serial.println("[SDPUT] ok");
+}
+
+// Returns true while a payload is being received (the line parser must not run).
+bool sdputPoll() {
+    if (!g_putActive) return false;
+    while (g_putGot < g_putLen && Serial.available()) {
+#if !defined(SIMULATOR)
+        const size_t got = Serial.read(g_putBuf + g_putGot, g_putLen - g_putGot);
+        if (!got) break;
+        g_putGot += got;
+#else
+        const int b = Serial.read();
+        if (b < 0) break;
+        g_putBuf[g_putGot++] = (uint8_t)b;
+#endif
+        g_putAt = millis();
+    }
+    if (g_putGot >= g_putLen) { sdputFinish(); return false; }
+    if (millis() - g_putAt > 3000) { g_putActive = false; Serial.println("[SDPUT] err timeout"); }
+    return g_putActive;
+}
 
 void handleSerialLine(char* p) {
     while (*p == ' ') p++;
@@ -5574,15 +5651,41 @@ void handleSerialLine(char* p) {
         Serial.printf("[SD] message archive setting %s (applies at next boot)\n", sdArchiveEnabled() ? "on" : "off");
     } else if (!strncmp(p, "sdput ", 6)) {
         sdputStart(p + 6);
-    } else if (!strcmp(p, "sdls") || !strncmp(p, "sdls ", 5)) {
+    } else if (!strncmp(p, "sdget ", 6)) {
+        // Read one SD file (absolute card path, <= 16 KB): "[SDGET] <len> <crc32 hex>", then
+        // exactly <len> raw bytes (tools/maptiles/copy_tiles.py checks the CRC).
+        const char* path = p + 6;
+        if (!sdMount()) { Serial.println("[SDGET] err no SD card"); return; }
+        if (!g_putBuf) {
+#if !defined(SIMULATOR)
+            g_putBuf = (uint8_t*)heap_caps_malloc(kSdPutMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+            if (!g_putBuf) g_putBuf = (uint8_t*)malloc(kSdPutMax);
+            if (!g_putBuf) { Serial.println("[SDGET] err no memory"); return; }
+        }
+        size_t n = 0;
+        if (!g_sdStore.readFile(path, g_putBuf, kSdPutMax, n)) { Serial.println("[SDGET] err read"); return; }
+        Serial.printf("[SDGET] %u %08lx\n", (unsigned)n, (unsigned long)crc32Of(g_putBuf, n));
+        Serial.write(g_putBuf, n);
+        Serial.flush();
+    } else if (!strncmp(p, "sdrm ", 5)) {
+        // Delete one SD file, or an EMPTY folder (absolute card path). No recursion.
+        const char* path = p + 5;
+        if (!sdMount() || !path[0] || !strcmp(path, "/")) { Serial.println("[SDRM] err"); return; }
+        bool ok = g_sdStore.remove(path) || g_sdStore.removeDir(path);
+        Serial.printf("[SDRM] %s %s\n", ok ? "ok" : "err", path);
+    } else if (!strcmp(p, "sdls") || !strncmp(p, "sdls ", 5) || !strncmp(p, "sdlsa ", 6)) {
         // List one SD folder (absolute card path, default "/"): name, size or <dir>.
-        const char* dirPath = p[4] ? p + 5 : "/";
+        // sdls shows the first 80 entries; sdlsa (for tools) shows all of them.
+        const bool all = p[4] == 'a';
+        const char* dirPath = all ? p + 6 : (p[4] ? p + 5 : "/");
         if (!sdMount()) { Serial.println("[SD] no card"); return; }
         File d = g_sdStore.openDir(dirPath);
-        if (!d) { Serial.printf("[SD] cannot open %s\n", dirPath); return; }
+        if (!d) { Serial.printf("[SDLS] cannot open %s\n", dirPath); return; }
         int n = 0;
         for (File e = d.openNextFile(); e; e = d.openNextFile()) {
-            if (n++ < 80) {
+            if (all || n++ < 80) {
+                if (all) n++;
                 if (e.isDirectory()) Serial.printf("[SDLS] <dir> %s\n", e.name());
                 else Serial.printf("[SDLS] %10lu %s\n", (unsigned long)e.size(), e.name());
             }
@@ -5768,85 +5871,6 @@ void handleSerialLine(char* p) {
     } else {
         Serial.println("[CMD] t:<msg> a h i c p s d g gp gr pw pm<0-3> pset bench<s> blog<0|1> usbsleep<s> rxdc<0|2-8> dctcxo<ms> fe<0|1> ev txp<dBm> msg id name energy rl sleeptest L FORMAT");
     }
-}
-
-// ---- sdput: file upload to the SD card over USB (tools/maptiles/push_tiles.py) ---------
-// "sdput <len> <crc32 hex> <path>" (path under /ratdeckpro, e.g. /maps/9/150/180.rmt).
-// The device answers "[SDPUT] ready", then reads exactly <len> raw bytes (no line
-// parsing meanwhile), checks the CRC-32 and writes the file: "[SDPUT] ok" or
-// "[SDPUT] err <why>". Payload is sent only after "ready", so a refused command (locked,
-// bad args) never lets binary bytes reach the line parser.
-constexpr size_t kSdPutMax = 16384;
-uint8_t* g_putBuf = nullptr;
-size_t   g_putLen = 0, g_putGot = 0;
-uint32_t g_putCrc = 0, g_putAt = 0;
-char     g_putPath[96] = "";
-bool     g_putActive = false;
-
-uint32_t crc32Of(const uint8_t* d, size_t n) {
-    uint32_t c = 0xFFFFFFFFu;
-    for (size_t i = 0; i < n; i++) {
-        c ^= d[i];
-        for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
-    }
-    return ~c;
-}
-
-void sdputStart(const char* args) {
-    unsigned long len = 0, crc = 0;
-    char rel[80] = "";
-    if (sscanf(args, "%lu %lx %79s", &len, &crc, rel) != 3 || !len || len > kSdPutMax || rel[0] != '/' ||
-        strstr(rel, "..")) {
-        Serial.println("[SDPUT] err usage: sdput <len 1-16384> <crc32 hex> </path under ratdeckpro>");
-        return;
-    }
-    if (!g_putBuf) {
-#if !defined(SIMULATOR)
-        g_putBuf = (uint8_t*)heap_caps_malloc(kSdPutMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#endif
-        if (!g_putBuf) g_putBuf = (uint8_t*)malloc(kSdPutMax);
-        if (!g_putBuf) { Serial.println("[SDPUT] err no memory"); return; }
-    }
-    if (!sdMount()) { Serial.println("[SDPUT] err no SD card"); return; }
-    g_putLen = len; g_putGot = 0; g_putCrc = (uint32_t)crc; g_putAt = millis();
-    snprintf(g_putPath, sizeof(g_putPath), "%s%s", SD_PATH_ROOT, rel);
-    g_putActive = true;
-    Serial.println("[SDPUT] ready");
-}
-
-void sdputFinish() {
-    g_putActive = false;
-    if (crc32Of(g_putBuf, g_putLen) != g_putCrc) { Serial.println("[SDPUT] err crc"); return; }
-    static char lastDir[96] = "";
-    char dir[96];
-    snprintf(dir, sizeof(dir), "%s", g_putPath);
-    if (char* slash = strrchr(dir, '/')) *slash = 0;
-    if (strcmp(dir, lastDir) != 0) {            // tiles arrive grouped by folder
-        if (!g_sdStore.ensureDir(dir)) { lastDir[0] = 0; Serial.println("[SDPUT] err mkdir"); return; }
-        snprintf(lastDir, sizeof(lastDir), "%s", dir);
-    }
-    if (!g_sdStore.writeSimple(g_putPath, g_putBuf, g_putLen)) { lastDir[0] = 0; Serial.println("[SDPUT] err write"); return; }
-    Serial.println("[SDPUT] ok");
-}
-
-// Returns true while a payload is being received (the line parser must not run).
-bool sdputPoll() {
-    if (!g_putActive) return false;
-    while (g_putGot < g_putLen && Serial.available()) {
-#if !defined(SIMULATOR)
-        const size_t got = Serial.read(g_putBuf + g_putGot, g_putLen - g_putGot);
-        if (!got) break;
-        g_putGot += got;
-#else
-        const int b = Serial.read();
-        if (b < 0) break;
-        g_putBuf[g_putGot++] = (uint8_t)b;
-#endif
-        g_putAt = millis();
-    }
-    if (g_putGot >= g_putLen) { sdputFinish(); return false; }
-    if (millis() - g_putAt > 3000) { g_putActive = false; Serial.println("[SDPUT] err timeout"); }
-    return g_putActive;
 }
 
 void pollSerial() {

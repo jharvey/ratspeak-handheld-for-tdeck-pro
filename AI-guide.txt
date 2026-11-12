@@ -194,7 +194,12 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
                   "[SDPUT] ready", then reads <len> raw bytes -> "[SDPUT] ok|err".
                   Use tools/maptiles/push_tiles.py (~7 tiles/s; USB RX queue raised
                   to 17 KB in main.cpp, the 256-byte default dropped bytes)
-  sdls [/path]    list an SD folder (absolute card path)
+  sdls [/path]    list an SD folder (absolute card path; sdlsa = all entries, for tools)
+  sdget </path>   read an SD file (<= 16 KB): "[SDGET] <len> <crc32>" + raw bytes
+                  (tools/maptiles/copy_tiles.py: card-to-card copy through the PC)
+  sdrm </path>    delete an SD file or an empty folder (free space updates after a
+                  remount/reboot)
+  The simulator's serial is line-based: sdput works there, sdget does not (binary out).
   map | map <lat> <lon> [z] | map close   offline map (key L on list screens; tiles on SD)
   sdinfo | sdarc 0|1   SD status / message archive setting (applies at next boot)
   maptest <lat> <lon>  bench: write 18 grid test tiles (z14-15) around a point to the SD card

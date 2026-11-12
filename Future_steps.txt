@@ -99,6 +99,26 @@ UI / UX
   per region/zoom + index) instead of millions of loose .rmt files: much faster to copy to
   the card, mostly-white tiles shrink 5-20x, skip empty ocean tiles. Target: US to z13-14 on
   a 32 GB card, z15-16 for chosen home areas.
+  Status 2026-11-12: COM5/COM6/COM9 carry USGS topo US z3-10 + Maine z9-13 as loose .rmt,
+  loaded over USB (sdput / push_tiles.py, ~7 tiles/s; card-to-card copy_tiles.py relays
+  sdget -> sdput through the PC, nothing stored on it). Loose files cost 32 KB each on the
+  stock 32 KB-cluster FAT32 cards (4x the 8 KB tile) and one FAT write per tile is what
+  limits speed, so pack files (above) are also the fix for copy speed.
+- Share maps unit-to-unit over WiFi without a router (user asked 2026-11-12). Medium job:
+  ESP-NOW (no AP, no pairing UI, 250 B frames v1 / 1470 B v2, a few hundred KB/s) or one
+  unit as a SoftAP + HTTP file server the other pulls from (~1 MB/s, simpler resume).
+  Needs: a "Share maps" / "Receive maps" screen, region/zoom pick, progress, resume, and
+  pack files (loose tiles make the receiving card's FAT writes the bottleneck either way).
+  WiFi radio is shared with the client mode: pause it while sharing.
+- USB mass-storage mode (user asked 2026-11-12): show the SD card as a USB drive on the PC
+  (ESP32-S3 TinyUSB MSC) so maps can be dragged on without a card reader. Needs the
+  TinyUSB USB stack (ARDUINO_USB_MODE=0) instead of USB Serial/JTAG while in that mode, so
+  the console and esptool auto-reset need care; a Settings > Storage "USB drive" toggle
+  that reboots into MSC and back. Faster than sdput (bulk USB, no per-file round trip).
+- Unit-to-unit USB (OTG) copy: the ESP32-S3 has USB OTG, but host mode must supply 5 V on
+  VBUS to the other unit; the T-Deck Pro's USB-C is wired as a charge input, so check the
+  schematic before planning this. Likely not possible without hardware changes; WiFi
+  (above) is the practical unit-to-unit path.
 - Map heading: the BHI260AP IMU has accel + gyro; the factory code never enables a
   magnetometer and no BMM150 is known on the board -> probably no true compass. Options:
   GPS course-over-ground arrow while moving (RMC field 8); confirm with an I2C scan / the

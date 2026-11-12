@@ -27,6 +27,12 @@ python push_tiles.py --port COM9 --src sdcard            # resumes; lowest zoom 
 python push_tiles.py --port COM9 --src sdcard --zoom 13  # just one level
 ```
 
+Card to card, both units on USB, nothing kept on the PC (about 4-5 tiles/s):
+
+```
+python copy_tiles.py --from COM9 --to COM6 --zoom 13
+```
+
 About 7 tiles/s (a 6,000-tile set takes 15 min). Progress is kept per unit in
 `sdcard/pushed_<dest>.txt`; it stops when the card has less than 200 MB free. On a
 32 KB-cluster FAT32 card each 8 KB tile takes 32 KB. Console `sdls /ratdeckpro/maps`
