@@ -5,15 +5,25 @@
 #include <stdlib.h>
 #include <string.h>
 #include <utility>
-#if !defined(SIMULATOR)
+#if defined(SIMULATOR)
+#include "miniz.h"                    // sim/third_party/miniz (MIT)
+#else
 #include <esp_heap_caps.h>
+#include <esp32s3/rom/miniz.h>        // the inflater in the ESP32-S3's ROM
 #endif
 
 namespace mapview {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
-constexpr int kCacheSlots = 6;   // a 240x224 view touches at most 4 tiles; 2 spare for panning
+// Inflated tiles kept in PSRAM (8 KB each, ~1.3 MB): a view touches at most 4, the rest make
+// panning back and forth and zooming in and out again free (no card read, no inflate).
+constexpr int kCacheSlots = 160;
+// Pack files (tools/maptiles/make_packs.py): one per 64x64 tiles of a zoom; their 32 KB
+// index is kept for the last few packs used.
+constexpr int kPackShift = 6, kPackSide = 1 << kPackShift;
+constexpr size_t kPackHeader = 16, kPackIndex = kPackSide * kPackSide * 8;
+constexpr int kPackSlots = 4;
 
 struct Tile {
     int z = -1, x = 0, y = 0;
@@ -22,10 +32,20 @@ struct Tile {
     uint8_t* bits = nullptr;     // kTileBytes, allocated once
 };
 
+struct Pack {
+    int z = -1;
+    uint32_t bx = 0, by = 0;
+    bool present = false;        // false = no pack file for this block (loose tiles only)
+    uint32_t used = 0;
+    uint8_t* head = nullptr;     // kPackHeader + kPackIndex, allocated once
+};
+
 TileReader g_reader = nullptr;
 Tile g_cache[kCacheSlots];
+Pack g_packs[kPackSlots];
 uint8_t* g_io = nullptr;         // header + tile read buffer
-uint32_t g_clock = 0, g_loaded = 0, g_missing = 0, g_hits = 0;
+tinfl_decompressor* g_inflater = nullptr;
+uint32_t g_clock = 0, g_loaded = 0, g_missing = 0, g_hits = 0, g_packed = 0;
 
 bool g_open = false;
 int g_zoom = kDefaultZoom;
@@ -56,6 +76,56 @@ uint8_t* bigAlloc(size_t n) {
     if (void* p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) return (uint8_t*)p;
 #endif
     return (uint8_t*)malloc(n);
+}
+
+uint32_t rd32(const uint8_t* p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
+
+void packPath(char* out, size_t n, int z, uint32_t bx, uint32_t by) {
+    snprintf(out, n, "/maps/packs/%d/%lu_%lu.rmp", z, (unsigned long)bx, (unsigned long)by);
+}
+
+// The index of the pack holding block (bx, by) of zoom z, read on first use.
+Pack* pack(int z, uint32_t bx, uint32_t by) {
+    Pack* victim = &g_packs[0];
+    for (auto& p : g_packs) {
+        if (p.z == z && p.bx == bx && p.by == by) { p.used = ++g_clock; return &p; }
+        if (p.used < victim->used) victim = &p;
+    }
+    if (!victim->head) victim->head = bigAlloc(kPackHeader + kPackIndex);
+    if (!victim->head) return nullptr;
+    victim->z = z; victim->bx = bx; victim->by = by; victim->used = ++g_clock;
+    char path[48];
+    packPath(path, sizeof(path), z, bx, by);
+    const uint8_t* h = victim->head;
+    victim->present = g_reader && g_reader(path, 0, victim->head, kPackHeader + kPackIndex) ==
+                                      kPackHeader + kPackIndex &&
+                      !memcmp(h, "RMP1", 4) && h[4] == z && h[5] == kPackShift &&
+                      rd32(h + 8) == bx && rd32(h + 12) == by;
+    return victim;
+}
+
+// A packed tile: raw deflate of the 8192 bitmap bytes, or the bytes themselves (len 8192).
+bool unpackTile(const uint8_t* src, size_t len, uint8_t* out) {
+    if (len == kTileBytes) { memcpy(out, src, kTileBytes); return true; }
+    if (!g_inflater) g_inflater = (tinfl_decompressor*)bigAlloc(sizeof(tinfl_decompressor));
+    if (!g_inflater) return false;
+    tinfl_init(g_inflater);
+    size_t inLen = len, outLen = kTileBytes;
+    const tinfl_status st = tinfl_decompress(g_inflater, (const mz_uint8*)src, &inLen, (mz_uint8*)out,
+                                             (mz_uint8*)out, &outLen,
+                                             TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    return st == TINFL_STATUS_DONE && outLen == kTileBytes;
+}
+
+bool readPacked(int z, int x, int y, uint8_t* out) {
+    Pack* p = pack(z, (uint32_t)x >> kPackShift, (uint32_t)y >> kPackShift);
+    if (!p || !p->present) return false;
+    const uint8_t* e = p->head + kPackHeader + ((y & (kPackSide - 1)) * kPackSide + (x & (kPackSide - 1))) * 8;
+    const uint32_t off = rd32(e), len = rd32(e + 4);
+    if (!len || len > kTileBytes) return false;
+    char path[48];
+    packPath(path, sizeof(path), z, p->bx, p->by);
+    return g_reader(path, off, g_io, len) == len && unpackTile(g_io, len, out);
 }
 
 double worldSize(int z) { return (double)kTileSize * (double)(1u << z); }
@@ -97,9 +167,15 @@ Tile* tile(int z, int x, int y) {
     if (!g_io) g_io = bigAlloc(kHeaderBytes + kTileBytes);
     if (!victim->bits || !g_io) return nullptr;
     victim->z = z; victim->x = x; victim->y = y; victim->used = ++g_clock; victim->present = false;
+    if (readPacked(z, x, y, victim->bits)) {
+        victim->present = true;
+        ++g_loaded;
+        ++g_packed;
+        return victim;
+    }
     char path[48];
     snprintf(path, sizeof(path), "/maps/%d/%d/%d.rmt", z, x, y);
-    const size_t got = g_reader ? g_reader(path, g_io, kHeaderBytes + kTileBytes) : 0;
+    const size_t got = g_reader ? g_reader(path, 0, g_io, kHeaderBytes + kTileBytes) : 0;
     if (got == kHeaderBytes + kTileBytes && !memcmp(g_io, "RMT1", 4) &&
         (g_io[4] | g_io[5] << 8) == kTileSize && (g_io[6] | g_io[7] << 8) == kTileSize) {
         memcpy(victim->bits, g_io + kHeaderBytes, kTileBytes);
@@ -172,9 +248,10 @@ void open(double lat, double lon, bool havePos, bool follow) {
         everCentred = true;
     }
     g_open = true;
-    g_loaded = g_missing = g_hits = 0;
-    // A card swapped since the last visit: forget "missing" tiles.
+    g_loaded = g_missing = g_hits = g_packed = 0;
+    // A card swapped since the last visit: forget "missing" tiles and the pack indexes.
     for (auto& t : g_cache) if (!t.present) t.z = -1;
+    for (auto& p : g_packs) p.z = -1;
 }
 
 void close() { g_open = false; }
@@ -498,5 +575,7 @@ bool key(char c, bool enter) {
 void stats(uint32_t& loaded, uint32_t& missing, uint32_t& hits) {
     loaded = g_loaded; missing = g_missing; hits = g_hits;
 }
+
+uint32_t packedLoaded() { return g_packed; }
 
 }  // namespace mapview

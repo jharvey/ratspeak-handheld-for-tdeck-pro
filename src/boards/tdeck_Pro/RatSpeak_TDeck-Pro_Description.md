@@ -736,8 +736,12 @@ tiles show a dotted grid and "no tiles".
 Tiles are 256×256 Web-Mercator tiles, converted on a PC to a 1-bit format
 (`.rmt`, 8 KB each) by `tools/maptiles/make_tiles.py` (from an MBTiles export or a tile
 server whose terms allow offline use; `--test` makes labelled grid tiles) and copied to
-`<SD>/ratdeckpro/maps/<z>/<x>/<y>.rmt`. See `tools/maptiles/README.md`. Six tiles stay in
-PSRAM; the SD card is mounted on the first map visit. On COM9: 4 tiles load and the
+`<SD>/ratdeckpro/maps/<z>/<x>/<y>.rmt`, or (preferred) deflated into pack files
+`<SD>/ratdeckpro/maps/packs/<z>/<bx>_<by>.rmp` (64×64 tiles each, `tools/maptiles/make_packs.py`;
+2.5–4× smaller for USGS topo, far more for the world base map) that the unit inflates with
+the ESP32-S3's ROM inflater; a tile missing from the packs is read loose. See
+`tools/maptiles/README.md`. 160 inflated tiles stay in PSRAM (~1.3 MB), so panning back
+and zooming out again need no card read; the SD card is mounted on the first map visit. On COM9: 4 tiles load and the
 frame builds in 156 ms; the e-ink full refresh is 1.1 s. Console: `map`,
 `map <lat> <lon> [zoom]`, `map close`; bench `maptest <lat> <lon>` writes 18 grid test
 tiles (z14–15) to the card (2.1 s).
@@ -752,7 +756,8 @@ back to the list, again to close. Plain text only (.txt / .md / .csv); a PDF nee
 version first. Copy files over USB without removing the card:
 
 ```
-python tools/sdcard/push_files.py --port COM5 M:atspeak-inforequencies_quick_reference.txt
+python tools/sdcard/push_files.py --port COM5 M:
+atspeak-inforequencies_quick_reference.txt
 ```
 
 (8 KB pieces through `sdput <len> <crc> <path> <offset>`; any size.)

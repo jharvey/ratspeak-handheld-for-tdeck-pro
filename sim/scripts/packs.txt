@@ -1,0 +1,40 @@
+# Map pack files (tools/maptiles/make_packs.py): the same view drawn from loose tiles and from
+# packs must match. Run once on a device with loose tiles (cmap) and once on one with only
+# packs under sd\ratdeckpro\maps\packs, then compare the shots:
+#   run-script.bat scripts\packs.txt cmap      and      run-script.bat scripts\packs.txt packsim
+wait 9000
+serial map 43.64 -70.92 9
+expect 4000 [MAP] open
+wait 1500
+serial map
+expect 3000 tiles loaded
+devshot packs_z9.png
+key Z
+wait 1200
+key Z
+wait 1200
+devshot packs_z11.png
+key Z
+wait 1200
+key Z
+wait 1200
+devshot packs_z13.png
+key D
+wait 1200
+key D
+wait 1200
+devshot packs_z13_east.png
+key X
+wait 1200
+key X
+wait 1200
+key X
+wait 1200
+key X
+wait 1200
+devshot packs_z9_again.png
+serial map
+expect 3000 tiles loaded
+key BACK
+expect 3000 [MAP] closed
+quit

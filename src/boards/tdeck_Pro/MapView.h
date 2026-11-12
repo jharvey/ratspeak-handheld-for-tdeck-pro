@@ -22,9 +22,10 @@ constexpr size_t kTileBytes = kTileSize * kTileSize / 8;   // 8192
 constexpr size_t kHeaderBytes = 8;
 constexpr int kMinZoom = 1, kMaxZoom = 18, kDefaultZoom = 14;
 
-// Reads the whole file at `path` (relative, e.g. "/maps/14/4578/5978.rmt") into `buf`.
+// Reads up to `len` bytes at `offset` of the file at `path` (relative, e.g.
+// "/maps/14/4578/5978.rmt" or "/maps/packs/14/71_93.rmp") into `buf`.
 // Returns the number of bytes read, 0 if absent or unreadable.
-using TileReader = size_t (*)(const char* path, uint8_t* buf, size_t capacity);
+using TileReader = size_t (*)(const char* path, uint32_t offset, uint8_t* buf, size_t len);
 using PixelFn = void (*)(int x, int y, bool black);
 
 void setReader(TileReader reader);
@@ -81,5 +82,6 @@ void setGuide(bool on, double lat = 0, double lon = 0);
 
 // Cache stats for the console: tiles loaded / missing since open.
 void stats(uint32_t& loaded, uint32_t& missing, uint32_t& hits);
+uint32_t packedLoaded();   // of the tiles loaded, how many came out of pack files
 
 }  // namespace mapview

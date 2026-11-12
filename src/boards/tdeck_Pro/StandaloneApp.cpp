@@ -4190,7 +4190,7 @@ void drawMenuOverlay() {
 // ---- Offline map (MapView.cpp; tiles from the SD card) ----------------------------------
 bool g_mapSdTried = false;
 
-size_t mapReadTile(const char* rel, uint8_t* buf, size_t cap) {
+size_t mapReadTile(const char* rel, uint32_t offset, uint8_t* buf, size_t len) {
     if (!g_sdMounted) {
         if (g_mapSdTried) return 0;          // one mount attempt per map visit
         g_mapSdTried = true;
@@ -4201,7 +4201,8 @@ size_t mapReadTile(const char* rel, uint8_t* buf, size_t cap) {
     if (!g_sdStore.exists(path)) return 0;
     File f = g_sdStore.openFile(path, FILE_READ);
     if (!f) return 0;
-    size_t n = f.size() <= cap ? f.read(buf, f.size()) : 0;
+    size_t n = 0;
+    if (offset < f.size() && (offset == 0 || f.seek(offset))) n = f.read(buf, len);
     f.close();
     return n;
 }
@@ -4262,7 +4263,7 @@ void openMap() {
     int homeZoom = 0;
     if (!have) {
         char txt[48] = "";
-        const size_t n = mapReadTile("/maps/home.txt", (uint8_t*)txt, sizeof(txt) - 1);
+        const size_t n = mapReadTile("/maps/home.txt", 0, (uint8_t*)txt, sizeof(txt) - 1);
         txt[n < sizeof(txt) ? n : sizeof(txt) - 1] = 0;
         if (n && sscanf(txt, "%lf %lf %d", &lat, &lon, &homeZoom) >= 2) { cardHome = true; how = "card home"; }
     }
@@ -5867,7 +5868,7 @@ bool paintIdleMap() {
     if (!have) {
         char txt[48] = "";
         int z = 0;
-        const size_t n = mapReadTile("/maps/home.txt", (uint8_t*)txt, sizeof(txt) - 1);
+        const size_t n = mapReadTile("/maps/home.txt", 0, (uint8_t*)txt, sizeof(txt) - 1);
         txt[n < sizeof(txt) ? n : sizeof(txt) - 1] = 0;
         have = n && sscanf(txt, "%lf %lf %d", &lat, &lon, &z) >= 2;
     }
@@ -7302,9 +7303,9 @@ void handleSerialLine(char* p) {
         } else if (!mapview::isOpen()) openMap();   // "map" on an open map: status only
         char st[64]; mapview::status(st, sizeof(st));
         uint32_t ld, ms, hi; mapview::stats(ld, ms, hi);
-        Serial.printf("[MAP] %s %s; tiles loaded %lu missing %lu cache hits %lu\n",
-                      mapview::isOpen() ? "open" : "closed", st, (unsigned long)ld, (unsigned long)ms,
-                      (unsigned long)hi);
+        Serial.printf("[MAP] %s %s; tiles loaded %lu (packed %lu) missing %lu cache hits %lu\n",
+                      mapview::isOpen() ? "open" : "closed", st, (unsigned long)ld,
+                      (unsigned long)mapview::packedLoaded(), (unsigned long)ms, (unsigned long)hi);
     } else if (!strncmp(p, "maptest ", 8)) {
         // Bench: write labelled grid test tiles (3x3 at z14 and z15) around <lat> <lon> on the SD card.
         double la = 0, lo = 0;

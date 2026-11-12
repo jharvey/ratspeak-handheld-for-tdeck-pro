@@ -11,6 +11,32 @@ the device needs no image decoder.
 Each `.rmt` file is `RMT1`, then width and height as uint16 little-endian (256, 256), then
 8192 bytes: row-major, most significant bit first, bit 1 = black. About 8 KB per tile.
 
+## Pack files (compressed; preferred)
+
+Loose tiles waste space (each takes a whole 8 KB cluster, 32 KB on a stock card) and copy
+slowly (one FAT write per tile). `make_packs.py` deflates the tiles into one file per 64×64
+tiles of a zoom level:
+
+```
+<SD card>/ratdeckpro/maps/packs/<z>/<bx>_<by>.rmp        bx = x >> 6, by = y >> 6
+python make_packs.py --out M:/ratspeak-maps/packed  M:/ratspeak-maps/mapsd  M:/ratspeak-maps/world
+```
+
+Sources are folders of loose tiles, the preferred first (detailed maps before the world
+base map). Re-running rebuilds only packs older than their tiles. USGS topo tiles pack to
+~2-3.5 KB (2.5-4x), world base-map tiles to 0.1-0.4 KB. The unit inflates a tile with the
+inflater in the ESP32-S3's ROM (about a millisecond) and keeps 160 inflated tiles in PSRAM;
+where a pack has no tile it still reads the loose `.rmt`, so both can be on one card.
+Copy packs to a unit over USB with `../sdcard/push_files.py`:
+
+```
+python ../sdcard/push_files.py --port COM5 --root M:/ratspeak-maps/packed/ratdeckpro maps/packs/9 maps/packs/10
+```
+
+Format: `RMP1`, u8 z, u8 6, u16 0, u32 bx, u32 by, then 4096 × (u32 offset, u32 length)
+indexed by `(y & 63) * 64 + (x & 63)` (length 0 = no tile), then the tiles: raw deflate of the
+8192 bitmap bytes, or the 8192 bytes as they are when the length is 8192.
+
 ## Make tiles
 
 ```
