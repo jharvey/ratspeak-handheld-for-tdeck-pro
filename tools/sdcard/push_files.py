@@ -3,7 +3,7 @@
 
     pip install pyserial
     python push_files.py --port COM5 notes\\*.txt                 # -> /ratdeckpro/library/
-    python push_files.py --port COM5 --dest /library ghostnet.txt
+    python push_files.py --port COM5 --dest library ghostnet.txt   (folder under /ratdeckpro)
     python push_files.py --port socket://127.0.0.1:5591 a.txt    # simulator (--serial-tcp)
 
 Uses the firmware's `sdput` command in pieces of 8 KB (the first piece writes the file,
@@ -32,6 +32,7 @@ def put_piece(dev, rel, data, offset):
         if m and "locked" in ln:
             sys.exit("the unit is locked: unlock it first")
         if not m or m.group(1) != "ready":
+            print("    %s @%d: %s" % (rel, offset, ln or "no answer to sdput"), flush=True)
             if ln and "offset" in ln:
                 return False                 # file length differs: caller restarts the file
             dev.drain()
@@ -40,6 +41,7 @@ def put_piece(dev, rel, data, offset):
         m, ln = dev.wait(r"\[SDPUT\] (ok|err.*)", 15)
         if m and m.group(1) == "ok":
             return True
+        print("    %s @%d: %s" % (rel, offset, ln or "no answer"), flush=True)
         dev.drain(1.0)
     return False
 
@@ -67,6 +69,12 @@ def main():
     ap.add_argument("--dest", default="/library", help="folder under /ratdeckpro (default /library)")
     ap.add_argument("files", nargs="+")
     a = ap.parse_args()
+    # Git Bash (MSYS) turns "/library" into "C:/Program Files/Git/library": undo that, and
+    # accept "library" without the slash.
+    dest = a.dest.replace("\\", "/")
+    if ":" in dest:
+        dest = "/" + dest.rstrip("/").split("/")[-1]
+    a.dest = dest if dest.startswith("/") else "/" + dest
     paths = [p for pat in a.files for p in (glob.glob(pat) or [pat])]
     dev = Dev(a.port)
     dev.drain(1.0)
