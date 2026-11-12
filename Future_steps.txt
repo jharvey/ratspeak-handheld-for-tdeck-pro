@@ -81,7 +81,11 @@ Boot / first impression
 UI / UX
 -------
 - DONE - Theme toggle: white paper (default) vs black ink background
-- Settings full parity with Plus (WiFi client, TCP, GPS time, identity create/erase)
+- DONE (sim; TCP device-only) - Settings parity with Plus: WiFi client + GPS time were already in;
+  added TCP hub client (S.2.6, TcpClientSet) and identity slots (S.6.5 new / switch / erase).
+  Next: try TCP against a hub on hardware (not done: needs WiFi + a hub); WiFi AP mode and
+  AutoInterface (LAN) not added - they need the Plus NetworkCoordinator; identity import
+  from SD not added (no file picker).
 - DONE - Contacts rename closer to Plus (context menu: Save Contact / Message / Close)
 - DONE - Inbox delivery status polish (queued / sent / delivered / fail)
 - DONE - Scroll indicators on long lists (Contacts, Peers, Settings)
@@ -109,12 +113,16 @@ Robustness to verify (before the stress-test pass)
   the oldest delivered messages past a high-water mark, keep a reserve for identity/ratchet
   files, show "storage full" instead of silently dropping.
 - Same for a full SD card (archive + map tiles).
-- IN PROGRESS - add a idle screen options, after like 1 min you need password to gain access to device, screen is blank when idle. 
+- DONE (sim + COM5) - idle screen password lock: S.3.2 "On + password" (password = vault password,
+  starts as "ratspeak"), boot lock, lockout after 3 wrong tries, messages keep arriving.
+  Next: optional fully blank splash (no time/unread) and a duress/wipe-after-N option. 
 - DONE - add manual refresh button, for ghosting issues. Do full screen refresh. 
 - DONE - add GPS clock displayed on idle screen / header. 
 - DONE - add battery / charge indicator. Lighting bolt in the battery icon, or a plug icon? Something to say it's getting power over USB. 
 - DONE - incrase keypad refresh rate (key queue read during e-ink refresh)
-- add share contact option. If you click a contact, offer a share button, where you can share it with other contacts in your list. 
+- DONE (sim, two devices) - share contact: contact page (Message / Rename / Share), card sent as
+  "Contact card: <name>\n<hash>" LXMF text, receiver saves it with Enter.
+  Next: also carry it as an LXMF field so other clients can import it; try between two units. 
 
 Audio / modes
 -------------
@@ -126,7 +134,8 @@ Audio / modes
 
 Protocol / mesh
 ---------------
-- Multi-peer UX at scale (pagination, search)
+- DONE (sim) - Multi-peer UX at scale: lists 48 rows, pages (N/B), find (F). Next: more than 48
+  (load pages from the store on demand), search older conversations than the newest 48.
 - Path / link live tiles — expand diagnostics beyond partial N3
 - Cooperative vs standalone feature matrix freeze (what each env owns)
 

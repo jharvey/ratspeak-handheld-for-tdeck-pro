@@ -142,6 +142,10 @@ Included: `scripts/smoke.txt` (boot and menus), `scripts/wifi.txt` (scan, join w
 password, saved + encrypted), `scripts/announce_a.txt` + `announce_b.txt` (two devices
 discover each other; run both at once), `scripts/live_tcp.txt` (live-device mode, see above),
 `scripts/power.txt` (Settings > Power: Saver, sleep statistics, USB forces Full, Custom knobs).
+UI features: `lock.txt` then `lock_boot.txt` (password lock, same device name), `share_a.txt`
++ `share_b.txt` (share a contact, run together), `lists.txt` / `inbox_pages.txt` (pages and
+find), `identity.txt` then `identity_after.txt` (identity slots, TCP hub settings), `id.txt`
+(print the destination hash). Scripts wait for `[BOOT] ready` rather than a fixed time.
 
 The energy modes run their real logic here; light sleep is a 20 ms pause, and the
 console command `pw` shows the mode, knobs and percent of time asleep.

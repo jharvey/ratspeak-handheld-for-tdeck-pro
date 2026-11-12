@@ -57,6 +57,18 @@ START HERE (handoff 2026-11-11)
   vs the PC clock (clk + rtcdrift log, Theil-Sen fit, late USB replies after a wake dropped):
   COM9 asleep on battery +33 ppm (+2.9 s/day), COM5 awake on USB +28 ppm (+2.4 s/day), fit rms
   < 4 ms. The 1 min lead covers ~20 days without a peer clock sync. PC clock not verified.
+- UI features (2026-11-11, branch claude/ui-features-fb43b8): idle password lock (S.3.2;
+  lock password = vault password, default "ratspeak" when mode 3 is picked, boot lock,
+  lockout 3 free then 30 s..16 min, NVS rs_lock; console lock / lock now; locked console
+  = status commands only), share contact (contact page 1 Message / 2 Rename / 3 Share;
+  "Contact card: <name>\n<32 hex>" text, receiver Enter on empty draft saves), lists 48
+  rows with pages (N/B, digits per page) and find (F), TCP hub S.2.6 (device only, NVS
+  rs_tcp, default off) and identity slots S.6.5 (new / switch / erase, Enter x2, restart).
+  Console: ids, contact <hex> <name>. Sim scripts: lock(+_boot), share_a/_b, lists,
+  inbox_pages, identity(+_after), id. COM5 smoke-tested through live mode (lock, lists,
+  contact page). Not on hardware yet: share (needs 2 units), TCP (needs WiFi + a hub).
+  Worktree sim build: the protocol's ../../rsLXMFLite path does not resolve from
+  .claude/worktrees, so pass -DRUST_LIB=<main checkout>/protocol/target/release/libratspeak_protocol.a.
 Long-term backlog → Future_steps.txt (do not strip future items from there).
 User/developer guide → src/boards/tdeck_Pro/RatSpeak_TDeck-Pro_Description.md
 Simulator → sim/README.md
@@ -130,7 +142,7 @@ ENERGY MODES  (Settings S.4 Power; power/PowerModes.*, power/LightSleep.*)
        start before TX? reply timing?). rxdc 0 = continuous.
        Console rxdc 0|2..8 (NVS rs_power/rxdc, default 4), tcxo (bench check), pw line.
        Note: a reboot leaves peers "rejected 8" until an announce is heard - not loss.
-[TODO] GPS M10 power-save; idle-password lock
+[TODO] GPS M10 power-save   [DONE 2026-11-11] idle-password lock
 
 MEASURED (gauge avg, battery 4.0–4.2 V)
        awake 240 MHz ~99 mA · 80 MHz ~87 · 80 MHz LoRa off ~79
@@ -166,6 +178,8 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
   dctcxo <ms>     bench: lowest duty-cycle TCXO delay (0 auto)  fe 0|1  log RX freq error (Hz)
   clk             bench: wall clock to the us + uptime + clock source (RTC drift logging)
   rmconv [<peer>|all]  bench: list conversations / delete one / delete all (with messages)
+  lock | lock now  password lock status / lock     ids  identity slots + TCP status
+  contact <hex32> <name>  bench: save a contact
   map | map <lat> <lon> [z] | map close   offline map (key L on list screens; tiles on SD)
   sdinfo | sdarc 0|1   SD status / message archive setting (applies at next boot)
   maptest <lat> <lon>  bench: write 18 grid test tiles (z14-15) around a point to the SD card

@@ -40,14 +40,61 @@ I  →  select  →  type  →  Enter  →  ^ (optional)
 **Discover first (two radios):** on each device, Home → **Announce ID**, then open
 **Peers** (**P**) and confirm the other appears.
 
-1. **C** → Contacts *(or **P** Peers if they are not saved yet)*.  
-2. Select the device (touch, **V**/**G**, or digit).  
-3. **Enter** to open name edit, type the name (**Alt** for case), **Enter** to save.
+1. **C** → Contacts *(or **P** Peers if they are not saved yet)*.
+2. Select the device (touch, **V**/**G**, or digit).
+3. **Enter** opens the contact page: **1 Message · 2 Rename · 3 Share**.
+4. **2** (Rename), type the name (**Alt** for case), **Enter** to save.
 
 Row **0** is always **this** device (**MyID**). Rename it the same way to set the
 local display name. The default is **TDP-** plus the last four hex digits of the MAC
 (e.g. `TDP-179C`), so units on one table can be told apart; console `name <text>` sets it
 too (`name` alone restores the default).
+
+### 1.2a Share a contact
+
+1. Open the contact (Contacts or Peers → row → **Enter**), then **3 Share**.
+   Row **0 MyID** shares this radio.
+2. The Contacts list now reads **Send <name> to:**. Pick who gets it, **Enter** (**^** cancels).
+3. It goes as an ordinary LXMF message, readable on any client:
+
+```
+Contact card: Alice
+39543b0f5fb5a72a2cb23b3014bd650a
+```
+
+On a RatSpeak T-Deck Pro the chat shows **[card] Alice** and the compose line offers
+**[Enter] save card: Alice**: **Enter** on the empty draft saves it as a contact. Until
+that contact announces (or a path is found), messages to it may wait in the queue.
+
+### 1.2b Long lists: pages and search
+
+Inbox, Contacts and Peers hold up to 48 rows, shown in pages: Contacts 10 rows (digits
+**0–9**), Inbox / Peers 9 rows (digits **1–9**). The header shows **p2/3**.
+
+- **N** / **B**: next / previous page. **G** / **V** move across page edges.
+- Digits pick a row on the page you are on.
+- **F** = find: type part of a name or hash (any case); the list filters as you type.
+  **Enter** keeps the filter, **^** clears it (changing list also clears it).
+
+### 1.2c Lock the device with a password
+
+**M → S → 3 → 2** (Idle splash):
+
+- **3 On + password**: with no password yet, the password becomes **`ratspeak`** and
+  the device locks after the idle timeout. Change it straight away with row 5.
+- **5 Set / Change password**: current password (when one is set), new (4–32 chars),
+  repeat. Typed characters show as `*`.
+- **6 Remove password** (asks the current one) · **7 Lock now**.
+
+Locked: the idle splash says **LOCKED | press a key**; a key shows the password prompt
+(time, unread count only; **^** clears, again goes back to the splash; the prompt falls
+back to the splash after 30 s). Messages keep arriving. 3 wrong tries are free, then
+30 s, 60 s … up to 16 min between tries (also after a reboot). Touch is off and the USB
+console only answers status commands (`pw clk id lock ev rl sdinfo energy`).
+
+The password is the SecretVault password (§12): once set, the device **also locks at
+every boot**, and saved WiFi passwords stay sealed until it is typed (WiFi auto-connect
+waits). Picking Off / On (no password) keeps that; remove the password to stop it.
 
 ### 1.3 First-boot setup
 
@@ -107,7 +154,9 @@ changes. While USB power is plugged in the device runs **Full** anyway (row 5).
 | **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox) | does **not** open the menu |
 | **H** | Home | — |
 | **G** / **V** | Up / down | — |
-| **1**–**9**, **0** | Lists: select row. Settings: select **and** activate row 1–9, **0** = row 10 | digits (numeric fields) |
+| **N** / **B** | Lists: next / previous page | — |
+| **F** | Lists: find (type to filter) | — |
+| **1**–**9**, **0** | Lists: select row on the page. Settings: select **and** activate row 1–9, **0** = row 10 | digits (numeric fields) |
 | **Enter** | Activate / open | Send / save |
 | **Alt** | — | Case shift while typing |
 | **SYM** | — | Digits / symbols |
@@ -156,7 +205,8 @@ Status tiles, **Announce ID**, device name. Bottom **Contact | Peers | Inbox**.
 ### 4.4 Contacts
 ![Contacts](images/screen-contacts.png)
 
-**0: MyID** = this radio.
+**0: MyID** = this radio. **Enter** on a row opens the contact page (Message / Rename /
+Share, §1.2a). Long lists: pages and **F** find (§1.2b).
 
 ### 4.5 Inbox (list)
 ![Inbox list](images/screen-inbox.png)
@@ -196,10 +246,13 @@ S     Settings                      ← M then S
 │   │   └── …  Join WiFi            Password · Auto-connect · Join (saves on success)
 │   ├── S.2.4  Saved networks       up to 8; passwords sealed (§12)
 │   │   └── …  Saved network        Connect now · Auto-connect · Password · Forget
-│   └── S.2.5  Disconnect           radio off, auto-connect paused until a manual join
+│   ├── S.2.5  Disconnect           radio off, auto-connect paused until a manual join
+│   └── S.2.6  TCP hub              Reticulum TCP client while WiFi is up: on/off, host, port,
+│                                   status, "Use RatSpeak hub" (rns.ratspeak.org:4242); default off
 ├── S.3   Screen & I/O
 │   ├── S.3.1  Theme                White paper / Black ink
-│   ├── S.3.2  Idle splash          Off / On (no password) / On + password (planned) / timeout
+│   ├── S.3.2  Idle splash          Off / On (no password) / On + password / timeout /
+│   │                               set-change password / remove / lock now (§1.2c)
 │   └── S.3.3  Key backlight        (a power mode may hold it off)
 ├── S.4   Power                     energy modes (§6)
 │   ├── S.4.1  Full power
@@ -218,6 +271,9 @@ S     Settings                      ← M then S
 │   ├── S.5.8  Battery log          internal RAM ring / SD CSV, dump to USB
 │   └── S.5.10 Reset calibration
 ├── S.6   Identity                  destination, display name, LXMF address, Announce
+│   └── S.6.5  Identities           slots; New identity (make + switch + restart); per slot:
+│                                   Switch (restart) / Erase (key deleted; the active one is
+│                                   replaced by a new identity first). Enter twice to confirm.
 ├── S.7   LoRa                      915 MHz; link preset (Long Fast / Long Slow / Medium / Fast Short)
 ├── S.8   Alerts                    beep, vibrate, volume, test
 ├── S.9   Diagnostics               paths/links, LXMF queue, peers, uptime
@@ -537,7 +593,8 @@ in a short window around each check-in:
 
 | Topic | Behaviour |
 |-------|-----------|
-| Timeout | **S.3.2** (10–99999 s, default 30 s); never while a draft is unsent |
+| Timeout | **S.3.2** (10–99999 s, default 30 s); never while a draft is unsent (with a password lock it locks anyway; the draft is kept) |
+| Password lock | **S.3.2** mode 3, see §1.2c |
 | Wake | Any **key** |
 | Unread on splash | Updates on receive without leaving idle |
 | Beep / vibe | **S.8** when enabled |
@@ -703,6 +760,9 @@ the device does not light-sleep.
 | `sdinfo` / `sdarc 0\|1` | SD card status / message archive setting (next boot, §8.2) |
 | `maptest <lat> <lon>` | bench: write 18 grid test tiles around a point to the card |
 | `rmconv [<peer>\|all]` | bench: list conversations / delete one / delete all |
+| `lock` / `lock now` | password lock status (locked, password set, idle mode, wrong tries, wait) / lock now |
+| `ids` | identity slots (active marked) and TCP hub status |
+| `contact <32 hex> <name>` | bench: save a contact (list tests) |
 | `FORMAT` | erase and format the data partition |
 | `@…` | screen-mirror protocol (§10.3) |
 
@@ -717,10 +777,11 @@ Saved secrets (today: WiFi passwords) are never written to flash as plaintext.
 **password + chip MAC + a random per-device salt** (NVS `rs_vault`), then seals each
 secret with AES-256-GCM (random nonce, SSID as associated data).
 
-- **Now:** the password is a built-in default, applied automatically at boot. This stops
-  a flash dump or copied NVS from being read on a PC, but not someone holding the device.
-- **Planned:** the idle-screen password (S.3.2 "On + password") becomes the vault
-  password; at boot the vault stays locked until it is typed, so WiFi auto-connect waits.
+- **Default:** a built-in password, applied automatically at boot. This stops a flash
+  dump or copied NVS from being read on a PC, but not someone holding the device.
+- **Your password (S.3.2, §1.2c):** the lock password is the vault password. At boot the
+  vault stays locked until it is typed, so WiFi auto-connect waits; changing or removing
+  it re-seals the saved WiFi passwords with the new key.
 - **Strongest option (not enabled):** ESP32-S3 flash + NVS encryption. Burns eFuses and
   can't be undone, so it is a deliberate per-device decision.
 
@@ -757,7 +818,10 @@ entry mode.
 | Message store performance (slow writes and boot with many messages) | Done: COM5 boot 281 → 29.8 s (sharded folders), incoming save 23 → 1.3 s, send → proof 28 → 4–5 s |
 | Offline map from SD tiles (§8.1) | Works: simulator and COM9 (test tiles); PC tile tool done; real map tiles need an MBTiles export or an allowed tile server |
 | SD card: shared-bus locking, message archive (§8.2) | Works on COM9 (32 GB card); archive off by default; flash trim still not wired |
-| Idle password + vault unlock | Planned |
+| Idle password lock = vault password, boot lock, lockout (§1.2c) | Works (simulator; COM5 smoke test) |
+| Share a contact as an LXMF message, save on receipt (§1.2a) | Works in the simulator (two devices) |
+| Lists: 48 rows, pages, find (§1.2b) | Works (simulator) |
+| TCP hub client (S.2.6), identity slots (S.6.5) | Identities work in the simulator; TCP is device-only (sim: settings only), not yet tried against a hub |
 | LoRa RX duty cycle in sleeping modes (§6.3) | Works: 14/14, ~13 → 8 mA asleep (gauge); reply latency same as continuous (the ~1 in 3 retries were a test artifact) |
 | Deep-sleep storage mode, GPS power-save | Planned |
 | Repeater / propagation-node sync for Check-in and On demand | Planned |
@@ -778,3 +842,4 @@ entry mode.
 | 0.7 | Message store: one-walk record open, duplicate-ID index, pending-outgoing cache (boot 98 s, save 1.3 s, proof 7 s); peer-ratchet save no longer reports a busy store as a flash failure; Check-in outbox in NVS, queued messages in the thread |
 | 0.8 | Message folders split into 64-record subfolders, moved at boot (COM5 boot 98 → 29.8 s, proof 4–5 s); RTC drift measured (~2.9 s/day); `rmconv` bench command |
 | 0.9 | Offline map (§8.1) with the PC tile tool; SD card on the shared SPI lock, optional message archive (§8.2); GPS position parsed |
+| 0.10 | Password lock (§1.2c), contact sharing (§1.2a), list pages + find (§1.2b), TCP hub (S.2.6), identity slots (S.6.5) |
