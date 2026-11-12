@@ -668,9 +668,9 @@ Geological Survey) as 1-bit tiles at `--threshold 150`: the lower 48 states at z
 3–8 and Maine at zoom 9–12, about 6,200 tiles / 50 MB; start view Maine at zoom 6.
 **Contacts on the map:** every location a contact shares (manual or auto, §1.2d) is kept
 as that contact's last position (16 contacts, NVS rs_cpos; older chats add theirs when
-opened). Each shows as its **map number** in a disc: **black disc** = position less than
-an hour old, **hollow disc** = older (check the age), black ring inside a white halo =
-selected. Contacts at the same spot: only the **lowest number** is drawn (the selected one
+opened). Each shows as a tag: its **map number** on a white centre, a black ring, a white
+halo outside. **Thick ring** = position less than an hour old, **thin ring** = older (check
+the age); **selected** = black centre with a white number. Contacts at the same spot: only the **lowest number** is drawn (the selected one
 wins while T steps through them), with a small **+** meaning more are there.
 **Map numbers:** set on the contact page (Contacts / Peers → row → **Enter** → **4 Map
 number**, type 1–99, Enter) - e.g. your partner = 1, so they win at a shared spot; whoever

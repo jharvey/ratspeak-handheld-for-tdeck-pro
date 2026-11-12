@@ -256,12 +256,11 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
     }
 
     // Markers (contacts), drawn last so nothing covers them: number in 2x 5x7 digits
-    // (10x14 px) on a black disc (white disc + black edge when the position is old);
-    // selected: a black ring around the disc; a white halo outermost. Overlapping markers: the
+    // (10x14 px) on a white centre, black ring (3 px fresh / 1 px old), white halo;
+    // selected: black centre, white number. Overlapping markers: the
     // selected one, else the lowest number, is drawn with a "+" badge; the rest hidden.
     auto radius = [](const Marker& mk) {
-        const int rDisc = mk.number >= 10 ? 13 : 10;
-        return mk.selected ? rDisc + 4 : rDisc + 2;
+        return (mk.number >= 10 ? 12 : 9) + (mk.fresh ? 3 : 1) + 2;
     };
     auto before = [](const Marker& a, const Marker& b) {    // priority: selected, low number
         if (a.selected != b.selected) return a.selected;
@@ -303,10 +302,11 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
         char num[4];
         snprintf(num, sizeof(num), "%u", (unsigned)(mk.number % 100));
         const int nd = (int)strlen(num), tw = nd * 12 - 2;          // 10 px glyph + 2 px gap
-        // From the centre out: disc, (selected: black ring), white halo outermost.
-        // Fresh (black) disc: a 1 px white gap first so the selection ring shows.
-        const int rDisc = nd > 1 ? 13 : 10, rGap = (mk.selected && mk.fresh) ? rDisc + 1 : rDisc;
-        const int rSel = mk.selected ? rGap + 2 : rDisc, rOut = rSel + 2;
+        // Tag (user's sketch): white centre with the black number, a black ring, a white
+        // halo outermost. Ring 3 px = fresh position (< 1 h), 1 px = older. Selected: the
+        // centre turns black with a white number.
+        const int rIn = nd > 1 ? 12 : 9;                         // white centre (digits fit)
+        const int rRing = rIn + (mk.fresh ? 3 : 1), rOut = rRing + 2;
         for (int yy = -rOut; yy <= rOut; yy++) {
             for (int xx = -rOut; xx <= rOut; xx++) {
                 const int vx = cx + xx, vy = cy + yy;
@@ -314,18 +314,15 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
                 const int d2 = xx * xx + yy * yy;
                 if (d2 > rOut * rOut + rOut) continue;
                 bool black;
-                if (d2 <= rDisc * rDisc + rDisc) {
-                    const bool edge = d2 > (rDisc - 1) * (rDisc - 1) + (rDisc - 1);
-                    black = mk.fresh ? true : edge;
+                if (d2 <= rIn * rIn + rIn) {
+                    black = mk.selected;
                     const int gx = xx + tw / 2, gy = yy + 7;           // cell 0..tw-1, 0..13
                     if (gx >= 0 && gx < tw && gy >= 0 && gy < 14 && (gx % 12) < 10) {
                         const int c = num[gx / 12] - '0';
-                        if (kDigit5x7[c][gy / 2] & (0x10 >> ((gx % 12) / 2))) black = !mk.fresh;
+                        if (kDigit5x7[c][gy / 2] & (0x10 >> ((gx % 12) / 2))) black = !mk.selected;
                     }
-                } else if (d2 <= rGap * rGap + rGap) {
-                    black = false;                                // gap (fresh + selected)
-                } else if (d2 <= rSel * rSel + rSel) {
-                    black = true;                                 // selected: black ring
+                } else if (d2 <= rRing * rRing + rRing) {
+                    black = true;                                 // the black ring
                 } else {
                     black = false;                                // white halo (outermost)
                 }
@@ -333,7 +330,7 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
             }
         }
         if (mk.more) {                       // "+" badge, upper right: 11x11 white box, black plus
-            const int bx = cx + rDisc - 1, by = cy - rDisc + 1;
+            const int bx = cx + rIn + 1, by = cy - rIn - 1;
             for (int yy = -5; yy <= 5; yy++) {
                 for (int xx = -5; xx <= 5; xx++) {
                     const int vx = bx + xx, vy = by + yy;
