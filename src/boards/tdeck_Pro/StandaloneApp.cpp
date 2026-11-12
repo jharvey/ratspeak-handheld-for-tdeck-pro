@@ -7303,9 +7303,10 @@ void handleSerialLine(char* p) {
         } else if (!mapview::isOpen()) openMap();   // "map" on an open map: status only
         char st[64]; mapview::status(st, sizeof(st));
         uint32_t ld, ms, hi; mapview::stats(ld, ms, hi);
-        Serial.printf("[MAP] %s %s; tiles loaded %lu (packed %lu) missing %lu cache hits %lu\n",
+        Serial.printf("[MAP] %s %s; tiles loaded %lu (packed %lu, %lu ms, decode %lu ms) missing %lu cache hits %lu\n",
                       mapview::isOpen() ? "open" : "closed", st, (unsigned long)ld,
-                      (unsigned long)mapview::packedLoaded(), (unsigned long)ms, (unsigned long)hi);
+                      (unsigned long)mapview::packedLoaded(), (unsigned long)mapview::packedMillis(),
+                      (unsigned long)mapview::decodeMillis(), (unsigned long)ms, (unsigned long)hi);
     } else if (!strncmp(p, "maptest ", 8)) {
         // Bench: write labelled grid test tiles (3x3 at z14 and z15) around <lat> <lon> on the SD card.
         double la = 0, lo = 0;

@@ -31,8 +31,10 @@ START HERE (handoff 2026-11-11)
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
 - Map packs (2026-11-12): MapView reads /ratdeckpro/maps/packs/<z>/<x>>6>_<y>>6>.rmp first
-  (make_packs.py; "RMP1" + 4096-entry index + raw-deflate tiles; inflated by ROM tinfl via
-  <esp32s3/rom/miniz.h>; the sim links sim/third_party/miniz), then the loose .rmt.
+  (make_packs.py). RMP2 (default) = context-model range coder, tools/maptiles/rmcodec.py
+  and ctxDecode() in MapView.cpp MUST stay identical (10-px context, 12-bit probs, shift 5,
+  per-pack 1024-entry prior). RMP1 = raw deflate via ROM tinfl (<esp32s3/rom/miniz.h>; the
+  sim links sim/third_party/miniz). Then the loose .rmt. Console "map" prints packed ms.
   TileReader is now (path, offset, buf, len). Cache 160 tiles in PSRAM, 4 pack indexes.
 - SD + maps (2026-11-11): MapView.cpp/.h (tiles /ratdeckpro/maps/z/x/y.rmt, 1-bit, made by
   tools/maptiles/make_tiles.py; --test = grid tiles). DisplayEink now takes SharedSPILock

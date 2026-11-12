@@ -83,5 +83,7 @@ void setGuide(bool on, double lat = 0, double lon = 0);
 // Cache stats for the console: tiles loaded / missing since open.
 void stats(uint32_t& loaded, uint32_t& missing, uint32_t& hits);
 uint32_t packedLoaded();   // of the tiles loaded, how many came out of pack files
+uint32_t packedMillis();   // ms spent reading + decoding them (incl. pack index reads)
+uint32_t decodeMillis();   // of which decoding
 
 }  // namespace mapview
