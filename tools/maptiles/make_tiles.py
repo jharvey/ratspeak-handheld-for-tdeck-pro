@@ -14,6 +14,14 @@ Sources (pick one):
   --test              synthetic grid tiles labelled with z/x/y (no Pillow needed) to try
                       the map screen without real map data.
 
+  --overlay-url T     a second layer composited on top before the 1-bit step, e.g. Canada
+                      (NRCan CBMT, Open Government Licence - Canada; credit "Contains
+                      information licensed under the Open Government Licence - Canada"):
+                      --url .../BaseMaps/CBMT_CBCT_GEOM_3857/MapServer/tile/{z}/{y}/{x}
+                      --overlay-url .../BaseMaps/CBMT_TXT_3857/MapServer/tile/{z}/{y}/{x}
+                      (host maps-cartes.services.geo.ca/server2_serveur2/rest/services)
+                      with --threshold 200 (its roads are light grey).
+
 Area: --bbox MINLON,MINLAT,MAXLON,MAXLAT  or  --center LAT,LON --radius-km R
 Zoom: --zoom 12-16 (inclusive range) or a single level.
 Start view: maps/home.txt = "lat lon zoom", used when the device has no GPS fix or saved
@@ -85,13 +93,21 @@ def pack_bits(black_rows):
     return bytes(out)
 
 
-def image_to_bits(data, threshold, invert):
+def image_to_bits(data, threshold, invert, overlay=None):
     from io import BytesIO
     try:
         from PIL import Image, ImageOps
     except ImportError:
         sys.exit("Pillow is needed for real map tiles: pip install pillow")
-    img = Image.open(BytesIO(data)).convert("L")
+    img = Image.open(BytesIO(data))
+    if overlay:                              # e.g. a transparent label layer on top
+        base = img.convert("RGBA")
+        top = Image.open(BytesIO(overlay)).convert("RGBA")
+        if top.size != base.size:
+            top = top.resize(base.size)
+        base.alpha_composite(top)
+        img = base
+    img = img.convert("L")
     if img.size != (TILE, TILE):
         img = img.resize((TILE, TILE))
     img = ImageOps.autocontrast(img, cutoff=1)
@@ -181,6 +197,7 @@ def main():
     src.add_argument("--mbtiles")
     src.add_argument("--url")
     src.add_argument("--test", action="store_true")
+    ap.add_argument("--overlay-url", help="second tile layer drawn on top (e.g. labels), same {z}/{x}/{y}")
     ap.add_argument("--bbox")
     ap.add_argument("--center")
     ap.add_argument("--radius-km", type=float, default=2.0)
@@ -234,6 +251,7 @@ def main():
         if not a.user_agent:
             sys.exit("--url needs --user-agent (identify your app to the tile server)")
         source = UrlSource(a.url, a.user_agent, a.delay)
+    overlay = UrlSource(a.overlay_url, a.user_agent, a.delay) if a.overlay_url else None
 
     done = skipped = 0
     for z, x, y in jobs:
@@ -247,7 +265,8 @@ def main():
             data = source.get(z, x, y)
             if not data:
                 continue
-            bits = image_to_bits(data, a.threshold, a.invert)
+            over = overlay.get(z, x, y) if overlay else None
+            bits = image_to_bits(data, a.threshold, a.invert, over)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             f.write(HEADER + bits)

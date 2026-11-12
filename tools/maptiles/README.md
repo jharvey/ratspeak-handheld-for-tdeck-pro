@@ -54,6 +54,18 @@ lists what is on the card.
 Note: write a negative bbox as `--bbox=-71.1,42.95,-66.9,47.47` (with `=`), or the
 argument parser reads it as an option.
 
+### Canada (NRCan, Open Government Licence - Canada)
+
+USGS topo stops at the border. Natural Resources Canada's Canada Base Map - Transportation
+(roads first) is free to reuse with credit ("Contains information licensed under the Open
+Government Licence - Canada"). Roads and labels are two layers; `--overlay-url` draws the
+labels on top, and `--threshold 200` keeps its light-grey roads:
+
+```
+set N=https://maps-cartes.services.geo.ca/server2_serveur2/rest/services/BaseMaps
+python make_tiles.py --url %N%/CBMT_CBCT_GEOM_3857/MapServer/tile/{z}/{y}/{x} --overlay-url %N%/CBMT_TXT_3857/MapServer/tile/{z}/{y}/{x} --threshold 200 --user-agent RatSpeak-maptiles/1.0 --delay 0.2 --bbox=-83.5,41.7,-59.5,50.5 --zoom 9-12 --out sdcard
+```
+
 ### World overview (Natural Earth, rendered here)
 
 `render_world.py` draws zoom 0-7 itself from Natural Earth GeoJSON (public domain:
