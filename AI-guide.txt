@@ -6,9 +6,13 @@ Last: 2026-11-11  (LoRa RX duty cycle, INA226 logger software, back-power rule)
 START HERE (handoff 2026-11-11)
 - Bench units: only 3 USB ports free (user's mouse dongle) - COM5, COM6, COM9 attached;
   COM3 unplugged. All run RatSpeak in Balanced with the RX duty-cycle build (2026-11-11).
-  COM3 + COM6 = bench build at -9 dBm (antenna unknown); COM5 = normal build with
-  txp -9 saved in NVS; COM9 = normal build. COM8 unplugged (GPS fault). Only COM8 and
-  COM9 have SD cards. COM3/COM5 boot slowly (large message stores; COM5 281 s -> 98 s after the 2026-11-11 store fixes).
+  COM3 = bench build at -9 dBm (antenna unknown). COM5 + COM6 = normal build with
+  txp -9 saved in NVS (antenna unknown; COM6 moved off the bench build 2026-11-12 - it
+  had NO saved txp, so the normal build's 22 dBm default applied for one boot announce
+  before `txp -9` was saved). COM9 = normal build at 22 dBm. Before flashing a normal
+  build onto a unit, check that `txp` says "(saved)" - older firmware printed "(saved)"
+  even for the build default. COM8 unplugged (GPS fault). SD cards (29.5 GB): COM5
+  (holds 28 GB of camera videos in /VIDEO - not ours, keep), COM6, COM9 (maps). COM3/COM5 boot slowly (large message stores; COM5 281 s -> 98 s after the 2026-11-11 store fixes).
 - Bench build (-9 dBm, ~11 min): PLATFORMIO_BUILD_FLAGS="-DRS_BENCH_TX_DBM=-9"
   PLATFORMIO_BUILD_DIR=".pio/build_bench" pio run -e tdeck_pro_standalone
 - Flash app only: esptool.py --chip esp32s3 --port COMx --baud 115200 --before
@@ -186,6 +190,11 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
   rmconv [<peer>|all]  bench: list conversations / delete one / delete all (with messages)
   lock | lock now  password lock status / lock     ids  identity slots + TCP status
   contact <hex32> <name>  bench: save a contact
+  sdput <len> <crc32> </path>  upload a file to the SD card (under /ratdeckpro); answers
+                  "[SDPUT] ready", then reads <len> raw bytes -> "[SDPUT] ok|err".
+                  Use tools/maptiles/push_tiles.py (~7 tiles/s; USB RX queue raised
+                  to 17 KB in main.cpp, the 256-byte default dropped bytes)
+  sdls [/path]    list an SD folder (absolute card path)
   map | map <lat> <lon> [z] | map close   offline map (key L on list screens; tiles on SD)
   sdinfo | sdarc 0|1   SD status / message archive setting (applies at next boot)
   maptest <lat> <lon>  bench: write 18 grid test tiles (z14-15) around a point to the SD card

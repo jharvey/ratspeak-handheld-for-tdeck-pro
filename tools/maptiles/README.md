@@ -18,7 +18,19 @@ pip install pillow          # only for real map images; --test needs nothing
 python make_tiles.py --mbtiles city.mbtiles --center 43.6532,-79.3832 --radius-km 5 --zoom 12-16 --out sdcard
 ```
 
-Copy `sdcard/ratdeckpro` to the root of a FAT32 microSD card.
+Copy `sdcard/ratdeckpro` to the root of a FAT32 microSD card, or send it over USB with
+the card left in the unit (no card reader; the unit must be unlocked):
+
+```
+pip install pyserial
+python push_tiles.py --port COM9 --src sdcard            # resumes; lowest zoom first
+python push_tiles.py --port COM9 --src sdcard --zoom 13  # just one level
+```
+
+About 7 tiles/s (a 6,000-tile set takes 15 min). Progress is kept per unit in
+`sdcard/pushed_<dest>.txt`; it stops when the card has less than 200 MB free. On a
+32 KB-cluster FAT32 card each 8 KB tile takes 32 KB. Console `sdls /ratdeckpro/maps`
+lists what is on the card.
 
 | Option | Meaning |
 |---|---|

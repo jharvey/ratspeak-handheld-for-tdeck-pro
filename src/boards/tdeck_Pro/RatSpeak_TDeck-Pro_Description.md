@@ -637,7 +637,9 @@ in detail).
 
 Ready-made set (2026-11-12): USGS National Map topo (public domain, credit U.S.
 Geological Survey) as 1-bit tiles at `--threshold 150`: the lower 48 states at zoom
-3–8 and Maine at zoom 9–12, about 6,200 tiles / 50 MB; start view Maine at zoom 6. **W A S D** pan half a screen, **Z / X**
+3–8 and Maine at zoom 9–12, about 6,200 tiles / 50 MB; start view Maine at zoom 6.
+Tiles can go onto the card over USB with the card left in the unit:
+`tools/maptiles/push_tiles.py` (console `sdput`, about 7 tiles/s; `sdls` lists a folder). **W A S D** pan half a screen, **Z / X**
 zoom, **C** or **Enter** returns to your position, **Shift (^)** closes. The header shows
 zoom, centre and the scale-bar length; `*` means the view is not following you. Missing
 tiles show a dotted grid and "no tiles".

@@ -5368,6 +5368,8 @@ void mirrorTick() {
     mirror::tick(g_display.framebuffer(), g_display.width(), g_display.height(), st);
 }
 
+void sdputStart(const char* args);
+
 void handleSerialLine(char* p) {
     while (*p == ' ') p++;
     if (!*p) return;
@@ -5570,6 +5572,25 @@ void handleSerialLine(char* p) {
     } else if (!strncmp(p, "sdarc ", 6)) {
         sdArchiveSet(atoi(p + 6) != 0);
         Serial.printf("[SD] message archive setting %s (applies at next boot)\n", sdArchiveEnabled() ? "on" : "off");
+    } else if (!strncmp(p, "sdput ", 6)) {
+        sdputStart(p + 6);
+    } else if (!strcmp(p, "sdls") || !strncmp(p, "sdls ", 5)) {
+        // List one SD folder (absolute card path, default "/"): name, size or <dir>.
+        const char* dirPath = p[4] ? p + 5 : "/";
+        if (!sdMount()) { Serial.println("[SD] no card"); return; }
+        File d = g_sdStore.openDir(dirPath);
+        if (!d) { Serial.printf("[SD] cannot open %s\n", dirPath); return; }
+        int n = 0;
+        for (File e = d.openNextFile(); e; e = d.openNextFile()) {
+            if (n++ < 80) {
+                if (e.isDirectory()) Serial.printf("[SDLS] <dir> %s\n", e.name());
+                else Serial.printf("[SDLS] %10lu %s\n", (unsigned long)e.size(), e.name());
+            }
+            e.close();
+            if ((n & 31) == 0) yield();
+        }
+        d.close();
+        Serial.printf("[SDLS] %d entries in %s\n", n, dirPath);
     } else if (!strcmp(p, "sdinfo")) {
         Serial.printf("[SD] %s (mounting to check)%c", g_sdStatus, 10);
         sdMount();
@@ -5673,7 +5694,13 @@ void handleSerialLine(char* p) {
             if (pr.begin("rs_radio", false)) { pr.putChar("txp", (int8_t)v); pr.end(); }
             if (g_radio) g_radio->setTxPower(v);
         }
-        Serial.printf("[LORA] tx power %d dBm (saved)\n", loraTxPower());
+        // "(saved)" only when NVS holds a value: a build default (22, or -9 in a bench
+        // build) changes with the firmware that is flashed.
+        Preferences pr;
+        bool saved = false;
+        if (pr.begin("rs_radio", true)) { saved = pr.isKey("txp"); pr.end(); }
+        Serial.printf("[LORA] tx power %d dBm (%s)\n", loraTxPower(),
+                      saved ? "saved" : "build default - set with txp <dBm>");
     } else if (!strcmp(p, "tcxo") && g_radio) {
         // Bench: TCXO cold-start check at each delay (bit 0x20 = XOSC start error).
         static const uint32_t us[] = {5000, 10000, 20000, 40000, 640000};
@@ -5743,10 +5770,91 @@ void handleSerialLine(char* p) {
     }
 }
 
+// ---- sdput: file upload to the SD card over USB (tools/maptiles/push_tiles.py) ---------
+// "sdput <len> <crc32 hex> <path>" (path under /ratdeckpro, e.g. /maps/9/150/180.rmt).
+// The device answers "[SDPUT] ready", then reads exactly <len> raw bytes (no line
+// parsing meanwhile), checks the CRC-32 and writes the file: "[SDPUT] ok" or
+// "[SDPUT] err <why>". Payload is sent only after "ready", so a refused command (locked,
+// bad args) never lets binary bytes reach the line parser.
+constexpr size_t kSdPutMax = 16384;
+uint8_t* g_putBuf = nullptr;
+size_t   g_putLen = 0, g_putGot = 0;
+uint32_t g_putCrc = 0, g_putAt = 0;
+char     g_putPath[96] = "";
+bool     g_putActive = false;
+
+uint32_t crc32Of(const uint8_t* d, size_t n) {
+    uint32_t c = 0xFFFFFFFFu;
+    for (size_t i = 0; i < n; i++) {
+        c ^= d[i];
+        for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+    }
+    return ~c;
+}
+
+void sdputStart(const char* args) {
+    unsigned long len = 0, crc = 0;
+    char rel[80] = "";
+    if (sscanf(args, "%lu %lx %79s", &len, &crc, rel) != 3 || !len || len > kSdPutMax || rel[0] != '/' ||
+        strstr(rel, "..")) {
+        Serial.println("[SDPUT] err usage: sdput <len 1-16384> <crc32 hex> </path under ratdeckpro>");
+        return;
+    }
+    if (!g_putBuf) {
+#if !defined(SIMULATOR)
+        g_putBuf = (uint8_t*)heap_caps_malloc(kSdPutMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+        if (!g_putBuf) g_putBuf = (uint8_t*)malloc(kSdPutMax);
+        if (!g_putBuf) { Serial.println("[SDPUT] err no memory"); return; }
+    }
+    if (!sdMount()) { Serial.println("[SDPUT] err no SD card"); return; }
+    g_putLen = len; g_putGot = 0; g_putCrc = (uint32_t)crc; g_putAt = millis();
+    snprintf(g_putPath, sizeof(g_putPath), "%s%s", SD_PATH_ROOT, rel);
+    g_putActive = true;
+    Serial.println("[SDPUT] ready");
+}
+
+void sdputFinish() {
+    g_putActive = false;
+    if (crc32Of(g_putBuf, g_putLen) != g_putCrc) { Serial.println("[SDPUT] err crc"); return; }
+    static char lastDir[96] = "";
+    char dir[96];
+    snprintf(dir, sizeof(dir), "%s", g_putPath);
+    if (char* slash = strrchr(dir, '/')) *slash = 0;
+    if (strcmp(dir, lastDir) != 0) {            // tiles arrive grouped by folder
+        if (!g_sdStore.ensureDir(dir)) { lastDir[0] = 0; Serial.println("[SDPUT] err mkdir"); return; }
+        snprintf(lastDir, sizeof(lastDir), "%s", dir);
+    }
+    if (!g_sdStore.writeSimple(g_putPath, g_putBuf, g_putLen)) { lastDir[0] = 0; Serial.println("[SDPUT] err write"); return; }
+    Serial.println("[SDPUT] ok");
+}
+
+// Returns true while a payload is being received (the line parser must not run).
+bool sdputPoll() {
+    if (!g_putActive) return false;
+    while (g_putGot < g_putLen && Serial.available()) {
+#if !defined(SIMULATOR)
+        const size_t got = Serial.read(g_putBuf + g_putGot, g_putLen - g_putGot);
+        if (!got) break;
+        g_putGot += got;
+#else
+        const int b = Serial.read();
+        if (b < 0) break;
+        g_putBuf[g_putGot++] = (uint8_t)b;
+#endif
+        g_putAt = millis();
+    }
+    if (g_putGot >= g_putLen) { sdputFinish(); return false; }
+    if (millis() - g_putAt > 3000) { g_putActive = false; Serial.println("[SDPUT] err timeout"); }
+    return g_putActive;
+}
+
 void pollSerial() {
     static char line[180];
     static size_t len = 0;
+    if (sdputPoll()) return;
     while (Serial.available()) {
+        if (g_putActive) { if (sdputPoll()) return; continue; }
         char c = (char)Serial.read();
         if (c == '\r' || c == '\n') {
             if (!len) continue;
