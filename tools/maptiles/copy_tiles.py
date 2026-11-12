@@ -112,6 +112,8 @@ def main():
         if rel in done:
             return
         data = get(src, ROOT + rel)
+        if data is not None and rel.endswith(".rmt") and len(data) == 8200 and data[:4] == b"RMT1":
+            data = data[8:]                  # header-less on the target (see push_tiles.py)
         if data is None or not put(dst, rel, data):
             fails += 1
             print("  failed: " + rel, flush=True)

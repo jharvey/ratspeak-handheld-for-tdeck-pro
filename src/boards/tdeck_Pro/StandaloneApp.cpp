@@ -63,6 +63,8 @@
 #if !defined(SIMULATOR)
 #include "transport/TcpClientSet.h"     // TCP hub client (device only: FreeRTOS tasks + lwIP)
 #include "config/UserConfig.h"
+#include "hal/SharedSPIBus.h"
+#include "ff.h"                          // sdformat: FatFs f_mkfs / f_getfree on the card
 #endif
 #include "security/SecretVault.h"
 #include "remote/ScreenMirror.h"
@@ -6178,11 +6180,70 @@ void handleSerialLine(char* p) {
         }
         d.close();
         Serial.printf("[SDLS] %d entries in %s\n", n, dirPath);
+    } else if (!strncmp(p, "sdformat", 8)) {
+        // sdformat <cluster bytes 512..32768> ERASE-ALL : new FAT32 on the card with that
+        // cluster size, then restart. Map tiles are 8 KB: 4096 wastes nothing (stock cards
+        // come with 32 KB clusters, 4x the space per tile). Everything on the card is lost.
+#if defined(SIMULATOR)
+        Serial.println("[SD] sdformat: not in the simulator");
+#else
+        unsigned long au = 0;
+        char conf[16] = "";
+        if (sscanf(p + 8, "%lu %15s", &au, conf) != 2 || strcmp(conf, "ERASE-ALL") || au < 512 || au > 32768 ||
+            (au & (au - 1))) {
+            Serial.println("[SD] usage: sdformat <512|1024|...|32768> ERASE-ALL");
+            return;
+        }
+        if (!sdMount()) { Serial.println("[SD] no card"); return; }
+        SharedSPILock lock;
+        FATFS* fs = nullptr;
+        DWORD freeClst = 0;
+        if (f_getfree("0:", &freeClst, &fs) != FR_OK || !fs) { Serial.println("[SD] drive 0: not found"); return; }
+#if FF_MAX_SS != FF_MIN_SS
+        const uint32_t ss = fs->ssize;
+#else
+        const uint32_t ss = FF_MAX_SS;
+#endif
+        const uint64_t vol = (uint64_t)(fs->n_fatent - 2) * fs->csize * ss;
+        const uint64_t card = g_sdStore.totalBytes();
+        if (vol > card + (64ULL << 20) || vol + (64ULL << 20) < card) {   // drive 0: must be this card
+            Serial.printf("[SD] drive 0: is %llu MB, card %llu MB: not formatting\n", vol >> 20, card >> 20);
+            return;
+        }
+        Serial.printf("[SD] formatting FAT32 with %lu-byte clusters (was %lu); takes a minute...\n", au,
+                      (unsigned long)(fs->csize * ss));
+        Serial.flush();
+        f_mount(nullptr, "0:", 0);
+        const UINT workLen = 16384;
+        void* work = heap_caps_malloc(workLen, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+        const FRESULT r = work ? f_mkfs("0:", FM_FAT32, (DWORD)au, work, workLen) : FR_NOT_ENOUGH_CORE;
+        if (work) free(work);
+        Serial.printf("[SD] format %s (%d); restarting\n", r == FR_OK ? "OK" : "FAILED", (int)r);
+        Serial.flush();
+        delay(500);
+        ESP.restart();
+#endif
     } else if (!strcmp(p, "sdinfo")) {
         Serial.printf("[SD] %s (mounting to check)%c", g_sdStatus, 10);
         sdMount();
         Serial.printf("[SD] %s; message archive %s%c", g_sdStatus,
                       g_sdArchiveActive ? "active" : sdArchiveEnabled() ? "on, not active" : "off", 10);
+#if !defined(SIMULATOR)
+        if (g_sdMounted) {
+            SharedSPILock lock;
+            FATFS* fs = nullptr;
+            DWORD freeClst = 0;
+            if (f_getfree("0:", &freeClst, &fs) == FR_OK && fs) {
+#if FF_MAX_SS != FF_MIN_SS
+                const uint32_t ss = fs->ssize;
+#else
+                const uint32_t ss = FF_MAX_SS;
+#endif
+                Serial.printf("[SD] FAT%s cluster %lu bytes, free %llu MB%c", fs->fs_type == FS_FAT32 ? "32" : "",
+                              (unsigned long)(fs->csize * ss), ((uint64_t)freeClst * fs->csize * ss) >> 20, 10);
+            }
+        }
+#endif
     } else if (!strncmp(p, "epdoff ", 7)) {
         g_epdOffInSleep = (uint8_t)atoi(p + 7);
         Serial.printf("[EINK] before sleep: %s%c", g_epdOffInSleep == 2 ? "controller deep sleep" : g_epdOffInSleep ? "power off" : "left on", 10);

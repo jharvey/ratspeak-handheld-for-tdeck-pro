@@ -110,6 +110,9 @@ def main():
     ap.add_argument("--zoom", help="only these zoom levels, e.g. 3-10")
     ap.add_argument("--min-free-mb", type=int, default=200)
     ap.add_argument("--fresh", action="store_true")
+    ap.add_argument("--keep-header", action="store_true",
+                    help="send .rmt files with their 8-byte header (firmware before 2026-11-12 needs it); "
+                         "default: header stripped, 8192 bytes = exactly two 4 KB clusters")
     a = ap.parse_args()
 
     root = os.path.join(a.src, "ratdeckpro")
@@ -166,6 +169,8 @@ def main():
                 print("stopping: card has %d MB free (< %d)" % (free, a.min_free_mb))
                 break
         data = open(full, "rb").read()
+        if not a.keep_header and rel.endswith(".rmt") and len(data) == 8200 and data[:4] == b"RMT1":
+            data = data[8:]
         if put(dev, rel, data):
             sent += 1
             log.write(rel + "\n")

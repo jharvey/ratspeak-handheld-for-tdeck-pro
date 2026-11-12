@@ -6,6 +6,8 @@
 //     <SD>/ratdeckpro/maps/<z>/<x>/<y>.rmt
 // File = 8-byte header "RMT1" + uint16 LE width (256) + uint16 LE height (256), then
 // 8192 bytes, row-major, MSB first, bit 1 = black. No decoder needed on the device.
+// A file of exactly 8192 bytes is the same bits without the header (push_tiles.py strips
+// it: on a card formatted with 4 KB clusters a tile then takes 8 KB, not 12).
 //
 // The module draws through callbacks and reads tiles through a callback, so it has no
 // dependency on the app shell (also compiled into the cooperative build and the simulator).

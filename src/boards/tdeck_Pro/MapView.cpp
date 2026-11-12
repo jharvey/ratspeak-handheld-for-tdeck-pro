@@ -89,6 +89,10 @@ Tile* tile(int z, int x, int y) {
         memcpy(victim->bits, g_io + kHeaderBytes, kTileBytes);
         victim->present = true;
         ++g_loaded;
+    } else if (got == kTileBytes) {           // header-less tile: exactly one 8 KB cluster pair
+        memcpy(victim->bits, g_io, kTileBytes);
+        victim->present = true;
+        ++g_loaded;
     } else {
         ++g_missing;
     }
