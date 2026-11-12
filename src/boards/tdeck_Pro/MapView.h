@@ -50,6 +50,9 @@ bool positionNeedsRedraw();
 void draw(PixelFn px, int x0, int y0, int w, int h, bool dark);
 // One-line header: "z14 43.65321,-79.38320 200 m" / "no map tiles here (z14)".
 void status(char* out, size_t n);
+// How the header writes the centre (decimal / DMS / MGRS); null = decimal degrees.
+using CoordFormatter = void (*)(double lat, double lon, char* out, size_t n);
+void setCoordFormatter(CoordFormatter f);
 
 // Keys while the map is open: W/A/S/D pan, Z/+ zoom in, X/- zoom out, C or Enter = centre
 // on own position (follow). Returns true if the key changed the view.

@@ -133,6 +133,9 @@ void scaleBar(double& metres, int& pixels) {
 
 void setReader(TileReader reader) { g_reader = reader; }
 
+CoordFormatter g_coordFmt = nullptr;
+void setCoordFormatter(CoordFormatter f) { g_coordFmt = f; }
+
 void setMarkers(const Marker* m, int n) {
     if (n > kMaxMarkers) n = kMaxMarkers;
     for (int i = 0; i < n; i++) { g_markers[i] = m[i]; g_markerOn[i] = false; }
@@ -456,10 +459,13 @@ void status(char* out, size_t n) {
     else snprintf(scale, sizeof(scale), "%g m", metres);
     // The header is built before the tiles are drawn, so ask the cache about the centre tile.
     const Tile* centre = g_open ? tile(g_zoom, (int)floor(g_cx / kTileSize), (int)floor(g_cy / kTileSize)) : nullptr;
+    char pos[40];
+    if (g_coordFmt) g_coordFmt(lat, lon, pos, sizeof(pos));
+    else snprintf(pos, sizeof(pos), "%.4f,%.4f", lat, lon);
     if (g_open && !(centre && centre->present))
-        snprintf(out, n, "z%d no tiles  %.4f,%.4f", g_zoom, lat, lon);
+        snprintf(out, n, "z%d no tiles  %s", g_zoom, pos);
     else
-        snprintf(out, n, "z%d %.4f,%.4f %s%s", g_zoom, lat, lon, scale, g_follow && g_posValid ? "" : " *");
+        snprintf(out, n, "z%d %s %s%s", g_zoom, pos, scale, g_follow && g_posValid ? "" : " *");
 }
 
 bool key(char c, bool enter) {

@@ -270,7 +270,11 @@ S     Settings                      ← M then S
 │   ├── S.1.8  Location auto-share  how many contacts; Enter = stop all (set in a chat, §1.2d)
 │   ├── S.1.9  Waypoints            list with distance; Enter = show on the map (§8.1)
 │   ├── S.1.10 Track                breadcrumb recording on/off
-│   └── S.1.11 Clear track          Enter twice
+│   ├── S.1.11 Clear track          Enter twice
+│   └── S.1.12 Coordinates          Decimal 43.64012,-70.92011 / Deg min sec 43 38'24"N 70 55'12"W /
+│                                   MGRS 19T CJ 4513 3368 (10 m): map header, GPS lines, lists.
+│                                   Messages keep decimal degrees (other clients read them);
+│                                   with MGRS a manual share also names the grid square.
 ├── S.2   WiFi                      status, IP
 │   ├── S.2.3  Scan networks        pick → saved: join; new locked: type password
 │   │   └── …  Join WiFi            Password · Auto-connect · Join (saves on success)

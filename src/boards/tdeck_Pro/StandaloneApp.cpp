@@ -127,6 +127,7 @@ struct Config {
     uint8_t  volume      = 80;      // 0..100 %, steps of 20; 80 spares the small speaker
     bool     idleMap     = false;   // idle screen = map around your position
     bool     trackOn     = false;   // breadcrumb track recording (S.1.10)
+    uint8_t  coordFmt    = 0;       // 0 decimal degrees, 1 deg-min-sec, 2 MGRS (S.1.12)
     bool     kbLight     = false;
     bool     gpsOn       = true;
     bool     gpsAutoSync = true;
@@ -207,6 +208,8 @@ void loadConfig() {
     g_cfg.volume      = p.getUChar("vol", 80);
     g_cfg.idleMap     = p.getBool("idleMap", false);
     g_cfg.trackOn     = p.getBool("trackOn", false);
+    g_cfg.coordFmt    = p.getUChar("coordFmt", 0);
+    if (g_cfg.coordFmt > 2) g_cfg.coordFmt = 0;
     g_cfg.kbLight     = p.getBool("kbl", false);
     g_cfg.gpsOn       = p.getBool("gps", true);
     g_cfg.gpsAutoSync = p.getBool("gpsSync", true);
@@ -242,6 +245,7 @@ void saveConfig() {
     p.putUChar("vol", g_cfg.volume);
     p.putBool("idleMap", g_cfg.idleMap);
     p.putBool("trackOn", g_cfg.trackOn);
+    p.putUChar("coordFmt", g_cfg.coordFmt);
     p.putBool("kbl", g_cfg.kbLight);
     p.putBool("gps", g_cfg.gpsOn);
     p.putBool("gpsSync", g_cfg.gpsAutoSync);
@@ -2941,6 +2945,8 @@ void buildSettingsRows(Page p) {
             srow(RK_TOGGLE, "Track (breadcrumbs)", "%s%s", g_cfg.trackOn ? "ON" : "OFF",
                  g_cfg.trackOn ? ", GPS wakes ~2 min" : "");
             srow(RK_ACTION, "Clear track", "%d points%s", g_trackN, g_trackLoaded ? "" : " (on SD)");
+            static const char* const kFmt[3] = {"Decimal 43.64012,-70.92011", "Deg min sec 43 38'24\"N", "MGRS 19T CJ 4513 3368"};
+            srow(RK_PICK, "Coordinates", "%s", kFmt[g_cfg.coordFmt % 3]);
         }
         break;
 
@@ -3383,6 +3389,11 @@ void activateSetting(int idx) {
             requestRedraw();
         } else if (idx == 10) {
             if (confirmTwice(1010, "clear the track")) { trackClear(); toast("Track cleared"); }
+        } else if (idx == 11) {
+            g_cfg.coordFmt = (uint8_t)((g_cfg.coordFmt + 1) % 3);
+            saveConfig();
+            Serial.printf("[CFG] coordinates %s\n", g_cfg.coordFmt == 2 ? "MGRS" : g_cfg.coordFmt == 1 ? "DMS" : "decimal");
+            requestRedraw();
         }
         break;
 
@@ -4353,17 +4364,73 @@ void fmtAge(uint32_t s, char* out, size_t n) {
     else snprintf(out, n, "%u h", (unsigned)((s + 1800) / 3600));
 }
 
+// ---- Coordinate formats (S.1.12) ---------------------------------------------------
+// Decimal degrees "43.64012,-70.92011", DMS "43 38'24"N 70 55'12"W", or MGRS to 10 m
+// "19T CJ 4513 3368" (WGS84 / UTM; Norway + Svalbard zone exceptions). Messages always
+// carry decimal degrees (machine-readable); MGRS is added to manual shares as text.
+void mgrsText(double lat, double lon, char* out, size_t n, int prec = 4) {
+    if (lat < -80 || lat > 84) { snprintf(out, n, "%.4f,%.4f", lat, lon); return; }   // UPS: not handled
+    const double a = 6378137.0, f = 1 / 298.257223563, e2 = f * (2 - f), ep2 = e2 / (1 - e2), k0 = 0.9996;
+    int zone = (int)floor((lon + 180) / 6) + 1;
+    if (lat >= 56 && lat < 64 && lon >= 3 && lon < 12) zone = 32;
+    if (lat >= 72 && lat < 84) {
+        if (lon >= 0 && lon < 9) zone = 31; else if (lon >= 9 && lon < 21) zone = 33;
+        else if (lon >= 21 && lon < 33) zone = 35; else if (lon >= 33 && lon < 42) zone = 37;
+    }
+    const double r = 3.14159265358979 / 180.0;
+    const double lon0 = ((zone - 1) * 6 - 180 + 3) * r, phi = lat * r, lam = lon * r;
+    const double sp = sin(phi), cp = cos(phi), tp = tan(phi);
+    const double N = a / sqrt(1 - e2 * sp * sp), T = tp * tp, C = ep2 * cp * cp, A = cp * (lam - lon0);
+    const double e4 = e2 * e2, e6 = e4 * e2;
+    const double M = a * ((1 - e2 / 4 - 3 * e4 / 64 - 5 * e6 / 256) * phi - (3 * e2 / 8 + 3 * e4 / 32 + 45 * e6 / 1024) * sin(2 * phi) +
+                          (15 * e4 / 256 + 45 * e6 / 1024) * sin(4 * phi) - (35 * e6 / 3072) * sin(6 * phi));
+    const double E = k0 * N * (A + (1 - T + C) * pow(A, 3) / 6 + (5 - 18 * T + T * T + 72 * C - 58 * ep2) * pow(A, 5) / 120) + 500000;
+    double Nn = k0 * (M + N * tp * (A * A / 2 + (5 - T + 9 * C + 4 * C * C) * pow(A, 4) / 24 +
+                                    (61 - 58 * T + T * T + 600 * C - 330 * ep2) * pow(A, 6) / 720));
+    if (lat < 0) Nn += 10000000;
+    const char band = "CDEFGHJKLMNPQRSTUVWXX"[(int)floor((lat + 80) / 8)];
+    static const char* const kCol[3] = {"ABCDEFGH", "JKLMNPQR", "STUVWXYZ"};
+    const int set = zone % 3;                // zones 1,4 -> A..H; 2,5 -> J..R; 3,6 -> S..Z
+    const int ci = (int)floor(E / 100000) - 1;
+    const char col = (ci >= 0 && ci < 8) ? kCol[set == 1 ? 0 : set == 2 ? 1 : 2][ci] : '?';
+    static const char* const kRow = "ABCDEFGHJKLMNPQRSTUV";
+    const char row = kRow[((int)floor(Nn / 100000) + (zone % 2 == 0 ? 5 : 0)) % 20];
+    long e = (long)fmod(E, 100000), nn = (long)fmod(Nn, 100000);
+    long d = 1;
+    for (int k = prec; k < 5; k++) d *= 10;
+    snprintf(out, n, "%d%c %c%c %0*ld %0*ld", zone, band, col, row, prec, e / d, prec, nn / d);
+}
+
+void fmtCoord(double lat, double lon, char* out, size_t n) {
+    if (g_cfg.coordFmt == 2) { mgrsText(lat, lon, out, n); return; }
+    if (g_cfg.coordFmt == 1) {
+        auto dms = [](double v, int& d, int& m, int& s) {
+            v = fabs(v); d = (int)v; const double mm = (v - d) * 60; m = (int)mm; s = (int)((mm - m) * 60 + 0.5);
+            if (s == 60) { s = 0; m++; } if (m == 60) { m = 0; d++; }
+        };
+        int ad, am, as, od, om, os;
+        dms(lat, ad, am, as); dms(lon, od, om, os);
+        snprintf(out, n, "%d %02d'%02d\"%c %d %02d'%02d\"%c", ad, am, as, lat < 0 ? 'S' : 'N', od, om, os, lon < 0 ? 'W' : 'E');
+        return;
+    }
+    snprintf(out, n, "%.5f,%.5f", lat, lon);
+}
+
 // One short line (fits the 240 px map footer): position, fix, age.
 void gpsPosText(char* out, size_t n) {
     if (gpsFresh()) {
-        snprintf(out, n, "%.5f,%.5f %usat", g_gpsLat, g_gpsLon, (unsigned)g_gpsSats);
+        char c[40];
+        fmtCoord(g_gpsLat, g_gpsLon, c, sizeof(c));
+        snprintf(out, n, "%s %usat", c, (unsigned)g_gpsSats);
     } else if (g_gpsPosValid) {
         const uint32_t a = (millis() - g_gpsPosAt) / 1000;
         char age[8];
         if (a < 90) snprintf(age, sizeof(age), "%us", (unsigned)a);
         else if (a < 5400) snprintf(age, sizeof(age), "%um", (unsigned)((a + 30) / 60));
         else snprintf(age, sizeof(age), "%uh", (unsigned)((a + 1800) / 3600));
-        snprintf(out, n, "old %.4f,%.4f %s", g_gpsLat, g_gpsLon, age);
+        char c[40];
+        fmtCoord(g_gpsLat, g_gpsLon, c, sizeof(c));
+        snprintf(out, n, "old %s %s", c, age);
     } else if (g_cfg.hasPos) {
         snprintf(out, n, "set %.4f,%.4f no fix", g_cfg.lat, g_cfg.lon);
     } else {
@@ -4410,8 +4477,10 @@ void shareMyLocation(const uint8_t dest[16]) {
     if (gpsFresh()) {
         localHHMM(hhmm, sizeof(hhmm));
         const int acc = g_gpsHdop > 0 ? (int)(g_gpsHdop * 5.0f + 0.5f) : 0;
-        if (acc > 0) snprintf(body, sizeof(body), "%s%.5f, %.5f (+-%d m, %s)", kLocPrefix, g_gpsLat, g_gpsLon, acc < 3 ? 3 : acc, hhmm);
-        else snprintf(body, sizeof(body), "%s%.5f, %.5f (%s)", kLocPrefix, g_gpsLat, g_gpsLon, hhmm);
+        char grid[28] = "";
+        if (g_cfg.coordFmt == 2) { mgrsText(g_gpsLat, g_gpsLon, grid, sizeof(grid)); strlcat(grid, ", ", sizeof(grid)); }
+        if (acc > 0) snprintf(body, sizeof(body), "%s%.5f, %.5f (%s+-%d m, %s)", kLocPrefix, g_gpsLat, g_gpsLon, grid, acc < 3 ? 3 : acc, hhmm);
+        else snprintf(body, sizeof(body), "%s%.5f, %.5f (%s%s)", kLocPrefix, g_gpsLat, g_gpsLon, grid, hhmm);
     } else if (g_gpsPosValid) {
         fmtAge((millis() - g_gpsPosAt) / 1000, age, sizeof(age));
         snprintf(body, sizeof(body), "%s%.5f, %.5f (%s old)", kLocLastPrefix, g_gpsLat, g_gpsLon, age);
@@ -7674,6 +7743,7 @@ bool begin() {
     ashareLoad();
     cposLoad();
     wptLoad();
+    mapview::setCoordFormatter(fmtCoord);
     g_proto.setMessageCallback(onCommittedMessage);
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
     noteInput();
