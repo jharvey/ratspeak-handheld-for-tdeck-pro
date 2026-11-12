@@ -4,6 +4,9 @@ Last: 2026-11-11  (LoRa RX duty cycle, INA226 logger software, back-power rule)
 ================================================================================
 
 START HERE (handoff 2026-11-11)
+- Map / elevation downloads (2026-11-12): run from the user's NAS, M:atspeak-maps (mapped
+  \192.168.0.202\maps). After any crash read M:atspeak-maps\RESUME.md + STATUS.txt and
+  restart there (every job resumes). Reference library: M:atspeak-info.
 - Bench units: only 3 USB ports free (user's mouse dongle) - COM5, COM6, COM9 attached;
   COM3 unplugged. All run RatSpeak in Balanced with the RX duty-cycle build (2026-11-11).
   COM3 = bench build at -9 dBm (antenna unknown). COM5 + COM6 = normal build with
