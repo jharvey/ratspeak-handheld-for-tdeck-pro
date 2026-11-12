@@ -93,14 +93,38 @@ console at once and logs everything to one file per unit.
 | Password lock + idle for days | Unlock still works; messages received while locked are shown after unlock |
 | Low battery / brown-out | Clean shutdown at the cut-off; boots normally when charged |
 
+## 4a. Power cuts: pick up where it left off
+
+Goal: after a power blip, reset or crash, the unit boots and carries on with at most the
+one message being saved at that moment missing, and nothing half-written or stuck.
+
+What is designed for this today (to prove, not assume):
+- Message records are written to a temporary file, then renamed; a `.bak` copy covers a
+  cut during a rewrite; leftovers are cleaned at boot (atomic write + recovery).
+- Queued outgoing messages are found again at boot and resent (outgoing recovery); the
+  Check-in outbox is in NVS.
+- An incoming message's delivery proof is only sent after it is saved, so a cut before
+  the save makes the sender retry instead of losing it.
+- Settings, TX power, identity: NVS / atomic files.
+- Map copies and downloads on the PC side resume from the NAS (`M:atspeak-maps\STATUS.txt`).
+
+Tests:
+| Test | How | Pass |
+|---|---|---|
+| **Reset loop while saving** (automated) | PC script runs `msgfill` (or ping-pong traffic) and resets the unit at a random moment through the USB serial lines (the same RTS/DTR reset as opening the port), several hundred times | Every boot succeeds; message count only ever grows by what was confirmed; no broken records; queued messages go out after boot |
+| **Real power cut** | Battery-only unit, pull the battery during saves / map copy / settings change (10-20 times by hand) | Same as above; settings unchanged |
+| **Simulator kill** | Kill the simulator process at random points during saves, restart, repeat | Same as above, fast enough for hundreds of runs overnight |
+| **Brown-out** | Run the battery down under load | Clean stop; normal boot when charged |
+
 ## 5. Order of work
 
 1. Add the `heap` heartbeat line (firmware) and the PC logger (also used for the units).
 2. Simulator: ping-pong runner, then the `monkey` command, then the sanitizer build.
 3. Overnight simulator runs; fix what they find.
-4. Units (after the map copies finish): full-flash timing on one unit, then a 24 h
+4. Power-cut tests (§4a): simulator kill loop first, then the USB reset loop on one unit.
+5. Units (after the map copies finish): full-flash timing on one unit, then a 24 h
    two-unit run, then the nasty cases.
-5. One 72 h run with all three units before calling it stable.
+6. One 72 h run with all three units before calling it stable.
 
 Results go in a table at the end of this file (date, build, layer, hours, result, issues).
 
