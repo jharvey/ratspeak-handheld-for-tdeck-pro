@@ -59,6 +59,11 @@
 #include "reticulum/AnnounceManager.h"
 #include "transport/LoRaInterface.h"
 #include "transport/WiFiInterface.h"
+#include "config/Config.h"
+#if !defined(SIMULATOR)
+#include "transport/TcpClientSet.h"     // TCP hub client (device only: FreeRTOS tasks + lwIP)
+#include "config/UserConfig.h"
+#endif
 #include "security/SecretVault.h"
 #include "remote/ScreenMirror.h"
 #include "power/PowerModes.h"
@@ -1822,7 +1827,8 @@ uint8_t g_threadPeer[16];
 // Entry mode: one text buffer, one owner.
 enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, Longitude, WifiPass,
                              PassOld, PassNew, PassConfirm,     // Pass*: lock password (arg = purpose)
-                             Search };                          // list filter (Inbox / Contacts / Peers)
+                             Search,                            // list filter (Inbox / Contacts / Peers)
+                             TcpHost, TcpPort };
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -1834,7 +1840,7 @@ bool entryActive() { return g_entry != Entry::None; }
 bool passEntry(Entry e) { return e == Entry::PassOld || e == Entry::PassNew || e == Entry::PassConfirm; }
 bool browseMode()  { return !entryActive(); }
 bool entryNumeric() {
-    return g_entry == Entry::RtcField || g_entry == Entry::IdleSecs ||
+    return g_entry == Entry::RtcField || g_entry == Entry::IdleSecs || g_entry == Entry::TcpPort ||
            g_entry == Entry::Latitude || g_entry == Entry::Longitude;
 }
 
@@ -1843,7 +1849,7 @@ enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
-    PG_CHECKIN
+    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -1944,7 +1950,7 @@ bool     g_joinAuto = true;
 
 bool isWifiPage(Page p) {
     return p == PG_WIFI || p == PG_WIFI_SCAN || p == PG_WIFI_SAVED ||
-           p == PG_WIFI_NET || p == PG_WIFI_JOIN;
+           p == PG_WIFI_NET || p == PG_WIFI_JOIN || p == PG_TCP;
 }
 
 void wifiUiChanged() {
@@ -2441,6 +2447,158 @@ void clearRoot() {
 // 6. Screens
 // =============================================================================
 
+// ---- TCP hub (Settings > WiFi > TCP hub) -------------------------------------------
+// The core's Reticulum TCP client interface (TcpClientSet on the protocol pump, as the
+// Plus build uses), one endpoint: NVS rs_tcp (on, host, port), default off and
+// rns.ratspeak.org:4242. It runs only while WiFi is connected. Device only: the
+// simulator has no TCP stack (FreeRTOS tasks + lwIP sockets), so there it is settings only.
+struct TcpCfg { bool on = false; char host[64] = ""; uint16_t port = TCP_DEFAULT_PORT; };
+TcpCfg g_tcpCfg;
+bool   g_tcpApplied = false;          // endpoint handed to the client set
+bool   g_tcpDirty = false;            // settings changed: reload
+#if !defined(SIMULATOR)
+TcpClientSet g_tcp;
+#endif
+
+void tcpLoad() {
+    Preferences p;
+    strlcpy(g_tcpCfg.host, RATSPEAK_HUB_HOST, sizeof(g_tcpCfg.host));
+    if (!p.begin("rs_tcp", true)) return;
+    g_tcpCfg.on = p.getUChar("on", 0) != 0;
+    String h = p.getString("host", RATSPEAK_HUB_HOST);
+    strlcpy(g_tcpCfg.host, h.c_str(), sizeof(g_tcpCfg.host));
+    g_tcpCfg.port = p.getUShort("port", TCP_DEFAULT_PORT);
+    if (!g_tcpCfg.port) g_tcpCfg.port = TCP_DEFAULT_PORT;
+    p.end();
+}
+
+void tcpSave() {
+    Preferences p;
+    if (!p.begin("rs_tcp", false)) return;
+    p.putUChar("on", g_tcpCfg.on ? 1 : 0);
+    p.putString("host", g_tcpCfg.host);
+    p.putUShort("port", g_tcpCfg.port);
+    p.end();
+    g_tcpDirty = true;
+    Serial.printf("[TCP] settings %s %s:%u\n", g_tcpCfg.on ? "on" : "off", g_tcpCfg.host, (unsigned)g_tcpCfg.port);
+}
+
+int tcpUp() {
+    int up = 0;
+#if !defined(SIMULATOR)
+    for (auto* c : g_tcp) if (c && c->isConnected()) up++;
+#endif
+    return up;
+}
+
+const char* tcpStatus() {
+#if defined(SIMULATOR)
+    return g_tcpCfg.on ? "on (not in simulator)" : "off";
+#else
+    if (!g_tcpCfg.on) return "off";
+    if (!g_protoReady) return "protocol off";
+    if (!wifiConnected()) return "waiting for WiFi";
+    return tcpUp() ? "connected" : "connecting";
+#endif
+}
+
+void tcpTick() {
+#if !defined(SIMULATOR)
+    if (!g_protoReady) return;
+    const bool want = g_tcpCfg.on && g_tcpCfg.host[0] && wifiConnected();
+    if (want && (!g_tcpApplied || g_tcpDirty)) {
+        std::vector<TCPEndpoint> eps(1);
+        eps[0].host = g_tcpCfg.host;
+        eps[0].port = g_tcpCfg.port;
+        eps[0].autoConnect = true;
+        g_tcpDirty = false;
+        if (g_tcp.reload(g_proto.pump(), eps)) {
+            g_tcpApplied = true;
+            Serial.printf("[TCP] client %s:%u\n", g_tcpCfg.host, (unsigned)g_tcpCfg.port);
+        } else {
+            Serial.println("[TCP] endpoint rejected");
+        }
+    } else if (!want && g_tcpApplied) {
+        g_tcp.stop();
+        g_tcpApplied = false;
+        Serial.println("[TCP] stopped");
+    }
+    g_tcp.maintain();
+    if (g_tcpApplied) g_tcp.poll(20);
+    static int lastUp = 0;
+    const int up = tcpUp();
+    if (up != lastUp) {
+        lastUp = up;
+        Serial.printf("[TCP] %s\n", up ? "connected" : "disconnected");
+        if (g_screen == SCR_SETTINGS && g_page == PG_TCP) requestRedraw();
+    }
+#endif
+}
+
+// ---- Identities (Settings > Identity > Identities) ------------------------------------
+// The core's IdentityManager slots (as on the Plus build): list, create, switch, erase.
+// The protocol loads the active identity at boot, so a switch restarts the device.
+// Destructive actions need Enter twice within 5 s.
+int      g_idSel = 0;                 // slot shown on PG_ID_ONE
+void popPage();
+int      g_confirmKey = -1;
+uint32_t g_confirmAt = 0;
+
+bool confirmTwice(int key, const char* what) {
+    if (g_confirmKey == key && millis() - g_confirmAt < 5000) { g_confirmKey = -1; return true; }
+    g_confirmKey = key;
+    g_confirmAt = millis();
+    toast("Enter again: %s", what);
+    return false;
+}
+
+void identityRestart(const char* why) {
+    Serial.printf("[ID] %s - restarting\n", why);
+    saveConfig();
+    g_idMgr.flushPending();
+    delay(200);
+    ESP.restart();
+}
+
+int identityIndexOf(const std::string& hash) {
+    const auto& v = g_idMgr.identities();
+    for (size_t i = 0; i < v.size(); i++) if (v[i].hash == hash) return (int)i;
+    return -1;
+}
+
+void identityNew() {
+    const int k = g_idMgr.createIdentity(String(g_selfName));
+    if (k < 0) { toast("Create failed (max 8?)"); return; }
+    if (!g_idMgr.switchTo(k)) { toast("Switch failed"); return; }
+    identityRestart("new identity");
+}
+
+void identitySwitch(int i) {
+    if (i == g_idMgr.activeIndex()) { toast("Already active"); return; }
+    if (!g_idMgr.switchTo(i)) { toast("Switch failed"); return; }
+    identityRestart("identity switched");
+}
+
+// Erase a slot's key. The active one is replaced: a new identity becomes active first.
+void identityErase(int i) {
+    const auto& v = g_idMgr.identities();
+    if (i < 0 || i >= (int)v.size()) return;
+    const std::string hash = v[i].hash;
+    if (i != g_idMgr.activeIndex()) {
+        if (!g_idMgr.deleteIdentity(i)) { toast("Erase failed"); return; }
+        Serial.printf("[ID] erased %s\n", hash.c_str());
+        toast("Identity erased");
+        popPage();
+        return;
+    }
+    const int k = g_idMgr.createIdentity(String(g_selfName));
+    if (k < 0 || !g_idMgr.switchTo(k)) { toast("New identity failed"); return; }
+    const int old = identityIndexOf(hash);
+    if (old < 0 || !g_idMgr.deleteIdentity(old)) { toast("Old key not erased"); return; }
+    Serial.printf("[ID] erased active %s\n", hash.c_str());
+    identityRestart("active identity erased, new one made");
+}
+
 // ---- Idle password lock (Settings > Screen > Idle splash) ----------------------------
 // The lock password IS the SecretVault password: setting one makes the vault start
 // locked at every boot (saved WiFi passwords stay sealed until it is typed), and idle
@@ -2621,6 +2779,9 @@ const char* pageTitle(Page p) {
         case PG_ENERGY:       return "Energy monitor";
         case PG_ENERGY_GRAPH: return "Energy trend";
         case PG_CHECKIN:      return "Check-in schedule";
+        case PG_TCP:          return "TCP hub";
+        case PG_IDS:          return "Identities";
+        case PG_ID_ONE:       return "Identity slot";
     }
     return "";
 }
@@ -2723,6 +2884,17 @@ void buildSettingsRows(Page p) {
         srow(RK_MENU, "Saved networks", "%d saved, encrypted%s", g_wifiSavedCount,
              wifiHasAutoCreds() ? ", auto" : "");
         srow(RK_ACTION, "Disconnect", g_wifiSt == WifiSt::Off ? "-" : "Enter = off (pause auto)");
+        srow(RK_MENU, "TCP hub", "%s", tcpStatus());
+        break;
+
+    case PG_TCP:
+        srow(RK_TOGGLE, "TCP hub", "%s", g_tcpCfg.on ? "ON (while WiFi is up)" : "OFF");
+        e = editingSub(Entry::TcpHost);
+        srow(RK_ENTRY, "Host", "%s", e ? e : g_tcpCfg.host);
+        e = editingSub(Entry::TcpPort);
+        if (e) srow(RK_ENTRY, "Port", "%s", e); else srow(RK_ENTRY, "Port", "%u", (unsigned)g_tcpCfg.port);
+        srow(RK_INFO, "Status", "%s", tcpStatus());
+        srow(RK_ACTION, "Use RatSpeak hub", "%s:%u", RATSPEAK_HUB_HOST, (unsigned)TCP_DEFAULT_PORT);
         break;
 
     case PG_WIFI_SCAN:
@@ -2952,7 +3124,29 @@ void buildSettingsRows(Page p) {
         srow(RK_ENTRY, "Display name", "%s", g_selfName);
         srow(RK_INFO, "LXMF address", "..%.16s", g_destHex[0] ? g_destHex + 16 : "");
         srow(RK_ACTION, "Announce ID", "last: %s", g_announceStr);
+        srow(RK_MENU, "Identities", "%d saved (new / switch / erase)", g_idMgr.count());
         break;
+
+    case PG_IDS: {
+        const auto& v = g_idMgr.identities();
+        for (size_t i = 0; i < v.size() && g_srowCount < MAX_SET_ROWS - 1; i++) {
+            const char* nm = v[i].displayName.length() ? v[i].displayName.c_str() : "(no name)";
+            srow(RK_MENU, nm, "%.16s%s", v[i].hash.c_str(), v[i].active ? " (active)" : "");
+        }
+        srow(RK_ACTION, "New identity", "make + switch + restart");
+        break;
+    }
+
+    case PG_ID_ONE: {
+        const auto& v = g_idMgr.identities();
+        if (g_idSel < 0 || g_idSel >= (int)v.size()) { srow(RK_INFO, "Gone", "^ = back"); break; }
+        const bool act = v[g_idSel].active;
+        srow(RK_INFO, "Hash", "%.16s", v[g_idSel].hash.c_str());
+        srow(RK_INFO, "", "%s", v[g_idSel].hash.size() > 16 ? v[g_idSel].hash.c_str() + 16 : "");
+        srow(RK_ACTION, "Switch to it", "%s", act ? "(active)" : "Enter x2 = switch + restart");
+        srow(RK_ACTION, "Erase it", "%s", act ? "Enter x2 = new ID + restart" : "Enter x2 = delete key");
+        break;
+    }
 
     case PG_LORA:
         srow(RK_INFO, "Radio", "%s", loraOnline() ? "online" : "offline");
@@ -3105,6 +3299,25 @@ void activateSetting(int idx) {
         if (idx == 2) { if (!g_wifiScanned || !g_wifiSeenCount) wifiStartScan(false); pushPage(PG_WIFI_SCAN); }
         else if (idx == 3) pushPage(PG_WIFI_SAVED);
         else if (idx == 4 && g_wifiSt != WifiSt::Off) { wifiDisconnect(); toast("WiFi off"); }
+        else if (idx == 5) pushPage(PG_TCP);
+        break;
+
+    case PG_TCP:
+        if (idx == 0) {
+            g_tcpCfg.on = !g_tcpCfg.on;
+            tcpSave();
+            if (g_tcpCfg.on && !wifiConnected()) toast("Starts when WiFi is up");
+            requestRedraw();
+        } else if (idx == 1) {
+            startEntry(Entry::TcpHost, g_tcpCfg.host);
+        } else if (idx == 2) {
+            char pb[8]; snprintf(pb, sizeof(pb), "%u", (unsigned)g_tcpCfg.port); startEntry(Entry::TcpPort, pb);
+        } else if (idx == 4) {
+            strlcpy(g_tcpCfg.host, RATSPEAK_HUB_HOST, sizeof(g_tcpCfg.host));
+            g_tcpCfg.port = TCP_DEFAULT_PORT;
+            tcpSave();
+            toast("RatSpeak hub set");
+        }
         break;
 
     case PG_WIFI_SCAN: {
@@ -3318,6 +3531,18 @@ void activateSetting(int idx) {
         if (idx == 1 && g_haveSelf) startNameEntry(g_selfHash);
         else if (idx == 1) toast("Identity not loaded");
         else if (idx == 3) { doAnnounce(); if (g_cfg.beep) g_audio.playAnnounce(); toast("Announce: %s", g_announceStr); }
+        else if (idx == 4) pushPage(PG_IDS, g_idMgr.activeIndex() > 0 ? g_idMgr.activeIndex() : 0);
+        break;
+
+    case PG_IDS:
+        if (idx >= 0 && idx < g_idMgr.count()) { g_idSel = idx; pushPage(PG_ID_ONE, 2); }
+        else if (idx == g_idMgr.count() && confirmTwice(100, "new ID + restart")) identityNew();
+        break;
+
+    case PG_ID_ONE:
+        if (idx == 2 && confirmTwice(200 + g_idSel, "switch + restart")) identitySwitch(g_idSel);
+        else if (idx == 3 && confirmTwice(300 + g_idSel, g_idSel == g_idMgr.activeIndex() ? "erase active ID" : "erase key"))
+            identityErase(g_idSel);
         break;
 
     case PG_LORA:
@@ -4340,6 +4565,21 @@ void commitEntry() {
         endEntry();
         return;
     }
+    case Entry::TcpHost: {
+        if (!g_bufLen || g_bufLen >= sizeof(g_tcpCfg.host) || strchr(g_buf, ' ')) { toast("Host: 1-63 chars, no spaces"); return; }
+        strlcpy(g_tcpCfg.host, g_buf, sizeof(g_tcpCfg.host));
+        endEntry();
+        tcpSave();
+        return;
+    }
+    case Entry::TcpPort: {
+        long v;
+        if (!parseLong(g_buf, v) || v < 1 || v > 65535) { toast("Port 1-65535"); return; }
+        g_tcpCfg.port = (uint16_t)v;
+        endEntry();
+        tcpSave();
+        return;
+    }
     case Entry::Search:                          // keep the filter, back to browsing
         endEntry();
         Serial.printf("[LIST] filter \"%s\": %d rows\n", g_filter, g_rowCount);
@@ -4468,6 +4708,7 @@ void entryKey(const KeyEvent& ev) {
     if (g_entry == Entry::WifiPass && g_bufLen >= WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
     if (passEntry(g_entry) && g_bufLen >= kLockPassMax) { toast("Max 32 chars"); return; }
     if (g_entry == Entry::Search && g_bufLen >= sizeof(g_filter) - 1) return;
+    if (g_entry == Entry::TcpHost && g_bufLen >= sizeof(g_tcpCfg.host) - 1) { toast("Max 63 chars"); return; }
     bufAppend(c);
     if (g_entry == Entry::Search) searchChanged();
     // Show it on the next frame. Keys typed while that frame is on the panel are
@@ -5382,6 +5623,12 @@ void handleSerialLine(char* p) {
         }
         if (ok) { saveContactName(h, p + 8 + 32 + 1); if (isListScreen(g_screen)) loadRows(g_screen); requestRedraw(); }
         else Serial.println("[CMD] contact <32 hex dest> <name>");
+    } else if (!strcmp(p, "ids")) {
+        const auto& v = g_idMgr.identities();
+        for (size_t i = 0; i < v.size(); i++)
+            Serial.printf("[ID] slot %u %s %s%s\n", (unsigned)i, v[i].hash.c_str(), v[i].displayName.c_str(),
+                          v[i].active ? " (active)" : "");
+        Serial.printf("[ID] %u identities, tcp %s\n", (unsigned)v.size(), tcpStatus());
     } else if (!strcmp(p, "id")) {
         Serial.printf("[ID] dest=%s name=%s\n", g_destHex, g_selfName);
     } else if (!strncmp(p, "txp", 3) && (p[3] == ' ' || p[3] == 0)) {
@@ -5670,6 +5917,7 @@ bool begin() {
     lockLoadFails();
     if (lockHasPassword()) { g_locked = true; Serial.println("[LOCK] boot locked (password set)"); }
     if (vault::unlocked()) wifiLoad();    // else after unlock (lockTry)
+    tcpLoad();
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
     noteInput();
     goScreen(SCR_HOME);
@@ -5700,6 +5948,7 @@ void loop() {
     watchPeers();
     watchClockAndToast();
     watchWifi();
+    tcpTick();
 
     processKeys();         // again, in case a watcher above took a while
     pollTouch();

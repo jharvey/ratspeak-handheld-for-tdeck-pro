@@ -1,0 +1,25 @@
+# After identity.txt: two identities, the new one active (new dest hash). Erase the old
+# one (slot 1 > Erase it, Enter twice), then check the TCP setting survived the restart.
+expect 60000 [BOOT] ready
+wait 1000
+serial ids
+expect 3000 [ID] 2 identities, tcp on
+key M
+wait 800
+key S
+wait 800
+key 6
+wait 800
+key 5
+wait 800
+shot idafter-01-ids.png
+key 1
+wait 800
+shot idafter-02-slot.png
+key 4
+expect 3000 [UI] Enter again
+key 4
+expect 5000 [ID] erased
+serial ids
+expect 3000 [ID] 1 identities
+quit
