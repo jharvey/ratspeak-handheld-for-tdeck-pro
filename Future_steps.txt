@@ -111,6 +111,14 @@ Robustness to verify (before the stress-test pass)
   Next: time the usage check (LittleFS walk) and a removal pass on a unit with ~1,500
   messages (msgfill), once a unit is free from the map copies.
 - Same for a full SD card (archive + map tiles).
+- FLASH WEAR (user asked 2026-11-12, do later): check that nothing exceeds the flash
+  write/erase cycle rating (NOR flash ~100k erase cycles per sector; SD cards vary).
+  Count writes per message (record + .bak + status/read rewrites), per announce/ratchet
+  file, NVS (settings, outbox, energy/battery logs, check-in state) and SD (archive,
+  batlog); add a bench write counter (bytes + erases per area per hour) and run the
+  ping-pong / soak tests with it; estimate years to wear-out at heavy use (e.g. 500
+  msgs/day); confirm LittleFS wear levelling (block_cycles) and NVS page rotation cover
+  the hot files; fix any hot spot (e.g. a file rewritten every few seconds).
 - IN PROGRESS - add a idle screen options, after like 1 min you need password to gain access to device, screen is blank when idle. 
 - DONE - add manual refresh button, for ghosting issues. Do full screen refresh. 
 - DONE - add GPS clock displayed on idle screen / header. 

@@ -97,6 +97,7 @@ console at once and logs everything to one file per unit.
 | Check-in mode for a week | Windows still on time (RTC drift ~2.9 s/day); outbox flushes |
 | Password lock + idle for days | Unlock still works; messages received while locked are shown after unlock |
 | Low battery / brown-out | Clean shutdown at the cut-off; boots normally when charged |
+| Flash wear (later, see Future_steps.txt) | Write counter during soak runs: no file or NVS key rewritten often enough to wear the flash out within years of heavy use |
 
 ## 4a. Power cuts: pick up where it left off
 
