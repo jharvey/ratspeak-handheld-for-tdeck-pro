@@ -267,7 +267,10 @@ S     Settings                      ← M then S
 │   ├── S.1.5  Sync GPS now         needs a fix
 │   ├── S.1.6  Auto GPS sync        boot + daily
 │   ├── S.1.7  GPS position         lat, lon, satellites; or the last fix and its age
-│   └── S.1.8  Location auto-share  how many contacts; Enter = stop all (set in a chat, §1.2d)
+│   ├── S.1.8  Location auto-share  how many contacts; Enter = stop all (set in a chat, §1.2d)
+│   ├── S.1.9  Waypoints            list with distance; Enter = show on the map (§8.1)
+│   ├── S.1.10 Track                breadcrumb recording on/off
+│   └── S.1.11 Clear track          Enter twice
 ├── S.2   WiFi                      status, IP
 │   ├── S.2.3  Scan networks        pick → saved: join; new locked: type password
 │   │   └── …  Join WiFi            Password · Auto-connect · Join (saves on success)
@@ -689,6 +692,18 @@ position arrives. On the map:
 From a list (Inbox / Contacts / Peers) **L** on a row shows that contact on the map; in
 a chat, **MIC → 5 Show them on the map**, or **Enter** on the empty draft under a received
 location. Markers also show on the map idle screen. Console `cpos` (`cpos clear`).
+
+**Waypoints:** on the map **P** marks one at the map centre: type a name (the default
+`WP3` goes on the first key; Enter alone keeps it), Enter. **N** steps through them: the map
+centres on it, the diamond is selected, a dashed line runs from your position to it and the
+bottom line reads `W2 BALLFIELD 2.1km SW`. **Del** twice removes the selected one. Up to 32
+(NVS rs_wpt); **S.1.9 Waypoints** lists them with distance (Enter = show on the map).
+
+**Track (breadcrumbs):** **S.1.10** on/off. A point is added when the GPS fix has moved more
+than 25 m; in Balanced / Saver the GPS is woken about every 2 minutes for it (sparser
+points, small battery cost). The last 1000 points are drawn as a dotted line; all of them
+are appended to `<SD>/ratdeckpro/tracks/track.bin`. **S.1.11** clears it (Enter twice).
+Console `wpt` (`wpt clear`), `track` (`track add <lat> <lon>`, `track clear`).
 
 The map's bottom line shows the GPS position (`43.64012,-70.92011 8sat`, or `old … 12m`
 for the last fix and its age). World overview zoom 0–7 (country, state / province borders

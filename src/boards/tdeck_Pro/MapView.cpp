@@ -35,6 +35,10 @@ bool g_posValid = false;
 double g_posLat = 0, g_posLon = 0;
 double g_drawnPx = -1e9, g_drawnPy = -1e9;   // own position (world px) at the last draw
 int g_viewW = 240, g_viewH = 224;
+const float* g_track = nullptr;
+int g_trackN = 0;
+bool g_guideOn = false;
+double g_guideLat = 0, g_guideLon = 0;
 const uint8_t kDigit5x7[11][7] = {        // rows, 5 bits each (bit 4 = left)
     {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}, {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
     {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}, {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E},
@@ -141,6 +145,12 @@ bool markerScreen(int i, int& x, int& y) {
     return true;
 }
 
+void setTrack(const float* latlon, int n) { g_track = latlon; g_trackN = n > 0 ? n : 0; }
+
+void setGuide(bool on, double lat, double lon) { g_guideOn = on; g_guideLat = lat; g_guideLon = lon; }
+
+void getCentre(double& lat, double& lon) { unproject(g_cx, g_cy, g_zoom, lat, lon); }
+
 void centreOn(double lat, double lon) {
     g_follow = false;
     project(lat, lon, g_zoom, g_cx, g_cy);
@@ -226,6 +236,71 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
         }
     }
 
+    // View coordinates of a lat/lon (wrapped across the date line).
+    auto toView = [&](double lat, double lon, int& vx, int& vy) {
+        double ppx, ppy;
+        project(lat, lon, g_zoom, ppx, ppy);
+        double dx = ppx - left;
+        const double s = worldSize(g_zoom);
+        if (dx < -s / 2) dx += s;
+        if (dx > s / 2) dx -= s;
+        vx = (int)dx;
+        vy = (int)(ppy - top);
+    };
+    // Line from a to b: pattern(step) true = black pixel; 1 px white either side for contrast.
+    auto line = [&](int ax, int ay, int bx, int by, int on, int off) {
+        const int dx = abs(bx - ax), dy = -abs(by - ay), sx = ax < bx ? 1 : -1, sy = ay < by ? 1 : -1;
+        int err = dx + dy, k = 0, guard = 4000;
+        while (guard-- > 0) {
+            if ((k % (on + off)) < on && ax >= 0 && ay >= 0 && ax < w && ay < h) px(x0 + ax, y0 + ay, !dark);
+            k++;
+            if (ax == bx && ay == by) break;
+            const int e2 = 2 * err;
+            if (e2 >= dy) { err += dy; ax += sx; }
+            if (e2 <= dx) { err += dx; ay += sy; }
+        }
+    };
+    // Breadcrumb track: dotted (2 on, 2 off), skipping segments far off the view.
+    for (int i = 1; i < g_trackN; i++) {
+        int ax, ay, bx, by;
+        toView(g_track[2 * (i - 1)], g_track[2 * (i - 1) + 1], ax, ay);
+        toView(g_track[2 * i], g_track[2 * i + 1], bx, by);
+        if ((ax < 0 && bx < 0) || (ay < 0 && by < 0) || (ax >= w && bx >= w) || (ay >= h && by >= h)) continue;
+        if (abs(ax - bx) > 2000 || abs(ay - by) > 2000) continue;
+        line(ax, ay, bx, by, 2, 2);
+    }
+    // Guide line from the own position to the selected waypoint: dashed (5 on, 3 off).
+    if (g_guideOn && g_posValid) {
+        int ax, ay, bx, by;
+        toView(g_posLat, g_posLon, ax, ay);
+        toView(g_guideLat, g_guideLon, bx, by);
+        if (abs(ax - bx) < 4000 && abs(ay - by) < 4000) line(ax, ay, bx, by, 5, 3);
+    }
+
+    // Waypoints: black diamond (radius 6) in a white halo; selected: hollow centre and an
+    // outer black diamond ring.
+    for (int i = 0; i < g_markerCount; i++) {
+        if (g_markers[i].kind != 1) continue;
+        int cx, cy;
+        toView(g_markers[i].lat, g_markers[i].lon, cx, cy);
+        g_markerX[i] = cx; g_markerY[i] = cy;
+        g_markerOn[i] = cx >= 0 && cy >= 0 && cx < w && cy < h;
+        const bool sel = g_markers[i].selected;
+        const int rOut = sel ? 11 : 8;
+        for (int yy = -rOut; yy <= rOut; yy++) {
+            for (int xx = -rOut; xx <= rOut; xx++) {
+                const int vx = cx + xx, vy = cy + yy, d = abs(xx) + abs(yy);
+                if (vx < 0 || vy < 0 || vx >= w || vy >= h || d > rOut) continue;
+                bool black;
+                if (d <= 6) black = !(sel && d <= 2);              // diamond (hollow centre if selected)
+                else if (sel && d == 7) black = false;
+                else if (sel && d <= 9) black = true;              // selected: outer ring
+                else black = false;                                // white halo
+                px(x0 + vx, y0 + vy, black != dark);
+            }
+        }
+    }
+
     // Own position: black ring with a white halo and a centre dot, visible on any tile.
     if (g_posValid) {
         double ppx, ppy;
@@ -276,11 +351,13 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
         g_markers[i].more = false;
         order[i] = i;
     }
-    for (int a = 1; a < g_markerCount; a++)
+    int nOrder = 0;                          // contacts only (waypoints are drawn above)
+    for (int i = 0; i < g_markerCount; i++) if (g_markers[i].kind == 0) order[nOrder++] = i;
+    for (int a = 1; a < nOrder; a++)
         for (int b = a; b > 0 && before(g_markers[order[b]], g_markers[order[b - 1]]); b--)
             std::swap(order[b], order[b - 1]);
     bool showSel[kMaxMarkers] = {};          // drawn selected: itself, or a hidden one under it
-    for (int k = 0; k < g_markerCount; k++) {
+    for (int k = 0; k < nOrder; k++) {
         const int i = order[k];
         g_markerOn[i] = true;
         if (g_markers[i].selected) showSel[i] = true;
@@ -298,6 +375,7 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
         }
     }
     for (int i = 0; i < g_markerCount; i++) {
+        if (g_markers[i].kind != 0) continue;
         const int cx = g_markerX[i], cy = g_markerY[i];
         if (!g_markerOn[i]) continue;
         g_markerOn[i] = cx >= 0 && cy >= 0 && cx < w && cy < h;

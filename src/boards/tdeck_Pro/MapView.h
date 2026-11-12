@@ -61,12 +61,20 @@ bool key(char c, bool enter);
 // drawn, with a small boxed "+" (more here), shown selected if a hidden one is selected. Copied (at most
 // kMaxMarkers). markerScreen() gives where marker i was drawn by the last draw(),
 // relative to the draw rectangle; false when hidden or off the view.
-constexpr int kMaxMarkers = 16;
-struct Marker { double lat, lon; bool selected; uint8_t number; bool fresh; bool more; };
+constexpr int kMaxMarkers = 48;           // 16 contacts + 32 waypoints
+struct Marker { double lat, lon; bool selected; uint8_t number; bool fresh; bool more;
+                uint8_t kind; };              // kind 0 = contact tag, 1 = waypoint (diamond)
 void setMarkers(const Marker* m, int n);
 bool markerScreen(int i, int& x, int& y);
 // Centre the view on a point without following the own position (zoom kept).
 void centreOn(double lat, double lon);
+void getCentre(double& lat, double& lon);   // view centre
+
+// Breadcrumb track: lat,lon pairs (float), drawn as a dotted line. The array is not
+// copied: keep it alive while the map can draw. n = 0: none.
+void setTrack(const float* latlon, int n);
+// Dashed guide line from the own position to a point (selected waypoint), or off.
+void setGuide(bool on, double lat = 0, double lon = 0);
 
 // Cache stats for the console: tiles loaded / missing since open.
 void stats(uint32_t& loaded, uint32_t& missing, uint32_t& hits);

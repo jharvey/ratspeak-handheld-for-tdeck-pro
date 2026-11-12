@@ -125,6 +125,7 @@ struct Config {
     bool     vibe        = true;
     uint8_t  volume      = 80;      // 0..100 %, steps of 20; 80 spares the small speaker
     bool     idleMap     = false;   // idle screen = map around your position
+    bool     trackOn     = false;   // breadcrumb track recording (S.1.10)
     bool     kbLight     = false;
     bool     gpsOn       = true;
     bool     gpsAutoSync = true;
@@ -204,6 +205,7 @@ void loadConfig() {
     g_cfg.vibe        = p.getBool("vibe", true);
     g_cfg.volume      = p.getUChar("vol", 80);
     g_cfg.idleMap     = p.getBool("idleMap", false);
+    g_cfg.trackOn     = p.getBool("trackOn", false);
     g_cfg.kbLight     = p.getBool("kbl", false);
     g_cfg.gpsOn       = p.getBool("gps", true);
     g_cfg.gpsAutoSync = p.getBool("gpsSync", true);
@@ -238,6 +240,7 @@ void saveConfig() {
     p.putBool("vibe", g_cfg.vibe);
     p.putUChar("vol", g_cfg.volume);
     p.putBool("idleMap", g_cfg.idleMap);
+    p.putBool("trackOn", g_cfg.trackOn);
     p.putBool("kbl", g_cfg.kbLight);
     p.putBool("gps", g_cfg.gpsOn);
     p.putBool("gpsSync", g_cfg.gpsAutoSync);
@@ -1537,6 +1540,25 @@ bool cardIsSaved(const uint8_t hash[16]) {
 
 bool cardOffered() { return g_threadCard.valid && !cardIsSaved(g_threadCard.hash); }
 
+// Waypoints + track data (functions in "Waypoints + breadcrumb track" below).
+struct Wpt { float lat, lon; char name[16]; uint32_t at; };
+constexpr int kWptMax = 32;
+Wpt g_wpt[kWptMax];
+int g_wptCount = 0;
+int g_wptSel = -1;                           // selected on the map (N), -1 = none
+uint32_t g_wptDelAt = 0;                     // Del pressed once (confirm within 3 s)
+constexpr int kTrackRam = 1000;
+float g_track[kTrackRam * 2];
+int g_trackN = 0;
+bool g_trackLoaded = false;
+bool ownPosition(double& lat, double& lon);
+void distText(double la, double lo, double tla, double tlo, char* out, size_t n);
+void trackLoad();
+void trackClear();
+void wptSelect(int i);
+void openMap();
+void wptOpenFromSettings(int i);
+
 // Location messages (see "Location sharing" below): newest incoming one in the thread.
 struct InLoc { bool valid; double lat, lon; uint32_t counter; };
 InLoc g_threadLoc = {};
@@ -1878,7 +1900,8 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              PassOld, PassNew, PassConfirm,     // Pass*: lock password (arg = purpose)
                              Search,                            // list filter (Inbox / Contacts / Peers)
                              TcpHost, TcpPort,
-                             MapNum };                          // contact page: map number
+                             MapNum,                            // contact page: map number
+                             WptName };                         // map P: waypoint name
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -1900,7 +1923,7 @@ enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
-    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE
+    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -1941,11 +1964,13 @@ void bufSet(const char* s) {
     g_buf[g_bufLen] = 0;
 }
 
-bool g_showPass = false;            // MIC in a password field: show / hide what was typed
+bool g_showPass = false;
+bool g_entryReplace = false;                 // the default text goes on the first typed key            // MIC in a password field: show / hide what was typed
 
 void startEntry(Entry kind, const char* initial = nullptr, int arg = 0) {
     g_entry = kind;
     g_showPass = false;
+    g_entryReplace = false;
     g_entryArg = arg;
     bufSet(initial);
     syncNumLayer();
@@ -2837,6 +2862,7 @@ const char* pageTitle(Page p) {
         case PG_TCP:          return "TCP hub";
         case PG_IDS:          return "Identities";
         case PG_ID_ONE:       return "Identity slot";
+        case PG_WPTS:         return "Waypoints";
     }
     return "";
 }
@@ -2908,8 +2934,26 @@ void buildSettingsRows(Page p) {
             srow(RK_INFO, "GPS position", "%s", pos);
             if (ashareActive()) srow(RK_ACTION, "Location auto-share", "%d on; Enter = stop all", ashareActive());
             else srow(RK_INFO, "Location auto-share", "off (set in a chat: MIC)");
+            srow(RK_MENU, "Waypoints", "%d saved (map: P mark, N next)", g_wptCount);
+            srow(RK_TOGGLE, "Track (breadcrumbs)", "%s%s", g_cfg.trackOn ? "ON" : "OFF",
+                 g_cfg.trackOn ? ", GPS wakes ~2 min" : "");
+            srow(RK_ACTION, "Clear track", "%d points%s", g_trackN, g_trackLoaded ? "" : " (on SD)");
         }
         break;
+
+    case PG_WPTS: {
+        double la = 0, lo = 0;
+        const bool own = ownPosition(la, lo);
+        if (!g_wptCount) srow(RK_INFO, "No waypoints yet", "map: P marks one at the centre");
+        for (int i = 0; i < g_wptCount && i < MAX_SET_ROWS; i++) {
+            char nm[24], d[24];
+            snprintf(nm, sizeof(nm), "W%d %s", i + 1, g_wpt[i].name);
+            if (own) distText(la, lo, g_wpt[i].lat, g_wpt[i].lon, d, sizeof(d));
+            else snprintf(d, sizeof(d), "%.4f,%.4f", g_wpt[i].lat, g_wpt[i].lon);
+            srow(RK_ACTION, nm, "%s  Enter = map", d);
+        }
+        break;
+    }
 
     case PG_RTC: {
         static const char* names[5] = {"Hour (0-23)", "Minute (0-59)", "Month (1-12)", "Day (1-31)", "Year"};
@@ -3327,6 +3371,22 @@ void activateSetting(int idx) {
         else if (idx == 4) { if (gpsSyncClock()) toast("Clock synced from GPS"); else toast("No GPS fix yet"); }
         else if (idx == 5) { g_cfg.gpsAutoSync = !g_cfg.gpsAutoSync; saveConfig(); requestRedraw(); }
         else if (idx == 7 && ashareActive()) { ashareStopAll(); toast("All auto-sharing stopped"); }
+        else if (idx == 8) pushPage(PG_WPTS);
+        else if (idx == 9) {
+            g_cfg.trackOn = !g_cfg.trackOn;
+            saveConfig();
+            if (g_cfg.trackOn) trackLoad();
+            toast(g_cfg.trackOn ? "Track on" : "Track off (kept)");
+            requestRedraw();
+        } else if (idx == 10) {
+            if (confirmTwice(1010, "clear the track")) { trackClear(); toast("Track cleared"); }
+        }
+        break;
+
+    case PG_WPTS:
+        if (idx >= 0 && idx < g_wptCount) {
+            wptOpenFromSettings(idx);
+        }
         break;
 
     case PG_RTC:
@@ -4164,8 +4224,8 @@ int cposWithPos();
 // Key hints on the map's bottom line for 6 s after it opens (keys are not written anywhere).
 void mapKeyHint() {
     const int n = cposWithPos();
-    if (n) toast("T: %d contact%s  Z/X zoom", n, n == 1 ? "" : "s");   // fits 240 px
-    else toast("WASD move  Z/X zoom  C me");
+    if (n) toast("T %d contact%s  N/P waypts", n, n == 1 ? "" : "s");   // fits 240 px
+    else toast("Z/X zoom  N/P waypoints");
     g_toastUntil = millis() + 6000;
 }
 
@@ -4225,14 +4285,19 @@ void mapContactsStamp();
 void mapContactsFeed();
 
 extern int g_mapSel;
+extern int g_wptSel;
+bool wptInfo(char* out, size_t n);
 
 void renderMapHeader() {
     char st[64];
     if (g_mapSel >= 0) snprintf(st, sizeof(st), "T next  #+Enter chat  C me");   // what to press
+    else if (g_wptSel >= 0) snprintf(st, sizeof(st), "N next  Del remove  C me");
     else mapview::status(st, sizeof(st));
     drawHeader(st, false);
     char pos[56];
-    if (g_toast[0]) snprintf(pos, sizeof(pos), "%s", g_toast);                    // key hints
+    if (g_entry == Entry::WptName) snprintf(pos, sizeof(pos), "Name: %s_", g_buf);
+    else if (g_toast[0]) snprintf(pos, sizeof(pos), "%s", g_toast);               // key hints
+    else if (wptInfo(pos, sizeof(pos))) {}
     else if (g_mapNum) snprintf(pos, sizeof(pos), "open chat #%d_  (Enter)", g_mapNum);
     else if (!mapContactInfo(pos, sizeof(pos))) gpsPosText(pos, sizeof(pos));
     box(0, BOT_TOP - MAP_FOOT_H, W, MAP_FOOT_H, 1);
@@ -4729,17 +4794,238 @@ void mapCycleContact() {
 
 // Markers for every known contact position; name tags (LVGL labels on a white box)
 // drawn over the stamped map, so only those small areas are redrawn.
+int wptFeed(mapview::Marker* m, int n);
+
 void mapContactsFeed() {
-    mapview::Marker m[kCPosMax];
+    mapview::Marker m[mapview::kMaxMarkers];
     const time_t now = time(nullptr);
     int n = 0;
     for (int i = 0; i < g_cposCount; i++) {
         if (!g_cpos[i].hasPos) continue;
         const bool fresh = g_cpos[i].at && now >= (time_t)g_cpos[i].at && now - (time_t)g_cpos[i].at < 3600;
-        m[n++] = {g_cpos[i].lat, g_cpos[i].lon, i == g_mapSel, g_cpos[i].num, fresh, false};
+        m[n++] = {g_cpos[i].lat, g_cpos[i].lon, i == g_mapSel, g_cpos[i].num, fresh, false, 0};
     }
+    n = wptFeed(m, n);                       // waypoints (diamonds), track, guide line
     mapview::setMarkers(m, n);
 }
+
+// ---- Waypoints + breadcrumb track ------------------------------------------------------
+// Waypoints: named places (up to 32, NVS rs_wpt), drawn as diamonds. Map keys: P = mark a
+// waypoint at the map centre (name it, Enter), N = next waypoint (centred, selected, a
+// dashed guide line from your position, footer "W2 Ballfield 2.1km SW"), Del twice =
+// remove the selected one. Settings S.1.9 lists them (Enter = show on the map).
+// Track: Settings S.1.10 on/off. Records a point when the GPS fix moved > 25 m (fresh fix
+// only; in Balanced / Saver it asks the GPS for a visit every ~2 min, so points are
+// sparser and the battery cost stays low). Last 1000 points in RAM, all of them appended
+// to <SD>/ratdeckpro/tracks/track.bin (uint32 epoch, float lat, float lon); dotted line on
+// the map. S.1.11 clears it.
+
+void wptSave() {
+    Preferences p;
+    if (!p.begin("rs_wpt", false)) return;
+    p.putBytes("list", g_wpt, sizeof(Wpt) * g_wptCount);
+    p.putUChar("n", (uint8_t)g_wptCount);
+    p.end();
+}
+
+void wptLoad() {
+    Preferences p;
+    g_wptCount = 0;
+    if (!p.begin("rs_wpt", true)) return;
+    const int n = p.getUChar("n", 0);
+    if (n > 0 && n <= kWptMax && p.getBytes("list", g_wpt, sizeof(Wpt) * n) == sizeof(Wpt) * (size_t)n)
+        g_wptCount = n;
+    p.end();
+}
+
+double g_wptNewLat = 0, g_wptNewLon = 0;     // where P was pressed (while the name is typed)
+
+void wptStartMark() {
+    if (g_wptCount >= kWptMax) { toast("Max %d waypoints", kWptMax); return; }
+    mapview::getCentre(g_wptNewLat, g_wptNewLon);
+    char def[16];
+    snprintf(def, sizeof(def), "WP%d", g_wptCount + 1);
+    startEntry(Entry::WptName, def);
+    g_entryReplace = true;                   // Enter keeps "WP3", the first key replaces it
+}
+
+void wptAdd(const char* name) {
+    if (g_wptCount >= kWptMax) return;
+    Wpt& w = g_wpt[g_wptCount++];
+    memset(&w, 0, sizeof(w));
+    w.lat = (float)g_wptNewLat;
+    w.lon = (float)g_wptNewLon;
+    strlcpy(w.name, name[0] ? name : "WP", sizeof(w.name));
+    const time_t now = time(nullptr);
+    w.at = now > 1600000000 ? (uint32_t)now : 0;
+    wptSave();
+    g_wptSel = g_wptCount - 1;
+    g_mapSel = -1;
+    Serial.printf("[WPT] W%d %s at %.5f,%.5f\n", g_wptCount, w.name, w.lat, w.lon);
+    requestRedraw();
+}
+
+void wptRemove(int i) {
+    if (i < 0 || i >= g_wptCount) return;
+    Serial.printf("[WPT] removed W%d %s\n", i + 1, g_wpt[i].name);
+    for (int k = i; k < g_wptCount - 1; k++) g_wpt[k] = g_wpt[k + 1];
+    g_wptCount--;
+    g_wptSel = -1;
+    wptSave();
+    requestRedraw();
+}
+
+void distText(double la, double lo, double tla, double tlo, char* out, size_t n) {
+    const double m = metersBetween(la, lo, tla, tlo);
+    const char* dir = compass8(bearingDeg(la, lo, tla, tlo));
+    if (m < 1000) snprintf(out, n, "%dm %s", (int)m, dir);
+    else if (m < 100000) snprintf(out, n, "%.1fkm %s", m / 1000.0, dir);
+    else snprintf(out, n, "%dkm %s", (int)(m / 1000.0), dir);
+}
+
+bool wptInfo(char* out, size_t n) {
+    if (g_wptSel < 0 || g_wptSel >= g_wptCount) return false;
+    const Wpt& w = g_wpt[g_wptSel];
+    char d[24] = "";
+    double la, lo;
+    if (ownPosition(la, lo)) distText(la, lo, w.lat, w.lon, d, sizeof(d));
+    else snprintf(d, sizeof(d), "%.4f,%.4f", w.lat, w.lon);
+    snprintf(out, n, "W%d %.11s %s", g_wptSel + 1, w.name, d);
+    return true;
+}
+
+void wptSelect(int i) {
+    if (i < 0 || i >= g_wptCount) return;
+    g_wptSel = i;
+    g_mapSel = -1;
+    mapview::centreOn(g_wpt[i].lat, g_wpt[i].lon);
+    mapview::fitZoom();
+    char info[64];
+    wptInfo(info, sizeof(info));
+    Serial.printf("[MAP] waypoint %s\n", info);
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void wptCycle() {
+    if (!g_wptCount) { toast("No waypoints: P marks one"); return; }
+    const int next = g_wptSel + 1;
+    if (next >= g_wptCount) {                // after the last: own position
+        g_wptSel = -1;
+        mapview::key('C', false);
+        Serial.println("[MAP] waypoint: none");
+        g_fullRefreshReq = true;
+        requestRedraw();
+        return;
+    }
+    wptSelect(next);
+}
+
+// ---- Track ---------------------------------------------------------------------------
+constexpr const char* kTrackFile = SD_PATH_ROOT "/tracks/track.bin";
+
+void trackPushRam(float la, float lo) {
+    if (g_trackN >= kTrackRam) {             // drop the oldest
+        memmove(g_track, g_track + 2, sizeof(float) * 2 * (kTrackRam - 1));
+        g_trackN = kTrackRam - 1;
+    }
+    g_track[2 * g_trackN] = la;
+    g_track[2 * g_trackN + 1] = lo;
+    g_trackN++;
+}
+
+void trackLoad() {                           // last kTrackRam points from the SD file
+    if (g_trackLoaded) return;
+    g_trackLoaded = true;
+    g_trackN = 0;
+    if (!sdMount()) return;
+    File f = g_sdStore.openFile(kTrackFile, FILE_READ);
+    if (!f) return;
+    const size_t n = f.size() / 12;
+    const size_t first = n > (size_t)kTrackRam ? n - kTrackRam : 0;
+    f.seek(first * 12);
+    uint8_t rec[12];
+    while (f.read(rec, 12) == 12) {
+        float la, lo;
+        memcpy(&la, rec + 4, 4);
+        memcpy(&lo, rec + 8, 4);
+        trackPushRam(la, lo);
+    }
+    f.close();
+    Serial.printf("[TRACK] loaded %d of %u points\n", g_trackN, (unsigned)n);
+}
+
+void trackClear() {
+    g_trackN = 0;
+    if (sdMount()) {
+        g_sdStore.remove(kTrackFile);
+    }
+    Serial.println("[TRACK] cleared");
+    requestRedraw();
+}
+
+void trackAdd(double la, double lo) {
+    trackPushRam((float)la, (float)lo);
+    if (sdMount()) {
+        g_sdStore.ensureDir(SD_PATH_ROOT "/tracks");
+        File f = g_sdStore.openFile(kTrackFile, FILE_APPEND);
+        if (f) {
+            const time_t now = time(nullptr);
+            const uint32_t t = now > 1600000000 ? (uint32_t)now : 0;
+            const float fla = (float)la, flo = (float)lo;
+            uint8_t rec[12];
+            memcpy(rec, &t, 4); memcpy(rec + 4, &fla, 4); memcpy(rec + 8, &flo, 4);
+            f.write(rec, 12);
+            f.close();
+        }
+    }
+    Serial.printf("[TRACK] point %d %.5f,%.5f\n", g_trackN, la, lo);
+    if (mapview::isOpen()) requestRedraw();
+}
+
+void trackTick() {
+    if (!g_cfg.trackOn) return;
+    static uint32_t last = 0, asked = 0;
+    if (millis() - last < 5000) return;
+    last = millis();
+    if (!g_trackLoaded) trackLoad();
+    if (!gpsFresh()) {                       // keep fixes coming without a GPS always on
+        if (g_cfg.gpsOn && (!asked || millis() - asked > 120000)) { asked = millis(); gpsRequestVisit(); }
+        return;
+    }
+    if (g_trackN) {
+        const double m = metersBetween(g_track[2 * g_trackN - 2], g_track[2 * g_trackN - 1], g_gpsLat, g_gpsLon);
+        if (m < 25.0) return;
+    }
+    trackAdd(g_gpsLat, g_gpsLon);
+}
+
+// Markers + track for the map (called before every map draw).
+int wptFeed(mapview::Marker* m, int n) {
+    for (int i = 0; i < g_wptCount && n < mapview::kMaxMarkers; i++)
+        m[n++] = {g_wpt[i].lat, g_wpt[i].lon, i == g_wptSel, (uint8_t)(i + 1), true, false, 1};
+    if (g_cfg.trackOn && !g_trackLoaded) trackLoad();
+    mapview::setTrack(g_track, g_trackN);
+    if (g_wptSel >= 0 && g_wptSel < g_wptCount) mapview::setGuide(true, g_wpt[g_wptSel].lat, g_wpt[g_wptSel].lon);
+    else mapview::setGuide(false);
+    return n;
+}
+
+// Map keys for waypoints. Returns true if used.
+bool wptMapKey(const KeyEvent& ev) {
+    const char c = (char)toupper((unsigned char)ev.character);
+    if (c == 'P') { wptStartMark(); return true; }
+    if (c == 'N') { wptCycle(); return true; }
+    if (c == 'T') g_wptSel = -1;             // contacts take over
+    if (ev.del && g_wptSel >= 0) {
+        if (g_wptDelAt && millis() - g_wptDelAt < 3000) { g_wptDelAt = 0; wptRemove(g_wptSel); toast("Waypoint removed"); }
+        else { g_wptDelAt = millis(); toast("Del again: remove W%d", g_wptSel + 1); }
+        return true;
+    }
+    if (c == 'C' || ev.enter) g_wptSel = -1;
+    return false;
+}
+
 
 // The marker carries the contact's number (no name tags: the screen is small); the
 // selected contact's name, distance and age are on the map's bottom line.
@@ -5228,6 +5514,13 @@ void goScreen(ScreenId s) {
     Serial.printf("[UI] -> %s\n", screenName(s));
 }
 
+// Settings > Waypoints > row: leave Settings, map over the Inbox, that waypoint selected.
+void wptOpenFromSettings(int i) {
+    goScreen(SCR_INBOX);
+    openMap();
+    wptSelect(i);
+}
+
 void openMenu() {
     g_menuOpen = true;
     g_menuSel = 0;
@@ -5406,6 +5699,14 @@ void commitEntry() {
         endEntry();
         return;
     }
+    case Entry::WptName: {
+        char nm[16];
+        strlcpy(nm, g_buf, sizeof(nm));
+        endEntry();
+        wptAdd(nm);
+        toast("Waypoint W%d", g_wptCount);
+        return;
+    }
     case Entry::MapNum: {
         long v;
         if (!parseLong(g_buf, v) || v < 1 || v > 99) { toast("Map number 1-99"); return; }
@@ -5559,7 +5860,7 @@ void entryKey(const KeyEvent& ev) {
     if (ev.space) {
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) c = '.';
         else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass || passEntry(g_entry) ||
-                 g_entry == Entry::Search) c = ' ';
+                 g_entry == Entry::Search || g_entry == Entry::WptName) c = ' ';
     } else if (ev.fn) {
         if (passEntry(g_entry)) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
         if (g_entry == Entry::Message && g_threadOpen) { g_tmenuOpen = true; g_tmenuSel = 0; requestRedraw(); return; }
@@ -5581,6 +5882,8 @@ void entryKey(const KeyEvent& ev) {
     if (g_entry == Entry::WifiPass && g_bufLen >= WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
     if (passEntry(g_entry) && g_bufLen >= kLockPassMax) { toast("Max 32 chars"); return; }
     if (g_entry == Entry::Search && g_bufLen >= sizeof(g_filter) - 1) return;
+    if (g_entry == Entry::WptName && g_entryReplace) { bufClear(); g_entryReplace = false; }   // typing replaces "WP3"
+    if (g_entry == Entry::WptName && g_bufLen >= 15) { toast("Max 15 chars"); return; }
     if (g_entry == Entry::TcpHost && g_bufLen >= sizeof(g_tcpCfg.host) - 1) { toast("Max 63 chars"); return; }
     bufAppend(c);
     if (g_entry == Entry::Search) searchChanged();
@@ -5657,6 +5960,7 @@ void handleKey(const KeyEvent& ev) {
     if (mapview::isOpen()) {
         const char mc = (char)toupper((unsigned char)ev.character);
         if (mapNumberKey(ev)) return;                         // "12" Enter: open chat #12
+        if (wptMapKey(ev)) return;                            // P mark, N next waypoint, Del
         if (mc == 'T') { mapCycleContact(); return; }        // next contact's last position
         if (mc == 'C' || ev.enter) g_mapSel = -1;             // back to own position
         if (mapview::key(ev.character, ev.enter)) requestRedraw();
@@ -6517,6 +6821,22 @@ void handleSerialLine(char* p) {
     } else if (!strncmp(p, "sdarc ", 6)) {
         sdArchiveSet(atoi(p + 6) != 0);
         Serial.printf("[SD] message archive setting %s (applies at next boot)\n", sdArchiveEnabled() ? "on" : "off");
+    } else if (!strcmp(p, "wpt") || !strcmp(p, "wpt clear")) {
+        // wpt = list waypoints; wpt clear = remove all
+        if (p[3]) { g_wptCount = 0; g_wptSel = -1; wptSave(); Serial.println("[WPT] cleared"); return; }
+        for (int i = 0; i < g_wptCount; i++)
+            Serial.printf("[WPT] W%d %s %.5f,%.5f\n", i + 1, g_wpt[i].name, g_wpt[i].lat, g_wpt[i].lon);
+        Serial.printf("[WPT] %d waypoints\n", g_wptCount);
+    } else if (!strcmp(p, "track") || !strncmp(p, "track ", 6)) {
+        // track = status; bench: track add <lat> <lon> | track clear
+        double la = 0, lo = 0;
+        if (!strcmp(p, "track clear")) { trackClear(); return; }
+        if (!strncmp(p, "track add ", 10) && sscanf(p + 10, "%lf %lf", &la, &lo) == 2) {
+            if (!g_trackLoaded) trackLoad();
+            trackAdd(la, lo);
+            return;
+        }
+        Serial.printf("[TRACK] %s, %d points in RAM, waypoints %d\n", g_cfg.trackOn ? "on" : "off", g_trackN, g_wptCount);
     } else if (!strcmp(p, "cpos") || !strncmp(p, "cpos ", 5)) {
         // cpos = contacts' last positions; bench: cpos <hex32> <lat> <lon> [age min] |
         // cpos num <hex32> <n> (map number) | cpos clear
@@ -7077,6 +7397,7 @@ bool begin() {
     tcpLoad();
     ashareLoad();
     cposLoad();
+    wptLoad();
     g_proto.setMessageCallback(onCommittedMessage);
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
     noteInput();
@@ -7111,6 +7432,7 @@ void loop() {
     tcpTick();
     autoShareTick();
     inboundTick();
+    trackTick();
 
     processKeys();         // again, in case a watcher above took a while
     pollTouch();
