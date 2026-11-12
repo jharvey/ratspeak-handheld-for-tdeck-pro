@@ -56,6 +56,17 @@ public:
     // Where flash record reads spend their time (microseconds, cumulative since boot).
     struct ReadProfile { uint32_t opens = 0; uint64_t openUs = 0, parseUs = 0, closeUs = 0, listUs = 0; };
     static ReadProfile& readProfile() { static ReadProfile p; return p; }
+    // Flash space upkeep (create path): from SpaceHighPct used, the oldest messages are
+    // removed until SpaceLowPct; at SpaceRefusePct new messages are refused so the rest of
+    // the flash (identity, ratchets, contacts, settings) keeps room to write.
+    static constexpr uint8_t SpaceHighPct = 85, SpaceLowPct = 80, SpaceRefusePct = 92;
+    // Usage is read (it walks the whole FS) after about 1% of the flash could have been
+    // written: a create costs at most ~8 KB (record block + a new shard folder).
+    static constexpr uint32_t SpaceCreateCost = 8192;
+    static constexpr uint32_t KeepPerConversation = 10;  // newest records never removed for space
+    struct SpaceStats { uint8_t usedPct = 0; bool full = false; uint16_t sinceCheck = 0, checkEvery = 0;
+                        uint32_t removed = 0, passes = 0; };
+    static SpaceStats& spaceStats() { static SpaceStats s; return s; }
 
 private:
     struct Summary {
@@ -145,6 +156,8 @@ private:
     void conversationPage(const Request&, uint8_t*, size_t, Result&);
     void conversation(const Request&, uint8_t*, size_t, Result&);
     void trim(const Request&, Result&);
+    bool makeRoom(int32_t& unreadDelta);   // false = flash full, refuse the create
+    uint64_t evictOldest(uint64_t bytes, int32_t& unreadDelta);   // returns bytes freed (estimate)
     bool reserveCounter(uint32_t&);
     bool retainedCopy(const RecordKey&, unsigned medium, MessageDocument&);
     bool initializeCounter();

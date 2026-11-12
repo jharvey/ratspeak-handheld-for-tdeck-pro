@@ -102,12 +102,12 @@ UI / UX
 
 Robustness to verify (before the stress-test pass)
 -------------------------------------------------
-- FULL FLASH: what happens when LittleFS fills with messages? (Does a save fail, is the
-  oldest deleted, does the UI say anything, can identity/ratchet/NVS-adjacent writes still
-  succeed?) Nothing calls MessageStore::requestTrim on this board, so today it never deletes.
-  Fill a unit (or the sim with a small LittleFS) and make the outcome tolerable: e.g. evict
-  the oldest delivered messages past a high-water mark, keep a reserve for identity/ratchet
-  files, show "storage full" instead of silently dropping.
+- DONE (sim) - FULL FLASH: before, every later write failed silently (messages, announce
+  order, ratchets); boot still worked; refused incoming saves are not lost (proof only after
+  a save). Now: oldest-first removal from 85% to 80% (newest 10 per conversation kept),
+  refuse new messages at 92% with a "Storage full" toast, reserve for identity/ratchets.
+  Next: time the usage check (LittleFS walk) and a removal pass on a unit with ~1,500
+  messages (msgfill), once a unit is free from the map copies.
 - Same for a full SD card (archive + map tiles).
 - IN PROGRESS - add a idle screen options, after like 1 min you need password to gain access to device, screen is blank when idle. 
 - DONE - add manual refresh button, for ghosting issues. Do full screen refresh. 

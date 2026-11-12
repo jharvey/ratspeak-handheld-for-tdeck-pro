@@ -54,6 +54,7 @@
 #include "storage/FlashStore.h"
 #include "storage/SDStore.h"
 #include "storage/MessageStore.h"
+#include "storage/MessageTransactions.h"
 #include "storage/ConversationView.h"
 #include "reticulum/IdentityManager.h"
 #include "reticulum/AnnounceManager.h"
@@ -3519,6 +3520,28 @@ void closeMap() {
     Serial.println("[MAP] closed");
 }
 
+// Flash space notices (the storage worker removes the oldest messages from 85% used and
+// refuses new ones at 92%, see MessageTransactions::makeRoom).
+void flashSpaceTick() {
+    static uint32_t lastRemoved = 0, fullAt = 0;
+    static bool toldRemoved = false;
+    auto& sp = handheld::storage::MessageTransactions::spaceStats();
+    if (sp.full) {
+        if (!fullAt || millis() - fullAt >= 600000) {
+            // Deleting conversations frees space without a new save to notice it: re-check.
+            const size_t total = g_flash.totalBytes(), used = g_flash.usedBytes();
+            if (total && (uint64_t)used * 100 / total < handheld::storage::MessageTransactions::SpaceRefusePct) {
+                sp.full = false; sp.usedPct = (uint8_t)((uint64_t)used * 100 / total);
+            } else { fullAt = millis() | 1; toast("Storage full: msgs refused"); return; }
+        } else return;
+    }
+    fullAt = 0;
+    if (sp.removed != lastRemoved) {
+        lastRemoved = sp.removed;
+        if (!toldRemoved) { toldRemoved = true; toast("Oldest msgs auto-removed"); }
+    }
+}
+
 void mapTick() {
     if (!mapview::isOpen()) return;
     mapFeedPosition();
@@ -4310,6 +4333,7 @@ void powerTick() {
     checkinTick();
     peerClockTick();
     mapTick();
+    flashSpaceTick();
     powerGpsTick();
     powerTouchTick();
     energyAccountAwake();
@@ -4805,6 +4829,50 @@ void handleSerialLine(char* p) {
             Serial.printf("[MSG] rmconv %s: %s\n", peer.c_str(),
                           done && r.outcome == Outcome::Committed ? "deleted" : "failed");
         }
+        requestRedraw();
+    } else if (!strcmp(p, "flash")) {
+        Serial.printf("[FLASH] used %u of %u KB (%u%%)\n", (unsigned)(g_flash.usedBytes() >> 10),
+                      (unsigned)(g_flash.totalBytes() >> 10),
+                      g_flash.totalBytes() ? (unsigned)(100ull * g_flash.usedBytes() / g_flash.totalBytes()) : 0u);
+        const auto& sp = handheld::storage::MessageTransactions::spaceStats();
+        Serial.printf("[FLASH] messages: %s; %lu oldest removed for space in %lu passes (from %u%% to %u%%, refuse at %u%%)\n",
+                      sp.full ? "FULL, new messages refused" : "ok", (unsigned long)sp.removed,
+                      (unsigned long)sp.passes, (unsigned)handheld::storage::MessageTransactions::SpaceHighPct,
+                      (unsigned)handheld::storage::MessageTransactions::SpaceLowPct,
+                      (unsigned)handheld::storage::MessageTransactions::SpaceRefusePct);
+    } else if (!strncmp(p, "msgfill ", 8)) {
+        // Bench (full-flash test): "msgfill <count> [peers] [bytes]" stores <count> fake incoming
+        // messages spread over [peers] fake conversations through the normal save path. Stops at
+        // the first failed save and prints flash use.
+        using namespace handheld::storage;
+        int count = 0, peers = 4, bytes = 200;
+        sscanf(p + 8, "%d %d %d", &count, &peers, &bytes);
+        peers = peers < 1 ? 1 : (peers > 200 ? 200 : peers);
+        bytes = bytes < 1 ? 1 : (bytes > 3000 ? 3000 : bytes);
+        std::string body(bytes, 'x');
+        int saved = 0, failed = 0;
+        const unsigned long t0 = millis();
+        for (int i = 0; i < count; i++) {
+            Request rq; rq.operation = Operation::CreateIncoming; rq.key.incoming = true;
+            memset(rq.key.peer, 0xF0, 16); rq.key.peer[15] = (uint8_t)(i % peers);
+            memcpy(rq.source, rq.key.peer, 16); for (int b = 0; b < 16; b++) { unsigned v = 0; sscanf(g_destHex + 2 * b, "%2x", &v); rq.destination[b] = (uint8_t)v; }
+            for (int b = 0; b < 32; b++) rq.messageId[b] = (uint8_t)esp_random();
+            rq.hasMessageId = true; rq.timestamp = (double)time(nullptr) + i * 0.001;
+            rq.status = (uint8_t)LXMFStatus::DELIVERED; rq.read = true;
+            rq.contentLength = (uint16_t)bytes;
+            auto sub = g_msgStore.requestSave(rq, nullptr, body.data());
+            MessageStore::Result r;
+            const bool done = sub.accepted() && waitResult(sub.ticket, r, 2000);
+            if (sub.accepted()) g_msgStore.releaseResult(sub.ticket);
+            if (done && r.outcome == Outcome::Committed && r.error == Error::None) { saved++; continue; }
+            failed++;
+            Serial.printf("[FILL] save %d failed: %s, outcome %d, error %d\n", i + 1,
+                          !sub.accepted() ? "not accepted" : !done ? "timeout" : "store",
+                          done ? (int)r.outcome : -1, done ? (int)r.error : -1);
+            break;
+        }
+        Serial.printf("[FILL] saved %d, failed %d in %lu ms; flash %u of %u KB\n", saved, failed,
+                      millis() - t0, (unsigned)(g_flash.usedBytes() >> 10), (unsigned)(g_flash.totalBytes() >> 10));
         requestRedraw();
     } else if (!strcmp(p, "id")) {
         Serial.printf("[ID] dest=%s name=%s\n", g_destHex, g_selfName);

@@ -595,6 +595,25 @@ everything as before). On COM9 a save with the archive takes 0.2–0.45 s and bo
 unchanged (~15 s). The old mount at 20 MHz failed on COM9's 32 GB card; SDStore mounts
 at 4 MHz, then 16 MHz. Console `sdinfo`, `sdarc 0|1` (applies at the next boot).
 
+### 8.3 Full flash — Works in the simulator
+
+Messages live in LittleFS (about 8 MB on the 16 MB layout; a message takes one 4 KB block,
+so roughly 1,500 messages fit beside the other files). When a new message is saved and the
+flash is **85 %** used, the oldest messages are removed (oldest first, across all
+conversations) until it is **80 %** used. The newest 10 messages of every conversation, and
+outgoing messages still queued or sending, are never removed for space; with the SD archive
+on, a flash copy is only removed when the card holds it. The first removal shows "Oldest
+msgs auto-removed". If nothing can be removed and the flash reaches **92 %**, new messages
+are refused ("Storage full: msgs refused", repeated every 10 min); the last 8 % stays free
+for identity, ratchet, contact and announce files. An incoming message that is refused is
+not lost: its delivery proof is only sent after a save, so the sender keeps retrying.
+
+Usage is read after about 1 % of the flash could have been written (about every 10 messages
+on the device). Simulator (`--flashkb 2048`, 4 conversations): 1,500 messages saved, the
+oldest 1,142 removed in 40 passes of ~0.2 s, no failed writes. Before this change a full
+flash failed every later write (messages, announce order, ratchets) without a word.
+Console `flash` (use and removal stats); bench `msgfill <count> [conversations] [bytes]`.
+
 ---
 
 ## 9. Hardware notes (T-DeckPro V1.1, 25-09-15)
@@ -703,6 +722,7 @@ the device does not light-sleep.
 | `sdinfo` / `sdarc 0\|1` | SD card status / message archive setting (next boot, §8.2) |
 | `maptest <lat> <lon>` | bench: write 18 grid test tiles around a point to the card |
 | `rmconv [<peer>\|all]` | bench: list conversations / delete one / delete all |
+| `flash` / `msgfill <n> [conv] [bytes]` | flash use + old-message removal stats / bench: store n fake messages (§8.3) |
 | `FORMAT` | erase and format the data partition |
 | `@…` | screen-mirror protocol (§10.3) |
 
@@ -756,7 +776,8 @@ entry mode.
 | GPS check of all five units (`tools/gpscheck`): only COM8 has the backup fault; COM3, COM5, COM6, COM9 OK | Done — report to LilyGo next |
 | Message store performance (slow writes and boot with many messages) | Done: COM5 boot 281 → 29.8 s (sharded folders), incoming save 23 → 1.3 s, send → proof 28 → 4–5 s |
 | Offline map from SD tiles (§8.1) | Works: simulator and COM9 (test tiles); PC tile tool done; real map tiles need an MBTiles export or an allowed tile server |
-| SD card: shared-bus locking, message archive (§8.2) | Works on COM9 (32 GB card); archive off by default; flash trim still not wired |
+| SD card: shared-bus locking, message archive (§8.2) | Works on COM9 (32 GB card); archive off by default |
+| Full flash: oldest messages removed from 85 %, refused at 92 % (§8.3) | Works in the simulator; time the usage check (LittleFS walk) on a unit |
 | Idle password + vault unlock | Planned |
 | LoRa RX duty cycle in sleeping modes (§6.3) | Works: 14/14, ~13 → 8 mA asleep (gauge); reply latency same as continuous (the ~1 in 3 retries were a test artifact) |
 | Deep-sleep storage mode, GPS power-save | Planned |
@@ -778,3 +799,4 @@ entry mode.
 | 0.7 | Message store: one-walk record open, duplicate-ID index, pending-outgoing cache (boot 98 s, save 1.3 s, proof 7 s); peer-ratchet save no longer reports a busy store as a flash failure; Check-in outbox in NVS, queued messages in the thread |
 | 0.8 | Message folders split into 64-record subfolders, moved at boot (COM5 boot 98 → 29.8 s, proof 4–5 s); RTC drift measured (~2.9 s/day); `rmconv` bench command |
 | 0.9 | Offline map (§8.1) with the PC tile tool; SD card on the shared SPI lock, optional message archive (§8.2); GPS position parsed |
+| 0.10 | Full flash handled (§8.3): oldest-first removal, refusal with a reserve, notices; simulator flash size limit (`--flashkb`) |

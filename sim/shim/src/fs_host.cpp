@@ -33,12 +33,46 @@ std::string vfsHostPath(const char* path) {
 
 namespace {
 
+// ---- flash space model: LittleFS allocates whole 4 KB blocks; a directory is a metadata pair.
+constexpr uint64_t kBlock = 4096;
+constexpr uint64_t kDirBlocks = 2;
+uint64_t blocksFor(uint64_t size) { return (size + kBlock - 1) / kBlock; }
+struct FlashSpace {
+    std::mutex mu;
+    bool scanned = false;
+    uint64_t used = 0;  // blocks
+} g_flash;
+uint64_t flashCapacityBlocks() {
+    std::lock_guard<std::mutex> l(sim::hw().mu);
+    return sim::hw().flashBytes / kBlock;
+}
+void flashScanLocked(const std::string& root) {
+    std::error_code ec;
+    uint64_t n = kDirBlocks;
+    for (auto& e : fsx::recursive_directory_iterator(root, ec)) {
+        if (e.is_directory(ec)) n += kDirBlocks;
+        else if (e.is_regular_file(ec)) n += blocksFor(e.file_size(ec));
+    }
+    g_flash.used = n;
+    g_flash.scanned = true;
+}
+std::string flashRoot() { return (fsx::path(sim::dataRoot()) / "littlefs").string(); }
+// Reserve (delta > 0) or release blocks; false = no space (nothing changed).
+bool flashAdjust(int64_t delta) {
+    std::lock_guard<std::mutex> l(g_flash.mu);
+    if (!g_flash.scanned) flashScanLocked(flashRoot());
+    if (delta > 0 && g_flash.used + (uint64_t)delta > flashCapacityBlocks()) return false;
+    if (delta < 0 && (uint64_t)(-delta) > g_flash.used) g_flash.used = 0;
+    else g_flash.used += delta;
+    return true;
+}
+
 class HostFileImpl final : public fs::FileImpl {
 public:
-    HostFileImpl(std::string vpath, std::string host, FILE* f)
-        : vpath_(std::move(vpath)), host_(std::move(host)), f_(f) { setName(); }
-    HostFileImpl(std::string vpath, std::string host, bool dir)
-        : vpath_(std::move(vpath)), host_(std::move(host)), dir_(dir) {
+    HostFileImpl(std::string vpath, std::string host, FILE* f, bool flash)
+        : vpath_(std::move(vpath)), host_(std::move(host)), f_(f), flash_(flash) { setName(); }
+    HostFileImpl(std::string vpath, std::string host, bool dir, bool flash)
+        : vpath_(std::move(vpath)), host_(std::move(host)), dir_(dir), flash_(flash) {
         setName();
         std::error_code ec;
         for (auto& e : fsx::directory_iterator(host_, ec)) entries_.push_back(e.path().filename().string());
@@ -46,7 +80,16 @@ public:
     }
     ~HostFileImpl() override { close(); }
 
-    size_t write(const uint8_t* b, size_t n) override { return f_ ? fwrite(b, 1, n, f_) : 0; }
+    size_t write(const uint8_t* b, size_t n) override {
+        if (!f_) return 0;
+        if (flash_ && n) {  // a write that needs new blocks fails when flash is full (LFS_ERR_NOSPC)
+            const uint64_t end = size(), pos = position();
+            const uint64_t grown = std::max<uint64_t>(end, pos + n);
+            const int64_t delta = (int64_t)blocksFor(grown) - (int64_t)blocksFor(end);
+            if (delta > 0 && !flashAdjust(delta)) return 0;
+        }
+        return fwrite(b, 1, n, f_);
+    }
     size_t read(uint8_t* b, size_t n) override { return f_ ? fread(b, 1, n, f_) : 0; }
     void flush() override { if (f_) fflush(f_); }
     bool seek(uint32_t pos, fs::SeekMode mode) override {
@@ -92,35 +135,42 @@ private:
     }
     std::string vpath_, host_, name_;
     FILE* f_ = nullptr;
-    bool dir_ = false, open_ = true;
+    bool dir_ = false, open_ = true, flash_ = false;
     std::vector<std::string> entries_;
     size_t pos_ = 0;
 };
 
-fs::FileImplPtr openHost(const std::string& vpath, const std::string& host, const char* mode, bool create) {
+fs::FileImplPtr openHost(const std::string& vpath, const std::string& host, const char* mode, bool create,
+                         bool flash) {
     std::error_code ec;
-    if (fsx::is_directory(host, ec)) return std::make_shared<HostFileImpl>(vpath, host, true);
+    if (fsx::is_directory(host, ec)) return std::make_shared<HostFileImpl>(vpath, host, true, flash);
     const char m = mode && *mode ? mode[0] : 'r';
     if (m == 'r' && !fsx::exists(host, ec)) return {};
     if (m != 'r') {
         const auto parent = fsx::path(host).parent_path();
         if (!fsx::is_directory(parent, ec)) {
             if (!create) return {};
+            if (flash) {
+                int64_t made = 0;
+                for (auto p = parent; !p.empty() && !fsx::exists(p, ec); p = p.parent_path()) made += kDirBlocks;
+                if (!flashAdjust(made)) return {};
+            }
             fsx::create_directories(parent, ec);
         }
     }
     const char* cm = m == 'w' ? (strchr(mode, '+') ? "w+b" : "wb")
                    : m == 'a' ? (strchr(mode, '+') ? "a+b" : "ab")
                    : (strchr(mode, '+') ? "r+b" : "rb");
+    if (flash && m == 'w' && fsx::is_regular_file(host, ec)) flashAdjust(-(int64_t)blocksFor(fsx::file_size(host, ec)));
     FILE* f = fopen(host.c_str(), cm);
     if (!f) return {};
-    return std::make_shared<HostFileImpl>(vpath, host, f);
+    return std::make_shared<HostFileImpl>(vpath, host, f, flash);
 }
 
 fs::FileImplPtr HostFileImpl::openNextFile(const char* mode) {
     if (!dir_ || pos_ >= entries_.size()) return {};
     const std::string& n = entries_[pos_++];
-    return openHost(joinV(n), (fsx::path(host_) / n).string(), mode, false);
+    return openHost(joinV(n), (fsx::path(host_) / n).string(), mode, false, flash_);
 }
 
 std::string normV(const char* p) {
@@ -140,50 +190,68 @@ std::string FS::hostPath(const char* path) const {
 }
 File FS::open(const char* path, const char* mode, const bool create) {
     const std::string v = normV(path);
-    return File(openHost(v, hostPath(v.c_str()), mode, create));
+    return File(openHost(v, hostPath(v.c_str()), mode, create, sub_ == "littlefs"));
 }
 bool FS::exists(const char* path) { std::error_code ec; return fsx::exists(hostPath(path), ec); }
 bool FS::remove(const char* path) {
     std::error_code ec;
     const auto h = hostPath(path);
-    return !fsx::is_directory(h, ec) && fsx::remove(h, ec);
+    if (fsx::is_directory(h, ec) || !fsx::exists(h, ec)) return false;
+    const uint64_t size = fsx::file_size(h, ec);
+    if (!fsx::remove(h, ec)) return false;
+    if (sub_ == "littlefs") flashAdjust(-(int64_t)blocksFor(size));
+    return true;
 }
 bool FS::rename(const char* a, const char* b) {
     std::error_code ec;
     const auto ha = hostPath(a), hb = hostPath(b);
     if (!fsx::exists(ha, ec)) return false;
+    const bool hadTarget = fsx::is_regular_file(hb, ec);
+    const uint64_t replaced = hadTarget ? fsx::file_size(hb, ec) : 0;
     fsx::rename(ha, hb, ec);       // replaces an existing target, like LittleFS
+    if (!ec && hadTarget && sub_ == "littlefs") flashAdjust(-(int64_t)blocksFor(replaced));
     return !ec;
 }
 bool FS::mkdir(const char* path) {
     std::error_code ec;
     const auto h = hostPath(path);
     if (fsx::is_directory(h, ec)) return true;
-    return fsx::create_directory(h, ec);
+    if (sub_ == "littlefs" && !flashAdjust(kDirBlocks)) return false;
+    if (fsx::create_directory(h, ec)) return true;
+    if (sub_ == "littlefs") flashAdjust(-(int64_t)kDirBlocks);
+    return false;
 }
 bool FS::rmdir(const char* path) {
     std::error_code ec;
     const auto h = hostPath(path);
-    return fsx::is_directory(h, ec) && fsx::is_empty(h, ec) && fsx::remove(h, ec);
+    if (!(fsx::is_directory(h, ec) && fsx::is_empty(h, ec) && fsx::remove(h, ec))) return false;
+    if (sub_ == "littlefs") flashAdjust(-(int64_t)kDirBlocks);
+    return true;
 }
 
 bool LittleFSFS::begin(bool, const char*, uint8_t, const char*) {
     std::error_code ec;
     fsx::create_directories(root(), ec);
+    std::lock_guard<std::mutex> l(g_flash.mu);
+    flashScanLocked(root());
     return !ec;
 }
 bool LittleFSFS::format() {
     std::error_code ec;
     fsx::remove_all(root(), ec);
     fsx::create_directories(root(), ec);
+    std::lock_guard<std::mutex> l(g_flash.mu);
+    flashScanLocked(root());
     return !ec;
 }
-size_t LittleFSFS::usedBytes() {
-    std::error_code ec;
-    size_t n = 0;
-    for (auto& e : fsx::recursive_directory_iterator(root(), ec))
-        if (e.is_regular_file(ec)) n += (size_t)e.file_size(ec);
-    return n;
+size_t LittleFSFS::totalBytes() {
+    std::lock_guard<std::mutex> l(sim::hw().mu);
+    return (size_t)sim::hw().flashBytes;
+}
+size_t LittleFSFS::usedBytes() {  // whole blocks, like LittleFS
+    std::lock_guard<std::mutex> l(g_flash.mu);
+    if (!g_flash.scanned) flashScanLocked(root());
+    return (size_t)(g_flash.used * kBlock);
 }
 
 bool SDFS::begin(uint8_t, SPIClass&, uint32_t, const char*, uint8_t, bool) {

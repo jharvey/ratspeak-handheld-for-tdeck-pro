@@ -1,0 +1,11 @@
+# Full flash where nothing can be removed: 60 conversations of <= 10 messages each (the newest
+# 10 per conversation are kept), so saves are refused at 92% and the toast shows.
+# Run: set SIM_ARGS=--flashkb 1024 & run-script.bat scriptsullflash_refuse.txt fullrefuse fresh
+wait 9000
+serial msgfill 600 60 200
+expect 240000 [FILL] saved
+wait 1500
+devshot fullflash_refused.png
+serial flash
+expect 3000 messages: FULL
+quit

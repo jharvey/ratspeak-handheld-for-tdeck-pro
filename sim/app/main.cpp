@@ -35,7 +35,9 @@ int main(int argc, char** argv) {
                                                "127.0.0.1:<port> (a second simulator can --live to it).",
                                  "port");
     QCommandLineOption noSd("nosd", "Start with the SD card slot empty.");
-    p.addOptions({name, data, fast, script, quit, shots, live, serialTcp, noSd});
+    QCommandLineOption flashKb("flashkb", "Flash (LittleFS) size in KB; writes fail when it is full. "
+                               "Default 8064 (the device partition).", "kb");
+    p.addOptions({name, data, fast, script, quit, shots, live, serialTcp, noSd, flashKb});
     p.process(app);
 
     SimOptions opt;
@@ -57,6 +59,8 @@ int main(int argc, char** argv) {
         sim::hw().deviceName = opt.name.toStdString();
         sim::hw().realisticPanel = !opt.fast;
         sim::hw().sdPresent = !p.isSet(noSd);
+        if (p.isSet(flashKb) && p.value(flashKb).toULongLong() >= 64)
+            sim::hw().flashBytes = p.value(flashKb).toULongLong() * 1024;
     }
 
     MainWindow w(opt);

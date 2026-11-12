@@ -54,6 +54,10 @@ struct Hw {
     // ---- SD card slot (--nosd, script "sd in|out"); a removed card fails every SD call
     bool sdPresent = true;
 
+    // ---- flash (LittleFS) size: 4 KB blocks, a directory costs 2 blocks, writes fail when
+    // full like the real partition (0x7E0000 on the 16 MB layout). --flashkb changes it.
+    uint64_t flashBytes = 0x7E0000;
+
     // ---- GPS
     bool gpsFix = true;
     double lat = 43.6532, lon = -79.3832;

@@ -27,9 +27,13 @@ START HERE (handoff 2026-11-11)
   tools/maptiles/make_tiles.py; --test = grid tiles). DisplayEink now takes SharedSPILock
   (SD shares the bus with e-ink + radio; the radio already locked). SD message archive
   (NVS rs_sd/msgs, default OFF) = MessageStore external mode: new messages mirrored to the
-  card. NOTE: nothing on this board calls MessageStore::requestTrim, so flash is never
-  trimmed (the core's Trim reloads every record of a conversation per pass - too slow to
-  run per save). COM9 has a 32 GB card (the OLD sdMount at 20 MHz failed on it; SDStore
+  card. Nothing on this board calls MessageStore::requestTrim (the core's Trim reloads
+  every record of a conversation per pass). Full flash is handled instead in
+  MessageTransactions::makeRoom/evictOldest (create path, storage worker): from 85% used
+  the globally oldest records go (counters are global, keep newest 10 per conversation,
+  skip outgoing status < 3, SD-archived copies only), to 80%; refuse creates at 92%.
+  Usage (LittleFS walk) is read every ~1% of possible growth. Sim: --flashkb N models
+  4 KB blocks + 2-block dirs; sim/scripts/fullflash*.txt. NOT yet timed on a unit. COM9 has a 32 GB card (the OLD sdMount at 20 MHz failed on it; SDStore
   mounts fine): map shown from maptest tiles, archive saves 0.2-0.45 s, boot unchanged.
   COM9 left with archive OFF and test tiles on the card. COM5/COM6 cards fitted 2026-11-11 (32 GB each; COM5's card already holds 28 GB of
   other data - firmware only adds /ratdeckpro and /batlog2.csv).
@@ -167,6 +171,8 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
   clk             bench: wall clock to the us + uptime + clock source (RTC drift logging)
   rmconv [<peer>|all]  bench: list conversations / delete one / delete all (with messages)
   map | map <lat> <lon> [z] | map close   offline map (key L on list screens; tiles on SD)
+  flash                flash use + oldest-message removal stats
+  msgfill <n> [conv] [bytes]   bench: store n fake incoming messages (full-flash test)
   sdinfo | sdarc 0|1   SD status / message archive setting (applies at next boot)
   maptest <lat> <lon>  bench: write 18 grid test tiles (z14-15) around a point to the SD card
   ev | ev 0       bench: RAM event trace (rx/tx/offer/txdone/msg-in, dup-scan/dup-idx/commit ms,

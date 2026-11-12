@@ -4,6 +4,8 @@
 #include <limits>
 #include <string>
 #include <vector>
+#include <array>
+#include <algorithm>
 #include <cerrno>
 #include <esp_timer.h>
 #include "util/DisplayText.h"
@@ -715,6 +717,8 @@ void MessageTransactions::create(const Request& request, uint8_t* bytes, Result&
     document.normal();
     if (!createRecord(document.document(), request, bytes)) { result.error = Error::Allocation; return; }
     _nextCounter = std::max(_nextCounter, cutoff + 1);
+    int32_t evictedUnread = 0;
+    if (!makeRoom(evictedUnread)) { result.error = Error::Write; return; }   // flash full
     if (!reserveCounter(result.key.counter)) {
         result.error = _nextCounter == UINT32_MAX ? Error::CounterExhausted : Error::Write; return;
     }
@@ -734,7 +738,7 @@ void MessageTransactions::create(const Request& request, uint8_t* bytes, Result&
     }
     if (result.error != Error::None) return;
     result.revision = 1; result.countDelta = 1; result.conversationDelta = conversationExists ? 0 : 1;
-    result.unreadDelta = request.key.incoming && !request.read ? 1 : 0;
+    result.unreadDelta = (request.key.incoming && !request.read ? 1 : 0) + evictedUnread;
     result.newStatus = request.status;
     result.outcome = Outcome::Committed;
 }
@@ -1173,6 +1177,102 @@ void MessageTransactions::pending(const Request& request, uint8_t* bytes, size_t
         result.revision = selected.revision;
     }
     result.outcome = Outcome::Committed;
+}
+
+// ---- flash space upkeep -----------------------------------------------------------------
+// Nothing else bounds flash history on this board, so a full LittleFS would fail every later
+// write (messages, announce order, contacts, ratchets). Runs on the storage executor inside
+// a create, under the same lease.
+bool MessageTransactions::makeRoom(int32_t& unreadDelta) {
+    auto& stats = spaceStats();
+    if (!_flash || !_flash->isReady()) return true;
+    if (stats.usedPct < SpaceHighPct && stats.checkEvery && ++stats.sinceCheck < stats.checkEvery) return true;
+    stats.sinceCheck = 0;
+    const uint64_t total = _flash->totalBytes();
+    if (!total) return true;
+    stats.checkEvery = uint16_t(std::max<uint64_t>(1, std::min<uint64_t>(64, total / 100 / SpaceCreateCost)));
+    uint64_t used = _flash->usedBytes();
+    stats.usedPct = uint8_t(std::min<uint64_t>(100, used * 100 / total));
+    if (stats.usedPct >= SpaceHighPct) {
+        const uint64_t goal = total * SpaceLowPct / 100;
+        const uint32_t started = millis(), before = stats.removed;
+        evictOldest(used > goal ? used - goal : 0, unreadDelta);
+        used = _flash->usedBytes();
+        stats.usedPct = uint8_t(std::min<uint64_t>(100, used * 100 / total));
+        ++stats.passes;
+        Serial.printf("[MSGSTORE] flash space: removed %lu oldest messages in %lu ms, now %u%% used%c",
+                      (unsigned long)(stats.removed - before), (unsigned long)(millis() - started),
+                      (unsigned)stats.usedPct, 10);
+    }
+    stats.full = stats.usedPct >= SpaceRefusePct;
+    if (stats.full) Serial.printf("[MSGSTORE] flash full (%u%%): new message refused%c", (unsigned)stats.usedPct, 10);
+    return !stats.full;
+}
+
+uint64_t MessageTransactions::evictOldest(uint64_t bytes, int32_t& unreadDelta) {
+    if (!bytes) return 0;
+    struct Victim { uint32_t counter; uint16_t peer; bool incoming; };
+    std::vector<std::array<uint8_t, 16>> peers;
+    std::vector<Victim> victims;
+    try {
+        FlashStore::NameScan root; char name[64]; bool isDir = false; int failure = 0;
+        if (_flash->openNames(PATH_MESSAGES, root) != 0) return 0;
+        while (_flash->nextName(root, name, sizeof(name), isDir, failure)) {
+            std::array<uint8_t, 16> peer;
+            if (isDir && peers.size() < UINT16_MAX && decodeHex(name, strnlen(name, 33), peer.data(), 16))
+                peers.push_back(peer);
+        }
+        std::vector<Victim> mine;
+        for (size_t index = 0; index < peers.size(); ++index) {
+            char peerDir[96]; directory(peers[index].data(), 0, peerDir);
+            mine.clear();
+            FlashStore::NameScan shards;
+            if (_flash->openNames(peerDir, shards) != 0) continue;
+            while (_flash->nextName(shards, name, sizeof(name), isDir, failure)) {
+                if (!isDir || !shardName(name)) continue;
+                char shardDir[128]; snprintf(shardDir, sizeof(shardDir), "%s/%s", peerDir, name);
+                FlashStore::NameScan files; char file[64]; bool fileIsDir = false; int fileFailure = 0;
+                if (_flash->openNames(shardDir, files) != 0) continue;
+                while (_flash->nextName(files, file, sizeof(file), fileIsDir, fileFailure)) {
+                    uint32_t counter = 0; bool incoming = false;
+                    if (fileIsDir || strnlen(file, 25) != 20 || !filename(file, counter, incoming)) continue;
+                    mine.push_back({counter, uint16_t(index), incoming});
+                }
+            }
+            if (mine.size() <= KeepPerConversation) continue;
+            std::sort(mine.begin(), mine.end(), [](const Victim& a, const Victim& b) { return a.counter < b.counter; });
+            victims.insert(victims.end(), mine.begin(), mine.end() - KeepPerConversation);
+        }
+    } catch (const std::bad_alloc&) {
+        Serial.printf("[MSGSTORE] flash space: no memory to list messages%c", 10);
+        return 0;
+    }
+    std::sort(victims.begin(), victims.end(), [](const Victim& a, const Victim& b) { return a.counter < b.counter; });
+    const bool mirrored = _external && _sd && _sd->isReady();
+    auto store = medium(0);
+    MessageDocument document;
+    uint64_t freed = 0;
+    for (const auto& victim : victims) {
+        if (freed >= bytes) break;
+        RecordKey key; memcpy(key.peer, peers[victim.peer].data(), 16);
+        key.counter = victim.counter; key.incoming = victim.incoming;
+        StoredRecordHeader header;
+        if (load(key, document, header) != Error::None) continue;
+        if (!header.incoming && header.status < 3) continue;   // draft / queued / sending: keep
+        // With the SD archive on, flash is a cache: drop a copy only when the card holds it.
+        if (mirrored && !retainedCopy(key, 1, document)) continue;
+        char primary[128], backup[128]; path(key, 0, primary); path(key, 0, backup, ".bak");
+        const bool hadBackup = store.exists(backup);
+        if ((store.exists(primary) && !store.remove(primary)) || (hadBackup && !store.remove(backup))) continue;
+        char shard[128]; recordDirectory(key, 0, shard); _flash->removeDir(shard);   // only if empty
+        freed += 4096u * (hadBackup ? 2u : 1u);
+        ++spaceStats().removed;
+        if (!mirrored && header.incoming && !header.read && unreadDelta > INT32_MIN) --unreadDelta;
+        invalidateSummary(key.peer);
+        dropIdIndex(key.peer);
+    }
+    if (freed) ++_mutationEpoch;
+    return freed;
 }
 
 void MessageTransactions::trim(const Request& request, Result& result) {

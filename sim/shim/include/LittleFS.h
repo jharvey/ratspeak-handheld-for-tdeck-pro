@@ -7,7 +7,7 @@ public:
     bool begin(bool formatOnFail = false, const char* basePath = "/littlefs", uint8_t maxOpen = 10,
                const char* label = "spiffs");
     bool format();
-    size_t totalBytes() { return 6 * 1024 * 1024; }
+    size_t totalBytes();
     size_t usedBytes();
     void end() {}
 };
