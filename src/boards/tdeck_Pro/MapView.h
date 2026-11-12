@@ -55,11 +55,13 @@ void status(char* out, size_t n);
 // on own position (follow). Returns true if the key changed the view.
 bool key(char c, bool enter);
 
-// Other positions (contacts' last shared locations): a filled square, bigger when
-// selected. Copied (at most kMaxMarkers). markerScreen() gives where marker i was drawn
-// by the last draw(), relative to the draw rectangle; false when it is off the view.
+// Other positions (contacts' last shared locations): the contact's number (1-99) in a
+// black disc with a white ring; fresh=false (old position) draws a white disc with a black
+// edge instead; selected adds an outer black ring. Copied (at most kMaxMarkers).
+// markerScreen() gives where marker i was drawn by the last draw(), relative to the draw
+// rectangle; false when it is off the view.
 constexpr int kMaxMarkers = 16;
-struct Marker { double lat, lon; bool selected; };
+struct Marker { double lat, lon; bool selected; uint8_t number; bool fresh; };
 void setMarkers(const Marker* m, int n);
 bool markerScreen(int i, int& x, int& y);
 // Centre the view on a point without following the own position (zoom kept).

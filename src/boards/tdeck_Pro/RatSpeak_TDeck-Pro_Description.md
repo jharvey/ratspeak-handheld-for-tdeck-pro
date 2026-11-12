@@ -110,6 +110,7 @@ In a chat, **MIC** opens the location menu (**MIC** or **^** goes back):
 2. **Auto-share location**: Enter steps off → every 5 → 15 → 30 → 60 min → off.
 3. **Auto-share for**: 1 h / 4 h / until off (applies to the next and the running share).
 4. **Stop all auto-sharing** (also S.1.8).
+5. **Show them on the map** (their last shared position, see §8.1).
 
 Auto updates are short (`Loc: 43.64012, -70.92011 14:32`), go out only with a fresh fix
 (the GPS is woken for a visit when one is due), only after moving > 50 m or two intervals,
@@ -666,12 +667,19 @@ Ready-made set (2026-11-12): USGS National Map topo (public domain, credit U.S.
 Geological Survey) as 1-bit tiles at `--threshold 150`: the lower 48 states at zoom
 3–8 and Maine at zoom 9–12, about 6,200 tiles / 50 MB; start view Maine at zoom 6.
 **Contacts on the map:** every location a contact shares (manual or auto, §1.2d) is kept
-as that contact's last position (newest 16, NVS rs_cpos; also picked up from older chats
-when they are opened) and drawn as a square marker with a name tag. **T** steps through
-them, newest first: the map centres on the contact and the bottom line reads
-`Alice 12.4km NE 8m ago` (distance and direction from your GPS / saved position). **T**
-after the last one, **C** or **Enter**: back to your own position. Markers also show on
-the map idle screen. Console `cpos` lists them (`cpos clear`).
+as that contact's last position (16 contacts, NVS rs_cpos; older chats add theirs when
+opened). Each shows as its **number** (1–16, fixed per contact) in a disc: **black disc**
+= position less than an hour old, **hollow disc** = older (check the age), extra ring =
+selected. On the map:
+
+- **T** steps through them, newest first, centring each; the bottom line reads
+  `#1 Alice 12.4km NE 8m ago` (distance / direction from you, age of the position).
+  **T** after the last one, **C** or **Enter**: back to your own position.
+- **Type the number, Enter** (e.g. `2` Enter): opens that contact's chat.
+
+From a list (Inbox / Contacts / Peers) **L** on a row shows that contact on the map; in
+a chat, **MIC → 5 Show them on the map**, or **Enter** on the empty draft under a received
+location. Markers also show on the map idle screen. Console `cpos` (`cpos clear`).
 
 The map's bottom line shows the GPS position (`43.64012,-70.92011 8sat`, or `old … 12m`
 for the last fix and its age). World overview zoom 0–7 (country, state / province borders

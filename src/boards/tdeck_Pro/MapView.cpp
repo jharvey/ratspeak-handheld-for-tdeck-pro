@@ -34,6 +34,12 @@ bool g_posValid = false;
 double g_posLat = 0, g_posLon = 0;
 double g_drawnPx = -1e9, g_drawnPy = -1e9;   // own position (world px) at the last draw
 int g_viewW = 240, g_viewH = 224;
+const uint8_t kDigit5x7[10][7] = {        // rows, 5 bits each (bit 4 = left)
+    {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}, {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
+    {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}, {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E},
+    {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}, {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E},
+    {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}, {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
+    {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}};
 Marker g_markers[kMaxMarkers];
 int g_markerCount = 0;
 int g_markerX[kMaxMarkers], g_markerY[kMaxMarkers];
@@ -238,7 +244,19 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
             }
         }
     }
-    // Markers (contacts): white-haloed black square, 7 px (11 px when selected).
+    if (!g_follow || !g_posValid) {
+        // Centre cross when the view is not on the own position.
+        const int cx = w / 2, cy = h / 2;
+        for (int d = -6; d <= 6; d++) {
+            if (d > -2 && d < 2) continue;
+            px(x0 + cx + d, y0 + cy, !dark);
+            px(x0 + cx, y0 + cy + d, !dark);
+        }
+    }
+
+    // Markers (contacts), drawn last so nothing covers them: number in 2x 5x7 digits
+    // (10x14 px) on a black disc (white disc + black edge when the position is old),
+    // white ring around it, selected: an extra black ring.
     for (int i = 0; i < g_markerCount; i++) {
         double mpx, mpy;
         project(g_markers[i].lat, g_markers[i].lon, g_zoom, mpx, mpy);
@@ -250,25 +268,33 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
         g_markerOn[i] = cx >= 0 && cy >= 0 && cx < w && cy < h;
         g_markerX[i] = cx; g_markerY[i] = cy;
         if (!g_markerOn[i]) continue;
-        const int r = g_markers[i].selected ? 5 : 3;
-        for (int yy = -r - 2; yy <= r + 2; yy++) {
-            for (int xx = -r - 2; xx <= r + 2; xx++) {
+        const Marker& mk = g_markers[i];
+        char num[4];
+        snprintf(num, sizeof(num), "%u", (unsigned)(mk.number % 100));
+        const int nd = (int)strlen(num), tw = nd * 12 - 2;          // 10 px glyph + 2 px gap
+        const int rDisc = nd > 1 ? 13 : 10, rRing = rDisc + 2, rOut = mk.selected ? rRing + 2 : rRing;
+        for (int yy = -rOut; yy <= rOut; yy++) {
+            for (int xx = -rOut; xx <= rOut; xx++) {
                 const int vx = cx + xx, vy = cy + yy;
                 if (vx < 0 || vy < 0 || vx >= w || vy >= h) continue;
-                const bool inner = xx >= -r && xx <= r && yy >= -r && yy <= r;
-                const bool hole = g_markers[i].selected && xx >= -1 && xx <= 1 && yy >= -1 && yy <= 1;
-                px(x0 + vx, y0 + vy, (inner && !hole) != dark);
+                const int d2 = xx * xx + yy * yy;
+                if (d2 > rOut * rOut + rOut) continue;
+                bool black;
+                if (d2 <= rDisc * rDisc + rDisc) {
+                    const bool edge = d2 > (rDisc - 1) * (rDisc - 1) + (rDisc - 1);
+                    black = mk.fresh ? true : edge;
+                    const int gx = xx + tw / 2, gy = yy + 7;           // cell 0..tw-1, 0..13
+                    if (gx >= 0 && gx < tw && gy >= 0 && gy < 14 && (gx % 12) < 10) {
+                        const int c = num[gx / 12] - '0';
+                        if (kDigit5x7[c][gy / 2] & (0x10 >> ((gx % 12) / 2))) black = !mk.fresh;
+                    }
+                } else if (d2 <= rRing * rRing + rRing) {
+                    black = false;
+                } else {
+                    black = true;
+                }
+                px(x0 + vx, y0 + vy, black != dark);
             }
-        }
-    }
-
-    if (!g_follow || !g_posValid) {
-        // Centre cross when the view is not on the own position.
-        const int cx = w / 2, cy = h / 2;
-        for (int d = -6; d <= 6; d++) {
-            if (d > -2 && d < 2) continue;
-            px(x0 + cx + d, y0 + cy, !dark);
-            px(x0 + cx, y0 + cy + d, !dark);
         }
     }
 

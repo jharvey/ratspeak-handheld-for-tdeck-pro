@@ -3809,13 +3809,14 @@ void renderThread() {
     char name[24], hdr[48];
     peerName(g_threadPeer, name, sizeof(name));
     const uint8_t am = ashareMinsFor(g_threadPeer);
-    if (am) snprintf(hdr, sizeof(hdr), ">>> %.14s [loc %um]", name, (unsigned)am);
+    if (g_tmenuOpen && g_toast[0]) snprintf(hdr, sizeof(hdr), "%s", g_toast);   // menu: no strip
+    else if (g_tmenuOpen) snprintf(hdr, sizeof(hdr), "1-5 / Enter, MIC or ^ = back");
+    else if (am) snprintf(hdr, sizeof(hdr), ">>> %.14s [loc %um]", name, (unsigned)am);
     else snprintf(hdr, sizeof(hdr), ">>> %s", name);
     text(4, HEADER_Y, hdr, true, W - 8);
     int y = HEADER_Y + 20;
     if (g_tmenuOpen) {                       // MIC: location menu instead of the history
-        renderThreadMenu(y);                 // 4 rows down to y + 176 (= 233)
-        text(6, BOT_TOP - 18, g_toast[0] ? g_toast : "1-4 / Enter  MIC or ^ = back", !!g_toast[0], W - 12);
+        renderThreadMenu(y);                 // 5 rows down to y + 220 (= 277)
         return;
     }
     if (g_txStr[0]) {
@@ -4197,6 +4198,7 @@ void mapTick() {
 constexpr int MAP_FOOT_H = 18;               // GPS position line under the map
 
 bool mapContactInfo(char* out, size_t n);   // contacts on the map (below)
+extern int g_mapNum;
 void mapContactsStamp();
 void mapContactsFeed();
 
@@ -4205,7 +4207,8 @@ void renderMapHeader() {
     mapview::status(st, sizeof(st));
     drawHeader(st, false);
     char pos[56];
-    if (!mapContactInfo(pos, sizeof(pos))) gpsPosText(pos, sizeof(pos));
+    if (g_mapNum) snprintf(pos, sizeof(pos), "open chat #%d_  (Enter)", g_mapNum);
+    else if (!mapContactInfo(pos, sizeof(pos))) gpsPosText(pos, sizeof(pos));
     box(0, BOT_TOP - MAP_FOOT_H, W, MAP_FOOT_H, 1);
     text(4, BOT_TOP - MAP_FOOT_H + 1, pos, false, W - 8);
 }
@@ -4610,7 +4613,7 @@ bool mapContactInfo(char* out, size_t n) {
     } else {
         snprintf(dist, sizeof(dist), "%.3f,%.3f", c.lat, c.lon);
     }
-    snprintf(out, n, "%.10s %s %s ago", nm, dist, age);
+    snprintf(out, n, "#%d %.9s %s %s ago", g_mapSel + 1, nm, dist, age);
     return true;
 }
 
@@ -4639,35 +4642,72 @@ void mapCycleContact() {
 // drawn over the stamped map, so only those small areas are redrawn.
 void mapContactsFeed() {
     mapview::Marker m[kCPosMax];
-    for (int i = 0; i < g_cposCount; i++) m[i] = {g_cpos[i].lat, g_cpos[i].lon, i == g_mapSel};
+    const time_t now = time(nullptr);
+    for (int i = 0; i < g_cposCount; i++) {
+        const bool fresh = g_cpos[i].at && now >= (time_t)g_cpos[i].at && now - (time_t)g_cpos[i].at < 3600;
+        m[i] = {g_cpos[i].lat, g_cpos[i].lon, i == g_mapSel, (uint8_t)(i + 1), fresh};   // number = slot
+    }
     mapview::setMarkers(m, g_cposCount);
 }
 
-void mapContactsStamp() {
-    const int mapH = BOT_TOP - MAP_FOOT_H - LIST_TOP;
-    bool any = false;
-    for (int i = 0; i < g_cposCount; i++) {
-        int x, y;
-        if (!mapview::markerScreen(i, x, y)) continue;
-        char nm[24];
-        peerName(g_cpos[i].dest, nm, sizeof(nm));
-        nm[9] = 0;
-        const int tw = textW(nm) + 4;
-        int lx = x + 9, ly = y - 9;
-        if (lx + tw > W) lx = x - 9 - tw;
-        if (ly < 0) ly = 0;
-        if (ly + 18 > mapH) ly = mapH - 18;
-        box(lx, LIST_TOP + ly, tw, 18, i == g_mapSel ? 2 : 0);
-        text(lx + 2, LIST_TOP + ly, nm, i == g_mapSel, tw);
-        any = true;
+// The marker carries the contact's number (no name tags: the screen is small); the
+// selected contact's name, distance and age are on the map's bottom line.
+void mapContactsStamp() {}
+
+int g_mapNum = 0;                            // digits typed on the map: open that chat
+
+int cposFind(const uint8_t dest[16]) {
+    for (int i = 0; i < g_cposCount; i++) if (!memcmp(g_cpos[i].dest, dest, 16)) return i;
+    return -1;
+}
+
+void openThread(const uint8_t peer[16]);
+void openMap();
+void closeThread();
+
+// Map centred on a contact's last position, its marker selected (lists: L, chat menu 5).
+bool mapShowContact(const uint8_t dest[16]) {
+    const int i = cposFind(dest);
+    if (i < 0) { toast("No position from them yet"); return false; }
+    if (!mapview::isOpen()) openMap();
+    g_mapSel = i;
+    mapview::centreOn(g_cpos[i].lat, g_cpos[i].lon);
+    mapview::fitZoom();
+    g_fullRefreshReq = true;
+    requestRedraw();
+    char info[64];
+    mapContactInfo(info, sizeof(info));
+    Serial.printf("[MAP] contact %s\n", info);
+    return true;
+}
+
+// Digits + Enter on the map: open contact #n's chat. Returns true if the key was used.
+bool mapNumberKey(const KeyEvent& ev) {
+    const char c = ev.character;
+    if (c >= '0' && c <= '9' && !ev.enter) {
+        g_mapNum = (g_mapNum * 10 + (c - '0')) % 100;
+        requestRedraw();
+        return true;
     }
-    if (any) lv_refr_now(nullptr);           // only the tag areas are redrawn
+    if (ev.del && g_mapNum) { g_mapNum /= 10; requestRedraw(); return true; }
+    if (ev.enter && g_mapNum) {
+        const int n = g_mapNum;
+        g_mapNum = 0;
+        if (n < 1 || n > g_cposCount) { toast("No contact #%d on the map", n); requestRedraw(); return true; }
+        uint8_t peer[16];
+        memcpy(peer, g_cpos[n - 1].dest, 16);
+        Serial.printf("[MAP] open chat #%d\n", n);
+        closeMap();
+        openThread(peer);
+        return true;
+    }
+    return false;
 }
 
 // ---- Thread menu (MIC in a conversation) -----------------------------------------------
 bool g_tmenuOpen = false;
 int  g_tmenuSel = 0;
-constexpr int kTmenuRows = 4;
+constexpr int kTmenuRows = 5;
 
 void tmenuAct(int i) {
     if (i == 0) { g_tmenuOpen = false; shareMyLocation(g_threadPeer); loadHistory(g_threadPeer); }
@@ -4681,6 +4721,15 @@ void tmenuAct(int i) {
             ashareSave();
         }
     } else if (i == 3) { if (g_ashareCount) { ashareStopAll(); toast("All auto-sharing stopped"); } else toast("Nothing to stop"); }
+    else if (i == 4) {
+        uint8_t peer[16];
+        memcpy(peer, g_threadPeer, 16);
+        if (cposFind(peer) < 0) { toast("No position from them yet"); return; }
+        g_tmenuOpen = false;
+        closeThread();
+        mapShowContact(peer);
+        return;
+    }
     requestRedraw();
 }
 
@@ -4718,7 +4767,19 @@ void renderThreadMenu(int y) {
     addHit(2, y, W - 4, ROW_H, H_TMENU, 2); y += ROW_H;
     snprintf(sub, sizeof(sub), "%d contact%s on", g_ashareCount, g_ashareCount == 1 ? "" : "s");
     listRow(y, "4 Stop all auto-sharing", sub, g_tmenuSel == 3);
-    addHit(2, y, W - 4, ROW_H, H_TMENU, 3);
+    addHit(2, y, W - 4, ROW_H, H_TMENU, 3); y += ROW_H;
+    const int ci = cposFind(g_threadPeer);
+    if (ci >= 0) {
+        const time_t now = time(nullptr);
+        const uint32_t a = (g_cpos[ci].at && now > (time_t)g_cpos[ci].at) ? (uint32_t)(now - g_cpos[ci].at) : 0;
+        char age[12];
+        fmtAge(a, age, sizeof(age));
+        snprintf(sub, sizeof(sub), "#%d, %s old", ci + 1, g_cpos[ci].at ? age : "?");
+    } else {
+        snprintf(sub, sizeof(sub), "no position from them yet");
+    }
+    listRow(y, "5 Show them on the map", sub, g_tmenuSel == 4);
+    addHit(2, y, W - 4, ROW_H, H_TMENU, 4);
 }
 
 // ---- Contact page + share picker ----------------------------------------------------
@@ -5187,8 +5248,11 @@ void commitEntry() {
         if (!g_bufLen) {                         // Enter on an empty draft: map or save card
             if (locOffered()) {
                 const double la = g_threadLoc.lat, lo = g_threadLoc.lon;
+                uint8_t peer[16];
+                memcpy(peer, g_threadPeer, 16);
                 closeThread();
                 openMapAt(la, lo);
+                g_mapSel = cposFind(peer);            // their marker selected (name + age below)
                 Serial.printf("[LOC] show %.5f,%.5f on the map\n", la, lo);
             } else {
                 saveThreadCard();
@@ -5447,7 +5511,11 @@ void browseKey(const KeyEvent& ev) {
         case 'A':
             if (g_screen == SCR_HOME) activateCurrent();
             break;
-        case 'L': openMap(); break;
+        case 'L':                                   // map; on a list row with a known position: there
+            if (isListScreen(g_screen) && g_listSel < g_rowCount && cposFind(g_rows[g_listSel].peer) >= 0)
+                mapShowContact(g_rows[g_listSel].peer);
+            else openMap();
+            break;
         case 'F':                                   // find: type to filter the list
             if (isListScreen(g_screen)) { startEntry(Entry::Search, g_filter); }
             break;
@@ -5475,6 +5543,7 @@ void handleKey(const KeyEvent& ev) {
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
     if (mapview::isOpen()) {
         const char mc = (char)toupper((unsigned char)ev.character);
+        if (mapNumberKey(ev)) return;                         // "12" Enter: open chat #12
         if (mc == 'T') { mapCycleContact(); return; }        // next contact's last position
         if (mc == 'C' || ev.enter) g_mapSel = -1;             // back to own position
         if (mapview::key(ev.character, ev.enter)) requestRedraw();
