@@ -2,6 +2,8 @@
 # opens the map there.
 expect 60000 [BOOT] ready
 expect 120000 [MSG] inbound message
+# the arriving location is stored as the contact's last position (map marker)
+expect 15000 at 43.65320,-79.38320
 wait 15000
 key BACK
 wait 1500
@@ -15,4 +17,8 @@ key ENTER
 expect 5000 [LOC] show
 wait 2500
 shot loc-b-02-map.png
+key T
+expect 5000 [MAP] contact
+wait 2500
+shot loc-b-03-contact.png
 quit

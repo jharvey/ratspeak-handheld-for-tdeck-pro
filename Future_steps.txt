@@ -97,8 +97,12 @@ UI / UX
   stop all in S.1.8); receiver shows [loc] and opens it on the map. GPS position text on the
   map footer and S.1.7. World map z0-7 from Natural Earth (render_world.py).
   Next: send the position in the LXMF telemetry field too (Sideband FIELD_TELEMETRY 0x02,
-  msgpack'd sensor data) - needs a fields argument on rsLXMFLite's send path; show
-  contacts' last positions as markers on the map; try between two units outdoors.
+  msgpack'd sensor data) - needs a fields argument on rsLXMFLite's send path; try between
+  two units outdoors.
+- DONE (sim, two devices) - contacts on the map (2026-11-12): last shared position per
+  contact as labelled markers, map key T cycles them with distance / direction / age.
+  Next: waypoints + breadcrumb track, place search (GNIS), coordinate formats (MGRS),
+  measure, touch pan, nearest NOAA weather radio, library viewer (user said yes to all).
   Next: contacts' positions on the map (needs location sharing), touch pan, real map tiles
 - Map data at country scale (user asked 2026-11-11: "something usable for the entire US").
   Contiguous-US bbox, raw 8 KB tiles: z0-12 ~2.6 GB, z13 +7.8 GB, z14 +31 GB, z15 +125 GB.

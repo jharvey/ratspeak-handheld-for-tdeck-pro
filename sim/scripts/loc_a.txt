@@ -2,6 +2,8 @@
 #   run-script.bat scripts\loc_a.txt loca fresh   +   run-script.bat scripts\loc_b.txt locb fresh
 # A opens a chat with B (Peers > row 1 > 1 Message), MIC = location menu: 1 share now,
 # 2 auto-share (5 min: the first update goes at once), 4 stop all.
+# Needs a quiet virtual radio: with other simulators running, "Peers row 1" may be one of
+# them - use loc_pair.py then (finds B by its hash).
 expect 60000 [BOOT] ready
 wait 25000
 key P

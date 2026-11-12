@@ -1,0 +1,27 @@
+# Contacts on the map: two contacts with last positions (bench "cpos"), map key T cycles
+# them (centred, marker selected, footer "Name dist dir age"), then back to own position.
+# Tiles near 04095 in build\simdata\cmap\sd (copied from the NAS master copy).
+expect 60000 [BOOT] ready
+serial contact 0000000000000000000000000000a11c Alice
+serial contact 0000000000000000000000000000b0bb Bob
+wait 500
+serial cpos 0000000000000000000000000000a11c 43.70 -70.80 5
+expect 3000 [LOC] Alice at
+serial cpos 0000000000000000000000000000b0bb 43.52 -71.05 40
+expect 3000 [LOC] Bob at
+serial map 43.64 -70.92 11
+wait 3000
+shot cmap-01-both.png
+key T
+expect 5000 [MAP] contact Alice
+wait 2500
+shot cmap-02-alice.png
+key T
+expect 5000 [MAP] contact Bob
+wait 2500
+shot cmap-03-bob.png
+key T
+expect 5000 [MAP] contact: none
+serial cpos
+expect 3000 [LOC] cpos 2 contacts
+quit

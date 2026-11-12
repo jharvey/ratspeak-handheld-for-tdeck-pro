@@ -1541,6 +1541,8 @@ bool cardOffered() { return g_threadCard.valid && !cardIsSaved(g_threadCard.hash
 struct InLoc { bool valid; double lat, lon; uint32_t counter; };
 InLoc g_threadLoc = {};
 bool locParse(const char* s, size_t len, double& lat, double& lon, bool* autoUpdate = nullptr);
+void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at);
+uint32_t msgEpoch(double ts);
 // Enter on an empty draft: the newest of an unsaved card / a location wins.
 void gpsPosText(char* out, size_t n);
 int ashareActive();
@@ -1647,6 +1649,7 @@ void loadHistory(const uint8_t peer[16]) {
             h.autoLoc = autoLoc;
             if (h.incoming && (!g_threadLoc.valid || entries[i].counter >= g_threadLoc.counter))
                 g_threadLoc = {true, la, lo, entries[i].counter};
+            if (h.incoming) cposNote(peer, la, lo, msgEpoch(hdr.timestamp));   // map marker
         }
         if (clen >= sizeof(h.text)) clen = sizeof(h.text) - 1;
         if (clen && !isCard && !isLoc) {
@@ -4193,18 +4196,24 @@ void mapTick() {
 
 constexpr int MAP_FOOT_H = 18;               // GPS position line under the map
 
+bool mapContactInfo(char* out, size_t n);   // contacts on the map (below)
+void mapContactsStamp();
+void mapContactsFeed();
+
 void renderMapHeader() {
     char st[64];
     mapview::status(st, sizeof(st));
     drawHeader(st, false);
     char pos[56];
-    gpsPosText(pos, sizeof(pos));
+    if (!mapContactInfo(pos, sizeof(pos))) gpsPosText(pos, sizeof(pos));
     box(0, BOT_TOP - MAP_FOOT_H, W, MAP_FOOT_H, 1);
     text(4, BOT_TOP - MAP_FOOT_H + 1, pos, false, W - 8);
 }
 
 void stampMap() {
+    mapContactsFeed();
     mapview::draw(mapPixel, 0, LIST_TOP, W, BOT_TOP - MAP_FOOT_H - LIST_TOP, g_cfg.dark);
+    mapContactsStamp();                      // name tags over the markers
     g_display.markDirty();
 }
 
@@ -4435,6 +4444,224 @@ void autoShareTick() {
         }
         break;                               // one send per tick
     }
+}
+
+// ---- Contacts' last positions (map markers) ---------------------------------------------
+// Every incoming location message (manual or auto share, any client that uses the same
+// text) updates that contact's last position: NVS rs_cpos, newest 16 contacts. Fed by
+// the protocol's committed-message notice (queued, read in the main loop) and by
+// loadHistory() for messages that arrived before. Shown as markers on the map.
+struct CPos { uint8_t dest[16]; float lat, lon; uint32_t at; };    // at = epoch s (sender)
+constexpr int kCPosMax = 16;
+CPos g_cpos[kCPosMax];
+int g_cposCount = 0;
+handheld::storage::RecordKey g_inQ[8];
+int g_inQn = 0;
+
+void cposSave() {
+    Preferences p;
+    if (!p.begin("rs_cpos", false)) return;
+    p.putBytes("list", g_cpos, sizeof(CPos) * g_cposCount);
+    p.putUChar("n", (uint8_t)g_cposCount);
+    p.end();
+}
+
+void cposLoad() {
+    Preferences p;
+    g_cposCount = 0;
+    if (!p.begin("rs_cpos", true)) return;
+    const int n = p.getUChar("n", 0);
+    if (n > 0 && n <= kCPosMax && p.getBytes("list", g_cpos, sizeof(CPos) * n) == sizeof(CPos) * (size_t)n)
+        g_cposCount = n;
+    p.end();
+}
+
+void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at) {
+    if (isSelf(dest)) return;
+    int i = 0;
+    while (i < g_cposCount && memcmp(g_cpos[i].dest, dest, 16)) i++;
+    if (i < g_cposCount && g_cpos[i].at > at) return;      // already have a newer one
+    if (i == g_cposCount) {
+        if (g_cposCount < kCPosMax) g_cposCount++;
+        else {                                               // full: replace the oldest
+            i = 0;
+            for (int k = 1; k < kCPosMax; k++) if (g_cpos[k].at < g_cpos[i].at) i = k;
+        }
+    }
+    memcpy(g_cpos[i].dest, dest, 16);
+    g_cpos[i].lat = (float)lat;
+    g_cpos[i].lon = (float)lon;
+    g_cpos[i].at = at;
+    cposSave();
+    char nm[24];
+    peerName(dest, nm, sizeof(nm));
+    Serial.printf("[LOC] %s at %.5f,%.5f\n", nm, lat, lon);
+    if (mapview::isOpen()) requestRedraw();
+}
+
+// Text of a stored message (content only, NUL-terminated); false if busy / missing.
+bool readRecordText(const handheld::storage::RecordKey& key, char* out, size_t cap, double* ts) {
+    using namespace handheld::storage;
+    auto rs = g_msgStore.requestRecord(key, 0, 256);
+    if (!rs.accepted()) return false;
+    MessageStore::Result rr;
+    uint8_t buf[256];
+    size_t got = 0;
+    if (waitResult(rs.ticket, rr) && rr.outcome == Outcome::Committed && rr.error == Error::None) {
+        got = rr.length < sizeof(buf) ? rr.length : sizeof(buf);
+        if (!g_msgStore.readPayload(rs.ticket, buf, got)) got = 0;
+    }
+    g_msgStore.releaseResult(rs.ticket);
+    if (got < sizeof(StoredRecordHeader)) return false;
+    StoredRecordHeader hdr;
+    memcpy(&hdr, buf, sizeof(hdr));
+    size_t off = sizeof(hdr) + hdr.titleLength;
+    if (off > got) off = got;
+    size_t clen = hdr.contentLength;
+    if (off + clen > got) clen = got - off;
+    if (clen >= cap) clen = cap - 1;
+    memcpy(out, buf + off, clen);
+    out[clen] = 0;
+    if (ts) *ts = hdr.timestamp;
+    return true;
+}
+
+uint32_t msgEpoch(double ts) {
+    const time_t now = time(nullptr);
+    if (ts > 1.6e9 && ts < (double)now + 86400.0) return (uint32_t)ts;   // sender clock, if sane
+    return now > 1600000000 ? (uint32_t)now : 0;
+}
+
+// Called by the protocol (inside g_proto.loop()): only queue the key.
+void onCommittedMessage(const LXMFManager::CommittedMessage& m) {
+    if (!m.key.incoming || g_inQn >= (int)(sizeof(g_inQ) / sizeof(g_inQ[0]))) return;
+    g_inQ[g_inQn++] = m.key;
+}
+
+void inboundTick() {
+    if (!g_inQn || !g_storeReady) return;
+    const handheld::storage::RecordKey key = g_inQ[0];
+    char text[96];
+    double ts = 0;
+    if (!readRecordText(key, text, sizeof(text), &ts)) {
+        static uint8_t tries = 0;
+        if (++tries < 20) return;            // store busy: try again next loop
+        tries = 0;
+    } else {
+        double la, lo;
+        if (locParse(text, strlen(text), la, lo)) cposNote(key.peer, la, lo, msgEpoch(ts));
+    }
+    for (int k = 1; k < g_inQn; k++) g_inQ[k - 1] = g_inQ[k];
+    g_inQn--;
+}
+
+// ---- Contacts on the map ---------------------------------------------------------------
+// Map key T: next contact with a known position (newest first), centred, its marker
+// selected; the footer shows "Name 12.4km NE 8m ago". C / Enter: back to own position.
+int g_mapSel = -1;                           // index into g_cpos, -1 = none
+
+int cposOrder(int* idx) {                    // newest first
+    int n = 0;
+    for (int i = 0; i < g_cposCount; i++) idx[n++] = i;
+    for (int a = 1; a < n; a++)
+        for (int b = a; b > 0 && g_cpos[idx[b]].at > g_cpos[idx[b - 1]].at; b--) std::swap(idx[b], idx[b - 1]);
+    return n;
+}
+
+bool ownPosition(double& lat, double& lon) {
+    if (g_gpsPosValid) { lat = g_gpsLat; lon = g_gpsLon; return true; }
+    if (g_cfg.hasPos) { lat = g_cfg.lat; lon = g_cfg.lon; return true; }
+    return false;
+}
+
+const char* compass8(double deg) {
+    static const char* k[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+    return k[(int)((deg + 22.5) / 45.0) & 7];
+}
+
+double bearingDeg(double la1, double lo1, double la2, double lo2) {
+    const double r = 3.14159265358979 / 180.0;
+    const double y = sin((lo2 - lo1) * r) * cos(la2 * r);
+    const double x = cos(la1 * r) * sin(la2 * r) - sin(la1 * r) * cos(la2 * r) * cos((lo2 - lo1) * r);
+    double b = atan2(y, x) / r;
+    return b < 0 ? b + 360.0 : b;
+}
+
+bool mapContactInfo(char* out, size_t n) {
+    if (g_mapSel < 0 || g_mapSel >= g_cposCount) return false;
+    const CPos& c = g_cpos[g_mapSel];
+    char nm[24], age[12] = "?", dist[24] = "";
+    peerName(c.dest, nm, sizeof(nm));
+    const time_t now = time(nullptr);
+    if (c.at && now > (time_t)c.at) {
+        const uint32_t a = (uint32_t)(now - c.at);
+        if (a < 90) snprintf(age, sizeof(age), "%us", (unsigned)a);
+        else if (a < 5400) snprintf(age, sizeof(age), "%um", (unsigned)((a + 30) / 60));
+        else if (a < 172800) snprintf(age, sizeof(age), "%uh", (unsigned)((a + 1800) / 3600));
+        else snprintf(age, sizeof(age), "%ud", (unsigned)((a + 43200) / 86400));
+    }
+    double la, lo;
+    if (ownPosition(la, lo)) {
+        const double m = metersBetween(la, lo, c.lat, c.lon);
+        const char* dir = compass8(bearingDeg(la, lo, c.lat, c.lon));
+        if (m < 1000) snprintf(dist, sizeof(dist), "%dm %s", (int)m, dir);
+        else if (m < 100000) snprintf(dist, sizeof(dist), "%.1fkm %s", m / 1000.0, dir);
+        else snprintf(dist, sizeof(dist), "%dkm %s", (int)(m / 1000.0), dir);
+    } else {
+        snprintf(dist, sizeof(dist), "%.3f,%.3f", c.lat, c.lon);
+    }
+    snprintf(out, n, "%.10s %s %s ago", nm, dist, age);
+    return true;
+}
+
+void mapCycleContact() {
+    int idx[kCPosMax];
+    const int n = cposOrder(idx);
+    if (!n) { toast("No contact positions yet"); return; }
+    int k = 0;
+    while (k < n && idx[k] != g_mapSel) k++;
+    g_mapSel = (k >= n) ? idx[0] : (k + 1 < n ? idx[k + 1] : -1);   // after the last: none
+    if (g_mapSel >= 0) {
+        mapview::centreOn(g_cpos[g_mapSel].lat, g_cpos[g_mapSel].lon);
+        mapview::fitZoom();
+        char info[56];
+        mapContactInfo(info, sizeof(info));
+        Serial.printf("[MAP] contact %s\n", info);
+    } else {
+        mapview::key('C', false);            // back to own position (follow)
+        Serial.println("[MAP] contact: none");
+    }
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+// Markers for every known contact position; name tags (LVGL labels on a white box)
+// drawn over the stamped map, so only those small areas are redrawn.
+void mapContactsFeed() {
+    mapview::Marker m[kCPosMax];
+    for (int i = 0; i < g_cposCount; i++) m[i] = {g_cpos[i].lat, g_cpos[i].lon, i == g_mapSel};
+    mapview::setMarkers(m, g_cposCount);
+}
+
+void mapContactsStamp() {
+    const int mapH = BOT_TOP - MAP_FOOT_H - LIST_TOP;
+    bool any = false;
+    for (int i = 0; i < g_cposCount; i++) {
+        int x, y;
+        if (!mapview::markerScreen(i, x, y)) continue;
+        char nm[24];
+        peerName(g_cpos[i].dest, nm, sizeof(nm));
+        nm[9] = 0;
+        const int tw = textW(nm) + 4;
+        int lx = x + 9, ly = y - 9;
+        if (lx + tw > W) lx = x - 9 - tw;
+        if (ly < 0) ly = 0;
+        if (ly + 18 > mapH) ly = mapH - 18;
+        box(lx, LIST_TOP + ly, tw, 18, i == g_mapSel ? 2 : 0);
+        text(lx + 2, LIST_TOP + ly, nm, i == g_mapSel, tw);
+        any = true;
+    }
+    if (any) lv_refr_now(nullptr);           // only the tag areas are redrawn
 }
 
 // ---- Thread menu (MIC in a conversation) -----------------------------------------------
@@ -4744,6 +4971,7 @@ bool paintIdleMap() {
         label(0, kIdleMapBottom, W, H - kIdleMapBottom, pos);
     }
     lv_refr_now(nullptr);
+    mapContactsFeed();                       // contacts' last positions on the idle map too
     mapview::draw(mapPixel, 0, kIdleMapTop, W, kIdleMapBottom - kIdleMapTop, g_cfg.dark);
     g_display.markDirty();
     if (!wasOpen) mapview::close();
@@ -5246,6 +5474,9 @@ void handleKey(const KeyEvent& ev) {
     if (entryActive()) { entryKey(ev); return; }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
     if (mapview::isOpen()) {
+        const char mc = (char)toupper((unsigned char)ev.character);
+        if (mc == 'T') { mapCycleContact(); return; }        // next contact's last position
+        if (mc == 'C' || ev.enter) g_mapSel = -1;             // back to own position
         if (mapview::key(ev.character, ev.enter)) requestRedraw();
         return;
     }
@@ -6104,6 +6335,28 @@ void handleSerialLine(char* p) {
     } else if (!strncmp(p, "sdarc ", 6)) {
         sdArchiveSet(atoi(p + 6) != 0);
         Serial.printf("[SD] message archive setting %s (applies at next boot)\n", sdArchiveEnabled() ? "on" : "off");
+    } else if (!strcmp(p, "cpos") || !strncmp(p, "cpos ", 5)) {
+        // cpos = contacts' last positions; bench: cpos <hex32> <lat> <lon> [age min] | cpos clear
+        if (!strcmp(p, "cpos clear")) { g_cposCount = 0; g_mapSel = -1; cposSave(); Serial.println("[LOC] cpos cleared"); return; }
+        if (p[4]) {
+            uint8_t d[16];
+            double la = 0, lo = 0;
+            int ageMin = 0;
+            if (strlen(p + 5) < 32 || !hexToHash(p + 5, d) || sscanf(p + 5 + 32, "%lf %lf %d", &la, &lo, &ageMin) < 2) {
+                Serial.println("[LOC] cpos <hex32> <lat> <lon> [age min]");
+                return;
+            }
+            cposNote(d, la, lo, (uint32_t)time(nullptr) - (uint32_t)ageMin * 60u);
+            return;
+        }
+        for (int i = 0; i < g_cposCount; i++) {
+            char nm[24], hex[33];
+            peerName(g_cpos[i].dest, nm, sizeof(nm));
+            hashToHex(g_cpos[i].dest, hex);
+            Serial.printf("[LOC] cpos %s %s %.5f,%.5f at %lu\n", hex, nm, g_cpos[i].lat, g_cpos[i].lon,
+                          (unsigned long)g_cpos[i].at);
+        }
+        Serial.printf("[LOC] cpos %d contacts\n", g_cposCount);
     } else if (!strcmp(p, "loc")) {
         char pos[56];
         gpsPosText(pos, sizeof(pos));
@@ -6630,6 +6883,8 @@ bool begin() {
     if (vault::unlocked()) wifiLoad();    // else after unlock (lockTry)
     tcpLoad();
     ashareLoad();
+    cposLoad();
+    g_proto.setMessageCallback(onCommittedMessage);
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
     noteInput();
     goScreen(SCR_HOME);
@@ -6662,6 +6917,7 @@ void loop() {
     watchWifi();
     tcpTick();
     autoShareTick();
+    inboundTick();
 
     processKeys();         // again, in case a watcher above took a while
     pollTouch();

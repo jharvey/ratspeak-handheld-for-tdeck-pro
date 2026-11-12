@@ -665,6 +665,14 @@ in detail).
 Ready-made set (2026-11-12): USGS National Map topo (public domain, credit U.S.
 Geological Survey) as 1-bit tiles at `--threshold 150`: the lower 48 states at zoom
 3–8 and Maine at zoom 9–12, about 6,200 tiles / 50 MB; start view Maine at zoom 6.
+**Contacts on the map:** every location a contact shares (manual or auto, §1.2d) is kept
+as that contact's last position (newest 16, NVS rs_cpos; also picked up from older chats
+when they are opened) and drawn as a square marker with a name tag. **T** steps through
+them, newest first: the map centres on the contact and the bottom line reads
+`Alice 12.4km NE 8m ago` (distance and direction from your GPS / saved position). **T**
+after the last one, **C** or **Enter**: back to your own position. Markers also show on
+the map idle screen. Console `cpos` lists them (`cpos clear`).
+
 The map's bottom line shows the GPS position (`43.64012,-70.92011 8sat`, or `old … 12m`
 for the last fix and its age). World overview zoom 0–7 (country, state / province borders
 and names, big cities) is drawn from Natural Earth (public domain) by

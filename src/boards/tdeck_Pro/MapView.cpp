@@ -34,6 +34,10 @@ bool g_posValid = false;
 double g_posLat = 0, g_posLon = 0;
 double g_drawnPx = -1e9, g_drawnPy = -1e9;   // own position (world px) at the last draw
 int g_viewW = 240, g_viewH = 224;
+Marker g_markers[kMaxMarkers];
+int g_markerCount = 0;
+int g_markerX[kMaxMarkers], g_markerY[kMaxMarkers];
+bool g_markerOn[kMaxMarkers];
 
 uint8_t* bigAlloc(size_t n) {
 #if !defined(SIMULATOR)
@@ -116,6 +120,24 @@ void scaleBar(double& metres, int& pixels) {
 }  // namespace
 
 void setReader(TileReader reader) { g_reader = reader; }
+
+void setMarkers(const Marker* m, int n) {
+    if (n > kMaxMarkers) n = kMaxMarkers;
+    for (int i = 0; i < n; i++) { g_markers[i] = m[i]; g_markerOn[i] = false; }
+    g_markerCount = n < 0 ? 0 : n;
+}
+
+bool markerScreen(int i, int& x, int& y) {
+    if (i < 0 || i >= g_markerCount || !g_markerOn[i]) return false;
+    x = g_markerX[i]; y = g_markerY[i];
+    return true;
+}
+
+void centreOn(double lat, double lon) {
+    g_follow = false;
+    project(lat, lon, g_zoom, g_cx, g_cy);
+    wrapCentre();
+}
 bool isOpen() { return g_open; }
 
 void open(double lat, double lon, bool havePos, bool follow) {
@@ -216,6 +238,30 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
             }
         }
     }
+    // Markers (contacts): white-haloed black square, 7 px (11 px when selected).
+    for (int i = 0; i < g_markerCount; i++) {
+        double mpx, mpy;
+        project(g_markers[i].lat, g_markers[i].lon, g_zoom, mpx, mpy);
+        double dx = mpx - left;
+        const double s = worldSize(g_zoom);
+        if (dx < -s / 2) dx += s;
+        if (dx > s / 2) dx -= s;
+        const int cx = (int)dx, cy = (int)(mpy - top);
+        g_markerOn[i] = cx >= 0 && cy >= 0 && cx < w && cy < h;
+        g_markerX[i] = cx; g_markerY[i] = cy;
+        if (!g_markerOn[i]) continue;
+        const int r = g_markers[i].selected ? 5 : 3;
+        for (int yy = -r - 2; yy <= r + 2; yy++) {
+            for (int xx = -r - 2; xx <= r + 2; xx++) {
+                const int vx = cx + xx, vy = cy + yy;
+                if (vx < 0 || vy < 0 || vx >= w || vy >= h) continue;
+                const bool inner = xx >= -r && xx <= r && yy >= -r && yy <= r;
+                const bool hole = g_markers[i].selected && xx >= -1 && xx <= 1 && yy >= -1 && yy <= 1;
+                px(x0 + vx, y0 + vy, (inner && !hole) != dark);
+            }
+        }
+    }
+
     if (!g_follow || !g_posValid) {
         // Centre cross when the view is not on the own position.
         const int cx = w / 2, cy = h / 2;

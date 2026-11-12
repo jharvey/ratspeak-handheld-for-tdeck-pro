@@ -145,7 +145,7 @@ discover each other; run both at once), `scripts/live_tcp.txt` (live-device mode
 UI features: `lock.txt` then `lock_boot.txt` (password lock, same device name), `share_a.txt`
 + `share_b.txt` (share a contact, run together), `lists.txt` / `inbox_pages.txt` (pages and
 find), `identity.txt` then `identity_after.txt` (identity slots, TCP hub settings), `id.txt`
-(print the destination hash), `more_box.txt` (the "^ more" cell), `loc_a.txt` + `loc_b.txt` (share my location / auto-share, run together), `map_menu.txt` (MENU → Map
+(print the destination hash), `more_box.txt` (the "^ more" cell), `loc_a.txt` + `loc_b.txt` (share my location / auto-share, run together), `contacts_map.txt` (contacts' positions on the map, T cycles; tiles in `build\simdata\cmap\sd`), `loc_pair.py` (two sims over TCP serial: share → stored on the receiver; robust to other simulators on the shared radio), `map_menu.txt` (MENU → Map
 with no GPS: card start view, zoom fallback; needs tiles in `build\simdata\<name>\sd`). Scripts wait for `[BOOT] ready` rather than a fixed time.
 
 The energy modes run their real logic here; light sleep is a 20 ms pause, and the
