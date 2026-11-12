@@ -808,3 +808,4 @@ entry mode.
 | 0.9 | Offline map (§8.1) with the PC tile tool; SD card on the shared SPI lock, optional message archive (§8.2); GPS position parsed |
 | 0.10 | Full flash handled (§8.3): oldest-first removal, refusal with a reserve, notices; simulator flash size limit (`--flashkb`) |
 | 0.11 | Thread status labels fixed (sent / delivered were swapped, failed showed "s5"); new-message beep no longer missed when old messages are removed; stress tools (`hb`, `msgstat`, `flashcap`, `tools/stress/pingpong.py`) |
+| 0.12 | Sending no longer freezes the screen when the radio is busy (was up to 16-24 s): busy or within 3 s of the last send, the message goes to the outbox ("Queued: radio busy") and is sent in the background, in order |

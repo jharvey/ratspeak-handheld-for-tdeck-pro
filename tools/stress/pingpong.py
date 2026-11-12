@@ -230,11 +230,11 @@ def main():
                 if now >= nxt[i]:
                     t_cmd = time.time()
                     m = d.command("msg %s PP %s %d" % (ids[1 - i], tag[i], sent[i] + 1),
-                                  r"\[MSG\] (send queued|send failed|outbox)", 60)
+                                  r"\[MSG\] (send queued|send outboxed|send failed|outbox queued|outbox full)", 60)
                     slowest[i] = max(slowest[i], time.time() - t_cmd)
                     if not m:
                         sys.exit("%s: no answer to msg within 60 s" % d.name)
-                    if m.group(1) != "send failed":
+                    if m.group(1) in ("send queued", "send outboxed", "outbox queued"):
                         sent[i] += 1
                     else:
                         refused[i] += 1
@@ -252,7 +252,8 @@ def main():
             qs = []
             for d in devs:
                 m = d.command("hb", r"\[HB\].*", 10)
-                qs.append(int(parse_kv(m.group(0)).get("q", "1")) if m else 1)
+                kv = parse_kv(m.group(0)) if m else {}
+                qs.append(int(kv.get("q", "1")) + int(kv.get("ob", "0")))   # radio queue + outbox
             if all(q == 0 for q in qs):
                 break
             time.sleep(10)

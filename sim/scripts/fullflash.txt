@@ -1,6 +1,7 @@
 # Full flash: fill a small simulated flash with messages through the normal save path.
 # Run: set SIM_ARGS=--flashkb 2048 & run-script.bat scriptsullflash.txt fullflash fresh
-wait 9000
+expect 60000 [BOOT] ready
+wait 1000
 serial flash
 expect 3000 [FLASH] used
 serial msgfill 1500 4 200

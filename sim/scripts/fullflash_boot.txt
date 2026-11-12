@@ -1,5 +1,6 @@
 # Boot with a full flash (after fullflash.txt, same device, not fresh).
-wait 12000
+expect 60000 [BOOT] ready
+wait 2000
 serial flash
 expect 3000 [FLASH] used
 serial rmconv

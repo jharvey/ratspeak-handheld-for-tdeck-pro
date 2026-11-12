@@ -143,9 +143,14 @@ Results go in a table at the end of this file (date, build, layer, hours, result
 | 2026-11-12 | (ping-pong) | Ping-pong overload, every ~3 s each way (more than SF11 airtime allows) | 0.07 | PASS | 41 + 40 msgs all delivered; queues drained in ~210 s; 14-16 sends per side refused by the 3 s send spacing; one send took 16 s to be accepted (console/UI blocked meanwhile) |
 | 2026-11-12 | (ping-pong) | Ping-pong overload + `flashcap 30` | 0.07 | PASS after 2 fixes | Found: (1) removal took outgoing "sent" (no proof yet) records the engine may still retry -> now only delivered/failed outgoing are removed; (2) the new-message beep keyed on a rising unread count, so a message whose save also removed old unread ones gave no beep -> now keyed on saved incoming messages. After: 40 + 41 arrived, 0 dup, no restart |
 
+| 2026-11-12 | (no-freeze) | Ping-pong overload after the send fix | 0.07 | PASS | 48 + 48 msgs all delivered; slowest send answer 1.1 s (was 16-24 s); busy / 3 s spacing now go to the outbox; 24-25 per side refused only when 8 already waited ("outbox full") |
+
+Fixed findings:
+- A send blocked the console and UI for up to ~16-24 s when the radio was busy
+  (sendMessage retried "busy" 12 x ~1.2 s inside the main loop). Now one attempt; busy or
+  the 3 s spacing puts the message in the outbox (shown "queued", retried in the
+  background every ~3 s, kept in NVS); "outbox full" (8) keeps the draft.
+
 Open findings:
-- A send can block the console (and the UI) for up to ~16-24 s when the radio is busy
-  (sendMessage retries "busy" inside the main loop). Look at doing the retry in the
-  background with a "sending..." state.
 - Under load, retried messages arrive late and the thread shows them in arrival order
   (e.g. "8" below "40"). Consider ordering threads by the sender's timestamp.

@@ -1503,6 +1503,7 @@ void loadHistory(const uint8_t peer[16]) {
 
 // ---- Send ------------------------------------------------------------------------
 char g_txStr[16] = "";
+bool g_txTransient = false;   // last sendMessage failure will pass by itself (busy, spacing)
 lv_obj_t* g_root = nullptr;
 
 enum class TxStep { Done, Rejected, Timeout, Invalid };
@@ -1522,6 +1523,7 @@ TxStep txOnce(const uint8_t dest[16], const char* body, size_t n,
 }
 
 bool sendMessage(const uint8_t dest[16], const char* text) {
+    g_txTransient = false;
     if (!g_protoReady) { snprintf(g_txStr, sizeof(g_txStr), "proto off"); return false; }
     if (isSelf(dest))  { snprintf(g_txStr, sizeof(g_txStr), "pick remote"); return false; }
 
@@ -1534,20 +1536,28 @@ bool sendMessage(const uint8_t dest[16], const char* text) {
     if (!n) return false;
 
     static uint32_t lastTx = 0;
-    if (lastTx && millis() - lastTx < 3000UL) { snprintf(g_txStr, sizeof(g_txStr), "wait 3s"); return false; }
+    if (lastTx && millis() - lastTx < 3000UL) {
+        snprintf(g_txStr, sizeof(g_txStr), "wait 3s");
+        g_txTransient = true;
+        return false;
+    }
 
     // Free LVGL widgets so the store can allocate the outgoing record.
     if (g_root) lv_obj_clean(g_root);
     pumpFor(30, 10);
 
+    // One attempt only. Busy (engine rows all waiting on proofs) or Recovering used to be
+    // retried here up to 12 x ~1.2 s, freezing the screen and keys for up to ~16-24 s when
+    // the radio was busy; now the caller queues the message in the outbox (sendOrQueue),
+    // which retries in the background.
     bool allocRetried = false;
-    for (int attempt = 0; attempt < 13; attempt++) {
+    for (int attempt = 0; attempt < 2; attempt++) {
         handheld::outgoing::InitialResult ir{};
         unsigned rej = 0;
         TxStep st = txOnce(dest, body, n, ir, rej);
         if (st == TxStep::Rejected) {
-            if ((rej == 1 || rej == 8) && attempt < 12) { pumpFor(60, 20); continue; }   // Busy / Recovering
-            snprintf(g_txStr, sizeof(g_txStr), "rejected %u", rej);
+            g_txTransient = rej == 1 || rej == 8;   // Busy / Recovering
+            snprintf(g_txStr, sizeof(g_txStr), g_txTransient ? "busy" : "rejected %u", rej);
             return false;
         }
         if (st == TxStep::Timeout) { snprintf(g_txStr, sizeof(g_txStr), "timeout"); return false; }
@@ -1616,6 +1626,19 @@ bool outboxAdd(const uint8_t dest[16], const char* text) {
     outboxSave();
     Serial.printf("[CHECKIN] queued \"%s\" (%d waiting)\n", o.text, g_outboxCount);
     return true;
+}
+
+// Send now, or queue in the outbox when the radio is busy / the 3 s spacing applies (the
+// outbox retries in the background, see checkinTick). While anything waits in the outbox,
+// new messages queue behind it so they keep their order.
+enum class SendResult { Sent, Queued, Failed };
+SendResult sendOrQueue(const uint8_t dest[16], const char* text) {
+    if (g_outboxCount == 0) {
+        if (sendMessage(dest, text)) return SendResult::Sent;
+        if (!g_txTransient) return SendResult::Failed;
+    }
+    if (!outboxAdd(dest, text)) { snprintf(g_txStr, sizeof(g_txStr), "outbox full"); return SendResult::Failed; }
+    return SendResult::Queued;
 }
 
 // Peer clock adoption (check-in mode, clock not GPS/NTP synchronized this boot):
@@ -3553,7 +3576,7 @@ void flashSpaceTick() {
 uint32_t g_hbEveryMs = 0;
 void heartbeatPrint() {
     const auto& sp = handheld::storage::MessageTransactions::spaceStats();
-    Serial.printf("[HB] up=%lu heap=%u int=%u intmin=%u intblk=%u psram=%u psmin=%u q=%d unread=%d "
+    Serial.printf("[HB] up=%lu heap=%u int=%u intmin=%u intblk=%u psram=%u psmin=%u q=%d ob=%d unread=%d "
                   "conv=%u inc=%lu flash=%u rm=%lu full=%d",
                   (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(),
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
@@ -3561,7 +3584,7 @@ void heartbeatPrint() {
                   (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
                   (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
-                  g_protoReady ? g_proto.lxmfQueuedCount() : -1,
+                  g_protoReady ? g_proto.lxmfQueuedCount() : -1, g_outboxCount,
                   g_storeReady ? g_msgStore.totalUnreadCount() : -1,
                   g_storeReady ? (unsigned)g_msgStore.totalConversations() : 0u,
                   g_storeReady ? (unsigned long)g_msgStore.incomingCommitted() : 0ul,
@@ -3871,11 +3894,17 @@ void commitEntry() {
             } else {
                 toast("Outbox full (%d)", kOutboxCap);
             }
-        } else if (sendMessage(g_threadPeer, body)) {
-            bufClear();
-            if (g_cfg.beep) g_audio.playMessage();
         } else {
-            toast("Not sent: %s", g_txStr);   // keep the draft for retry
+            const SendResult r = sendOrQueue(g_threadPeer, body);
+            if (r == SendResult::Sent) {
+                bufClear();
+                if (g_cfg.beep) g_audio.playMessage();
+            } else if (r == SendResult::Queued) {
+                bufClear();
+                toast("Queued: radio busy");
+            } else {
+                toast("Not sent: %s", g_txStr);   // keep the draft for retry
+            }
         }
         loadHistory(g_threadPeer);
         requestRedraw();
@@ -4311,13 +4340,13 @@ void checkinTick() {
         }
         if (!g_outboxCount || ph.sinceS < (int32_t)power::kCheckinSendS) return;
     }
-    if (millis() - lastTry < 3500) return;
+    if (millis() - lastTry < (flushNow ? 3100u : 3500u)) return;   // 3 s send spacing
     lastTry = millis();
     OutboxItem& o = g_outbox[0];
     const bool sent = sendMessage(o.dest, o.text);
     // "rejected 1" (busy) and "rejected 8" (store still recovering after boot) are
     // temporary: keep the message for the next try instead of dropping it.
-    const bool transient = !strcmp(g_txStr, "rejected 1") || !strcmp(g_txStr, "rejected 8");
+    const bool transient = g_txTransient;
     const bool hopeless = !sent && !transient &&
                           (!strncmp(g_txStr, "rejected", 8) || !strcmp(g_txStr, "invalid") ||
                            !strcmp(g_txStr, "pick remote"));
@@ -4609,7 +4638,7 @@ void handleSerialLine(char* p) {
     if (p[0] == '@') { handleRemoteLine(p + 1); return; }
     if ((p[0] == 't' || p[0] == 'T') && p[1] == ':') {
         if (!g_threadOpen) { Serial.println("[CMD] open a thread first"); return; }
-        if (sendMessage(g_threadPeer, p + 2)) loadHistory(g_threadPeer);
+        if (sendOrQueue(g_threadPeer, p + 2) != SendResult::Failed) loadHistory(g_threadPeer);
         Serial.printf("[CMD] send: %s\n", g_txStr);
         requestRedraw();
     } else if (!strcmp(p, "a")) {
@@ -4728,8 +4757,9 @@ void handleSerialLine(char* p) {
             Serial.printf("[MSG] outbox %s\n", outboxAdd(dest, p + 4 + 32 + 1) ? "queued for check-in" : "full");
             return;
         }
-        const bool sent = sendMessage(dest, p + 4 + 32 + 1);
-        Serial.printf("[MSG] send %s at uptime %lu ms: %s\n", sent ? "queued" : "failed",
+        const SendResult r = sendOrQueue(dest, p + 4 + 32 + 1);
+        Serial.printf("[MSG] send %s at uptime %lu ms: %s\n",
+                      r == SendResult::Sent ? "queued" : r == SendResult::Queued ? "outboxed" : "failed",
                       (unsigned long)millis(), g_txStr);
     } else if (!strncmp(p, "gpio ", 5)) {
         // Bench: drive an output pin (power-rail experiments): gpio <pin> <0|1>
