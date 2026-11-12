@@ -153,6 +153,25 @@ Security: password, accounts, encrypted storage (user asked 2026-11-12)
 - User accounts (later): several users per device, each with its own password, DEK,
   contacts and messages (and possibly own LXMF identity); one admin.
 
+Team awareness, ATAK-style (user asked 2026-11-12, longer term)
+---------------------------------------------------------------
+- Builds on "share my location" (position text + LXMF location field) and the offline map.
+- Relative markers: "something interesting 600 ft north of me". Make a marker by distance +
+  direction from my position (or by moving a cursor on the map), with a type (hazard, person,
+  vehicle, camp, water, meet-up, other) and a short note; send it to a contact or group. The
+  receiver sees it on the map and as text with distance + bearing from THEIR position
+  ("hazard, 0.4 mi NE of you").
+- Contacts on the map: last shared position of each contact with its age; list sorted by
+  distance with bearing arrows; optional periodic position sharing (opt-in, interval, to
+  chosen contacts only; respects energy modes / check-in windows).
+- Waypoints / navigation: "go to" a marker: distance + bearing on screen; heading from GPS
+  course over ground (no magnetometer, see Map heading).
+- Units setting (ft/mi or m/km), lat/lon or MGRS grid.
+- Interop: compact binary location/marker field in LXMF (Sideband-compatible telemetry where
+  possible); later a gateway to ATAK / TAK (Cursor-on-Target XML) so phones running ATAK
+  see the T-Deck units and their markers.
+- Privacy: nothing shared automatically by default; clear "sharing on" indicator.
+
 Home Assistant integration (user asked 2026-11-12)
 --------------------------------------------------
 - Presence detector: HA knows when the handheld (its owner) is home / away. Routes, cheapest
