@@ -341,16 +341,15 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
                 px(x0 + vx, y0 + vy, black != dark);
             }
         }
-        if (mk.more) {                       // "+" badge, upper right: 11x11 white box, black plus
+        if (mk.more) {                       // "+" badge, upper right: black plus on an 11x11 white patch
             const int bx = cx + rIn + 5, by = cy - rIn - 5;   // hangs off the ring, up and right
             for (int yy = -5; yy <= 5; yy++) {
                 for (int xx = -5; xx <= 5; xx++) {
                     const int vx = bx + xx, vy = by + yy;
                     if (vx < 0 || vy < 0 || vx >= w || vy >= h) continue;
-                    const bool border = xx == -5 || xx == 5 || yy == -5 || yy == 5;
                     const bool plus = (xx >= -3 && xx <= 3 && yy >= -1 && yy <= 1) ||
                                       (yy >= -3 && yy <= 3 && xx >= -1 && xx <= 1);
-                    px(x0 + vx, y0 + vy, (border || plus) != dark);
+                    px(x0 + vx, y0 + vy, plus != dark);       // black plus on a white patch
                 }
             }
         }
