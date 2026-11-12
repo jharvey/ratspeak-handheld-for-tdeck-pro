@@ -130,6 +130,22 @@ Protocol / mesh
 - Path / link live tiles — expand diagnostics beyond partial N3
 - Cooperative vs standalone feature matrix freeze (what each env owns)
 
+Home Assistant integration (user asked 2026-11-12)
+--------------------------------------------------
+- Presence detector: HA knows when the handheld (its owner) is home / away. Routes, cheapest
+  first: (1) home gateway (Pi + RNode running Reticulum) hears the unit's LoRa announces /
+  check-ins and reports "seen in the last N min" to HA (MQTT); works with WiFi off and long
+  range; (2) unit joins home WiFi -> HA sees it (router / MQTT birth message); (3) BLE beacon
+  for room-level presence (ESPresense / Bermuda), costs battery.
+- Trigger things: send commands from the handheld (e.g. "garage open", a scene) as LXMF
+  messages to an HA bridge identity; the bridge allows only known source hashes (contacts
+  list) and replies with the result. A MENU / quick-action screen for saved commands.
+- HA -> handheld: HA automations send alerts / notifications to the unit over LXMF (works
+  off-grid via the LoRa gateway, e.g. doorbell, water leak, alarm armed).
+- Optional: report battery / GPS position to HA as sensors (opt-in, privacy).
+- Needs: a small bridge (Python, Reticulum + MQTT or an HA custom integration) on the home
+  gateway; message format for commands (plain text first, then a field-tagged LXMF type).
+
 Build / devex
 -------------
 - DONE - Host UI simulator (Qt, real firmware) + scripted checks; live-device mirror over USB
