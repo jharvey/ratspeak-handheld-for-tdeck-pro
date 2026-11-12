@@ -145,7 +145,8 @@ discover each other; run both at once), `scripts/live_tcp.txt` (live-device mode
 UI features: `lock.txt` then `lock_boot.txt` (password lock, same device name), `share_a.txt`
 + `share_b.txt` (share a contact, run together), `lists.txt` / `inbox_pages.txt` (pages and
 find), `identity.txt` then `identity_after.txt` (identity slots, TCP hub settings), `id.txt`
-(print the destination hash). Scripts wait for `[BOOT] ready` rather than a fixed time.
+(print the destination hash), `more_box.txt` (the "^ more" cell), `map_menu.txt` (MENU → Map
+with no GPS: card start view, zoom fallback; needs tiles in `build\simdata\<name>\sd`). Scripts wait for `[BOOT] ready` rather than a fixed time.
 
 The energy modes run their real logic here; light sleep is a 20 ms pause, and the
 console command `pw` shows the mode, knobs and percent of time asleep.

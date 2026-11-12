@@ -32,6 +32,11 @@ bool isOpen();
 // follow=false: an explicit place (console "map <lat> <lon>"), not the own position.
 void open(double lat, double lon, bool havePos, bool follow = true);
 void setZoom(int z);                 // clamped to kMinZoom..kMaxZoom, keeps the centre
+int  zoom();
+// No tile under the centre at this zoom: zoom out to the deepest level that has one
+// (cards often hold a wide area at low zoom and a smaller one in detail). Returns
+// true if the zoom changed. Stays put when no level has a tile there.
+bool fitZoom();
 void close();
 
 // Own position (GPS or saved). Follow mode keeps it centred until the user pans.

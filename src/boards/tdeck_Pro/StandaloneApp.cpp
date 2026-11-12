@@ -1810,8 +1810,11 @@ const char* screenName(ScreenId s) {
 ScreenId g_screen = SCR_HOME;
 
 // MENU overlay rows (doc §4.3): Home · Settings · Contacts · Peers · Inbox
-const ScreenId kMenuScreens[5] = {SCR_HOME, SCR_SETTINGS, SCR_CONTACTS, SCR_PEERS, SCR_INBOX};
-const char*    kMenuLabels[5]  = {"Home", "Settings", "Contacts", "Peers", "Inbox"};
+// Last row "Map" is not a screen: it opens the offline map (same as L); hotkey A.
+constexpr int  kMenuCount = 6, kMenuMap = 5;
+const ScreenId kMenuScreens[kMenuCount] = {SCR_HOME, SCR_SETTINGS, SCR_CONTACTS, SCR_PEERS, SCR_INBOX, SCR_HOME};
+const char*    kMenuLabels[kMenuCount]  = {"Home", "Settings", "Contacts", "Peers", "Inbox", "Map"};
+const char     kMenuKeys[kMenuCount]    = {'H', 'S', 'C', 'P', 'I', 'A'};
 bool g_menuOpen = false;
 int  g_menuSel = 0;
 
@@ -1890,8 +1893,11 @@ void bufSet(const char* s) {
     g_buf[g_bufLen] = 0;
 }
 
+bool g_showPass = false;            // MIC in a password field: show / hide what was typed
+
 void startEntry(Entry kind, const char* initial = nullptr, int arg = 0) {
     g_entry = kind;
+    g_showPass = false;
     g_entryArg = arg;
     bufSet(initial);
     syncNumLayer();
@@ -1902,6 +1908,7 @@ char g_passNew[33] = "";            // lock password typed once, waiting for the
 
 void endEntry() {
     g_entry = Entry::None;
+    g_showPass = false;
     memset(g_buf, 0, sizeof(g_buf));     // may have held a password
     memset(g_passNew, 0, sizeof(g_passNew));
     bufClear();
@@ -2613,7 +2620,9 @@ uint32_t g_lockUntil = 0;           // millis(): no tries before this (0 = none)
 constexpr uint8_t  kLockFreeTries = 3;
 constexpr uint32_t kLockPromptMs = 30000;   // prompt without keys -> back to the splash
 constexpr size_t   kLockPassMin = 4, kLockPassMax = 32;
-constexpr const char* kLockDefaultPassword = "ratspeak";   // set when mode 2 is picked with no password
+// Set when mode 2 is picked with no password. Capitals: the keyboard types capitals
+// unless Alt is held, so this is what a plain key-by-key typing gives.
+constexpr const char* kLockDefaultPassword = "RATSPEAK";
 
 bool lockHasPassword() { return !vault::usingDefaultPassword(); }
 bool lockOnIdle()      { return g_cfg.idleMode == 2 && lockHasPassword(); }
@@ -2657,7 +2666,7 @@ void lockNoteRight() {
     g_lockUntil = 0;
 }
 
-void lockWipe() { memset(g_lockBuf, 0, sizeof(g_lockBuf)); g_lockLen = 0; }
+void lockWipe() { memset(g_lockBuf, 0, sizeof(g_lockBuf)); g_lockLen = 0; g_showPass = false; }
 
 void enterIdle();
 void wifiLoad();
@@ -2692,7 +2701,7 @@ void lockKey(const KeyEvent& ev) {
     }
     if (ev.enter) { lockTry(); return; }
     if (ev.del) { if (g_lockLen) g_lockBuf[--g_lockLen] = 0; requestRedraw(); return; }
-    if (ev.fn) return;
+    if (ev.fn) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
     char c = ev.space ? ' ' : ev.character;
     if (c < 32 || c > 126) return;
     if (ev.alt && isalpha((unsigned char)c)) c = isupper((unsigned char)c) ? (char)tolower(c) : (char)toupper(c);
@@ -2715,7 +2724,7 @@ void renderLock() {
     label(0, 184, W, 18, "Type password, Enter");
     box(20, 206, W - 40, 30, 2);
     size_t n = g_lockLen < 24 ? g_lockLen : 24;
-    for (size_t i = 0; i < n; i++) line[i] = '*';
+    for (size_t i = 0; i < n; i++) line[i] = g_showPass ? g_lockBuf[g_lockLen - n + i] : '*';
     line[n] = '_'; line[n + 1] = 0;
     label(20, 206, W - 40, 30, line, true);
     const uint32_t wait = lockWaitS();
@@ -2728,6 +2737,7 @@ void renderLock() {
         line[0] = 0;
     }
     label(0, 244, W, 18, line, true);
+    label(0, 274, W, 18, g_showPass ? "MIC = hide password" : "MIC = show password");
     label(0, 292, W, 18, "^ clear / back to splash");
 }
 
@@ -2791,10 +2801,10 @@ const char* editingSub(Entry kind, int arg = 0) {
     static char s[34];
     if (g_entry != kind || (kind == Entry::RtcField && g_entryArg != arg)) return nullptr;
     constexpr size_t kShow = 27;                 // keep the cursor end visible
-    if (passEntry(kind)) {                       // lock password: never shown
+    if (passEntry(kind)) {                       // lock password: * unless MIC = show
         size_t n = g_bufLen < kShow ? g_bufLen : kShow;
         s[0] = '>';
-        for (size_t i = 0; i < n; i++) s[1 + i] = '*';
+        for (size_t i = 0; i < n; i++) s[1 + i] = g_showPass ? g_buf[g_bufLen - n + i] : '*';
         s[1 + n] = '_'; s[2 + n] = 0;
         return s;
     }
@@ -3075,7 +3085,7 @@ void buildSettingsRows(Page p) {
         const bool pw = lockHasPassword();
         srow(RK_PICK, "Off", "%s", g_cfg.idleMode == 0 ? "(current)" : "");
         srow(RK_PICK, "On, no password", "%s", g_cfg.idleMode == 1 ? "(current)" : "");
-        srow(RK_PICK, "On + password", "%s", lockOnIdle() ? "(current)" : pw ? "" : "password: ratspeak");
+        srow(RK_PICK, "On + password", "%s%s", lockOnIdle() ? "(current)" : pw ? "" : "password: ", lockOnIdle() || pw ? "" : kLockDefaultPassword);
         e = editingSub(Entry::IdleSecs);
         if (e) srow(RK_ENTRY, "Timeout (10-99999 s)", "%s", e);
         else   srow(RK_ENTRY, "Timeout (10-99999 s)", "%u s", (unsigned)g_cfg.idleSecs);
@@ -3481,7 +3491,7 @@ void activateSetting(int idx) {
             requestRedraw();
         } else if (idx == 2) {
             if (lockHasPassword()) { g_cfg.idleMode = 2; saveConfig(); toast("Locks after %u s idle", (unsigned)g_cfg.idleSecs); }
-            else if (vault::setPassword(kLockDefaultPassword)) {   // user's choice: starts as "ratspeak"
+            else if (vault::setPassword(kLockDefaultPassword)) {   // user's choice: starts as "RATSPEAK"
                 wifiSaveAll();                   // re-seal saved WiFi passwords with the new key
                 lockNoteRight();
                 g_cfg.idleMode = 2;
@@ -3635,6 +3645,7 @@ void drawFooter() {
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) hint = "SPC=.  SYM+U=-";
         else if (g_entry == Entry::WifiPass) hint = "Alt+key=case  Enter=ok";
         else if (g_entry == Entry::Search) hint = "Enter=keep  ^=clear";
+        else if (passEntry(g_entry)) hint = g_showPass ? "MIC=hide  Alt=case" : "MIC=show  Alt=case";
         box(0, FOOT_Y, W, FOOT_H, 1);
         label(0, FOOT_Y - 1, W, FOOT_H, third[0] ? third : hint);
         return;
@@ -4016,9 +4027,9 @@ void drawBottomBar() {
 
 void drawMenuOverlay() {
     if (!g_menuOpen) return;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < kMenuCount; i++) {
         const int y = TOP_H + i * MENU_ROW_H;
-        navBox(MENU_X, y, TAB_W, MENU_ROW_H, kMenuLabels[i], i == g_menuSel, kMenuLabels[i][0]);
+        navBox(MENU_X, y, TAB_W, MENU_ROW_H, kMenuLabels[i], i == g_menuSel, kMenuKeys[i]);
         addHit(MENU_X, y, TAB_W, MENU_ROW_H, H_MENU_GO, i);
     }
 }
@@ -4071,10 +4082,23 @@ void openMap() {
     if (g_gpsPosValid && g_gpsFix) { lat = g_gpsLat; lon = g_gpsLon; have = true; }
     else if (g_cfg.hasPos) { lat = g_cfg.lat; lon = g_cfg.lon; have = true; }
     if (g_menuOpen) g_menuOpen = false;
-    mapview::open(lat, lon, have);
+    // No position: the card's own start view, maps/home.txt = "lat lon zoom"
+    // (written by tools/maptiles/make_tiles.py), so the first view is not empty sea.
+    const char* how = have ? (g_gpsPosValid && g_gpsFix ? "GPS" : "saved position") : "no position";
+    bool cardHome = false;
+    int homeZoom = 0;
+    if (!have) {
+        char txt[48] = "";
+        const size_t n = mapReadTile("/maps/home.txt", (uint8_t*)txt, sizeof(txt) - 1);
+        txt[n < sizeof(txt) ? n : sizeof(txt) - 1] = 0;
+        if (n && sscanf(txt, "%lf %lf %d", &lat, &lon, &homeZoom) >= 2) { cardHome = true; how = "card home"; }
+    }
+    mapview::open(lat, lon, have || cardHome, have);
+    if (homeZoom > 0) mapview::setZoom(homeZoom);
+    if (mapview::fitZoom()) Serial.printf("[MAP] zoom %d (deepest tiles here)\n", mapview::zoom());
     g_fullRefreshReq = true;
     requestRedraw();
-    Serial.printf("[MAP] open (%s)\n", have ? (g_gpsPosValid && g_gpsFix ? "GPS" : "saved position") : "no position");
+    Serial.printf("[MAP] open (%s)\n", how);
 }
 
 void closeMap() {
@@ -4385,7 +4409,7 @@ void goScreen(ScreenId s) {
 void openMenu() {
     g_menuOpen = true;
     g_menuSel = 0;
-    for (int i = 0; i < 5; i++) if (kMenuScreens[i] == g_screen) g_menuSel = i;
+    for (int i = 0; i < kMenuMap; i++) if (kMenuScreens[i] == g_screen) g_menuSel = i;
     requestRedraw();
 }
 
@@ -4693,6 +4717,7 @@ void entryKey(const KeyEvent& ev) {
         else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass || passEntry(g_entry) ||
                  g_entry == Entry::Search) c = ' ';
     } else if (ev.fn) {
+        if (passEntry(g_entry)) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
         if (entryNumeric()) c = '0';          // MIC (+SYM) types 0 in number fields
     } else {
         c = ev.character;
@@ -4719,14 +4744,20 @@ void entryKey(const KeyEvent& ev) {
     requestRedraw();
 }
 
+void menuGo(int i) {
+    if (i == kMenuMap) { closeMenu(); openMap(); return; }
+    goScreen(kMenuScreens[i]);
+}
+
 void menuKey(const KeyEvent& ev) {
-    if (ev.enter) { goScreen(kMenuScreens[g_menuSel]); return; }
+    if (ev.enter) { menuGo(g_menuSel); return; }
     const char c = (char)toupper((unsigned char)ev.character);
     if (c == 'M') { closeMenu(); return; }
     if (c == 'G') { if (g_menuSel > 0) g_menuSel--; requestRedraw(); return; }
-    if (c == 'V') { if (g_menuSel < 4) g_menuSel++; requestRedraw(); return; }
-    for (int i = 0; i < 5; i++)
-        if (c == kMenuLabels[i][0]) { goScreen(kMenuScreens[i]); return; }
+    if (c == 'V') { if (g_menuSel < kMenuCount - 1) g_menuSel++; requestRedraw(); return; }
+    if (c == 'L') { menuGo(kMenuMap); return; }
+    for (int i = 0; i < kMenuCount; i++)
+        if (c == kMenuKeys[i]) { menuGo(i); return; }
 }
 
 void browseKey(const KeyEvent& ev) {
@@ -4848,7 +4879,7 @@ void handleTouch(int16_t x, int16_t y) {
     switch (hit->act) {
         case H_REFRESH:    g_fullRefreshReq = true; requestRedraw(); break;
         case H_MENU:       if (g_menuOpen) closeMenu(); else openMenu(); break;
-        case H_MENU_GO:    goScreen(kMenuScreens[hit->arg]); break;
+        case H_MENU_GO:    menuGo(hit->arg); break;
         case H_TAB:        goScreen((ScreenId)hit->arg); break;
         case H_BACK:       goBack(); break;
         case H_ANNOUNCE:   activateCurrent(); break;

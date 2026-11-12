@@ -16,6 +16,8 @@ Sources (pick one):
 
 Area: --bbox MINLON,MINLAT,MAXLON,MAXLAT  or  --center LAT,LON --radius-km R
 Zoom: --zoom 12-16 (inclusive range) or a single level.
+Start view: maps/home.txt = "lat lon zoom", used when the device has no GPS fix or saved
+position (--home LAT,LON,ZOOM; else the first run's area centre at its lowest zoom).
 
 Conversion (Pillow, `pip install pillow`): grey -> auto contrast -> Floyd-Steinberg dither.
 --threshold N (0-255) instead gives clean black/white without dithering (good for line maps).
@@ -190,6 +192,10 @@ def main():
     ap.add_argument("--delay", type=float, default=1.0, help="seconds between URL downloads")
     ap.add_argument("--max-tiles", type=int, default=5000)
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--home", help="LAT,LON,ZOOM start view when the device has no position "
+                    "(maps/home.txt; default: centre of this area at its lowest zoom, "
+                    "written only if the card has no home.txt yet)")
+    ap.add_argument("--home-only", action="store_true", help="only write home.txt, no tiles")
     a = ap.parse_args()
 
     if a.bbox:
@@ -200,6 +206,19 @@ def main():
     else:
         sys.exit("give --bbox or --center")
     zooms = parse_zoom(a.zoom)
+    root = os.path.join(a.out, "ratdeckpro", "maps")
+    home = os.path.join(root, "home.txt")
+    if a.home or not os.path.exists(home):
+        if a.home:
+            hlat, hlon, hz = a.home.split(",")
+        else:
+            hlat, hlon, hz = (bbox[1] + bbox[3]) / 2, (bbox[0] + bbox[2]) / 2, min(zooms)
+        os.makedirs(root, exist_ok=True)
+        with open(home, "w", newline="\n") as f:
+            f.write("%.5f %.5f %d\n" % (float(hlat), float(hlon), int(hz)))
+        print("start view (no GPS / saved position): %s" % open(home).read().strip())
+    if a.home_only:
+        return
     jobs = []
     for z in zooms:
         xs, ys = tile_range(bbox, z)
@@ -216,7 +235,6 @@ def main():
             sys.exit("--url needs --user-agent (identify your app to the tile server)")
         source = UrlSource(a.url, a.user_agent, a.delay)
 
-    root = os.path.join(a.out, "ratdeckpro", "maps")
     done = skipped = 0
     for z, x, y in jobs:
         path = os.path.join(root, str(z), str(x), "%d.rmt" % y)

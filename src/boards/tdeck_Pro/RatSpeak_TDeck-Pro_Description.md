@@ -80,10 +80,12 @@ Inbox, Contacts and Peers hold up to 48 rows, shown in pages: Contacts 10 rows (
 
 **M → S → 3 → 2** (Idle splash):
 
-- **3 On + password**: with no password yet, the password becomes **`ratspeak`** and
-  the device locks after the idle timeout. Change it straight away with row 5.
+- **3 On + password**: with no password yet, the password becomes **`RATSPEAK`** (capitals:
+  the keyboard types capitals unless **Alt** is held) and the device locks after the
+  idle timeout. Change it straight away with row 5.
 - **5 Set / Change password**: current password (when one is set), new (4–32 chars),
-  repeat. Typed characters show as `*`.
+  repeat. Typed characters show as `*`; **MIC** shows / hides what you typed (also on
+  the lock prompt; hidden again after each field).
 - **6 Remove password** (asks the current one) · **7 Lock now**.
 
 Locked: the idle splash says **LOCKED | press a key**; a key shows the password prompt
@@ -151,7 +153,7 @@ changes. While USB power is plugged in the device runs **Full** anyway (row 5).
 | **I** | Inbox | types letter |
 | **C** | Contacts | types letter |
 | **P** | Peers | types letter |
-| **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox) | does **not** open the menu |
+| **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox · M**a**p) | does **not** open the menu |
 | **H** | Home | — |
 | **G** / **V** | Up / down | — |
 | **N** / **B** | Lists: next / previous page | — |
@@ -626,8 +628,16 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
 
 ### 8.1 Offline map — Works (simulator; COM9 with test tiles on its card, 2026-11-11)
 
-Press **L** on any list screen. The map is centred on the GPS fix, or on the saved
-position (S.2) without one, and follows it. **W A S D** pan half a screen, **Z / X**
+**M → Map** (MENU row 6, hotkey **A**), or **L** on any list screen. The map is centred
+on the GPS fix, or on the saved position (S.2) without one, and follows it. With
+neither, it opens on the card's start view `maps/home.txt` (`lat lon zoom`, written by
+the tile tool). If the card has no tile under the centre at that zoom, it zooms out to
+the deepest level that has one (a card often holds a wide area coarse and a small one
+in detail).
+
+Ready-made set (2026-11-12): USGS National Map topo (public domain, credit U.S.
+Geological Survey) as 1-bit tiles at `--threshold 150`: the lower 48 states at zoom
+3–8 and Maine at zoom 9–12, about 6,200 tiles / 50 MB; start view Maine at zoom 6. **W A S D** pan half a screen, **Z / X**
 zoom, **C** or **Enter** returns to your position, **Shift (^)** closes. The header shows
 zoom, centre and the scale-bar length; `*` means the view is not following you. Missing
 tiles show a dotted grid and "no tiles".

@@ -140,6 +140,19 @@ void setZoom(int z) {
     wrapCentre();
 }
 
+int zoom() { return g_zoom; }
+
+bool fitZoom() {
+    const int start = g_zoom;
+    for (int z = g_zoom; z >= kMinZoom; z--) {
+        setZoom(z);
+        const Tile* t = tile(g_zoom, (int)floor(g_cx / kTileSize), (int)floor(g_cy / kTileSize));
+        if (t && t->present) return g_zoom != start;
+    }
+    setZoom(start);
+    return false;
+}
+
 void setPosition(bool valid, double lat, double lon) {
     g_posValid = valid;
     g_posLat = lat; g_posLon = lon;

@@ -1,6 +1,6 @@
 # Offline map tiles for the T-Deck Pro
 
-The map screen (press **L** on any list screen) draws 256×256 Web-Mercator tiles from the
+The map screen (**M → Map**, or **L** on any list screen) draws 256×256 Web-Mercator tiles from the
 SD card. The e-ink panel is 1-bit, so tiles are converted on the PC to a raw 1-bit format;
 the device needs no image decoder.
 
@@ -31,6 +31,26 @@ Copy `sdcard/ratdeckpro` to the root of a FAT32 microSD card.
 | `--invert` | Swap black and white |
 | `--max-tiles` | Safety cap (default 5000 ≈ 40 MB) |
 
+| `--home LAT,LON,ZOOM` | Start view when the device has no GPS fix or saved position (`maps/home.txt`). Without it the first run writes its area's centre at its lowest zoom; later runs keep it. `--home-only` writes just that file |
+
+Note: write a negative bbox as `--bbox=-71.1,42.95,-66.9,47.47` (with `=`), or the
+argument parser reads it as an option.
+
+### Example: Maine + the lower 48 (USGS topo, public domain)
+
+USGS National Map basemaps are U.S. public domain (credit: U.S. Geological Survey).
+Plain black/white at 150 reads better on e-ink than dithering:
+
+```
+set U=https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}
+python make_tiles.py --url %U% --user-agent RatSpeak-maptiles/1.0 --delay 0.2 --threshold 150 --bbox=-125,24.4,-66.9,49.4 --zoom 3-8 --out sdcard
+python make_tiles.py --url %U% --user-agent RatSpeak-maptiles/1.0 --delay 0.2 --threshold 150 --bbox=-71.1,42.95,-66.9,47.47 --zoom 9-12 --max-tiles 6000 --out sdcard
+python make_tiles.py --test --home=45.25,-69.2,6 --home-only --center 45,-69 --out sdcard
+```
+
+About 1,400 + 4,800 tiles (50 MB). Maine at zoom 13 adds 14,000 tiles (115 MB); for street
+detail, add a small `--center <town> --radius-km 15 --zoom 13-15` area instead.
+
 The public OpenStreetMap tile server (`tile.openstreetmap.org`) forbids bulk downloading,
 so the tool refuses it. Use an MBTiles export, your own tile server, or a provider whose
 terms allow offline use.
@@ -42,7 +62,7 @@ quadruples the last level.
 
 | Key | Action |
 |---|---|
-| L | Open the map (centred on the GPS fix, else the saved position) |
+| M → Map, or L | Open the map (centred on the GPS fix, else the saved position, else the card's `home.txt`; zooms out to the deepest level with a tile there) |
 | W A S D | Pan half a screen |
 | Z / X | Zoom in / out |
 | C or Enter | Back to your position (follow mode) |
