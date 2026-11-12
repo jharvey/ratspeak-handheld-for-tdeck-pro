@@ -258,10 +258,10 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
 
     // Markers (contacts), drawn last so nothing covers them: number in 2x 5x7 digits
     // (10x14 px) on a white centre, black ring (3 px fresh / 1 px old), white halo;
-    // selected: black centre, white number. Overlapping markers: the
+    // selected: a second black ring outside. Overlapping markers: the
     // lowest number is drawn, with a boxed "+" (more here); the rest hidden. A selected one under
     // it makes that tag show selected.
-    auto radius = [](const Marker& mk) { return 12 + (mk.fresh ? 3 : 1) + 2; };
+    auto radius = [](const Marker& mk) { return 12 + (mk.fresh ? 3 : 1) + 2; };   // overlap test
     auto before = [](const Marker& a, const Marker& b) { return a.number < b.number; };   // low number wins
     int order[kMaxMarkers];
     for (int i = 0; i < g_markerCount; i++) {
@@ -311,7 +311,9 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
         // halo outermost. Ring 3 px = fresh position (< 1 h), 1 px = older. Selected: the
         // centre turns black with a white number.
         const int rIn = nd > 1 ? 12 : 9;                         // white centre (digits fit)
-        const int rRing = rIn + (mk.fresh ? 3 : 1), rOut = rRing + 2;
+        // Selected: a second black ring outside (1 px white gap), centre stays white.
+        const int rRing = rIn + (mk.fresh ? 3 : 1);
+        const int rGap = sel ? rRing + 1 : rRing, rSel = sel ? rGap + 2 : rRing, rOut = rSel + 2;
         for (int yy = -rOut; yy <= rOut; yy++) {
             for (int xx = -rOut; xx <= rOut; xx++) {
                 const int vx = cx + xx, vy = cy + yy;
@@ -320,15 +322,19 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
                 if (d2 > rOut * rOut + rOut) continue;
                 bool black;
                 if (d2 <= rIn * rIn + rIn) {
-                    black = sel;
+                    black = false;
                     const int gx = xx + tw / 2, gy = yy + 7;           // cell 0..tw-1, 0..13
                     if (gx >= 0 && gx < tw && gy >= 0 && gy < 14 && (gx % 12) < 10) {
                         const char ch = num[gx / 12];
                         const int c = ch == '+' ? 10 : ch - '0';
-                        if (kDigit5x7[c][gy / 2] & (0x10 >> ((gx % 12) / 2))) black = !sel;
+                        if (kDigit5x7[c][gy / 2] & (0x10 >> ((gx % 12) / 2))) black = true;
                     }
                 } else if (d2 <= rRing * rRing + rRing) {
                     black = true;                                 // the black ring
+                } else if (d2 <= rGap * rGap + rGap) {
+                    black = false;                                // selected: gap
+                } else if (d2 <= rSel * rSel + rSel) {
+                    black = true;                                 // selected: outer ring
                 } else {
                     black = false;                                // white halo (outermost)
                 }
@@ -336,7 +342,7 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
             }
         }
         if (mk.more) {                       // "+" badge, upper right: 11x11 white box, black plus
-            const int bx = cx + rIn + 1, by = cy - rIn - 1;
+            const int bx = cx + rIn + 5, by = cy - rIn - 5;   // hangs off the ring, up and right
             for (int yy = -5; yy <= 5; yy++) {
                 for (int xx = -5; xx <= 5; xx++) {
                     const int vx = bx + xx, vy = by + yy;

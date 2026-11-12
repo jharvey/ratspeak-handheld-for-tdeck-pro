@@ -670,7 +670,7 @@ Geological Survey) as 1-bit tiles at `--threshold 150`: the lower 48 states at z
 as that contact's last position (16 contacts, NVS rs_cpos; older chats add theirs when
 opened). Each shows as a tag: its **map number** on a white centre, a black ring, a white
 halo outside. **Thick ring** = position less than an hour old, **thin ring** = older (check
-the age); **selected** = black centre with a white number. Contacts at the same spot: only the **lowest number** is shown, with a small boxed
+the age); **selected** = a second black ring around it. Contacts at the same spot: only the **lowest number** is shown, with a small boxed
 **+** at its top right (more here); when T selects one of the others, that tag shows
 selected and the bottom line names who it is.
 **Map numbers:** set on the contact page (Contacts / Peers → row → **Enter** → **4 Map
