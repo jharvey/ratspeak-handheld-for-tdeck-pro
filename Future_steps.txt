@@ -91,6 +91,14 @@ UI / UX
 - DONE - Scroll indicators on long lists (Contacts, Peers, Settings)
 - Optional fuller LVGL screens later (keep standalone build rules)
 - DONE (sim + COM9) - Geo maps on SD: offline 1-bit tiles (tools/maptiles), own position, pan/zoom.
+- DONE (sim, two devices) - share my location (chat MIC menu): readable LXMF text, last fix
+  with its age when there is none, GPS visit on demand; per-contact auto-share 5/15/30/60
+  min for 1 h / 4 h / until off (moved > 50 m or 2 intervals, Check-in queues, header pin,
+  stop all in S.1.8); receiver shows [loc] and opens it on the map. GPS position text on the
+  map footer and S.1.7. World map z0-7 from Natural Earth (render_world.py).
+  Next: send the position in the LXMF telemetry field too (Sideband FIELD_TELEMETRY 0x02,
+  msgpack'd sensor data) - needs a fields argument on rsLXMFLite's send path; show
+  contacts' last positions as markers on the map; try between two units outdoors.
   Next: contacts' positions on the map (needs location sharing), touch pan, real map tiles
 - Map data at country scale (user asked 2026-11-11: "something usable for the entire US").
   Contiguous-US bbox, raw 8 KB tiles: z0-12 ~2.6 GB, z13 +7.8 GB, z14 +31 GB, z15 +125 GB.

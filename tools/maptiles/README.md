@@ -54,6 +54,17 @@ lists what is on the card.
 Note: write a negative bbox as `--bbox=-71.1,42.95,-66.9,47.47` (with `=`), or the
 argument parser reads it as an option.
 
+### World overview (Natural Earth, rendered here)
+
+`render_world.py` draws zoom 0-7 itself from Natural Earth GeoJSON (public domain:
+coastlines, lakes, country borders 2 px, state / province borders dotted, names with a
+white halo, big cities). 21,845 tiles (175 MB; ~700 MB on a 32 KB-cluster card).
+
+```
+python render_world.py --ne <folder with the ne_*.geojson files> --zoom 0-7 --out world --home 43.64,-70.92,9
+python push_tiles.py --port COM9 --src world
+```
+
 ### Example: Maine + the lower 48 (USGS topo, public domain)
 
 USGS National Map basemaps are U.S. public domain (credit: U.S. Geological Survey).

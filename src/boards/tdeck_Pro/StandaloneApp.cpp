@@ -671,6 +671,7 @@ uint8_t g_gpsSats = 0;
 bool    g_gpsPosValid = false;   // last GGA/RMC with a fix carried a position
 double  g_gpsLat = 0, g_gpsLon = 0;
 uint32_t g_gpsPosAt = 0;
+float   g_gpsHdop = 0;               // GGA horizontal dilution (accuracy ~ HDOP x 5 m)
 
 // NMEA ddmm.mmmm / dddmm.mmmm + hemisphere -> signed degrees. false if empty.
 bool nmeaDegrees(const char* v, const char* hemi, double& out) {
@@ -975,6 +976,7 @@ void gpsHandleSentence(char* line) {
         g_gpsFix = valid;
     } else if (gga && n > 7) {
         if (fld[7][0]) g_gpsSats = (uint8_t)atoi(fld[7]);
+        if (n > 8 && fld[8][0]) g_gpsHdop = (float)atof(fld[8]);
         if (fld[6][0]) g_gpsFix = fld[6][0] > '0';
         if (fld[6][0] > '0') gpsNotePosition(fld[2], fld[3], fld[4], fld[5]);
     } else {
@@ -1486,6 +1488,15 @@ int hexNib(char c) {
     return -1;
 }
 
+bool hexToHash(const char* s, uint8_t out[16]) {
+    for (int i = 0; i < 16; i++) {
+        const int h = hexNib(s[2 * i]), l = hexNib(s[2 * i + 1]);
+        if (h < 0 || l < 0) return false;
+        out[i] = (uint8_t)((h << 4) | l);
+    }
+    return true;
+}
+
 bool cardParse(const char* s, size_t len, uint8_t hash[16], char* name, size_t nameCap) {
     const size_t pl = strlen(kCardPrefix);
     if (len < pl + 1 + 1 + 32 || strncmp(s, kCardPrefix, pl) != 0) return false;
@@ -1521,9 +1532,19 @@ bool cardIsSaved(const uint8_t hash[16]) {
 
 bool cardOffered() { return g_threadCard.valid && !cardIsSaved(g_threadCard.hash); }
 
+// Location messages (see "Location sharing" below): newest incoming one in the thread.
+struct InLoc { bool valid; double lat, lon; uint32_t counter; };
+InLoc g_threadLoc = {};
+bool locParse(const char* s, size_t len, double& lat, double& lon, bool* autoUpdate = nullptr);
+// Enter on an empty draft: the newest of an unsaved card / a location wins.
+void gpsPosText(char* out, size_t n);
+int ashareActive();
+void ashareStopAll();
+bool locOffered() { return g_threadLoc.valid && (!cardOffered() || g_threadLoc.counter > g_threadCard.counter); }
+
 // ---- Thread history ------------------------------------------------------------
 constexpr int HIST_ROWS = 6;
-struct HistRow { char text[36]; char status[12]; bool incoming; };
+struct HistRow { char text[36]; char status[12]; bool incoming; bool autoLoc; };
 HistRow g_hist[HIST_ROWS];
 int  g_histCount = 0;
 char g_histNote[24] = "";
@@ -1533,6 +1554,7 @@ void loadHistory(const uint8_t peer[16]) {
     g_histCount = 0;
     g_histNote[0] = 0;
     g_threadCard.valid = false;
+    g_threadLoc.valid = false;
     if (!g_storeReady) { snprintf(g_histNote, sizeof(g_histNote), "(store off)"); return; }
 
     char hex[33];
@@ -1612,8 +1634,17 @@ void loadHistory(const uint8_t peer[16]) {
                 strlcpy(g_threadCard.name, cardName, sizeof(g_threadCard.name));
             }
         }
+        double la = 0, lo = 0;
+        bool autoLoc = false;
+        const bool isLoc = !isCard && locParse((const char*)buf + off, clen, la, lo, &autoLoc);
+        if (isLoc) {
+            snprintf(h.text, sizeof(h.text), "[loc%s] %.4f,%.4f", autoLoc ? " auto" : "", la, lo);
+            h.autoLoc = autoLoc;
+            if (h.incoming && (!g_threadLoc.valid || entries[i].counter >= g_threadLoc.counter))
+                g_threadLoc = {true, la, lo, entries[i].counter};
+        }
         if (clen >= sizeof(h.text)) clen = sizeof(h.text) - 1;
-        if (clen && !isCard) {
+        if (clen && !isCard && !isLoc) {
             memcpy(h.text, buf + off, clen);
             h.text[clen] = 0;
             for (size_t k = 0; k < clen; k++)
@@ -1628,6 +1659,13 @@ void loadHistory(const uint8_t peer[16]) {
                 case 3:  snprintf(h.status, sizeof(h.status), "delivered"); break;
                 default: snprintf(h.status, sizeof(h.status), "s%u", (unsigned)hdr.status); break;
             }
+        }
+    }
+    // Auto location updates in a row (same direction): keep only the newest.
+    for (int i = g_histCount - 1; i > 0; i--) {
+        if (g_hist[i].autoLoc && g_hist[i - 1].autoLoc && g_hist[i].incoming == g_hist[i - 1].incoming) {
+            for (int k = i - 1; k < g_histCount - 1; k++) g_hist[k] = g_hist[k + 1];
+            g_histCount--;
         }
     }
     if (g_histCount == 0) snprintf(g_histNote, sizeof(g_histNote), "(no messages yet)");
@@ -2350,7 +2388,7 @@ void label(int x, int y, int w, int h, const char* s, bool bold = false, char ho
 // ---- Touch hit registry (filled while drawing) ------------------------------------
 enum HitAct : uint8_t {
     H_REFRESH, H_MENU, H_MENU_GO, H_TAB, H_ROW, H_BACK, H_ANNOUNCE,
-    H_TILE_AUDIO, H_UP, H_DOWN, H_CARD
+    H_TILE_AUDIO, H_UP, H_DOWN, H_CARD, H_TMENU
 };
 struct Hit { int16_t x, y, w, h; uint8_t act; int8_t arg; };
 constexpr int MAX_HITS = 32;
@@ -2854,6 +2892,13 @@ void buildSettingsRows(Page p) {
         else              srow(RK_MENU, "Manual location", "not set");
         srow(RK_ACTION, "Sync GPS now", g_gpsFix ? "Enter = sync" : "needs GPS fix");
         srow(RK_TOGGLE, "Auto GPS sync", g_cfg.gpsAutoSync ? "ON (boot + daily)" : "OFF");
+        {
+            char pos[56];
+            gpsPosText(pos, sizeof(pos));
+            srow(RK_INFO, "GPS position", "%s", pos);
+            if (ashareActive()) srow(RK_ACTION, "Location auto-share", "%d on; Enter = stop all", ashareActive());
+            else srow(RK_INFO, "Location auto-share", "off (set in a chat: MIC)");
+        }
         break;
 
     case PG_RTC: {
@@ -3269,6 +3314,7 @@ void activateSetting(int idx) {
         else if (idx == 3) pushPage(PG_LOC);
         else if (idx == 4) { if (gpsSyncClock()) toast("Clock synced from GPS"); else toast("No GPS fix yet"); }
         else if (idx == 5) { g_cfg.gpsAutoSync = !g_cfg.gpsAutoSync; saveConfig(); requestRedraw(); }
+        else if (idx == 7 && ashareActive()) { ashareStopAll(); toast("All auto-sharing stopped"); }
         break;
 
     case PG_RTC:
@@ -3738,12 +3784,24 @@ void drawBubble(int y, const char* s, bool incoming, const char* status) {
     if (status && status[0]) text(x + 2, y + 25, status);
 }
 
+extern bool g_tmenuOpen;
+void renderThreadMenu(int y);
+uint8_t ashareMinsFor(const uint8_t dest[16]);
+int ashareActive();
+
 void renderThread() {
-    char name[24], hdr[40];
+    char name[24], hdr[48];
     peerName(g_threadPeer, name, sizeof(name));
-    snprintf(hdr, sizeof(hdr), ">>> %s", name);
+    const uint8_t am = ashareMinsFor(g_threadPeer);
+    if (am) snprintf(hdr, sizeof(hdr), ">>> %.14s [loc %um]", name, (unsigned)am);
+    else snprintf(hdr, sizeof(hdr), ">>> %s", name);
     text(4, HEADER_Y, hdr, true, W - 8);
     int y = HEADER_Y + 20;
+    if (g_tmenuOpen) {                       // MIC: location menu instead of the history
+        renderThreadMenu(y);                 // 4 rows down to y + 176 (= 233)
+        text(6, BOT_TOP - 18, g_toast[0] ? g_toast : "1-4 / Enter  MIC or ^ = back", !!g_toast[0], W - 12);
+        return;
+    }
     if (g_txStr[0]) {
         char st[32];
         snprintf(st, sizeof(st), "last send: %s", g_txStr);
@@ -3801,9 +3859,11 @@ void renderThread() {
     else           strncat(l2, "_", sizeof(l2) - strlen(l2) - 1);
     text(6, STRIP_Y + 1, l1, false, W - 12);
     text(6, STRIP_Y + STRIP_LINE, l2, false, W - 12);
-    char hint[40] = "[Enter] send  [Alt] case";
-    if (!g_bufLen && cardOffered()) snprintf(hint, sizeof(hint), "[Enter] save card: %.14s", g_threadCard.name);
-    text(6, STRIP_Y + STRIP_LINE * 2, g_toast[0] ? g_toast : hint, !g_toast[0] && !g_bufLen && cardOffered(), W - 12);
+    char hint[40] = "[Enter] send  [MIC] location";
+    const bool offer = !g_bufLen && (locOffered() || cardOffered());
+    if (!g_bufLen && locOffered()) snprintf(hint, sizeof(hint), "[Enter] map %.3f,%.3f", g_threadLoc.lat, g_threadLoc.lon);
+    else if (!g_bufLen && cardOffered()) snprintf(hint, sizeof(hint), "[Enter] save card: %.14s", g_threadCard.name);
+    text(6, STRIP_Y + STRIP_LINE * 2, g_toast[0] ? g_toast : hint, !g_toast[0] && offer, W - 12);
 }
 
 // ---- Rename (entry mode) ---------------------------------------------------------
@@ -3993,6 +4053,10 @@ void drawTopBar() {
     snprintf(md, sizeof(md), "%.5s", d);
     label(CLOCK_X, 1, TAB_W, 16, md);
     label(CLOCK_X, 17, TAB_W, 16, t);
+    if (ashareActive()) {                    // location auto-share on: small pin, top left
+        fillRect(CLOCK_X + 4, 4, 7, 7);
+        fillRect(CLOCK_X + 6, 11, 3, 4);
+    }
 
     navBox(MENU_X, 0, TAB_W, TOP_H, "MENU", g_menuOpen, browseMode() ? 'M' : 0);
     if (browseMode()) addHit(MENU_X, 0, TAB_W, TOP_H, H_MENU);
@@ -4063,6 +4127,7 @@ void openMapAt(double lat, double lon) {
     g_mapSdTried = false;
     mapFeedPosition();
     mapview::open(lat, lon, true, false);   // explicit place: no follow
+    mapview::fitZoom();                     // deepest zoom with a tile there
     g_fullRefreshReq = true;                // a map is mostly new pixels: avoid ghosting
     requestRedraw();
     Serial.printf("[MAP] open %.5f,%.5f\n", lat, lon);
@@ -4102,23 +4167,319 @@ void closeMap() {
     Serial.println("[MAP] closed");
 }
 
+bool gpsFresh();
+
 void mapTick() {
     if (!mapview::isOpen()) return;
     mapFeedPosition();
-    if (mapview::positionNeedsRedraw()) requestRedraw();
+    static bool lastFresh = false;
+    const bool fresh = gpsFresh();
+    if (mapview::positionNeedsRedraw() || fresh != lastFresh) requestRedraw();   // footer text
+    lastFresh = fresh;
 }
+
+constexpr int MAP_FOOT_H = 18;               // GPS position line under the map
 
 void renderMapHeader() {
     char st[64];
     mapview::status(st, sizeof(st));
     drawHeader(st, false);
+    char pos[56];
+    gpsPosText(pos, sizeof(pos));
+    box(0, BOT_TOP - MAP_FOOT_H, W, MAP_FOOT_H, 1);
+    text(4, BOT_TOP - MAP_FOOT_H + 1, pos, false, W - 8);
 }
 
 void stampMap() {
-    mapview::draw(mapPixel, 0, LIST_TOP, W, BOT_TOP - LIST_TOP, g_cfg.dark);
+    mapview::draw(mapPixel, 0, LIST_TOP, W, BOT_TOP - MAP_FOOT_H - LIST_TOP, g_cfg.dark);
     g_display.markDirty();
 }
 
+
+// ---- Location sharing ------------------------------------------------------------------
+// Sent as plain LXMF text any client can read (rsLXMF has no field API on the send path):
+//   manual  "My location: 43.64012, -70.92011 (+-10 m, 14:32)"
+//   no fix  "My last location: 43.64012, -70.92011 (35 min old)"
+//   auto    "Loc: 43.64012, -70.92011 14:32"
+// A RatSpeak unit shows "[loc] ..." in the thread; Enter on an empty draft opens it on the
+// map. Auto-share: per contact, OFF by default, NVS rs_ashare; sends only with a fresh fix,
+// only after it moved > 50 m or two intervals passed; Check-in mode queues to the window.
+constexpr const char* kLocPrefix = "My location: ";
+constexpr const char* kLocLastPrefix = "My last location: ";
+constexpr const char* kLocAutoPrefix = "Loc: ";
+constexpr uint32_t kFreshFixMs = 120000;
+constexpr int kAutoShareMax = 8;
+const uint8_t kAutoMins[] = {0, 5, 15, 30, 60};           // 0 = off
+const uint16_t kAutoForMin[] = {60, 240, 0};               // 0 = until turned off
+const char* const kAutoForName[] = {"1 h", "4 h", "until off"};
+
+struct AutoShare {
+    uint8_t dest[16];
+    uint8_t mins;            // interval
+    uint8_t pad[3];
+    uint32_t until;          // epoch s, 0 = until turned off
+    uint32_t lastAt;         // epoch s of the last update sent
+    float lastLat, lastLon;
+};
+AutoShare g_ashare[kAutoShareMax];
+int g_ashareCount = 0;
+uint8_t g_autoForSel = 1;    // duration picked in the thread menu (4 h)
+
+bool gpsFresh() { return g_gpsFix && g_gpsPosValid && millis() - g_gpsPosAt < kFreshFixMs; }
+void gpsRequestVisit();
+
+void fmtAge(uint32_t s, char* out, size_t n) {
+    if (s < 90) snprintf(out, n, "%u s", (unsigned)s);
+    else if (s < 5400) snprintf(out, n, "%u min", (unsigned)((s + 30) / 60));
+    else snprintf(out, n, "%u h", (unsigned)((s + 1800) / 3600));
+}
+
+// One short line (fits the 240 px map footer): position, fix, age.
+void gpsPosText(char* out, size_t n) {
+    if (gpsFresh()) {
+        snprintf(out, n, "%.5f,%.5f %usat", g_gpsLat, g_gpsLon, (unsigned)g_gpsSats);
+    } else if (g_gpsPosValid) {
+        const uint32_t a = (millis() - g_gpsPosAt) / 1000;
+        char age[8];
+        if (a < 90) snprintf(age, sizeof(age), "%us", (unsigned)a);
+        else if (a < 5400) snprintf(age, sizeof(age), "%um", (unsigned)((a + 30) / 60));
+        else snprintf(age, sizeof(age), "%uh", (unsigned)((a + 1800) / 3600));
+        snprintf(out, n, "old %.4f,%.4f %s", g_gpsLat, g_gpsLon, age);
+    } else if (g_cfg.hasPos) {
+        snprintf(out, n, "set %.4f,%.4f no fix", g_cfg.lat, g_cfg.lon);
+    } else {
+        snprintf(out, n, "%s", g_cfg.gpsOn ? "GPS: no fix yet" : "GPS off");
+    }
+}
+
+bool locParse(const char* s, size_t len, double& lat, double& lon, bool* autoUpdate) {
+    char t[80];
+    if (len >= sizeof(t)) len = sizeof(t) - 1;
+    memcpy(t, s, len);
+    t[len] = 0;
+    const char* p = nullptr;
+    bool au = false;
+    if (!strncmp(t, kLocPrefix, strlen(kLocPrefix))) p = t + strlen(kLocPrefix);
+    else if (!strncmp(t, kLocLastPrefix, strlen(kLocLastPrefix))) p = t + strlen(kLocLastPrefix);
+    else if (!strncmp(t, kLocAutoPrefix, strlen(kLocAutoPrefix))) { p = t + strlen(kLocAutoPrefix); au = true; }
+    if (!p || sscanf(p, "%lf, %lf", &lat, &lon) != 2) return false;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return false;
+    if (autoUpdate) *autoUpdate = au;
+    return true;
+}
+
+void localHHMM(char* out, size_t n) {
+    const time_t now = time(nullptr);
+    struct tm lt;
+    applyTz();
+    localtime_r(&now, &lt);
+    snprintf(out, n, "%02d:%02d", lt.tm_hour, lt.tm_min);
+}
+
+// Send now, or queue for the next check-in window. 0 = failed, 1 = sent, 2 = queued.
+int sendOrQueue(const uint8_t dest[16], const char* body) {
+    const power::CheckinPhase ph = checkinNow();
+    if (g_pwEff.checkin && !(ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS))
+        return outboxAdd(dest, body) ? 2 : 0;
+    const bool ok = sendMessage(dest, body);
+    requestRedraw();                         // sendMessage cleared the LVGL widgets
+    return ok ? 1 : 0;
+}
+
+void shareMyLocation(const uint8_t dest[16]) {
+    char body[96], hhmm[8], age[16];
+    if (gpsFresh()) {
+        localHHMM(hhmm, sizeof(hhmm));
+        const int acc = g_gpsHdop > 0 ? (int)(g_gpsHdop * 5.0f + 0.5f) : 0;
+        if (acc > 0) snprintf(body, sizeof(body), "%s%.5f, %.5f (+-%d m, %s)", kLocPrefix, g_gpsLat, g_gpsLon, acc < 3 ? 3 : acc, hhmm);
+        else snprintf(body, sizeof(body), "%s%.5f, %.5f (%s)", kLocPrefix, g_gpsLat, g_gpsLon, hhmm);
+    } else if (g_gpsPosValid) {
+        fmtAge((millis() - g_gpsPosAt) / 1000, age, sizeof(age));
+        snprintf(body, sizeof(body), "%s%.5f, %.5f (%s old)", kLocLastPrefix, g_gpsLat, g_gpsLon, age);
+    } else if (g_cfg.hasPos) {
+        snprintf(body, sizeof(body), "%s%.5f, %.5f (set by hand)", kLocLastPrefix, g_cfg.lat, g_cfg.lon);
+    } else {
+        toast(g_cfg.gpsOn ? "No GPS position yet" : "GPS is off (S.1)");
+        return;
+    }
+    const int r = sendOrQueue(dest, body);
+    Serial.printf("[LOC] share %s: %s\n", r == 1 ? "sent" : r == 2 ? "queued" : "failed", body);
+    if (!gpsFresh() && g_cfg.gpsOn) gpsRequestVisit();       // the next share can be fresh
+    toast(r == 1 ? (gpsFresh() ? "Location sent" : "Last location sent") : r == 2 ? "Location queued (check-in)" : "Not sent: %s", g_txStr);
+}
+
+// ---- Auto-share list ---------------------------------------------------------------
+void ashareSave() {
+    Preferences p;
+    if (!p.begin("rs_ashare", false)) return;
+    p.putBytes("list", g_ashare, sizeof(AutoShare) * g_ashareCount);
+    p.putUChar("n", (uint8_t)g_ashareCount);
+    p.end();
+}
+
+void ashareLoad() {
+    Preferences p;
+    g_ashareCount = 0;
+    if (!p.begin("rs_ashare", true)) return;
+    const int n = p.getUChar("n", 0);
+    if (n > 0 && n <= kAutoShareMax && p.getBytes("list", g_ashare, sizeof(AutoShare) * n) == sizeof(AutoShare) * (size_t)n)
+        g_ashareCount = n;
+    p.end();
+}
+
+int ashareFind(const uint8_t dest[16]) {
+    for (int i = 0; i < g_ashareCount; i++) if (!memcmp(g_ashare[i].dest, dest, 16)) return i;
+    return -1;
+}
+
+uint8_t ashareMinsFor(const uint8_t dest[16]) { const int i = ashareFind(dest); return i >= 0 ? g_ashare[i].mins : 0; }
+int ashareActive() { return g_ashareCount; }
+
+void ashareRemove(int i) {
+    for (int k = i; k < g_ashareCount - 1; k++) g_ashare[k] = g_ashare[k + 1];
+    g_ashareCount--;
+}
+
+void ashareStopAll() {
+    g_ashareCount = 0;
+    ashareSave();
+    Serial.println("[LOC] auto-share: all stopped");
+    requestRedraw();
+}
+
+// Next interval for this contact (off -> 5 -> 15 -> 30 -> 60 -> off).
+void ashareCycle(const uint8_t dest[16]) {
+    int i = ashareFind(dest);
+    uint8_t cur = i >= 0 ? g_ashare[i].mins : 0;
+    size_t k = 0;
+    while (k < sizeof(kAutoMins) && kAutoMins[k] != cur) k++;
+    const uint8_t next = kAutoMins[(k + 1) % sizeof(kAutoMins)];
+    if (!next) {
+        if (i >= 0) ashareRemove(i);
+        toast("Auto-share off");
+    } else {
+        if (i < 0) {
+            if (g_ashareCount >= kAutoShareMax) { toast("Max %d auto-shares", kAutoShareMax); return; }
+            i = g_ashareCount++;
+            memset(&g_ashare[i], 0, sizeof(AutoShare));
+            memcpy(g_ashare[i].dest, dest, 16);
+        }
+        g_ashare[i].mins = next;
+        const uint16_t forMin = kAutoForMin[g_autoForSel];
+        const time_t now = time(nullptr);
+        g_ashare[i].until = forMin ? (uint32_t)now + forMin * 60UL : 0;
+        if (!g_cfg.gpsOn) toast("Every %u min; GPS is OFF (S.1)", (unsigned)next);
+        else toast("Every %u min, %s", (unsigned)next, kAutoForName[g_autoForSel]);
+    }
+    ashareSave();
+    Serial.printf("[LOC] auto-share %u min (%d on)\n", (unsigned)next, g_ashareCount);
+    requestRedraw();
+}
+
+float metersBetween(double la1, double lo1, double la2, double lo2) {
+    const double k = 3.14159265358979 / 180.0;
+    const double x = (lo2 - lo1) * k * cos((la1 + la2) * 0.5 * k), y = (la2 - la1) * k;
+    return (float)(sqrt(x * x + y * y) * 6371000.0);
+}
+
+void autoShareTick() {
+    static uint32_t last = 0;
+    if (!g_ashareCount || millis() - last < 5000) return;
+    last = millis();
+    const time_t now = time(nullptr);
+    if (now < 1600000000) return;            // clock not set yet
+    for (int i = 0; i < g_ashareCount; i++) {
+        AutoShare& a = g_ashare[i];
+        if (a.until && (uint32_t)now >= a.until) {
+            char nm[24]; peerName(a.dest, nm, sizeof(nm));
+            Serial.printf("[LOC] auto-share to %s ended\n", nm);
+            toast("Auto-share to %.12s ended", nm);
+            ashareRemove(i--);
+            ashareSave();
+            requestRedraw();
+            continue;
+        }
+        const uint32_t iv = a.mins * 60UL;
+        if (a.lastAt && (uint32_t)now - a.lastAt < iv) continue;
+        if (!gpsFresh()) {                   // no fresh fix: power the GPS for a visit
+            static uint32_t asked = 0;
+            if (g_cfg.gpsOn && (!asked || millis() - asked > 180000)) { asked = millis(); gpsRequestVisit(); }
+            continue;
+        }
+        const bool moved = !a.lastAt || metersBetween(a.lastLat, a.lastLon, g_gpsLat, g_gpsLon) > 50.0f;
+        if (!moved && (uint32_t)now - a.lastAt < 2 * iv) continue;
+        char body[64], hhmm[8];
+        localHHMM(hhmm, sizeof(hhmm));
+        snprintf(body, sizeof(body), "%s%.5f, %.5f %s", kLocAutoPrefix, g_gpsLat, g_gpsLon, hhmm);
+        const int r = sendOrQueue(a.dest, body);
+        Serial.printf("[LOC] auto %s: %s\n", r == 1 ? "sent" : r == 2 ? "queued" : "failed", body);
+        if (r) {
+            a.lastAt = (uint32_t)now;
+            a.lastLat = (float)g_gpsLat;
+            a.lastLon = (float)g_gpsLon;
+            ashareSave();
+            if (g_threadOpen && !memcmp(g_threadPeer, a.dest, 16)) loadHistory(g_threadPeer);
+        }
+        break;                               // one send per tick
+    }
+}
+
+// ---- Thread menu (MIC in a conversation) -----------------------------------------------
+bool g_tmenuOpen = false;
+int  g_tmenuSel = 0;
+constexpr int kTmenuRows = 4;
+
+void tmenuAct(int i) {
+    if (i == 0) { g_tmenuOpen = false; shareMyLocation(g_threadPeer); loadHistory(g_threadPeer); }
+    else if (i == 1) ashareCycle(g_threadPeer);
+    else if (i == 2) {
+        g_autoForSel = (uint8_t)((g_autoForSel + 1) % 3);
+        const int k = ashareFind(g_threadPeer);
+        if (k >= 0) {                        // applies to a running share too
+            const uint16_t m = kAutoForMin[g_autoForSel];
+            g_ashare[k].until = m ? (uint32_t)time(nullptr) + m * 60UL : 0;
+            ashareSave();
+        }
+    } else if (i == 3) { if (g_ashareCount) { ashareStopAll(); toast("All auto-sharing stopped"); } else toast("Nothing to stop"); }
+    requestRedraw();
+}
+
+void tmenuKey(const KeyEvent& ev) {
+    if (ev.up || ev.fn) { g_tmenuOpen = false; requestRedraw(); return; }
+    if (ev.enter) { tmenuAct(g_tmenuSel); return; }
+    const char c = (char)toupper((unsigned char)ev.character);
+    if (c >= '1' && c <= '0' + kTmenuRows) { g_tmenuSel = c - '1'; tmenuAct(g_tmenuSel); return; }
+    if (c == 'G' && g_tmenuSel > 0) g_tmenuSel--;
+    if (c == 'V' && g_tmenuSel < kTmenuRows - 1) g_tmenuSel++;
+    requestRedraw();
+}
+
+void renderThreadMenu(int y) {
+    char sub[40], a[40];
+    const int k = ashareFind(g_threadPeer);
+    gpsPosText(a, sizeof(a));
+    snprintf(sub, sizeof(sub), "%s", a);
+    listRow(y, "1 Share my location", sub, g_tmenuSel == 0);
+    addHit(2, y, W - 4, ROW_H, H_TMENU, 0); y += ROW_H;
+    if (k >= 0) {
+        char left[16] = "until off";
+        if (g_ashare[k].until) {
+            const int32_t s = (int32_t)(g_ashare[k].until - (uint32_t)time(nullptr));
+            fmtAge(s > 0 ? (uint32_t)s : 0, left, sizeof(left));
+            strlcat(left, " left", sizeof(left));
+        }
+        snprintf(sub, sizeof(sub), "every %u min, %s", (unsigned)g_ashare[k].mins, left);
+    } else {
+        snprintf(sub, sizeof(sub), "off (Enter: 5/15/30/60 min)");
+    }
+    listRow(y, "2 Auto-share location", sub, g_tmenuSel == 1);
+    addHit(2, y, W - 4, ROW_H, H_TMENU, 1); y += ROW_H;
+    listRow(y, "3 Auto-share for", kAutoForName[g_autoForSel], g_tmenuSel == 2);
+    addHit(2, y, W - 4, ROW_H, H_TMENU, 2); y += ROW_H;
+    snprintf(sub, sizeof(sub), "%d contact%s on", g_ashareCount, g_ashareCount == 1 ? "" : "s");
+    listRow(y, "4 Stop all auto-sharing", sub, g_tmenuSel == 3);
+    addHit(2, y, W - 4, ROW_H, H_TMENU, 3);
+}
 
 // ---- Contact page + share picker ----------------------------------------------------
 const char* const kCardActs[3] = {"Message", "Rename", "Share"};
@@ -4355,6 +4716,7 @@ void openThread(const uint8_t peer[16]) {
     if (isSelf(peer)) { toast("Pick a remote peer"); return; }
     memcpy(g_threadPeer, peer, 16);
     g_threadOpen = true;
+    g_tmenuOpen = false;
     g_txStr[0] = 0;
     loadHistory(peer);
     startEntry(Entry::Message);
@@ -4520,7 +4882,17 @@ bool parseFloat(const char* s, float& out) {
 void commitEntry() {
     switch (g_entry) {
     case Entry::Message: {
-        if (!g_bufLen) { saveThreadCard(); return; }   // Enter on an empty draft saves a card
+        if (!g_bufLen) {                         // Enter on an empty draft: map or save card
+            if (locOffered()) {
+                const double la = g_threadLoc.lat, lo = g_threadLoc.lon;
+                closeThread();
+                openMapAt(la, lo);
+                Serial.printf("[LOC] show %.5f,%.5f on the map\n", la, lo);
+            } else {
+                saveThreadCard();
+            }
+            return;
+        }
         char body[BUF_CAP + 1];
         memcpy(body, g_buf, g_bufLen + 1);
         const power::CheckinPhase ph = checkinNow();
@@ -4712,6 +5084,7 @@ void entryKey(const KeyEvent& ev) {
                  g_entry == Entry::Search) c = ' ';
     } else if (ev.fn) {
         if (passEntry(g_entry)) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
+        if (g_entry == Entry::Message && g_threadOpen) { g_tmenuOpen = true; g_tmenuSel = 0; requestRedraw(); return; }
         if (entryNumeric()) c = '0';          // MIC (+SYM) types 0 in number fields
     } else {
         c = ev.character;
@@ -4793,6 +5166,7 @@ void handleKey(const KeyEvent& ev) {
     }
     noteInput();
     if (g_locked) { lockKey(ev); return; }
+    if (g_threadOpen && g_tmenuOpen) { tmenuKey(ev); return; }
     if (ev.up) { goBack(); return; }                          // lone Shift = ^
     if (g_menuOpen) { menuKey(ev); return; }
     if (entryActive()) { entryKey(ev); return; }
@@ -4880,6 +5254,7 @@ void handleTouch(int16_t x, int16_t y) {
         case H_UP:         moveSelection(-1); break;
         case H_DOWN:       moveSelection(+1); break;
         case H_CARD:       if (g_cardOpen) { g_cardSel = hit->arg; cardAct(hit->arg); } break;
+        case H_TMENU:      if (g_tmenuOpen) { g_tmenuSel = hit->arg; tmenuAct(hit->arg); } break;
         case H_TILE_AUDIO:
             g_cfg.beep = !g_cfg.beep;
             g_audio.setEnabled(g_cfg.beep);
@@ -5000,6 +5375,16 @@ void powerApply(bool force) {
 // then rest until the next interval. The backup cell keeps ephemeris, so visits after
 // the first are usually hot starts of a few seconds.
 
+bool g_gpsVisitAsked = false;     // a feature (location auto-share) needs a fix now
+
+// Start a GPS visit at the next tick even between scheduled ones (any mode but GPS off).
+void gpsRequestVisit() {
+    if (g_gpsVisitStart) return;
+    g_gpsVisitAsked = true;
+    g_gpsNextVisit = millis();
+    Serial.println("[GPS] visit requested (location share)");
+}
+
 void powerGpsTick() {
     const uint32_t now = millis();
     const uint32_t ivl = power::gpsIntervalMs(g_pwEff.gps);
@@ -5031,7 +5416,9 @@ void powerGpsTick() {
             want = true;
         }
     } else if ((!g_gpsNextVisit || (int32_t)(now - g_gpsNextVisit) >= 0) &&
-               (g_pwEff.gps != power::GPS_ON_USE || (g_lastInputMs && now - g_lastInputMs < 10000))) {
+               (g_pwEff.gps != power::GPS_ON_USE || g_gpsVisitAsked ||
+                (g_lastInputMs && now - g_lastInputMs < 10000))) {
+        g_gpsVisitAsked = false;
         g_gpsVisitStart = now ? now : 1;
         Serial.println("[GPS] scheduled visit: receiver on");
         want = true;
@@ -5643,6 +6030,37 @@ void handleSerialLine(char* p) {
     } else if (!strncmp(p, "sdarc ", 6)) {
         sdArchiveSet(atoi(p + 6) != 0);
         Serial.printf("[SD] message archive setting %s (applies at next boot)\n", sdArchiveEnabled() ? "on" : "off");
+    } else if (!strcmp(p, "loc")) {
+        char pos[56];
+        gpsPosText(pos, sizeof(pos));
+        Serial.printf("[LOC] %s (hdop %.1f)\n", pos, g_gpsHdop);
+        for (int i = 0; i < g_ashareCount; i++) {
+            char hex[33]; hashToHex(g_ashare[i].dest, hex);
+            Serial.printf("[LOC] auto %s every %u min until %lu last %lu\n", hex, (unsigned)g_ashare[i].mins,
+                          (unsigned long)g_ashare[i].until, (unsigned long)g_ashare[i].lastAt);
+        }
+    } else if (!strncmp(p, "locshare ", 9) || !strncmp(p, "ashare ", 7)) {
+        // Bench: locshare <hex32> = share my location; ashare <hex32> <0|5|15|30|60> | ashare off
+        const bool share = p[0] == 'l';
+        const char* a = p + (share ? 9 : 7);
+        if (!share && !strcmp(a, "off")) { ashareStopAll(); return; }
+        uint8_t dest[16];
+        if (strlen(a) < 32 || !hexToHash(a, dest)) { Serial.println("[LOC] need <hex32>"); return; }
+        if (share) { shareMyLocation(dest); return; }
+        const int mins = atoi(a + 32);
+        int i = ashareFind(dest);
+        if (!mins) { if (i >= 0) { ashareRemove(i); ashareSave(); } Serial.println("[LOC] auto-share off"); return; }
+        if (i < 0) {
+            if (g_ashareCount >= kAutoShareMax) return;
+            i = g_ashareCount++;
+            memset(&g_ashare[i], 0, sizeof(AutoShare));
+            memcpy(g_ashare[i].dest, dest, 16);
+        }
+        g_ashare[i].mins = (uint8_t)mins;
+        g_ashare[i].until = 0;
+        ashareSave();
+        Serial.printf("[LOC] auto-share every %d min\n", mins);
+        requestRedraw();
     } else if (!strncmp(p, "sdput ", 6)) {
         sdputStart(p + 6);
     } else if (!strncmp(p, "sdget ", 6)) {
@@ -6078,6 +6496,7 @@ bool begin() {
     if (lockHasPassword()) { g_locked = true; Serial.println("[LOCK] boot locked (password set)"); }
     if (vault::unlocked()) wifiLoad();    // else after unlock (lockTry)
     tcpLoad();
+    ashareLoad();
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
     noteInput();
     goScreen(SCR_HOME);
@@ -6109,6 +6528,7 @@ void loop() {
     watchClockAndToast();
     watchWifi();
     tcpTick();
+    autoShareTick();
 
     processKeys();         // again, in case a watcher above took a while
     pollTouch();

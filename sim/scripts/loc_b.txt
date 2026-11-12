@@ -1,0 +1,18 @@
+# Receive a location (see loc_a.txt): the chat shows [loc], Enter on the empty draft
+# opens the map there.
+expect 60000 [BOOT] ready
+expect 120000 [MSG] inbound message
+wait 15000
+key BACK
+wait 1500
+key I
+wait 1500
+key 1
+key ENTER
+wait 2000
+shot loc-b-01-thread.png
+key ENTER
+expect 5000 [LOC] show
+wait 2500
+shot loc-b-02-map.png
+quit

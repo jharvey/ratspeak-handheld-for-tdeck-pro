@@ -99,6 +99,27 @@ The password is the SecretVault password (§12): once set, the device **also loc
 every boot**, and saved WiFi passwords stay sealed until it is typed (WiFi auto-connect
 waits). Picking Off / On (no password) keeps that; remove the password to stop it.
 
+### 1.2d Share my location
+
+In a chat, **MIC** opens the location menu (**MIC** or **^** goes back):
+
+1. **Share my location** sends a normal message any LXMF client can read:
+   `My location: 43.64012, -70.92011 (+-10 m, 14:32)`. Without a fresh fix (GPS resting
+   in Balanced / Saver, or indoors) it sends the last fix with its age, `My last
+   location: … (35 min old)`, or the manual location (S.1.4), and wakes the GPS for a visit.
+2. **Auto-share location**: Enter steps off → every 5 → 15 → 30 → 60 min → off.
+3. **Auto-share for**: 1 h / 4 h / until off (applies to the next and the running share).
+4. **Stop all auto-sharing** (also S.1.8).
+
+Auto updates are short (`Loc: 43.64012, -70.92011 14:32`), go out only with a fresh fix
+(the GPS is woken for a visit when one is due), only after moving > 50 m or two intervals,
+and in Check-in mode wait for the window. The chat header shows **[loc 15m]** and the top
+bar a small pin while any auto-share is on. Settings are kept per contact (NVS rs_ashare).
+
+On a RatSpeak unit a received location shows as **[loc]** (consecutive auto updates fold
+into the newest); **Enter** on the empty draft opens it on the map. The LXMF telemetry
+field (Sideband) is not sent yet: the protocol library has no field API on the send path.
+
 ### 1.3 First-boot setup
 
 | Step | What | How |
@@ -243,7 +264,9 @@ S     Settings                      ← M then S
 │   ├── S.1.3  Enable GPS           shows heard/in-view satellites, "backup cell low", or "resting"
 │   ├── S.1.4  Manual location      latitude / longitude / clear
 │   ├── S.1.5  Sync GPS now         needs a fix
-│   └── S.1.6  Auto GPS sync        boot + daily
+│   ├── S.1.6  Auto GPS sync        boot + daily
+│   ├── S.1.7  GPS position         lat, lon, satellites; or the last fix and its age
+│   └── S.1.8  Location auto-share  how many contacts; Enter = stop all (set in a chat, §1.2d)
 ├── S.2   WiFi                      status, IP
 │   ├── S.2.3  Scan networks        pick → saved: join; new locked: type password
 │   │   └── …  Join WiFi            Password · Auto-connect · Join (saves on success)
@@ -639,6 +662,10 @@ in detail).
 Ready-made set (2026-11-12): USGS National Map topo (public domain, credit U.S.
 Geological Survey) as 1-bit tiles at `--threshold 150`: the lower 48 states at zoom
 3–8 and Maine at zoom 9–12, about 6,200 tiles / 50 MB; start view Maine at zoom 6.
+The map's bottom line shows the GPS position (`43.64012,-70.92011 8sat`, or `old … 12m`
+for the last fix and its age). World overview zoom 0–7 (country, state / province borders
+and names, big cities) is drawn from Natural Earth (public domain) by
+`tools/maptiles/render_world.py`; USGS topo takes over from zoom 8.
 Tiles can go onto the card over USB with the card left in the unit:
 `tools/maptiles/push_tiles.py` (console `sdput`, about 7 tiles/s; `sdls` lists a folder). **W A S D** pan half a screen, **Z / X**
 zoom, **C** or **Enter** returns to your position, **Shift (^)** closes. The header shows
