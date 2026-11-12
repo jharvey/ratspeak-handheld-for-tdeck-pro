@@ -1396,6 +1396,61 @@ void appendAnnounced(bool savedOnly, bool withSignal) {
     }
 }
 
+// ---- Contact cards (share a contact as an LXMF message) -----------------------------
+// Plain text, readable on any LXMF client:   "Contact card: <name>\n<32 hex dest hash>"
+// This firmware recognises it in a thread ("[card] <name>") and offers to save it as a
+// contact (Enter on an empty draft). Sent from a contact's page: Share -> pick who gets it.
+constexpr const char* kCardPrefix = "Contact card: ";
+struct InCard { bool valid; uint8_t hash[16]; char name[24]; uint32_t counter; };
+InCard  g_threadCard = {};         // newest incoming card in the open thread
+bool    g_cardOpen = false;        // contact page (Message / Rename / Share) over Contacts / Peers
+uint8_t g_cardPeer[16];
+int     g_cardSel = 0;
+bool    g_shareActive = false;     // the Contacts list is picking who gets g_sharePeer
+uint8_t g_sharePeer[16];
+
+int hexNib(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+bool cardParse(const char* s, size_t len, uint8_t hash[16], char* name, size_t nameCap) {
+    const size_t pl = strlen(kCardPrefix);
+    if (len < pl + 1 + 1 + 32 || strncmp(s, kCardPrefix, pl) != 0) return false;
+    size_t i = pl, n = 0;
+    while (i < len && s[i] != '\n' && s[i] != '\r') {
+        if (n + 1 < nameCap && (uint8_t)s[i] >= 32 && (uint8_t)s[i] < 127) name[n++] = s[i];
+        i++;
+    }
+    while (n && name[n - 1] == ' ') n--;
+    name[n] = 0;
+    while (i < len && (s[i] == '\n' || s[i] == '\r' || s[i] == ' ')) i++;
+    if (i + 32 > len) return false;
+    for (int k = 0; k < 16; k++) {
+        const int h = hexNib(s[i + 2 * k]), l = hexNib(s[i + 2 * k + 1]);
+        if (h < 0 || l < 0) return false;
+        hash[k] = (uint8_t)((h << 4) | l);
+    }
+    if (i + 32 < len && hexNib(s[i + 32]) >= 0) return false;   // longer hex: not a dest hash
+    return n > 0;
+}
+
+int cardFormat(const uint8_t hash[16], const char* name, char* out, size_t n) {
+    char hex[33];
+    hashToHex(hash, hex);
+    return snprintf(out, n, "%s%.23s\n%s", kCardPrefix, name, hex);
+}
+
+bool cardIsSaved(const uint8_t hash[16]) {
+    if (isSelf(hash)) return true;
+    const DiscoveredNode* node = g_announceMgr.findNode(rs::Bytes(hash, 16));
+    return node && node->saved;
+}
+
+bool cardOffered() { return g_threadCard.valid && !cardIsSaved(g_threadCard.hash); }
+
 // ---- Thread history ------------------------------------------------------------
 constexpr int HIST_ROWS = 6;
 struct HistRow { char text[36]; char status[12]; bool incoming; };
@@ -1407,6 +1462,7 @@ void loadHistory(const uint8_t peer[16]) {
     using namespace handheld::storage;
     g_histCount = 0;
     g_histNote[0] = 0;
+    g_threadCard.valid = false;
     if (!g_storeReady) { snprintf(g_histNote, sizeof(g_histNote), "(store off)"); return; }
 
     char hex[33];
@@ -1473,8 +1529,20 @@ void loadHistory(const uint8_t peer[16]) {
         if (off > got) off = got;
         size_t clen = hdr.contentLength;
         if (off + clen > got) clen = got - off;
+        uint8_t cardHash[16];
+        char cardName[24];
+        const bool isCard = cardParse((const char*)buf + off, clen, cardHash, cardName, sizeof(cardName));
+        if (isCard) {
+            snprintf(h.text, sizeof(h.text), "[card] %s", cardName);
+            if (h.incoming && (!g_threadCard.valid || entries[i].counter >= g_threadCard.counter)) {
+                g_threadCard.valid = true;
+                g_threadCard.counter = entries[i].counter;
+                memcpy(g_threadCard.hash, cardHash, 16);
+                strlcpy(g_threadCard.name, cardName, sizeof(g_threadCard.name));
+            }
+        }
         if (clen >= sizeof(h.text)) clen = sizeof(h.text) - 1;
-        if (clen) {
+        if (clen && !isCard) {
             memcpy(h.text, buf + off, clen);
             h.text[clen] = 0;
             for (size_t k = 0; k < clen; k++)
@@ -2202,7 +2270,7 @@ void label(int x, int y, int w, int h, const char* s, bool bold = false, char ho
 // ---- Touch hit registry (filled while drawing) ------------------------------------
 enum HitAct : uint8_t {
     H_REFRESH, H_MENU, H_MENU_GO, H_TAB, H_ROW, H_BACK, H_ANNOUNCE,
-    H_TILE_AUDIO, H_UP, H_DOWN
+    H_TILE_AUDIO, H_UP, H_DOWN, H_CARD
 };
 struct Hit { int16_t x, y, w, h; uint8_t act; int8_t arg; };
 constexpr int MAX_HITS = 32;
@@ -3311,6 +3379,10 @@ void renderList() {
     if (g_screen == SCR_INBOX) {
         int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
         snprintf(hdr, sizeof(hdr), "Inbox  unread %02d", unread > 99 ? 99 : unread);
+    } else if (g_shareActive) {
+        char nm[24];
+        peerName(g_sharePeer, nm, sizeof(nm));
+        snprintf(hdr, sizeof(hdr), "Send %.12s to:", nm);
     } else {
         snprintf(hdr, sizeof(hdr), "%s (%d)", screenName(g_screen), g_rowCount);
     }
@@ -3412,7 +3484,9 @@ void renderThread() {
     else           strncat(l2, "_", sizeof(l2) - strlen(l2) - 1);
     text(6, STRIP_Y + 1, l1, false, W - 12);
     text(6, STRIP_Y + STRIP_LINE, l2, false, W - 12);
-    text(6, STRIP_Y + STRIP_LINE * 2, g_toast[0] ? g_toast : "[Enter] send  [Alt] case", false, W - 12);
+    char hint[40] = "[Enter] send  [Alt] case";
+    if (!g_bufLen && cardOffered()) snprintf(hint, sizeof(hint), "[Enter] save card: %.14s", g_threadCard.name);
+    text(6, STRIP_Y + STRIP_LINE * 2, g_toast[0] ? g_toast : hint, !g_toast[0] && !g_bufLen && cardOffered(), W - 12);
 }
 
 // ---- Rename (entry mode) ---------------------------------------------------------
@@ -3716,6 +3790,110 @@ void stampMap() {
 }
 
 
+// ---- Contact page + share picker ----------------------------------------------------
+const char* const kCardActs[3] = {"Message", "Rename", "Share"};
+const char* const kCardSubs[3] = {"open the chat", "name it on this radio", "send it to a contact"};
+
+void openCard(const uint8_t peer[16]) {
+    memcpy(g_cardPeer, peer, 16);
+    g_cardOpen = true;
+    g_cardSel = 0;
+    requestRedraw();
+}
+
+void closeCard() { g_cardOpen = false; requestRedraw(); }
+
+void renderCard() {
+    char name[24], hex[33], line[40];
+    peerName(g_cardPeer, name, sizeof(name));
+    hashToHex(g_cardPeer, hex);
+    snprintf(line, sizeof(line), "%s%s", isSelf(g_cardPeer) ? "MyID: " : "", name);
+    text(4, HEADER_Y, line, true, W - 8);
+    snprintf(line, sizeof(line), "%.16s", hex);
+    text(6, HEADER_Y + 20, line);
+    text(6, HEADER_Y + 38, hex + 16);
+    int y = HEADER_Y + 62;
+    for (int i = 0; i < 3; i++) {
+        snprintf(line, sizeof(line), "%d : %s", i + 1, kCardActs[i]);
+        listRow(y, line, kCardSubs[i], i == g_cardSel);
+        addHit(2, y, W - 4, ROW_H, H_CARD, i);
+        y += ROW_H;
+    }
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-3 / Enter    ^ = back");
+}
+
+void startNameEntry(const uint8_t peer[16]);
+void openThread(const uint8_t peer[16]);
+void goScreen(ScreenId s);
+void openMenu();
+
+void cardAct(int i) {
+    uint8_t peer[16];
+    memcpy(peer, g_cardPeer, 16);
+    switch (i) {
+        case 0:
+            if (isSelf(peer)) { toast("That is this radio"); return; }
+            closeCard();
+            openThread(peer);
+            break;
+        case 1:
+            closeCard();
+            startNameEntry(peer);
+            break;
+        case 2:
+            closeCard();
+            goScreen(SCR_CONTACTS);
+            memcpy(g_sharePeer, peer, 16);
+            g_shareActive = true;
+            toast("Pick who gets it");
+            Serial.println("[CARD] pick recipient");
+            break;
+    }
+}
+
+void cardKey(const KeyEvent& ev) {
+    if (ev.enter) { cardAct(g_cardSel); return; }
+    const char raw = ev.character;
+    if (raw >= '1' && raw <= '3') { g_cardSel = raw - '1'; cardAct(g_cardSel); return; }
+    switch (toupper((unsigned char)raw)) {
+        case 'G': if (g_cardSel > 0) g_cardSel--; requestRedraw(); break;
+        case 'V': if (g_cardSel < 2) g_cardSel++; requestRedraw(); break;
+        case 'M': closeCard(); openMenu(); break;
+        default: break;
+    }
+}
+
+void shareSendTo(int idx) {
+    const uint8_t* to = g_rows[idx].peer;
+    if (isSelf(to) || !memcmp(to, g_sharePeer, 16)) { toast("Pick someone else"); return; }
+    char nm[24], toName[24], body[96];
+    peerName(g_sharePeer, nm, sizeof(nm));
+    peerName(to, toName, sizeof(toName));
+    cardFormat(g_sharePeer, nm, body, sizeof(body));
+    g_shareActive = false;
+    const power::CheckinPhase ph = checkinNow();
+    if (g_pwEff.checkin && !(ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS)) {
+        if (outboxAdd(to, body)) toast("Card queued (check-in)"); else toast("Outbox full (%d)", kOutboxCap);
+    } else if (sendMessage(to, body)) {
+        Serial.printf("[CARD] sent \"%s\" to %s\n", nm, toName);
+        toast("Card sent to %.12s", toName);
+    } else {
+        toast("Not sent: %s", g_txStr);
+    }
+    loadRows(g_screen);
+    requestRedraw();
+}
+
+void saveThreadCard() {
+    if (!cardOffered()) return;
+    saveContactName(g_threadCard.hash, g_threadCard.name);
+    char hex[33];
+    hashToHex(g_threadCard.hash, hex);
+    Serial.printf("[CARD] saved \"%s\" %s\n", g_threadCard.name, hex);
+    toast("Saved %.18s", g_threadCard.name);
+}
+
 void render() {
     const uint32_t t0 = millis();
     clearRoot();
@@ -3732,6 +3910,7 @@ void render() {
     }
     if (g_threadOpen)                  renderThread();
     else if (g_entry == Entry::Name)   renderRename();
+    else if (g_cardOpen)               renderCard();
     else if (mapview::isOpen())        renderMapHeader();
     else switch (g_screen) {
         case SCR_HOME:     renderHome(); break;
@@ -3873,6 +4052,8 @@ void startNameEntry(const uint8_t peer[16]) {
 
 void goScreen(ScreenId s) {
     g_menuOpen = false;
+    g_cardOpen = false;
+    g_shareActive = false;
     if (mapview::isOpen()) mapview::close();
     if (g_threadOpen) { g_threadOpen = false; }
     if (entryActive()) endEntry();
@@ -3919,7 +4100,8 @@ void activateListRow(int idx) {
     g_listSel = idx;
     rememberSelection();
     if (g_screen == SCR_INBOX) openThread(g_rows[idx].peer);
-    else startNameEntry(g_rows[idx].peer);    // Contacts + Peers: Enter names the device
+    else if (g_shareActive) shareSendTo(idx);  // picking who gets a contact card
+    else openCard(g_rows[idx].peer);           // Contacts + Peers: Message / Rename / Share
 }
 
 void activateCurrent() {
@@ -3966,6 +4148,8 @@ void cancelEntry() {
 
 void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
+    if (g_cardOpen && !entryActive()) { closeCard(); return; }
+    if (g_shareActive && !entryActive()) { g_shareActive = false; toast("Share cancelled"); return; }
     if (mapview::isOpen() && !entryActive()) { closeMap(); return; }
     if (entryActive())           { cancelEntry(); return; }
     if (g_screen == SCR_SETTINGS && g_navDepth > 0) { popPage(); return; }
@@ -3988,7 +4172,7 @@ bool parseFloat(const char* s, float& out) {
 void commitEntry() {
     switch (g_entry) {
     case Entry::Message: {
-        if (!g_bufLen) return;
+        if (!g_bufLen) { saveThreadCard(); return; }   // Enter on an empty draft saves a card
         char body[BUF_CAP + 1];
         memcpy(body, g_buf, g_bufLen + 1);
         const power::CheckinPhase ph = checkinNow();
@@ -4184,6 +4368,7 @@ void menuKey(const KeyEvent& ev) {
 }
 
 void browseKey(const KeyEvent& ev) {
+    if (g_cardOpen) { cardKey(ev); return; }
     if (ev.enter) { activateCurrent(); return; }
     if (ev.del || ev.space) return;
     const char raw = ev.character;
@@ -4302,6 +4487,7 @@ void handleTouch(int16_t x, int16_t y) {
         case H_ANNOUNCE:   activateCurrent(); break;
         case H_UP:         moveSelection(-1); break;
         case H_DOWN:       moveSelection(+1); break;
+        case H_CARD:       if (g_cardOpen) { g_cardSel = hit->arg; cardAct(hit->arg); } break;
         case H_TILE_AUDIO:
             g_cfg.beep = !g_cfg.beep;
             g_audio.setEnabled(g_cfg.beep);

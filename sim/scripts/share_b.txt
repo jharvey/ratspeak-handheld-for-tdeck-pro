@@ -1,0 +1,23 @@
+# Receive a shared contact card (see share_a.txt): open the chat, Enter on the empty
+# draft saves the card as a contact.
+expect 60000 [BOOT] ready
+expect 120000 [MSG] inbound message
+wait 3000
+# wake the idle splash first (the waking key is consumed)
+key BACK
+wait 1500
+key I
+wait 1500
+key 1
+key ENTER
+wait 2000
+shot share-b-01-thread.png
+key ENTER
+expect 5000 [CARD] saved
+wait 1000
+key BACK
+wait 1000
+key C
+wait 1500
+shot share-b-02-contacts.png
+quit

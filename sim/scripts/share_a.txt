@@ -1,0 +1,33 @@
+# Share a contact (run with share_b.txt at the same time, two device names):
+#   run-script.bat scripts\share_a.txt sharea fresh   +   run-script.bat scripts\share_b.txt shareb fresh
+# A hears B's boot announce, saves B as "BOB" (Peers > row 1 > contact page > Rename),
+# then shares its own ID with BOB (Contacts > MyID > 3 Share > pick BOB).
+expect 60000 [BOOT] ready
+wait 25000
+key P
+wait 1500
+key 1
+key ENTER
+wait 1000
+shot share-a-01-card.png
+key 2
+wait 500
+type BOB
+key ENTER
+expect 5000 [NAME]
+key C
+wait 1500
+key 0
+key ENTER
+wait 1000
+key 3
+expect 3000 [CARD] pick recipient
+wait 1000
+shot share-a-02-pick.png
+key 1
+key ENTER
+expect 30000 [CARD] sent
+wait 1500
+shot share-a-03-sent.png
+wait 40000
+quit
