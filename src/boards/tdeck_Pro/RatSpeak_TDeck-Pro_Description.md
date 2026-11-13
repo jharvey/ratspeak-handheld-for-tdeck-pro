@@ -338,6 +338,7 @@ messages are immediate in every mode**, because they wake the processor directly
 | GPS | always on | every 15 min | every hour | off | one fix on a key (≤ every 15 min) | same |
 | WiFi / key backlight | allowed | allowed | off | off | off | off |
 | Touch | on | on | 1 min after a key | 1 min after a key | 1 min after a key | 1 min after a key |
+| Map wakes GPS (§8.1) | yes | yes | no | no | no | no |
 | Battery draw | ~48 mA, ~67 with GPS | ~9–10 mA | ~7 mA | ~7 mA (est.) | ~6 mA (est.) | ~6 mA (est.) |
 | Runtime (~1450 mAh) | ~21–30 h | ~5–6 days | ~6–8 days | ~8 days | ~10 days | ~10 days |
 | Messages in | immediate | immediate | immediate | immediate | only while LoRa is on | only in a window |
@@ -367,7 +368,8 @@ one knob (Enter steps to the next value):
 | 6 | WiFi | allowed / OFF |
 | 7 | Key backlight | allowed / OFF |
 | 8 | Touch | always on / 1 min after a key |
-| 9 | Reset to Balanced | |
+| 9 | Map wakes GPS | ON = opening the map starts a GPS visit (§8.1) / OFF = the map shows the last fix (default) |
+| 10 | Reset to Balanced | |
 
 Example: GPS off but snappy UI → Custom, CPU 240, sleep "never", GPS Off.
 
@@ -672,9 +674,11 @@ the tile tool). If the card has no tile under the centre at that zoom, it zooms 
 the deepest level that has one (a card often holds a wide area coarse and a small one
 in detail).
 
-**GPS while the map is open:** without a fresh fix, opening the map starts a GPS visit at
-once (in the scheduled power modes the receiver is otherwise only on every 15 min / hourly),
-and asks again each minute while the map stays open and in use. A visit indoors ends after
+**GPS while the map is open:** in Full and Balanced (and Custom with "Map wakes GPS" on),
+without a fresh fix, opening the map starts a GPS visit at once (Balanced otherwise powers the
+receiver only every 15 min), and asks again each minute while the map stays open and in use.
+Saver, Ultra-low, On demand and Check-in keep their own GPS schedule: the map shows the last
+fix (or the saved position) and its age. A visit indoors ends after
 60 s with no satellite heard. The footer line says what the receiver is doing:
 `17T PJ 3037 3462 7sat` (fresh fix) · `fix 28m old, GPS on 45s 3/9 sats` (last fix's age;
 searching, 45 s into the visit, 3 satellites heard of 9 in view) · `fix 28m old, GPS next
@@ -740,7 +744,11 @@ Cards are best formatted with 8 KB clusters (console `sdformat 8192 ERASE-ALL`, 
 the card): a header-less 8 KB tile then takes exactly 8 KB instead of 32 KB.
 Tiles can go onto the card over USB with the card left in the unit:
 `tools/maptiles/push_tiles.py` (console `sdput`, about 7 tiles/s; `sdls` lists a folder). **W A S D** pan half a screen, **Z / X**
-zoom, **C** or **Enter** returns to your position, **Shift (^)** closes. The header shows
+zoom, **C** or **Enter** returns to your position, **Shift (^)** closes. **M** on the map
+opens the map keys menu: Move (W A S D), Zoom in Z, Zoom out X, Back to me Enter, Next
+contact T, Mark waypoint P, Next waypoint N, Find place F, Main menu M, Close map ^. Pick a
+row with G/V + Enter or a tap, or press the key itself; the key hint when the map opens says
+"M = map keys". The header shows
 zoom, centre and the scale-bar length; `*` means the view is not following you. Missing
 tiles show a dotted grid and "no tiles".
 
@@ -924,7 +932,7 @@ the device does not light-sleep.
 | `pm0` … `pm3` | set mode: Full, Balanced, Saver, Custom |
 | `bench <s>` | run from battery with USB attached (charger input + its watchdog off) for up to 4 h; `bench 0` stops |
 | `usbsleep <s>` | allow light sleep with a USB host for `<s>` s (the console drops while asleep); `usbsleep 0` blocks it |
-| `pset <knob> <v>` | set a Custom knob and switch to Custom: `cpu 80\|160\|240`, `wake <s>`, `awake <s>`, `lora 0\|1`, `gps 0-3`, `wifi 0\|1`, `kbl 0\|1` |
+| `pset <knob> <v>` | set a Custom knob and switch to Custom: `cpu 80\|160\|240`, `wake <s>`, `awake <s>`, `lora 0\|1`, `gps 0-4`, `wifi 0\|1`, `kbl 0\|1`, `touch 0\|1`, `mapgps 0\|1` |
 | `blog 0\|1` | internal battery log off / on (RAM ring, 120 samples) |
 | `rl` / `rl 0` | dump / clear the RTC power log (survives resets: time, uptime, mV, mA, USB, sleeps; a BOOT line with the reset reason at every boot) |
 | `sleeptest <ms> [guard] [stop]` | diagnostic: one timer-only light sleep; stop bits 1 audio, 2 GPS, 4 LoRa |

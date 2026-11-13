@@ -30,6 +30,9 @@ START HERE (handoff 2026-11-11)
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
+- Map keys menu + map GPS per mode (2026-11-13): M on the Atlas = kMapMenu table (letters in one place;
+  mapKey() is the map's key handler, rows call it). Profile.mapGps: Full/Balanced yes, saving modes no, Custom
+  knob S.4.7.9 "Map wakes GPS" (NVS cMapGps, default off; console pset mapgps). sim/scripts/map_keys.txt.
 - GPS + map (2026-11-13): openMap() centres on fresh fix > last fix (g_gpsPosValid) > saved pos > card home, follow on;
   mapGpsAsk() requests a GPS visit on open and each minute while open + in use (no fresh fix); gpsPosText()
   footer = fix age + gpsStateText() (GPS on Ns heard/inView, next Nm, off, backup fault). sim/scripts/gps_map.txt.

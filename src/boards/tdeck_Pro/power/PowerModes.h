@@ -38,6 +38,7 @@ struct Profile {
     bool     touchOnKey;  // touch held in reset; a key press enables it for 1 min (~2 mA)
     bool     loraOnUse;   // lora off: power it for kLoraOnUseMs after each key press
     bool     checkin;     // lora off: power it only in the scheduled check-in windows
+    bool     mapGps;      // opening the map (no fresh fix) starts a GPS visit at once
 };
 
 // Check-in schedule: windows at checkinMin past midnight local time + k * checkinEvery.

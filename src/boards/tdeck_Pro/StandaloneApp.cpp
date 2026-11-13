@@ -2499,7 +2499,7 @@ void label(int x, int y, int w, int h, const char* s, bool bold = false, char ho
 // ---- Touch hit registry (filled while drawing) ------------------------------------
 enum HitAct : uint8_t {
     H_REFRESH, H_MENU, H_MENU_GO, H_TAB, H_ROW, H_BACK, H_ANNOUNCE,
-    H_TILE_AUDIO, H_UP, H_DOWN, H_CARD, H_TMENU
+    H_TILE_AUDIO, H_UP, H_DOWN, H_CARD, H_TMENU, H_MAPMENU
 };
 struct Hit { int16_t x, y, w, h; uint8_t act; int8_t arg; };
 constexpr int MAX_HITS = 32;
@@ -3245,6 +3245,7 @@ void buildSettingsRows(Page p) {
         srow(RK_TOGGLE, "WiFi", "%s", c.wifi ? "allowed" : "OFF");
         srow(RK_TOGGLE, "Key backlight", "%s", c.keyLight ? "allowed" : "OFF");
         srow(RK_TOGGLE, "Touch", "%s", c.touchOnKey ? "1 min after a key" : "always on");
+        srow(RK_TOGGLE, "Map wakes GPS", "%s", c.mapGps ? "ON (fix when the map opens)" : "OFF (last fix)");
         srow(RK_ACTION, "Reset to Balanced", "Enter = reset");
         break;
     }
@@ -3653,7 +3654,8 @@ void activateSetting(int idx) {
             case 5: c.wifi = !c.wifi; break;
             case 6: c.keyLight = !c.keyLight; break;
             case 7: c.touchOnKey = !c.touchOnKey; break;
-            case 8: c = power::preset(power::MODE_BALANCED); toast("Custom = Balanced"); break;
+            case 8: c.mapGps = !c.mapGps; break;
+            case 9: c = power::preset(power::MODE_BALANCED); toast("Custom = Balanced"); break;
             default: return;
         }
         g_pw.mode = power::MODE_CUSTOM;
@@ -4255,6 +4257,49 @@ void drawBottomBar() {
     }
 }
 
+// ---- Map keys menu (M on the Atlas) -----------------------------------------------------
+// The map's keys as a pull-down: G/V + Enter or a tap does what the key does, the key itself
+// works too. Letters live in this table only (a key layout change is one edit here).
+enum MapMenuAct : uint8_t { MM_KEY, MM_ENTER, MM_MOVE, MM_MENU, MM_CLOSE };
+struct MapMenuRow { MapMenuAct act; char key; const char* label; const char* keys; };
+constexpr char kMapMenuKey = 'M';
+const MapMenuRow kMapMenu[] = {
+    {MM_MOVE,  0,   "Move",          "W A S D"},
+    {MM_KEY,   'Z', "Zoom in",       "Z"},
+    {MM_KEY,   'X', "Zoom out",      "X"},
+    {MM_ENTER, 0,   "Back to me",    "Enter"},
+    {MM_KEY,   'T', "Next contact",  "T"},
+    {MM_KEY,   'P', "Mark waypoint", "P"},
+    {MM_KEY,   'N', "Next waypoint", "N"},
+    {MM_KEY,   'F', "Find place",    "F"},
+    {MM_MENU,  'M', "Main menu",     "M"},
+    {MM_CLOSE, 0,   "Close map",     "^"},
+};
+constexpr int kMapMenuRows = sizeof(kMapMenu) / sizeof(kMapMenu[0]);
+constexpr int MAPMENU_X = 36, MAPMENU_ROW_H = 24;           // 10 rows: 36 .. 276 (bar at 280)
+bool g_mapMenuOpen = false;
+int  g_mapMenuSel = 0;
+void mapMenuAct(int i);
+void mapMenuClose();
+void mapMenuKey(const KeyEvent& ev);
+void mapKey(const KeyEvent& ev);
+void mapMenuOpen();
+
+void drawMapMenu() {
+    if (!g_mapMenuOpen) return;
+    const int w = W - MAPMENU_X;
+    for (int i = 0; i < kMapMenuRows; i++) {
+        const int y = TOP_H + i * MAPMENU_ROW_H;
+        const bool sel = i == g_mapMenuSel;
+        fillRect(MAPMENU_X, y, w, MAPMENU_ROW_H, false);
+        box(MAPMENU_X, y, w, MAPMENU_ROW_H, sel ? 3 : 1);
+        text(MAPMENU_X + 6, y + (MAPMENU_ROW_H - 16) / 2, kMapMenu[i].label, sel, w - 80);
+        const int kw = textW(kMapMenu[i].keys);
+        text(W - 6 - kw, y + (MAPMENU_ROW_H - 16) / 2, kMapMenu[i].keys, true);
+        addHit(MAPMENU_X, y, w, MAPMENU_ROW_H, H_MAPMENU, i);
+    }
+}
+
 void drawMenuOverlay() {
     if (!g_menuOpen) return;
     for (int i = 0; i < kMenuCount; i++) {
@@ -4365,8 +4410,8 @@ int cposWithPos();
 // Key hints on the map's bottom line for 6 s after it opens (keys are not written anywhere).
 void mapKeyHint() {
     const int n = cposWithPos();
-    if (n) toast("T %d contact%s  N/P waypts", n, n == 1 ? "" : "s");   // fits 240 px
-    else toast("Z/X zoom  N/P waypoints");
+    if (n) toast("M = map keys  T %d contact%s", n, n == 1 ? "" : "s");   // fits 240 px
+    else toast("M = map keys  WASD move");
     g_toastUntil = millis() + 6000;
 }
 
@@ -4403,6 +4448,7 @@ void openMap() {
 }
 
 void closeMap() {
+    g_mapMenuOpen = false;
     mapview::close();
     mapReadDone();
     g_fullRefreshReq = true;
@@ -4466,11 +4512,16 @@ void heartbeatTick() {
 bool gpsFresh();
 
 // The map wants the own position: without a fresh fix ask for a GPS visit when it opens and
-// again each minute while it stays open and in use (keys in the last 5 min), so a scheduled
-// mode does not leave it on a 15-min-old (or no) fix. A visit indoors ends after 60 s.
+// again each minute while it stays open and in use (keys in the last 5 min), so Balanced does
+// not leave it on a 15-min-old (or no) fix. Only in profiles with mapGps (Full, Balanced,
+// Custom if chosen): the saving modes keep their GPS schedule. A visit indoors ends after 60 s.
 void mapGpsAsk(bool opening) {
     static uint32_t asked = 0;
     if (!g_cfg.gpsOn || g_pwEff.gps == power::GPS_OFF || gpsFresh()) return;
+    if (!g_pwEff.mapGps) {                        // saving modes (Custom: "Map wakes GPS")
+        if (opening) Serial.println("[GPS] map: no visit in this power mode (last fix shown)");
+        return;
+    }
     if (!power::gpsIntervalMs(g_pwEff.gps) && g_pwEff.gps != power::GPS_ON_USE) return;   // always on
     if (!opening && (!g_lastInputMs || millis() - g_lastInputMs > 300000)) return;
     if (asked && millis() - asked < 60000) return;
@@ -6182,8 +6233,10 @@ void render() {
     drawTopBar();
     drawBottomBar();
     drawMenuOverlay();
+    drawMapMenu();
     lv_refr_now(nullptr);
-    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_placeOpen) stampMap();   // after LVGL's clear
+    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_mapMenuOpen && !g_libOpen && !g_gameOpen && !g_placeOpen)
+        stampMap();   // after LVGL's clear (a menu hides the map, like the MENU does)
     const uint32_t t1 = millis();
     // Clear the request first: keys queued during the panel refresh may ask again.
     g_redraw = false;
@@ -6499,6 +6552,7 @@ void cancelEntry() {
 
 void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
+    if (g_mapMenuOpen)           { mapMenuClose(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
     if (g_shareActive && !entryActive()) { g_shareActive = false; toast("Share cancelled"); return; }
     if (g_placeOpen && !entryActive()) { g_placeOpen = false; g_fullRefreshReq = true; requestRedraw(); return; }
@@ -6867,22 +6921,65 @@ void handleKey(const KeyEvent& ev) {
     if (g_threadOpen && g_tmenuOpen) { tmenuKey(ev); return; }
     if (ev.up) { goBack(); return; }                          // lone Shift = ^
     if (g_menuOpen) { menuKey(ev); return; }
+    if (g_mapMenuOpen) { mapMenuKey(ev); return; }
     if (entryActive()) { entryKey(ev); return; }
     if (g_libOpen) { libKey(ev); return; }
     if (g_gameOpen) { gameKey(ev); return; }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
-    if (mapview::isOpen()) {
-        const char mc = (char)toupper((unsigned char)ev.character);
-        if (g_placeOpen) { placeKey(ev); return; }            // place results list (digits = go)
-        if (mapNumberKey(ev)) return;                         // "12" Enter: open chat #12
-        if (mc == 'F') { startEntry(Entry::PlaceFind); return; }   // find a place
-        if (wptMapKey(ev)) return;                            // P mark, N next waypoint, Del
-        if (mc == 'T') { mapCycleContact(); return; }        // next contact's last position
-        if (mc == 'C' || ev.enter) g_mapSel = -1;             // back to own position
-        if (mapview::key(ev.character, ev.enter)) requestRedraw();
-        return;
-    }
+    if (mapview::isOpen()) { mapKey(ev); return; }
     browseKey(ev);
+}
+
+// A key on the Atlas (also what a map keys menu row does).
+void mapKey(const KeyEvent& ev) {
+    const char mc = (char)toupper((unsigned char)ev.character);
+    if (g_placeOpen) { placeKey(ev); return; }            // place results list (digits = go)
+    if (mc == kMapMenuKey && !g_mapNum) { mapMenuOpen(); return; }   // the keys, as a menu
+    if (mapNumberKey(ev)) return;                         // "12" Enter: open chat #12
+    if (mc == 'F') { startEntry(Entry::PlaceFind); return; }   // find a place
+    if (wptMapKey(ev)) return;                            // P mark, N next waypoint, Del
+    if (mc == 'T') { mapCycleContact(); return; }        // next contact's last position
+    if (mc == 'C' || ev.enter) g_mapSel = -1;             // back to own position
+    if (mapview::key(ev.character, ev.enter)) requestRedraw();
+}
+
+void mapMenuOpen() {
+    g_mapMenuOpen = true;
+    g_mapMenuSel = 0;
+    requestRedraw();
+    Serial.println("[MAP] keys menu");
+}
+
+void mapMenuClose() {
+    g_mapMenuOpen = false;
+    g_fullRefreshReq = true;                                  // the map under it comes back
+    requestRedraw();
+}
+
+void mapMenuAct(int i) {
+    if (i < 0 || i >= kMapMenuRows) return;
+    const MapMenuRow& r = kMapMenu[i];
+    mapMenuClose();
+    Serial.printf("[MAP] menu: %s\n", r.label);
+    switch (r.act) {
+        case MM_MOVE:  toast("W A S D move  Enter = me"); g_toastUntil = millis() + 6000; return;
+        case MM_MENU:  openMenu(); return;
+        case MM_CLOSE: closeMap(); return;
+        default: break;
+    }
+    KeyEvent ev;
+    if (r.act == MM_ENTER) ev.enter = true; else ev.character = r.key;
+    mapKey(ev);
+}
+
+void mapMenuKey(const KeyEvent& ev) {
+    const char c = (char)toupper((unsigned char)ev.character);
+    if (ev.enter) { mapMenuAct(g_mapMenuSel); return; }
+    if (c == 'G') { if (g_mapMenuSel > 0) g_mapMenuSel--; requestRedraw(); return; }
+    if (c == 'V') { if (g_mapMenuSel < kMapMenuRows - 1) g_mapMenuSel++; requestRedraw(); return; }
+    if (c == 'W' || c == 'A' || c == 'S' || c == 'D') { mapMenuClose(); mapKey(ev); return; }   // move at once
+    for (int i = 0; i < kMapMenuRows; i++)
+        if (kMapMenu[i].key && c == kMapMenu[i].key) { mapMenuAct(i); return; }
 }
 
 // ---- Key queue --------------------------------------------------------------------
@@ -6949,6 +7046,7 @@ void handleTouch(int16_t x, int16_t y) {
         if (x >= h.x && x < h.x + h.w && y >= h.y && y < h.y + h.h) { hit = &h; break; }
     }
     if (g_menuOpen && (!hit || (hit->act != H_MENU_GO && hit->act != H_MENU))) { closeMenu(); return; }
+    if (g_mapMenuOpen && (!hit || hit->act != H_MAPMENU)) { mapMenuClose(); return; }
     if (!hit) return;
     Serial.printf("[TOUCH] %d,%d act=%u arg=%d\n", x, y, hit->act, hit->arg);
     switch (hit->act) {
@@ -6962,6 +7060,7 @@ void handleTouch(int16_t x, int16_t y) {
         case H_DOWN:       moveSelection(+1); break;
         case H_CARD:       if (g_cardOpen) { g_cardSel = hit->arg; cardAct(hit->arg); } break;
         case H_TMENU:      if (g_tmenuOpen) { g_tmenuSel = hit->arg; tmenuAct(hit->arg); } break;
+        case H_MAPMENU:    if (g_mapMenuOpen) { g_mapMenuSel = hit->arg; mapMenuAct(hit->arg); } break;
         case H_TILE_AUDIO:
             g_cfg.beep = !g_cfg.beep;
             g_audio.setEnabled(g_cfg.beep);
@@ -7618,7 +7717,7 @@ void handleSerialLine(char* p) {
             powerApply(true);
         }
     } else if (!strncmp(p, "pset ", 5)) {
-        // Custom-mode knob from the console: pset cpu|wake|awake|lora|gps|wifi|kbl <value>
+        // Custom-mode knob from the console: pset cpu|wake|awake|lora|gps|wifi|kbl|touch|mapgps <value>
         char k[8] = "";
         int v = -1;
         if (sscanf(p + 5, "%7s %d", k, &v) == 2 && v >= 0) {
@@ -7632,12 +7731,13 @@ void handleSerialLine(char* p) {
             else if (!strcmp(k, "wifi")) c.wifi = v != 0;
             else if (!strcmp(k, "kbl")) c.keyLight = v != 0;
             else if (!strcmp(k, "touch")) c.touchOnKey = v != 0;
+            else if (!strcmp(k, "mapgps")) c.mapGps = v != 0;
             else { Serial.println("[POWER] pset: bad knob/value"); return; }
             g_pw.mode = power::MODE_CUSTOM;
             power::save(g_pw);
             powerApply(true);
         } else {
-            Serial.println("[POWER] pset cpu 80|160|240, wake <s>, awake <s>, lora 0|1|2(on use), gps 0-4 (on,15m,1h,off,on use), wifi 0|1, kbl 0|1");
+            Serial.println("[POWER] pset cpu 80|160|240, wake <s>, awake <s>, lora 0|1|2(on use), gps 0-4 (on,15m,1h,off,on use), wifi 0|1, kbl 0|1, touch 0|1, mapgps 0|1");
         }
     } else if (!strncmp(p, "bench", 5)) {
         const int secs = p[5] ? atoi(p + 5) : 120;
