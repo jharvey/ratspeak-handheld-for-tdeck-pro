@@ -1803,8 +1803,11 @@ power::CheckinPhase checkinNow() {
 }
 
 // Messages written outside a check-in window wait here and go out kCheckinSendS after the
-// check-in time, when every device should be listening. Kept in NVS "rs_outbox" (blob "q",
-// count = size / item) so a reset or battery swap does not lose them.
+// check-in time, when every device should be listening. Kept in NVS "rs_outbox" so a reset or
+// battery swap does not lose them: blob "q2" = per item dest[16], text length (1 byte), the
+// text without padding (a short text costs ~3 NVS entries instead of 6; NVS wear, see
+// Stress_test_plan). Older firmware wrote blob "q" (fixed 177-byte items); it is read once
+// and moved to "q2".
 struct OutboxItem { uint8_t dest[16]; char text[161]; };
 constexpr int kOutboxCap = 8;
 OutboxItem g_outbox[kOutboxCap];
@@ -1813,20 +1816,50 @@ int g_outboxCount = 0;
 void outboxSave() {
     Preferences p;
     if (!p.begin("rs_outbox", false)) { Serial.println("[CHECKIN] outbox save failed (nvs)"); return; }
-    if (g_outboxCount) p.putBytes("q", g_outbox, sizeof(OutboxItem) * (size_t)g_outboxCount);
-    else p.remove("q");
+    if (g_outboxCount) {
+        static uint8_t buf[kOutboxCap * (16 + 1 + sizeof(OutboxItem::text))];   // main loop only
+        size_t n = 0;
+        for (int i = 0; i < g_outboxCount; i++) {
+            const size_t len = strnlen(g_outbox[i].text, sizeof(OutboxItem::text) - 1);
+            memcpy(buf + n, g_outbox[i].dest, 16);
+            buf[n + 16] = (uint8_t)len;
+            memcpy(buf + n + 17, g_outbox[i].text, len);
+            n += 17 + len;
+        }
+        p.putBytes("q2", buf, n);
+    } else {
+        p.remove("q2");
+    }
+    if (p.isKey("q")) p.remove("q");            // old format, already moved
     p.end();
 }
 
 void outboxLoad() {
     Preferences p;
     if (!p.begin("rs_outbox", true)) return;
-    const size_t n = p.getBytesLength("q");
-    if (n && n % sizeof(OutboxItem) == 0 && n <= sizeof(g_outbox)) {
+    bool migrate = false;
+    size_t n = p.getBytesLength("q2");
+    if (n) {
+        static uint8_t buf[kOutboxCap * (16 + 1 + sizeof(OutboxItem::text))];   // main loop only
+        if (n <= sizeof(buf) && p.getBytes("q2", buf, n) == n) {
+            size_t off = 0;
+            while (off + 17 <= n && g_outboxCount < kOutboxCap) {
+                const size_t len = buf[off + 16];
+                if (len >= sizeof(OutboxItem::text) || off + 17 + len > n) break;   // damaged: keep what was read
+                OutboxItem& o = g_outbox[g_outboxCount++];
+                memset(&o, 0, sizeof(o));
+                memcpy(o.dest, buf + off, 16);
+                memcpy(o.text, buf + off + 17, len);
+                off += 17 + len;
+            }
+        }
+    } else if ((n = p.getBytesLength("q")) && n % sizeof(OutboxItem) == 0 && n <= sizeof(g_outbox)) {
         g_outboxCount = (int)(p.getBytes("q", g_outbox, n) / sizeof(OutboxItem));
         for (int i = 0; i < g_outboxCount; i++) g_outbox[i].text[sizeof(g_outbox[i].text) - 1] = 0;
+        migrate = true;
     }
     p.end();
+    if (migrate) outboxSave();                  // write "q2", remove "q"
     if (g_outboxCount) Serial.printf("[CHECKIN] outbox restored: %d waiting\n", g_outboxCount);
 }
 
@@ -8054,6 +8087,9 @@ void watchIdle() {
 // 8. begin() / loop()
 // =============================================================================
 
+// Boot phase timing: "[BOOT] <ms since power-on> <phase>" (unit boot is ~15 s with an empty store).
+void bootMark(const char* phase) { Serial.printf("[BOOT] %6lu ms %s\n", (unsigned long)millis(), phase); }
+
 bool begin() {
     Serial.println();
     Serial.println("========================================");
@@ -8112,22 +8148,32 @@ bool begin() {
 #endif
     spiBusIdle();
     logPsram();
+    bootMark("config, power, I2C");
 
 #if defined(RS_NO_RADIO) && RS_NO_RADIO
     Serial.println("[BOOT] radio DISABLED (RS_NO_RADIO build) - LoRa powered off, no transmit");
 #else
     if (!initRadio()) Serial.println("[BOOT] radio failed");
 #endif
+    bootMark("radio");
     initStorageAndProto();
+    bootMark("flash, messages, protocol");
 
-    // Finish LXMF outbound recovery while internal heap is still large.
-    if (g_protoReady) pumpFor(300, 10);
+    // Finish LXMF outbound recovery while internal heap is still large: pump until the
+    // engine has read the persisted outgoing records (was a fixed 3 s on every boot).
+    if (g_protoReady) {
+        const uint32_t t0 = millis();
+        for (int i = 0; i < 300 && (i < 20 || g_proto.lxmfRecovering()); i++) { pumpOnce(); delay(10); }
+        Serial.printf("[BOOT] outgoing recovery %s after %lu ms\n", g_proto.lxmfRecovering() ? "still running" : "done",
+                      (unsigned long)(millis() - t0));
+    }
 
     spiBusIdle();
     if (!g_display.begin()) { Serial.println("[BOOT] display failed"); return false; }
     if (!LvglPort::begin(g_display)) { Serial.println("[BOOT] LVGL failed"); return false; }
     g_display.setBusyCallback(onPanelBusy);
     drawBootSplash();
+    bootMark("display, splash");
 
     g_kbOk = g_kb.begin();
     applyKeyLight();
@@ -8145,6 +8191,7 @@ bool begin() {
     g_touchOk = Wire.endTransmission() == 0;
     Serial.printf("[TOUCH] CST328 %s\n", g_touchOk ? "ok" : "absent");
 
+    bootMark("keyboard, audio, touch");
     pinMode(KB_INT, INPUT_PULLUP);
     loadBatteryCal();
     readBattery();
@@ -8159,6 +8206,7 @@ bool begin() {
     ashareLoad();
     cposLoad();
     wptLoad();
+    bootMark("battery, power mode, GPS, vault, settings");
     mapview::setCoordFormatter(fmtCoord);
     g_proto.setMessageCallback(onCommittedMessage);
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce

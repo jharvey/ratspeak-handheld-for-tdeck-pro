@@ -76,7 +76,7 @@ START HERE (handoff 2026-11-11)
   logger; builds, selftest passes, not run on hardware). Needs the parts (README) and
   wiring, then: log.py COMx --zero; sleepcheck floor d 8 300; log.py --out floor.csv. (2) e-ink
   controller deep-sleep command, keyboard controller sleep; (3) DONE 2026-11-11 check-in
-  outbox in NVS (rs_outbox/q), queued messages shown in the thread ("queued HH:MM"), flushed
+  outbox in NVS (rs_outbox/q2: dest, len, text per item; old "q" moved at boot), queued messages shown in the thread ("queued HH:MM"), flushed
   when leaving Check-in, rejected 1/8 kept for retry; (4) DONE 2026-11-11 RTC drift, 3.1 h
   vs the PC clock (clk + rtcdrift log, Theil-Sen fit, late USB replies after a wake dropped):
   COM9 asleep on battery +33 ppm (+2.9 s/day), COM5 awake on USB +28 ppm (+2.4 s/day), fit rms

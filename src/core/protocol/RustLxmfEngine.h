@@ -50,6 +50,7 @@ public:
     bool beginPeerDelete(const uint8_t peer[16]);
     void finishPeerDelete(const uint8_t peer[16], const handheld::storage::Result&);
     int queuedCount() const;
+    bool recovering() const { return _recovering; }   // still reading persisted outgoing records
     void loop();
     void onLinkSetupFailure(const uint8_t peer[16], const rs_handheld_route_t& failedRoute);
     void onResourceOutcome(Ticket, bool delivered);

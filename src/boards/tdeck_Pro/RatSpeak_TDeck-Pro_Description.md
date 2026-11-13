@@ -1023,3 +1023,4 @@ entry mode.
 | 0.12 | Sending no longer freezes the screen when the radio is busy (was up to 16-24 s): busy or within 3 s of the last send, the message goes to the outbox ("Queued: radio busy") and is sent in the background, in order |
 | 0.13 | Boot no longer opens every saved message: a record index (saved after 30 s without a change, checked against the file names at boot) replaces the scan (§8.4); opening threads and mark-read use it too |
 | 0.14 | Password lock (§1.2c), contact sharing (§1.2a), list pages + find (§1.2b), TCP hub (S.2.6), identity slots (S.6.5) |
+| 0.15 | Boot: the outgoing-recovery wait stops when recovery is done (was a fixed 3 s); boot phase times on the console (`[BOOT] <ms> <phase>`). Outbox saved without padding (NVS key `q2`, ~6x less NVS wear when messages queue) |

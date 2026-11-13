@@ -179,13 +179,13 @@ Fixed findings:
 | 2026-11-12 | dad0b2f | Boot from the saved index on a unit (COM3, 212 messages) | 2 boots | PASS | message start 11.3 s (212 opens, 9.9 s opening) -> 0.58 s (4 opens); `msgidx check` 0 mismatches |
 | 2026-11-13 | (wear) | Flash wear: idle sim 1 h + ping-pong 30 min normal rate (115 msgs) + 60 min overload (705 msgs) | - | PASS | 500 msgs/day: LittleFS ~450 erases/day = 185 years with flash 85 % full (1,100 years mostly empty); NVS 114 years (busiest: clock save once a minute). Overload all day (outbox nearly full): NVS ~10 years (outbox rewrite) - see findings |
 | 2026-11-13 | (ping-pong) | Ping-pong 60 min overload (every ~8 s each way) | 0.13 | PASS | 352 + 353 msgs, all arrived once, all delivered, no restart, queues drained in 292 s |
+| 2026-11-13 | (0.15) | Outbox `q2` + boot recovery wait: 18 sim scripts, old-format outbox moved, 30 power cuts, ping-pong 15 min overload (every ~4 s) | 30 cycles | PASS | sim boot 5.4-6.2 s -> 1.0-3.0 s (recovery done after ~0.4 s); 108 + 108 msgs all delivered once |
 
 Open findings:
-- Flash wear (2026-11-13, simulator counters, `tools/stress/wear.py`): nothing near the
-  limit in normal use. The one item worth a later look: the outbox (NVS rs_outbox:q) is
-  rewritten whole (up to 8 x 177 B, ~41 NVS entries) on every add / send, so with the radio
-  overloaded all day, or check-in mode at hundreds of messages a day, NVS lasts ~10 years.
-  Storing only each text's used length would cut that 2-3x. Not urgent.
+- FIXED 2026-11-13: flash wear (simulator counters, `tools/stress/wear.py`): nothing near the
+  limit in normal use. The outbox was rewritten whole (up to 8 x 177 B, ~41 NVS entries) on
+  every add / send (NVS ~10 years with the radio overloaded all day). Now saved without
+  padding (key `q2`): overload ping-pong 173 B / 6.8 entries per save instead of 1,266 B / 41.
 - FIXED 2026-11-12: boot time grew with stored messages (the startup scan opened
   every record: ~36 ms each on COM5, 376 records = ~16 s; near the 85 % mark it would have
   passed a minute). A saved record index now replaces the scan when it matches the file
