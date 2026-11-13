@@ -4251,9 +4251,23 @@ const NavKeyRow kAtlasKeys[] = {                 // two columns of 6, the 12 px 
     {"Q", "add waypoint"},   {"N", "next waypoint"}, {"T", "next contact"},
     {"R", "find place"},     {"Del Del", "remove"},  {"12 Enter", "chat #12"},
 };
+// Library reader and list (K there too).
+const NavKeyRow kReaderKeys[] = {
+    {"Space N", "next page"}, {"B", "previous page"}, {"E X", "half page"},
+    {"W", "wrap on / off"},   {"S F", "pan left/right"}, {"D", "left edge"},
+    {"R", "find"},            {"K", "hide keys"},      {"M", "menu"},
+    {"^", "back to the list"}, {"", ""},              {"", ""},
+};
+const NavKeyRow kLibListKeys[] = {
+    {"1-4", "open that row"}, {"Enter", "open selected"}, {"G V", "up / down"},
+    {"K", "hide keys"},       {"", ""},                {"", ""},
+    {"M", "menu"},            {"^", "close"},          {"", ""},
+    {"", ""},                 {"", ""},                {"", ""},
+};
 constexpr int kNavRowH = 14, kNavRows = 6;
 constexpr int kNavH = kNavRows * kNavRowH + 6;   // 90 px: the map keeps the rest
 bool g_navKeysOpen = false;
+extern bool g_libOpen;
 void mapKey(const KeyEvent& ev);
 
 void navKeysToggle() {
@@ -4274,16 +4288,17 @@ void smallText(int x, int y, const char* s, bool bold) {
 }
 
 // Drawn at the bottom of the map area (y0 .. y0 + kNavH).
-void drawNavKeys(int y0) {
+void drawNavKeys(int y0, const NavKeyRow* rows = kAtlasKeys) {
     fillRect(0, y0, W, kNavH, false);
     box(0, y0, W, kNavH, 1);
     const int colW = W / 2;
     for (int i = 0; i < 2 * kNavRows; i++) {
         const int x = 4 + (i / kNavRows) * colW, y = y0 + 3 + (i % kNavRows) * kNavRowH;
-        smallText(x, y, kAtlasKeys[i].keys, true);
-        const int kw = lv_txt_get_width(kAtlasKeys[i].keys, strlen(kAtlasKeys[i].keys), &lv_font_montserrat_12, 0,
+        if (!rows[i].keys[0]) continue;
+        smallText(x, y, rows[i].keys, true);
+        const int kw = lv_txt_get_width(rows[i].keys, strlen(rows[i].keys), &lv_font_montserrat_12, 0,
                                         LV_TEXT_FLAG_NONE);
-        if (kAtlasKeys[i].what[0]) smallText(x + (kw + 6 > 22 ? kw + 6 : 22), y, kAtlasKeys[i].what, false);
+        if (rows[i].what[0]) smallText(x + (kw + 6 > 22 ? kw + 6 : 22), y, rows[i].what, false);
     }
 }
 
@@ -4301,7 +4316,7 @@ void drawBottomBar() {
     navBox(0, BOT_TOP, BOT_C_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, hk ? 'C' : 0);
     // Middle tab: "Nav / keys" (K) on the Atlas, where it shows the key card; else Atlas (L,
     // the offline map) when the card has maps, else Peers (P). L and P work either way.
-    if (mapview::isOpen()) {
+    if (mapview::isOpen() || g_libOpen) {
         box(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, g_navKeysOpen ? 3 : 1);
         label(BOT_C_W, BOT_TOP + 2, BOT_A_W, 16, "Nav", g_navKeysOpen);
         label(BOT_C_W, BOT_TOP + 19, BOT_A_W, 16, "keys", g_navKeysOpen, kKeyNav);
@@ -5684,9 +5699,11 @@ void openMenu();
 
 // ---- Library (reference texts on the SD card) -----------------------------------------
 // MENU -> Library: the files in <SD>/ratdeckpro/library/ (plain text: frequency card,
-// GhostNet / JS8Call notes, weather radio list ...). Enter / digit opens one; pages with
-// word wrap: N or V = next page, B or G = previous, F = find (case-insensitive, from the
-// next page on), ^ = back to the list / close. Copy files with tools/sdcard/push_files.py.
+// GhostNet / JS8Call notes, weather radio list ...). Enter / digit opens one. Reader keys:
+// Space / N / V next page, B / G previous, E / X up / down half a page, W wrap on/off (off
+// for .csv: each file line whole, cut at the screen edge), S / F pan left / right when wrap
+// is off, D back to the left edge, R find (case-insensitive, from the next page on), K the
+// keys card, ^ back to the list / close. Copy files with tools/sdcard/push_files.py.
 constexpr const char* kLibDir = SD_PATH_ROOT "/library";
 constexpr int kLibMaxFiles = 24, kLibLines = 12, kLibLineH = 17;
 struct LibFile { char name[40]; uint32_t size; };
@@ -5696,9 +5713,14 @@ bool g_libOpen = false, g_libReading = false;
 char g_libPath[96] = "";
 uint32_t g_libSize = 0;
 std::vector<uint32_t> g_libPages;            // start offset of every page read so far
-char g_libText[kLibLines][40];               // the current page, wrapped
+constexpr int kLibLineMax = 256;             // chars kept per line (wrap off: room to pan)
+char g_libText[kLibLines][kLibLineMax];      // the current page
+uint32_t g_libLineOff[kLibLines];            // file offset where each shown line starts
 int g_libTextN = 0;
 uint32_t g_libNext = 0;                      // offset after the current page
+bool g_libWrap = true;                       // false: one file line per screen line, panned
+int g_libCol = 0;                            // wrap off: first character shown
+constexpr int kLibPanCols = 12;              // S / F: about half a screen
 
 void libScan() {
     g_libCount = 0;
@@ -5739,47 +5761,50 @@ int libAscii(const uint8_t* p, int n, char& out) {
     return len;
 }
 
-// Wrap text from `off` into kLibLines lines of at most W-12 px; sets g_libNext.
-void libLoadPage(uint32_t off) {
-    g_libTextN = 0;
-    g_libNext = off;
+// Lay out text from `off`: up to maxLines lines (wrap on: at most W-12 px, broken at the last
+// space; wrap off: one file line each, the first kLibLineMax-1 chars kept). Line i's text
+// goes to text[i] (if text) and its file offset to starts[i]; returns the line count and
+// sets *next to the offset after the last line.
+int libLayout(uint32_t off, int maxLines, char (*text)[kLibLineMax], uint32_t* starts, uint32_t* next) {
+    *next = off;
     File f = g_sdStore.openFile(g_libPath, FILE_READ);
-    if (!f) return;
+    if (!f) return 0;
     f.seek(off);
     static uint8_t buf[2048];
     const int n = f.read(buf, sizeof(buf));
     f.close();
-    if (n <= 0) return;
+    if (n <= 0) return 0;
     const int maxW = W - 12;
-    int i = 0;
-    char line[40];
-    int ll = 0;
-    int lastSpace = -1, lastSpaceIn = 0;     // break point in `line` / in buf
-    int lineStartIn = 0;
-    while (i < n && g_libTextN < kLibLines) {
+    int count = 0, i = 0, ll = 0, lastSpace = -1, lastSpaceIn = 0, lineStartIn = 0;
+    char line[kLibLineMax];
+    auto emit = [&](int len) {
+        line[len] = 0;
+        if (text) strlcpy(text[count], line, kLibLineMax);
+        if (starts) starts[count] = off + (uint32_t)lineStartIn;
+        count++;
+    };
+    while (i < n && count < maxLines) {
         char c;
         const int used = libAscii(buf + i, n - i, c);
         if (c == '\r') { i += used; continue; }
         if (c == '\t') c = ' ';
-        if (c == '\n' || ll >= (int)sizeof(line) - 1) {
-            line[ll] = 0;
-            strlcpy(g_libText[g_libTextN++], line, sizeof(line));
+        if (c == '\n') {
+            emit(ll);
+            i += used;
             ll = 0; lastSpace = -1;
-            i += (c == '\n') ? used : 0;
             lineStartIn = i;
+            continue;
+        }
+        if (!g_libWrap) {                         // keep the start of a long line, skip the rest
+            if (ll < kLibLineMax - 1) line[ll++] = c;
+            i += used;
             continue;
         }
         line[ll] = c;
         line[ll + 1] = 0;
-        if (textW(line) > maxW) {            // wrap at the last space, else hard
-            if (lastSpace > 0) {
-                line[lastSpace] = 0;
-                strlcpy(g_libText[g_libTextN++], line, sizeof(line));
-                i = lastSpaceIn + 1;
-            } else {
-                line[ll] = 0;
-                strlcpy(g_libText[g_libTextN++], line, sizeof(line));
-            }
+        if (ll >= 39 || textW(line) > maxW) {     // wrap at the last space, else hard
+            if (lastSpace > 0) { emit(lastSpace); i = lastSpaceIn + 1; }
+            else emit(ll);
             ll = 0; lastSpace = -1;
             lineStartIn = i;
             continue;
@@ -5788,18 +5813,25 @@ void libLoadPage(uint32_t off) {
         ll++;
         i += used;
     }
-    if (g_libTextN < kLibLines && ll > 0 && i >= n) {   // end of the chunk (= end of file if short)
-        line[ll] = 0;
-        strlcpy(g_libText[g_libTextN++], line, sizeof(line));
-        lineStartIn = i;
+    if (count < maxLines && ll > 0 && i >= n) {   // end of the chunk (= end of file if short)
+        if (n < (int)sizeof(buf) || count == 0) { emit(ll); lineStartIn = i; }
     }
-    g_libNext = off + (uint32_t)lineStartIn;
+    *next = off + (uint32_t)lineStartIn;
+    if (count == 0 && n == (int)sizeof(buf)) *next = off + (uint32_t)n;   // one line longer than the chunk
+    return count;
+}
+
+void libLoadPage(uint32_t off) {
+    g_libTextN = libLayout(off, kLibLines, g_libText, g_libLineOff, &g_libNext);
 }
 
 void libOpenFile(int k) {
     if (k < 0 || k >= g_libCount) return;
     snprintf(g_libPath, sizeof(g_libPath), "%s/%s", kLibDir, g_libFiles[k].name);
     g_libSize = g_libFiles[k].size;
+    const char* dot = strrchr(g_libFiles[k].name, '.');
+    g_libWrap = !(dot && !strcasecmp(dot, ".csv"));   // tables: no wrap, pan instead
+    g_libCol = 0;
     g_libPages.clear();
     g_libPages.push_back(0);
     libLoadPage(0);
@@ -5821,7 +5853,43 @@ void libOpen() {
     requestRedraw();
 }
 
-void libClose() { g_libOpen = false; g_libReading = false; g_libPages.clear(); g_libPages.shrink_to_fit(); requestRedraw(); }
+void libClose() {
+    g_libOpen = false; g_libReading = false; g_navKeysOpen = false;
+    g_libPages.clear(); g_libPages.shrink_to_fit();
+    requestRedraw();
+}
+
+// E / X: half a page (6 lines) up / down. Down pushes the 7th line's offset; up lays out
+// again from the previous stop and goes back 6 lines from the top one.
+void libHalf(int dir) {
+    const int half = kLibLines / 2;
+    if (dir > 0) {
+        if (g_libTextN <= half || g_libNext >= g_libSize) { toast("End of file"); return; }
+        g_libPages.push_back(g_libLineOff[half]);
+    } else {
+        if (g_libPages.size() <= 1) { toast("Start of file"); return; }
+        const uint32_t top = g_libPages.back();
+        const uint32_t prev = g_libPages[g_libPages.size() - 2];
+        static uint32_t st[64];
+        uint32_t at = prev;
+        int n = 0;
+        while (at < top && n < 64) {              // line starts from prev up to top
+            uint32_t nx;
+            const int got = libLayout(at, 64 - n, nullptr, st + n, &nx);
+            if (!got || nx <= at) break;
+            int keep = got;
+            while (keep > 0 && st[n + keep - 1] >= top) keep--;
+            n += keep;
+            if (keep < got) break;
+            at = nx;
+        }
+        g_libPages.pop_back();
+        const uint32_t to = n > half ? st[n - half] : prev;
+        if (to > prev) g_libPages.push_back(to);
+    }
+    libLoadPage(g_libPages.back());
+    requestRedraw();
+}
 
 void libPage(int dir) {
     if (dir > 0) {
@@ -5872,10 +5940,27 @@ void libFind(const char* what) {
 bool gameOpen();
 void libKey(const KeyEvent& ev) {
     const char c = (char)toupper((unsigned char)ev.character);
+    if (c == kKeyNav) { navKeysToggle(); return; }
     if (g_libReading) {
         if (c == 'N' || c == 'V' || ev.space) libPage(+1);
         else if (c == 'B' || c == 'G') libPage(-1);
-        else if (c == 'F') startEntry(Entry::LibFind);
+        else if (c == 'X') libHalf(+1);
+        else if (c == 'E') libHalf(-1);
+        else if (c == 'R') startEntry(Entry::LibFind);
+        else if (c == 'W') {
+            g_libWrap = !g_libWrap;
+            g_libCol = 0;
+            libLoadPage(g_libPages.back());
+            toast(g_libWrap ? "Wrap on" : "Wrap off: S / F pan");
+            Serial.printf("[LIB] wrap %s\n", g_libWrap ? "on" : "off");
+            requestRedraw();
+        } else if ((c == 'S' || c == 'F') && !g_libWrap) {
+            g_libCol += c == 'F' ? kLibPanCols : -kLibPanCols;
+            if (g_libCol < 0) g_libCol = 0;
+            if (g_libCol > kLibLineMax - 2) g_libCol = kLibLineMax - 2;
+            Serial.printf("[LIB] column %d\n", g_libCol);
+            requestRedraw();
+        } else if (c == 'D') { g_libCol = 0; requestRedraw(); }
         else if (c == 'M') { libClose(); openMenu(); }
         return;
     }
@@ -5916,23 +6001,30 @@ void renderLibrary() {
             listRow(LIST_TOP + r * ROW_H, t, sub, k == g_libSel);
         }
         box(0, FOOT_Y, W, FOOT_H, 1);
-        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4 / Enter  G/V  ^ close");
+        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4 / Enter  G/V  K keys");
+        if (g_navKeysOpen) drawNavKeys(FOOT_Y - kNavH, kLibListKeys);
         return;
     }
     const char* nm = strrchr(g_libPath, '/');
     nm = nm ? nm + 1 : g_libPath;
     const unsigned pct = g_libSize ? (unsigned)((uint64_t)g_libPages.back() * 100 / g_libSize) : 0;
-    snprintf(hdr, sizeof(hdr), "p%u %u%% %s", (unsigned)g_libPages.size(), pct, nm);
+    if (g_libCol) snprintf(hdr, sizeof(hdr), "p%u %u%% >%d %s", (unsigned)g_libPages.size(), pct, g_libCol, nm);
+    else snprintf(hdr, sizeof(hdr), "p%u %u%% %s", (unsigned)g_libPages.size(), pct, nm);
     drawHeader(hdr, false);
-    for (int l = 0; l < g_libTextN; l++) text(6, LIST_TOP + l * kLibLineH, g_libText[l], false, W - 10);
+    for (int l = 0; l < g_libTextN; l++) {
+        const char* t = g_libText[l];
+        const int len = (int)strlen(t);
+        text(6, LIST_TOP + l * kLibLineH, g_libWrap ? t : (g_libCol < len ? t + g_libCol : ""), false, W - 10);
+    }
     box(0, FOOT_Y, W, FOOT_H, 1);
     if (g_entry == Entry::LibFind) {
         char t[48];
         snprintf(t, sizeof(t), "Find: %s_", g_buf);
         label(0, FOOT_Y - 1, W, FOOT_H, t);
     } else {
-        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "N/B page  F find  ^ list");
+        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "K keys  R find  ^ list");
     }
+    if (g_navKeysOpen) drawNavKeys(FOOT_Y - kNavH, kReaderKeys);
 }
 
 // ---- Rat Trap (a small puzzle game, MENU -> Library, last row) -----------------------
@@ -6573,7 +6665,7 @@ void cancelEntry() {
 
 void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
-    if (g_navKeysOpen && mapview::isOpen() && !entryActive()) { navKeysToggle(); return; }
+    if (g_navKeysOpen && (mapview::isOpen() || g_libOpen) && !entryActive()) { navKeysToggle(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
     if (g_shareActive && !entryActive()) { g_shareActive = false; toast("Share cancelled"); return; }
     if (g_placeOpen && !entryActive()) { g_placeOpen = false; g_fullRefreshReq = true; requestRedraw(); return; }

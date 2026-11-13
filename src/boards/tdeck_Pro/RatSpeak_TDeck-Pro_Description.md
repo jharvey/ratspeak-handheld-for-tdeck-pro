@@ -774,9 +774,13 @@ tiles (z14–15) to the card (2.1 s).
 
 **M → Library** (hotkey **R**): the text files in `<SD>/ratdeckpro/library/` (frequency card,
 GhostNet / JS8Call notes, NOAA weather radio list ...), sorted by name. A digit or **Enter**
-opens one: word-wrapped pages, header `p3 12% name`; **N** / **V** / **Space** next page,
-**B** / **G** previous, **F** find (any case; jumps to the next match after this page), **^**
-back to the list, again to close. Plain text only (.txt / .md / .csv); a PDF needs a text
+opens one: pages, header `p3 12% name` (`p3 12% >24 name` when panned); **N** / **V** /
+**Space** next page, **B** / **G** previous, **E** / **X** half a page (6 lines) up / down,
+**W** wrap on / off, **R** find (any case; jumps to the next match after this page), **^**
+back to the list, again to close. Wrap is on for text and off for `.csv`: with wrap off each
+file line stays whole on one screen line (the first 255 characters), cut at the screen edge;
+**S** / **F** pan left / right half a screen and **D** goes back to the left edge. **K**, or
+the middle bottom tab ("Nav / keys"), shows a card with these keys (also in the file list). Plain text only (.txt / .md / .csv); a PDF needs a text
 version first. Copy files over USB without removing the card:
 
 ```

@@ -13,9 +13,12 @@ R = Library (in the Menu)
 G / V = up / down
 N / B = next / previous page
 F = find in a list
+K = the keys card on the Atlas and in the Library (also the Nav keys tab)
 0-9 = pick a row by its number
 Enter = open, send, save
 MIC = full screen refresh
+
+Reading a Library file: Space or N next page, B back a page, E / X half a page up / down, W wrap on/off (tables open with wrap off), S / F move left / right when wrap is off, D back to the left edge, R find, ^ back to the list.
 
 While typing: Alt + key changes case, SYM gives digits and symbols. Hotkeys do not work while typing: press ^ first.
 

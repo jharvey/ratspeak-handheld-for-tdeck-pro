@@ -30,6 +30,9 @@ START HERE (handoff 2026-11-11)
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
+- Library reader (2026-11-13): libLayout() lays out a page (wrap on: W-12 px; off: one file line, 255 chars kept);
+  W wrap (off for .csv), S/F pan g_libCol, D left, E/X libHalf() via the offset stack, R find, K card (kReaderKeys /
+  kLibListKeys). sim library.txt + wide_table.csv in libsim's library.
 - Atlas keys (2026-11-13): E S X F pan, D/Enter me, Z/W zoom (MapView::key); Q add / N next waypoint, T contact,
   R find, K = Nav keys card (kAtlasKeys, g_navKeysOpen, map drawn shorter above it), M menu, C I P H navigate.
   Letters: kKeyNav/kKeyFind/kKeyWptAdd/kKeyWptNext/kKeyContact. Middle tab: Nav keys on the map, Atlas if g_haveMaps
