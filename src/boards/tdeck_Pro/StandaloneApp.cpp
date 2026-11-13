@@ -1651,6 +1651,21 @@ bool tbStart();
 void tbStop(const char* why);
 int  trackExportGpx();
 bool g_navOpen = false;              // bearing + distance screen (G on the Atlas)
+// Arrival alerts (functions under "Arrival alerts" below)
+constexpr int kGeofMax = 8;
+struct Geof { uint8_t dest[16]; float lat, lon; uint16_t radius; uint8_t place, repeat, armed, pad; char wname[16]; };
+Geof g_geof[kGeofMax];
+int g_geofCount = 0;
+const uint16_t kGeofSteps[] = {100, 250, 500, 1000, 2000, 5000};
+constexpr int kGeofStepN = sizeof(kGeofSteps) / sizeof(kGeofSteps[0]);
+uint8_t g_gnContacts[MAX_ROWS][16];        // the New alert page: saved contacts to pick from
+int g_gnContactN = 0, g_gnContact = 0, g_gnPlace = 0, g_gnDist = 2;
+bool g_gnRepeat = false;
+void geofText(const Geof& g, char* out, size_t n);
+bool geofAdd(const uint8_t dest[16], int place, uint16_t radius, bool repeat);
+void geofRemove(int i);
+void geofNewStart(const uint8_t* dest);
+void geofLoad();
 void navOpen();
 void navClose();
 void fmtDist(double m, char* out, size_t n);
@@ -2090,7 +2105,7 @@ enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
-    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK
+    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -3031,6 +3046,8 @@ const char* pageTitle(Page p) {
         case PG_ID_ONE:       return "Identity slot";
         case PG_WPTS:         return "Waypoints";
         case PG_TRACK:        return "Track";
+        case PG_GEOFS:        return "Arrival alerts";
+        case PG_GEOF_NEW:     return "New arrival alert";
     }
     return "";
 }
@@ -3459,7 +3476,33 @@ void buildSettingsRows(Page p) {
         srow(RK_PICK, "Volume", "%u%%%s", (unsigned)g_cfg.volume,
              g_cfg.volume == 0 ? " (silent)" : g_cfg.volume == 80 ? " (default)" : g_cfg.volume == 100 ? " (max)" : "");
         srow(RK_ACTION, "Test alert", "Enter = play");
+        srow(RK_MENU, "Arrival alerts", "%d set (contact near a place)", g_geofCount);
         break;
+
+    case PG_GEOFS:
+        for (int i = 0; i < g_geofCount; i++) {
+            char t[40], sub[34];
+            geofText(g_geof[i], t, sizeof(t));
+            snprintf(sub, sizeof(sub), "%s; Enter twice = remove", g_geof[i].repeat ? "every time" : "once");
+            srow(RK_ACTION, t, "%s", sub);
+        }
+        srow(RK_ACTION, "New alert", g_geofCount < kGeofMax ? "contact, place, distance" : "list full (8)");
+        break;
+
+    case PG_GEOF_NEW: {
+        char nm[24], at[24], d[16];
+        if (g_gnContact >= 0 && g_gnContact < g_gnContactN) peerName(g_gnContacts[g_gnContact], nm, sizeof(nm));
+        else snprintf(nm, sizeof(nm), "(no saved contacts)");
+        srow(RK_PICK, "Contact", "%s", nm);
+        if (g_gnPlace <= 0 || g_gnPlace > g_wptCount) snprintf(at, sizeof(at), "me (where I am)");
+        else snprintf(at, sizeof(at), "W%d %s", g_gnPlace, g_wpt[g_gnPlace - 1].name);
+        srow(RK_PICK, "Near", "%s", at);
+        fmtDist(kGeofSteps[g_gnDist], d, sizeof(d));
+        srow(RK_PICK, "Within", "%s", d);
+        srow(RK_TOGGLE, "Repeat", "%s", g_gnRepeat ? "every time they come back" : "once, then removed");
+        srow(RK_ACTION, "Save alert", "Enter = save");
+        break;
+    }
 
     case PG_DIAG: {
         uint32_t s = millis() / 1000;
@@ -3909,7 +3952,28 @@ void activateSetting(int idx) {
             if (g_cfg.beep) g_audio.playMessage();
             if (g_cfg.vibe) vibrate(60);
             toast("Test alert");
+        } else if (idx == 4) pushPage(PG_GEOFS);
+        break;
+
+    case PG_GEOFS:
+        if (idx >= 0 && idx < g_geofCount) {
+            if (confirmTwice(2000 + idx, "remove this alert")) { geofRemove(idx); toast("Alert removed"); }
+        } else if (idx == g_geofCount && g_geofCount < kGeofMax) {
+            geofNewStart(nullptr);
         }
+        break;
+
+    case PG_GEOF_NEW:
+        if (idx == 0 && g_gnContactN) g_gnContact = (g_gnContact + 1) % g_gnContactN;
+        else if (idx == 1) g_gnPlace = (g_gnPlace + 1) % (g_wptCount + 1);
+        else if (idx == 2) g_gnDist = (g_gnDist + 1) % kGeofStepN;
+        else if (idx == 3) g_gnRepeat = !g_gnRepeat;
+        else if (idx == 4) {
+            if (!g_gnContactN) { toast("Save a contact first"); break; }
+            if (geofAdd(g_gnContacts[g_gnContact], g_gnPlace, kGeofSteps[g_gnDist], g_gnRepeat)) { toast("Alert saved"); popPage(); }
+            else toast("List full (8)");
+        }
+        requestRedraw();
         break;
 
     case PG_STORAGE:
@@ -5167,6 +5231,110 @@ int cposSlot(const uint8_t dest[16]) {
     return i;
 }
 
+// ---- Arrival alerts (Settings S.8 Alerts > Arrival alerts) ---------------------------------
+// "Tell me when <contact> is within <distance> of <me | waypoint>": checked whenever their
+// shared position arrives. A beep (+ vibration) and a 15 s message; once = then removed,
+// repeat = again after they have been 25 % further away. Up to 8, NVS rs_geof.
+// (the data is next to the waypoint data near the top)
+
+void geofSave() {
+    Preferences p;
+    if (!p.begin("rs_geof", false)) return;
+    p.putBytes("list", g_geof, sizeof(Geof) * g_geofCount);
+    p.putUChar("n", (uint8_t)g_geofCount);
+    p.end();
+}
+
+void geofLoad() {
+    Preferences p;
+    if (!p.begin("rs_geof", true)) return;
+    const int n = p.getUChar("n", 0);
+    g_geofCount = n <= kGeofMax && p.getBytesLength("list") == sizeof(Geof) * (size_t)n ? n : 0;
+    if (g_geofCount) p.getBytes("list", g_geof, sizeof(Geof) * g_geofCount);
+    p.end();
+}
+
+void geofText(const Geof& g, char* out, size_t n) {
+    char nm[24], d[16];
+    peerName(g.dest, nm, sizeof(nm));
+    fmtDist(g.radius, d, sizeof(d));
+    if (g.place) snprintf(out, n, "%.10s %s of %.10s", nm, d, g.wname);
+    else snprintf(out, n, "%.12s within %s of me", nm, d);
+}
+
+// place 0 = me (wherever I am when their position arrives), n = waypoint n (its spot now).
+bool geofAdd(const uint8_t dest[16], int place, uint16_t radius, bool repeat) {
+    if (g_geofCount >= kGeofMax || radius < 10 || place < 0 || place > g_wptCount) return false;
+    Geof& g = g_geof[g_geofCount];
+    memset(&g, 0, sizeof(g));
+    memcpy(g.dest, dest, 16);
+    g.place = (uint8_t)place;
+    if (place) {
+        g.lat = g_wpt[place - 1].lat; g.lon = g_wpt[place - 1].lon;
+        snprintf(g.wname, sizeof(g.wname), "W%d %s", place, g_wpt[place - 1].name);
+    }
+    g.radius = radius;
+    g.repeat = repeat;
+    g.armed = 1;
+    g_geofCount++;
+    geofSave();
+    char t[40];
+    geofText(g, t, sizeof(t));
+    Serial.printf("[GEOF] new: %s%s\n", t, repeat ? " (repeat)" : "");
+    return true;
+}
+
+void geofRemove(int i) {
+    if (i < 0 || i >= g_geofCount) return;
+    for (int k = i; k < g_geofCount - 1; k++) g_geof[k] = g_geof[k + 1];
+    g_geofCount--;
+    geofSave();
+}
+
+void geofCheck(const uint8_t dest[16], double lat, double lon) {
+    bool changed = false;
+    for (int i = 0; i < g_geofCount; i++) {
+        Geof& g = g_geof[i];
+        if (memcmp(g.dest, dest, 16) != 0) continue;
+        double tla = g.lat, tlo = g.lon;
+        if (!g.place && !ownPosition(tla, tlo)) continue;   // "near me" needs my position
+        const float d = metersBetween(lat, lon, tla, tlo);
+        if (!g.armed) {                                     // repeat: re-arm once well outside
+            if (d > g.radius * 1.25f) { g.armed = 1; changed = true; }
+            continue;
+        }
+        if (d > g.radius) continue;
+        char nm[24], dd[16];
+        peerName(dest, nm, sizeof(nm));
+        fmtDist(d, dd, sizeof(dd));
+        Serial.printf("[GEOF] %s is %s from %s\n", nm, dd, g.place ? g.wname : "me");
+        if (g_cfg.beep) g_audio.playMessage();
+        if (g_cfg.vibe) vibrate(200);
+        toast("%.10s: %s from %.10s", nm, dd, g.place ? g.wname : "you");
+        g_toastUntil = millis() + 15000;
+        if (g.repeat) { g.armed = 0; changed = true; }
+        else { geofRemove(i); i--; changed = false; }
+        requestRedraw();
+    }
+    if (changed) geofSave();
+}
+
+// The New alert page, for a contact (nullptr = the first saved one).
+void geofNewStart(const uint8_t* dest) {
+    loadRows(SCR_CONTACTS);
+    g_gnContactN = 0;
+    g_gnContact = 0;
+    for (int i = 0; i < g_rowCount && g_gnContactN < MAX_ROWS; i++) {
+        if (isSelf(g_rows[i].peer)) continue;
+        if (dest && !memcmp(dest, g_rows[i].peer, 16)) g_gnContact = g_gnContactN;
+        memcpy(g_gnContacts[g_gnContactN++], g_rows[i].peer, 16);
+    }
+    g_gnPlace = g_wptSel >= 0 ? g_wptSel + 1 : 0;
+    g_gnDist = 2;
+    g_gnRepeat = false;
+    pushPage(PG_GEOF_NEW);
+}
+
 void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at) {
     if (isSelf(dest)) return;
     const int found = cposFind(dest);
@@ -5180,6 +5348,7 @@ void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at) {
     char nm[24];
     peerName(dest, nm, sizeof(nm));
     Serial.printf("[LOC] %s at %.5f,%.5f (#%u)\n", nm, lat, lon, (unsigned)g_cpos[i].num);
+    geofCheck(dest, lat, lon);
     if (mapview::isOpen()) requestRedraw();
 }
 
@@ -8675,6 +8844,23 @@ void handleSerialLine(char* p) {
         shareAllTo(to);
         return;
     }
+    if (!strncmp(p, "geof", 4) && (p[4] == 0 || p[4] == ' ')) {   // geof | geof add <hex> me|w<n> <m> [rep] | geof clear
+        char hx[40] = "", at[8] = "";
+        int m = 0, rep = 0;
+        uint8_t h[16];
+        if (!strcmp(p, "geof clear")) { g_geofCount = 0; geofSave(); }
+        else if (!strncmp(p, "geof add ", 9) && sscanf(p + 9, "%39s %7s %d %d", hx, at, &m, &rep) >= 3 && hexToHash(hx, h)) {
+            const int place = (at[0] == 'w' || at[0] == 'W') ? atoi(at + 1) : 0;
+            Serial.printf("[GEOF] add %s\n", geofAdd(h, place, (uint16_t)m, rep != 0) ? "ok" : "failed");
+        }
+        for (int i = 0; i < g_geofCount; i++) {
+            char t[40];
+            geofText(g_geof[i], t, sizeof(t));
+            Serial.printf("[GEOF] %d: %s%s%s\n", i + 1, t, g_geof[i].repeat ? " repeat" : "", g_geof[i].armed ? "" : " (inside)");
+        }
+        Serial.printf("[GEOF] %d alerts\n", g_geofCount);
+        return;
+    }
     if (!strcmp(p, "contacts export")) { Serial.printf("[CONTACTS] exported %d\n", contactsExport()); return; }
     if (!strcmp(p, "contacts import")) { Serial.printf("[CONTACTS] imported %d\n", contactsImport()); return; }
     if (!strncmp(p, "idlescr", 7)) {                   // idlescr [0-3]: idle screen; "idle now"
@@ -8880,8 +9066,21 @@ void handleSerialLine(char* p) {
     } else if (!strncmp(p, "sdarc ", 6)) {
         sdArchiveSet(atoi(p + 6) != 0);
         Serial.printf("[SD] message archive setting %s (applies at next boot)\n", sdArchiveEnabled() ? "on" : "off");
-    } else if (!strcmp(p, "wpt") || !strcmp(p, "wpt clear")) {
-        // wpt = list waypoints; wpt clear = remove all
+    } else if (!strcmp(p, "wpt") || !strcmp(p, "wpt clear") || !strncmp(p, "wpt add ", 8)) {
+        // wpt = list waypoints; wpt clear = remove all; wpt add <lat> <lon> <NAME> (bench)
+        double la = 0, lo = 0;
+        char nm[16] = "";
+        if (!strncmp(p, "wpt add ", 8)) {
+            if (sscanf(p + 8, "%lf %lf %15s", &la, &lo, nm) == 3 && g_wptCount < kWptMax) {
+                Wpt& w = g_wpt[g_wptCount++];
+                w.lat = (float)la; w.lon = (float)lo;
+                strlcpy(w.name, nm, sizeof(w.name));
+                w.at = 0;
+                wptSave();
+                Serial.printf("[WPT] W%d %s at %.5f,%.5f\n", g_wptCount, w.name, la, lo);
+            }
+            return;
+        }
         if (p[3]) { g_wptCount = 0; g_wptSel = -1; wptSave(); Serial.println("[WPT] cleared"); return; }
         for (int i = 0; i < g_wptCount; i++)
             Serial.printf("[WPT] W%d %s %.5f,%.5f\n", i + 1, g_wpt[i].name, g_wpt[i].lat, g_wpt[i].lon);
@@ -9622,6 +9821,7 @@ bool begin() {
     ashareLoad();
     cposLoad();
     wptLoad();
+    geofLoad();
     bootMark("battery, power mode, GPS, vault, settings");
     mapview::setCoordFormatter(fmtCoord);
     g_proto.setMessageCallback(onCommittedMessage);
