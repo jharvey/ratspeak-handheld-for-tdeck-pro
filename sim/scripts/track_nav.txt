@@ -1,0 +1,48 @@
+# Breadcrumb track + track back + GPX + the bearing / distance screen (G on the Atlas).
+# The sim's GPS fix is 43.6532,-79.3832; a 5-point track ends there. Track back guides to
+# the earlier points; G shows the arrow + distance; then a contact with a position.
+# Run: run-script.bat scripts\track_nav.txt cmap
+gps on
+expect 60000 [BOOT] ready
+wait 3000
+serial track clear
+serial track add 43.6600 -79.3700
+serial track add 43.6580 -79.3740
+serial track add 43.6560 -79.3780
+serial track add 43.6540 -79.3815
+serial track add 43.6533 -79.3830
+expect 3000 [TRACK] point 5
+serial track gpx
+expect 5000 [TRACK] gpx 5 points
+key G
+wait 800
+key A
+expect 5000 [MAP] open
+wait 7000
+key B
+expect 3000 [TRACK] back on: point 4 of 5
+wait 2000
+shot nav-01-trackback-map.png
+key G
+expect 3000 [NAV] open kind=2 idx=3
+wait 2500
+shot nav-02-trackback-arrow.png
+key G
+expect 3000 [NAV] closed
+key B
+expect 3000 [TRACK] back stopped
+# A contact 1.2 km north-east, its fix 7 min old: N selects it, G shows the arrow
+serial contact 0000000000000000000000000000a11c Alice
+serial cpos 0000000000000000000000000000a11c 43.6610 -79.3720 7
+wait 1000
+key N
+expect 3000 [MAP] contact
+key G
+expect 3000 [NAV] open kind=0
+wait 2500
+shot nav-03-contact.png
+key BACK
+expect 3000 [NAV] closed
+key BACK
+wait 800
+quit

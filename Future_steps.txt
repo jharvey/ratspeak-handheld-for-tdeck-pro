@@ -299,17 +299,17 @@ Everyday use
 - 5. Backup / restore to SD: identity, contacts, waypoints, settings, encrypted with the
   lock password (see Security), to rebuild a lost or wiped unit.
 Maps / location
-- 6. Breadcrumb track: log my path to SD, draw it on the Atlas, export GPX, "track back".
+- DONE 2026-11-13 (branch claude/features-6-11) - 6. Breadcrumb track: log my path to SD, draw it on the Atlas, export GPX, "track back".
   (Also listed under the contacts-on-the-map Next items.)
-- 7. Bearing + distance screen to a contact or waypoint: big arrow + distance. (See
+- DONE 2026-11-13 (branch claude/features-6-11) - 7. Bearing + distance screen to a contact or waypoint: big arrow + distance. (See
   "Navigate to a contact" under Team awareness.)
-- 8. Arrival / geofence alerts: "tell me when <contact> is within 500 m of <waypoint>".
+- DONE 2026-11-13 (branch claude/features-6-11) - 8. Arrival / geofence alerts: "tell me when <contact> is within 500 m of <waypoint>".
 Field / test tools
-- 9. Range-test mode: two units ping each other and log RSSI / SNR / GPS position to a CSV
+- DONE 2026-11-13 (branch claude/features-6-11) - 9. Range-test mode: two units ping each other and log RSSI / SNR / GPS position to a CSV
   on SD -> coverage map (pairs with RF coverage prediction above).
-- 10. Measured battery-life estimate on screen ("about 31 h left in Balanced") from the
+- DONE 2026-11-13 (branch claude/features-6-11) - 10. Measured battery-life estimate on screen ("about 31 h left in Balanced") from the
   actual drain; builds on the battery-life test (Stress_test_plan.md section 4b).
-- 11. Low-battery notice: at 10 %, send one chosen contact "battery dying" + my position.
+- DONE 2026-11-13 (branch claude/features-6-11) - 11. Low-battery notice: at 10 %, send one chosen contact "battery dying" + my position.
 Nice to have
 - 12. Group threads: one message to a named set of contacts.
 - 13. Relay mode when plugged in: act as a Reticulum transport node on USB power to extend

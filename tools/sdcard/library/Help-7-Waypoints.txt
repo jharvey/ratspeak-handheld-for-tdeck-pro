@@ -11,4 +11,10 @@ Find a place (town, lake, summit):
 2. Enter shows the 6 nearest matches.
 3. A digit jumps there. Alt+P right after saves it as a waypoint. ^ closes the list.
 
-Track (breadcrumbs): M, S, 1, 0 (row 10) turns it on; a dotted line shows where you walked. To clear it: M, S, 1, V down to row 11 (Clear track), Enter twice.
+Track (breadcrumbs): M, S, 1, 0 (row 10) opens the Track page:
+1 Record track on/off: a point every 20 m moved, or every 10 min standing; a dotted line on the map.
+2 Track back: a line to the earlier track points, one after the other, back to the start (on the map: B).
+3 Export as GPX: ratdeckpro/tracks/track-<date>-<time>.gpx, for Google Earth / Gaia / OsmAnd.
+4 Clear track: Enter twice.
+The track logs when the GPS is on anyway (Full, Balanced every 15 min ...). Custom power mode has "Track wakes GPS" for more points.
+Units (m/km or ft/mi): M, S, 1, row 11.

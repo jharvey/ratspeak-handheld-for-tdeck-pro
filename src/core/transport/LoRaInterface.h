@@ -41,6 +41,10 @@ public:
     // reuses the existing queue/split/airtime path.
     using RawSink = std::function<void(const uint8_t* data, size_t len)>;
     void setRawSink(RawSink sink) { _rawSink = sink; }
+    // Optional application tap on single-frame RX before the sink (range test pings): return
+    // true to consume the frame (it does not reach the protocol).
+    using RxTap = bool (*)(const uint8_t* data, size_t len, int rssi, float snr);
+    void setRxTap(RxTap tap) { _rxTap = tap; }
     // True when the new packet was handed to the radio or retained in the bounded TX queue.
     bool sendRaw(const uint8_t* data, size_t len) { return accepted(send_outgoing(data, len)); }
     bool sendLeased(const uint8_t* data, size_t len, const handheld::TxLease& lease) {
@@ -103,6 +107,7 @@ private:
     static constexpr size_t RETICULUM_MTU = 500;
 
     RawSink _rawSink;
+    RxTap _rxTap = nullptr;
 
     char _name[32] = {};
     bool _online = false;

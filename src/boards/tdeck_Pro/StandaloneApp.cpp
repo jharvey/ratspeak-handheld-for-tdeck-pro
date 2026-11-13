@@ -116,6 +116,7 @@ bool g_protoReady = false;
 
 SX1262*        g_radio  = nullptr;
 LoRaInterface* g_loraIf = nullptr;
+bool rtRxTap(const uint8_t* d, size_t n, int rssi, float snr);
 
 constexpr const char* kDefaultSelfName = "MyRatSpeakPro";
 
@@ -138,6 +139,10 @@ struct Config {
     uint32_t libLastOff  = 0;       // and the page it was on
     bool     libLastWrap = true;
     bool     clock12     = false;   // 12 h clock (1:45 PM) instead of 24 h
+    bool     imperial    = false;   // distances in ft / mi instead of m / km
+    uint8_t  lowBatPct   = 0;       // low-battery notice at this % (0 = off)
+    uint8_t  lowBatTo[16] = {};     // ... sent to this contact
+    bool     lowBatSent  = false;   // sent in this discharge (reset when charging)
     bool     simple      = false;   // Simple mode (wizard step 7; the mode itself comes later)
     bool     wizDone     = true;    // setup wizard finished or skipped
     bool     trackOn     = false;   // breadcrumb track recording (S.1.10)
@@ -254,6 +259,10 @@ void loadConfig() {
     g_cfg.libLastOff  = p.getUInt("libOff", 0);
     g_cfg.libLastWrap = p.getBool("libWrap", true);
     g_cfg.clock12     = p.getBool("clk12", false);
+    g_cfg.imperial    = p.getBool("imperial", false);
+    g_cfg.lowBatPct   = p.getUChar("lbPct", 0);
+    p.getBytes("lbTo", g_cfg.lowBatTo, 16);
+    g_cfg.lowBatSent  = p.getBool("lbSent", false);
     g_cfg.simple      = p.getBool("simple", false);
     // Units that had settings before the wizard existed never see it (flag absent = done).
     g_cfg.wizDone     = p.isKey("wizDone") ? p.getBool("wizDone", true) : true;
@@ -302,6 +311,10 @@ void saveConfig() {
     p.putUInt("libOff", g_cfg.libLastOff);
     p.putBool("libWrap", g_cfg.libLastWrap);
     p.putBool("clk12", g_cfg.clock12);
+    p.putBool("imperial", g_cfg.imperial);
+    p.putUChar("lbPct", g_cfg.lowBatPct);
+    p.putBytes("lbTo", g_cfg.lowBatTo, 16);
+    p.putBool("lbSent", g_cfg.lowBatSent);
     p.putBool("simple", g_cfg.simple);
     p.putBool("wizDone", g_cfg.wizDone);
     p.putBool("trackOn", g_cfg.trackOn);
@@ -715,6 +728,13 @@ void fmtTime(char* out, size_t n) {
     else snprintf(out, n, "%02d:%02d", t.tm_hour, t.tm_min);
 }
 
+// A minute of the day as "7:30 am" (12 h clock) or "07:30".
+void fmtClockMin(int m, char* out, size_t n) {
+    const int h = (m / 60) % 24, mm = m % 60;
+    if (g_cfg.clock12) snprintf(out, n, "%d:%02d %s", h % 12 ? h % 12 : 12, mm, h < 12 ? "am" : "pm");
+    else snprintf(out, n, "%02d:%02d", h, mm);
+}
+
 void fmtDate(char* out, size_t n) {
     struct tm t;
     if (localNow(t)) snprintf(out, n, "%02d/%02d/%04d", t.tm_mon + 1, t.tm_mday, t.tm_year + 1900);
@@ -750,6 +770,9 @@ bool setClockLocal(int y, int mo, int d, int hh, int mm) {
 HardwareSerial* g_gpsSerial = nullptr;
 bool    g_gpsFix = false;
 uint8_t g_gpsSats = 0;
+float    g_gpsSpeedKn = 0, g_gpsCourse = 0;   // RMC: speed over ground (knots), course (deg true)
+bool     g_gpsCourseOk = false;
+uint32_t g_gpsCourseAt = 0;
 bool    g_gpsPosValid = false;   // last GGA/RMC with a fix carried a position
 double  g_gpsLat = 0, g_gpsLon = 0;
 uint32_t g_gpsPosAt = 0;
@@ -1056,6 +1079,12 @@ void gpsHandleSentence(char* line) {
             g_gpsUtcValid = true;
         }
         if (valid && n > 6) gpsNotePosition(fld[3], fld[4], fld[5], fld[6]);
+        if (valid && n > 8) {                    // speed + course over ground (no compass on board)
+            g_gpsSpeedKn = fld[7][0] ? (float)atof(fld[7]) : 0.0f;
+            g_gpsCourseOk = fld[8][0] != 0;
+            if (g_gpsCourseOk) g_gpsCourse = (float)atof(fld[8]);
+            g_gpsCourseAt = millis();
+        }
         g_gpsFix = valid;
     } else if (gga && n > 7) {
         if (fld[7][0]) g_gpsSats = (uint8_t)atoi(fld[7]);
@@ -1171,6 +1200,7 @@ bool initRadio() {
     g_radio->setPreambleLength(LORA_DEFAULT_PREAMBLE);
     g_radio->receive();
     g_loraIf = new LoRaInterface(g_radio, "LoRa");
+    g_loraIf->setRxTap(rtRxTap);
     if (!g_loraIf || !g_loraIf->start()) return false;
     Serial.printf("[LORA] online %lu Hz SF%d\n", (unsigned long)LORA_DEFAULT_FREQ, LORA_DEFAULT_SF);
     return true;
@@ -1564,6 +1594,8 @@ uint8_t g_cardPeer[16];
 int     g_cardSel = 0;
 bool    g_shareActive = false;     // the Contacts list is picking who gets g_sharePeer
 bool    g_shareAll = false;        // ... and gets every contact's card (Settings S.6)
+bool    g_pickRt = false;          // ... or is the range-test partner (Settings S.7)
+bool    g_pickLowbat = false;      // ... or gets the low-battery notice (Settings S.5)
 uint8_t g_sharePeer[16];
 
 int hexNib(char c) {
@@ -1633,6 +1665,38 @@ bool ownPosition(double& lat, double& lon);
 void distText(double la, double lo, double tla, double tlo, char* out, size_t n);
 void trackLoad();
 void trackClear();
+bool g_tbOn = false;                 // track back: guide to earlier track points, newest first
+int  g_tbIdx = 0;                    // the track point being walked to
+bool tbStart();
+void tbStop(const char* why);
+int  trackExportGpx();
+bool g_navOpen = false;              // bearing + distance screen (G on the Atlas)
+int  batHoursLeft10(int* dataMin);
+void batLeftText(char* out, size_t n);
+bool g_rtOn = false, g_rtOpen = false; // range test running / its screen shown
+void rtStart(const uint8_t peer[16], int everySecs);
+void rtStop();
+// Arrival alerts (functions under "Arrival alerts" below)
+constexpr int kGeofMax = 8;
+struct Geof { uint8_t dest[16]; float lat, lon; uint16_t radius; uint8_t place, repeat, armed, pad; char wname[16]; };
+Geof g_geof[kGeofMax];
+int g_geofCount = 0;
+const uint16_t kGeofSteps[] = {100, 250, 500, 1000, 2000, 5000};
+constexpr int kGeofStepN = sizeof(kGeofSteps) / sizeof(kGeofSteps[0]);
+uint8_t g_gnContacts[MAX_ROWS][16];        // the New alert page: saved contacts to pick from
+int g_gnContactN = 0, g_gnContact = 0, g_gnPlace = 0, g_gnDist = 2;
+bool g_gnRepeat = false;
+void geofText(const Geof& g, char* out, size_t n);
+bool geofAdd(const uint8_t dest[16], int place, uint16_t radius, bool repeat);
+void geofRemove(int i);
+void geofNewStart(const uint8_t* dest);
+void geofLoad();
+void navOpen();
+void navClose();
+void fmtDist(double m, char* out, size_t n);
+float metersBetween(double la1, double lo1, double la2, double lo2);
+bool ownPosition(double& lat, double& lon);
+extern char g_trackGpx[40];
 void wptSelect(int i);
 void openMap();
 void wptOpenFromSettings(int i);
@@ -2044,7 +2108,8 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              WptName,                           // map P: waypoint name
                              LibFind,                           // library: find text
                              PlaceFind,                         // map R: place name
-                             FoundText };                       // idle "If found": owner text
+                             FoundText,                         // idle "If found": owner text
+                             CheckinTime };                     // S.4.8: hhmm
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -2057,6 +2122,7 @@ bool passEntry(Entry e) { return e == Entry::PassOld || e == Entry::PassNew || e
 bool browseMode()  { return !entryActive(); }
 bool entryNumeric() {
     return g_entry == Entry::RtcField || g_entry == Entry::IdleSecs || g_entry == Entry::TcpPort ||
+           g_entry == Entry::CheckinTime ||
            g_entry == Entry::MapNum ||
            g_entry == Entry::Latitude || g_entry == Entry::Longitude;
 }
@@ -2066,7 +2132,7 @@ enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
-    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS
+    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW, PG_LOWBAT
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -2967,6 +3033,8 @@ void srow(uint8_t kind, const char* name, const char* subFmt, ...) {
     if (g_srowCount >= MAX_SET_ROWS) return;
     SetRow& r = g_srows[g_srowCount];
     snprintf(r.title, sizeof(r.title), "%d : %s : %s", g_srowCount + 1, kKindName[kind], name);
+    if (textW(r.title) > W - 16)              // too long for one line: the kind word goes
+        snprintf(r.title, sizeof(r.title), "%d : %s", g_srowCount + 1, name);
     va_list ap;
     va_start(ap, subFmt);
     vsnprintf(r.sub, sizeof(r.sub), subFmt ? subFmt : "", ap);
@@ -3001,11 +3069,15 @@ const char* pageTitle(Page p) {
         case PG_POWER_CUSTOM: return "Custom power";
         case PG_ENERGY:       return "Energy monitor";
         case PG_ENERGY_GRAPH: return "Energy trend";
-        case PG_CHECKIN:      return "Check-in schedule";
+        case PG_CHECKIN:      return "Check-in";
         case PG_TCP:          return "TCP hub";
         case PG_IDS:          return "Identities";
         case PG_ID_ONE:       return "Identity slot";
         case PG_WPTS:         return "Waypoints";
+        case PG_TRACK:        return "Track";
+        case PG_GEOFS:        return "Arrival alerts";
+        case PG_LOWBAT:       return "Low-battery notice";
+        case PG_GEOF_NEW:     return "New arrival alert";
     }
     return "";
 }
@@ -3025,6 +3097,12 @@ const char* editingSub(Entry kind, int arg = 0) {
     if (g_bufLen > kShow) snprintf(s, sizeof(s), ">..%s_", g_buf + g_bufLen - (kShow - 2));
     else                  snprintf(s, sizeof(s), ">%s_", g_buf);
     return s;
+}
+
+void checkinEveryText(char* out, size_t n) {
+    if (g_pw.checkinEvery % 60) snprintf(out, n, "%u min", (unsigned)g_pw.checkinEvery);
+    else if (g_pw.checkinEvery == 1440) snprintf(out, n, "day");
+    else snprintf(out, n, "%u h", (unsigned)(g_pw.checkinEvery / 60));
 }
 
 void buildSettingsRows(Page p) {
@@ -3077,19 +3155,28 @@ void buildSettingsRows(Page p) {
             srow(RK_INFO, "GPS position", "%s", pos);
             if (ashareActive()) srow(RK_ACTION, "Location auto-share", "%d on; Enter = stop all", ashareActive());
             else srow(RK_INFO, "Location auto-share", "off (set in a chat: MIC)");
-            srow(RK_MENU, "Waypoints", "%d saved (map: Alt+P add, P next)", g_wptCount);
-            srow(RK_TOGGLE, "Track (breadcrumbs)", "%s%s", g_cfg.trackOn ? "ON" : "OFF",
-                 g_cfg.trackOn ? ", GPS wakes ~2 min" : "");
-            srow(RK_ACTION, "Clear track", "%d points%s", g_trackN, g_trackLoaded ? "" : " (on SD)");
+            srow(RK_MENU, "Waypoints", "%d saved (Alt+P adds)", g_wptCount);
+            srow(RK_MENU, "Track (breadcrumbs)", "%s, %d points%s", g_cfg.trackOn ? "ON" : "OFF", g_trackN,
+                 g_tbOn ? ", track back" : "");
+            srow(RK_PICK, "Units", "%s", g_cfg.imperial ? "ft / mi" : "m / km");
             static const char* const kFmt[3] = {"Decimal 43.64012,-70.92011", "Deg min sec 43 38'24\"N", "MGRS 19T CJ 4513 3368"};
             srow(RK_PICK, "Coordinates", "%s", kFmt[g_cfg.coordFmt % 3]);
         }
         break;
 
+    case PG_TRACK:
+        srow(RK_TOGGLE, "Record track", "%s, %d points", g_cfg.trackOn ? "ON" : "OFF", g_trackN);
+        if (g_tbOn) srow(RK_ACTION, "Track back", "ON: to point %d; Enter = stop", g_tbIdx + 1);
+        else srow(RK_ACTION, "Track back", "guide me back along it");
+        srow(RK_ACTION, "Export as GPX", "%s", g_trackGpx[0] ? g_trackGpx : "<SD>/ratdeckpro/tracks/");
+        srow(RK_ACTION, "Clear track", "Enter twice");
+        srow(RK_INFO, "GPS for the track", "%s", g_pwEff.trackGps ? "wakes it every ~2 min" : "logs when it is on anyway");
+        break;
+
     case PG_WPTS: {
         double la = 0, lo = 0;
         const bool own = ownPosition(la, lo);
-        if (!g_wptCount) srow(RK_INFO, "No waypoints yet", "map: Alt+P marks one at the centre");
+        if (!g_wptCount) srow(RK_INFO, "No waypoints yet", "Alt+P on the map adds one");
         for (int i = 0; i < g_wptCount && i < MAX_SET_ROWS; i++) {
             char nm[24], d[24];
             snprintf(nm, sizeof(nm), "W%d %s", i + 1, g_wpt[i].name);
@@ -3197,14 +3284,17 @@ void buildSettingsRows(Page p) {
     case PG_POWER: {
         // Estimated runtime on a full battery (gauge FullChargeCapacity, else ~1450 mAh).
         const uint16_t cap = (g_bat.valid && g_bat.fccMah >= 500 && g_bat.fccMah <= 6000) ? g_bat.fccMah : 1450;
-        static const char* kNote[power::MODE_CUSTOM] = {"always awake", "wakes each 1s", "wakes each 60s",
+        static const char* kNote[power::MODE_CUSTOM] = {"always awake", "wake 1 s", "wake 60 s",
                                                         "LoRa only", "LoRa on key", ""};
-        char rt[16], ci[20];
-        snprintf(ci, sizeof(ci), "LoRa at :%02u", (unsigned)g_pw.checkinMin);
+        char rt[16], ci[24], at[12];
+        fmtClockMin(g_pw.checkinStart, at, sizeof(at));
+        checkinEveryText(ci, sizeof(ci));
         for (uint8_t m = power::MODE_FULL; m < power::MODE_CUSTOM; m++) {
             power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(power::preset(m)));
-            srow(RK_PICK, power::modeName(m), "%s%s, %s", g_pw.mode == m ? "ON " : "", rt,
-                 m == power::MODE_CHECKIN ? ci : kNote[m]);
+            if (m == power::MODE_CHECKIN)        // a menu: the Check-in page (time, every ...)
+                srow(RK_MENU, "Check-in", "%s%s, every %s", g_pw.mode == m ? "ON " : "", at, ci);
+            else
+                srow(RK_PICK, power::modeName(m), "%s%s, %s", g_pw.mode == m ? "ON " : "", rt, kNote[m]);
         }
         if (g_pw.customSet || g_pw.mode == power::MODE_CUSTOM) {
             power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(g_pw.custom));
@@ -3212,8 +3302,7 @@ void buildSettingsRows(Page p) {
         } else {
             srow(RK_MENU, "Custom", "set your own");
         }
-        srow(RK_MENU, "Check-in schedule", ":%02u every %u min%s", (unsigned)g_pw.checkinMin,
-             (unsigned)g_pw.checkinEvery, g_outboxCount ? ", msgs waiting" : "");
+        srow(RK_MENU, "Check-in sched", "%s, every %s%s", at, ci, g_outboxCount ? ", msgs wait" : "");
         srow(RK_MENU, "Energy monitor", "what uses the battery");
         srow(RK_TOGGLE, "Full power on USB", "%s", g_pw.fullOnUsb ? "ON" : "OFF");
         const uint32_t tot = g_pwAwakeMs + g_pwSleepMs;
@@ -3232,9 +3321,16 @@ void buildSettingsRows(Page p) {
 
     case PG_CHECKIN: {
         const power::CheckinPhase ph = checkinNow();
-        srow(RK_PICK, "Check-in minute", ":%02u (Enter = +5)", (unsigned)g_pw.checkinMin);
-        if (g_pw.checkinEvery % 60) srow(RK_PICK, "Every", "%u min", (unsigned)g_pw.checkinEvery);
-        else                        srow(RK_PICK, "Every", "%u h", (unsigned)(g_pw.checkinEvery / 60));
+        char at[12], ev[16];
+        fmtClockMin(g_pw.checkinStart, at, sizeof(at));
+        checkinEveryText(ev, sizeof(ev));
+        srow(RK_TOGGLE, "Use Check-in mode", "%s", g_pw.mode == power::MODE_CHECKIN ? "ON" : "OFF");
+        e = editingSub(Entry::CheckinTime);
+        if (e) srow(RK_ENTRY, "Check-in time (hhmm)", "%s", e);
+        else   srow(RK_ENTRY, "Check-in time", "%s", at);
+        if (g_cfg.clock12) srow(RK_PICK, "am / pm", "%s", g_pw.checkinStart < 720 ? "am" : "pm");
+        else               srow(RK_INFO, "am / pm", "- (24 h clock)");
+        srow(RK_PICK, "Every", "%s", ev);
         if (ph.inWindow) {
             srow(RK_INFO, "Now", "window open, LoRa on");
         } else {
@@ -3242,8 +3338,9 @@ void buildSettingsRows(Page p) {
             struct tm lt;
             applyTz();
             localtime_r(&at, &lt);
-            srow(RK_INFO, "Next check-in", "%02d:%02d (in %lu min)", lt.tm_hour, lt.tm_min,
-                 (unsigned long)(ph.toNextS / 60));
+            char nx[12];
+            fmtClockMin(lt.tm_hour * 60 + lt.tm_min, nx, sizeof(nx));
+            srow(RK_INFO, "Next check-in", "%s (in %lu min)", nx, (unsigned long)(ph.toNextS / 60));
         }
         srow(RK_INFO, "Messages waiting", "%d", g_outboxCount);
         if (handheld::ClockConfidence::synchronized()) {
@@ -3256,7 +3353,7 @@ void buildSettingsRows(Page p) {
         } else {
             srow(RK_INFO, "Clock", "own (not synced yet)");
         }
-        srow(RK_INFO, "How it works", "LoRa on 1 min early, 3 min after");
+        srow(RK_INFO, "How it works", "LoRa 1 min before, 3 after");
         break;
     }
 
@@ -3313,6 +3410,7 @@ void buildSettingsRows(Page p) {
         srow(RK_TOGGLE, "Key backlight", "%s", c.keyLight ? "allowed" : "OFF");
         srow(RK_TOGGLE, "Touch", "%s", c.touchOnKey ? "1 min after a key" : "always on");
         srow(RK_TOGGLE, "Map wakes GPS", "%s", c.mapGps ? "ON (fix when the map opens)" : "OFF (last fix)");
+        srow(RK_TOGGLE, "Track wakes GPS", "%s", c.trackGps ? "ON (every ~2 min)" : "OFF (when GPS is on)");
         srow(RK_ACTION, "Reset to Balanced", "Enter = reset");
         break;
     }
@@ -3366,7 +3464,25 @@ void buildSettingsRows(Page p) {
         srow(RK_INFO, "Full-charge cal", g_fullSoc < 100 ? "gauge %u%% = 100%%" : "none yet (charge to full)",
              (unsigned)g_fullSoc);
         srow(RK_ACTION, "Reset calibration", g_fullSoc < 100 ? "Enter = reset" : "-");
+        {
+            char t[48];
+            batLeftText(t, sizeof(t));
+            srow(RK_INFO, "Time left (measured)", "%s", t);
+        }
+        srow(RK_MENU, "Low-battery notice", "%s", g_cfg.lowBatPct ? "on" : "off");
         break;
+
+    case PG_LOWBAT: {
+        if (g_cfg.lowBatPct) srow(RK_PICK, "Send at", "%u %%", (unsigned)g_cfg.lowBatPct);
+        else srow(RK_PICK, "Send at", "off");
+        char nm[24];
+        const bool to = memcmp(g_cfg.lowBatTo, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) != 0;
+        if (to) peerName(g_cfg.lowBatTo, nm, sizeof(nm)); else snprintf(nm, sizeof(nm), "nobody yet");
+        srow(RK_ACTION, "Send to", "%s; Enter = pick", nm);
+        srow(RK_INFO, "This discharge", "%s", g_cfg.lowBatSent ? "sent (again after charging)" : "not sent");
+        srow(RK_INFO, "Message", "battery %%, last position");
+        break;
+    }
 
     case PG_BATLOG:
         srow(RK_TOGGLE, "Internal log", "%s (%u samples)", g_batLogInternal ? "ON" : "OFF", (unsigned)g_batLogCount);
@@ -3381,11 +3497,11 @@ void buildSettingsRows(Page p) {
         srow(RK_ENTRY, "Display name", "%s", g_selfName);
         srow(RK_INFO, "LXMF address", "..%.16s", g_destHex[0] ? g_destHex + 16 : "");
         srow(RK_ACTION, "Announce ID", "last: %s", g_announceStr);
-        srow(RK_MENU, "Identities", "%d saved (new / switch / erase)", g_idMgr.count());
+        srow(RK_MENU, "Identities", "%d saved: new/switch/erase", g_idMgr.count());
         srow(RK_ACTION, "Run setup wizard", "name, clock, energy, idle ...");
-        srow(RK_ACTION, "Share all contacts", "a card per contact to one radio");
-        srow(RK_ACTION, "Export contacts to SD", "ratdeckpro/contacts.txt");
-        srow(RK_ACTION, "Import contacts from SD", "ratdeckpro/contacts.txt");
+        srow(RK_ACTION, "Share all contacts", "every contact, as cards");
+        srow(RK_ACTION, "Export contacts (SD)", "ratdeckpro/contacts.txt");
+        srow(RK_ACTION, "Import contacts (SD)", "ratdeckpro/contacts.txt");
         break;
 
     case PG_IDS: {
@@ -3416,6 +3532,7 @@ void buildSettingsRows(Page p) {
              g_loraPreset ? " (peers need same)" : "");
         srow(RK_INFO, "Last RSSI", "%d dBm", loraRssi());
         srow(RK_INFO, "Last SNR", "%.1f dB", loraSnr());
+        srow(RK_ACTION, "Range test", g_rtOn ? "running; Enter = show" : "ping a radio, log to SD");
         break;
 
     case PG_ALERTS:
@@ -3424,7 +3541,33 @@ void buildSettingsRows(Page p) {
         srow(RK_PICK, "Volume", "%u%%%s", (unsigned)g_cfg.volume,
              g_cfg.volume == 0 ? " (silent)" : g_cfg.volume == 80 ? " (default)" : g_cfg.volume == 100 ? " (max)" : "");
         srow(RK_ACTION, "Test alert", "Enter = play");
+        srow(RK_MENU, "Arrival alerts", "%d set (contact near a place)", g_geofCount);
         break;
+
+    case PG_GEOFS:
+        for (int i = 0; i < g_geofCount; i++) {
+            char t[40], sub[34];
+            geofText(g_geof[i], t, sizeof(t));
+            snprintf(sub, sizeof(sub), "%s; Enter twice = remove", g_geof[i].repeat ? "every time" : "once");
+            srow(RK_ACTION, t, "%s", sub);
+        }
+        srow(RK_ACTION, "New alert", g_geofCount < kGeofMax ? "contact, place, distance" : "list full (8)");
+        break;
+
+    case PG_GEOF_NEW: {
+        char nm[24], at[24], d[16];
+        if (g_gnContact >= 0 && g_gnContact < g_gnContactN) peerName(g_gnContacts[g_gnContact], nm, sizeof(nm));
+        else snprintf(nm, sizeof(nm), "(no saved contacts)");
+        srow(RK_PICK, "Contact", "%s", nm);
+        if (g_gnPlace <= 0 || g_gnPlace > g_wptCount) snprintf(at, sizeof(at), "me (where I am)");
+        else snprintf(at, sizeof(at), "W%d %s", g_gnPlace, g_wpt[g_gnPlace - 1].name);
+        srow(RK_PICK, "Near", "%s", at);
+        fmtDist(kGeofSteps[g_gnDist], d, sizeof(d));
+        srow(RK_PICK, "Within", "%s", d);
+        srow(RK_TOGGLE, "Repeat", "%s", g_gnRepeat ? "every time they come back" : "once, then removed");
+        srow(RK_ACTION, "Save alert", "Enter = save");
+        break;
+    }
 
     case PG_DIAG: {
         uint32_t s = millis() / 1000;
@@ -3509,6 +3652,8 @@ void loadRtcStaging() {
 
 void startNameEntry(const uint8_t peer[16]);
 
+void goScreen(ScreenId s);
+
 void activateSetting(int idx) {
     switch (g_page) {
     case PG_ROOT: {
@@ -3526,19 +3671,31 @@ void activateSetting(int idx) {
         else if (idx == 5) { g_cfg.gpsAutoSync = !g_cfg.gpsAutoSync; saveConfig(); requestRedraw(); }
         else if (idx == 7 && ashareActive()) { ashareStopAll(); toast("All auto-sharing stopped"); }
         else if (idx == 8) pushPage(PG_WPTS);
-        else if (idx == 9) {
+        else if (idx == 9) { trackLoad(); pushPage(PG_TRACK); }
+        else if (idx == 10) { g_cfg.imperial = !g_cfg.imperial; saveConfig(); requestRedraw(); }
+        else if (idx == 11) {
+            g_cfg.coordFmt = (uint8_t)((g_cfg.coordFmt + 1) % 3);
+            saveConfig();
+            Serial.printf("[CFG] coordinates %s\n", g_cfg.coordFmt == 2 ? "MGRS" : g_cfg.coordFmt == 1 ? "DMS" : "decimal");
+            requestRedraw();
+        }
+        break;
+
+    case PG_TRACK:
+        if (idx == 0) {
             g_cfg.trackOn = !g_cfg.trackOn;
             saveConfig();
             if (g_cfg.trackOn) trackLoad();
             toast(g_cfg.trackOn ? "Track on" : "Track off (kept)");
             requestRedraw();
-        } else if (idx == 10) {
-            if (confirmTwice(1010, "clear the track")) { trackClear(); toast("Track cleared"); }
-        } else if (idx == 11) {
-            g_cfg.coordFmt = (uint8_t)((g_cfg.coordFmt + 1) % 3);
-            saveConfig();
-            Serial.printf("[CFG] coordinates %s\n", g_cfg.coordFmt == 2 ? "MGRS" : g_cfg.coordFmt == 1 ? "DMS" : "decimal");
+        } else if (idx == 1) {
+            if (g_tbOn) tbStop("stopped"); else if (tbStart()) openMap();
+        } else if (idx == 2) {
+            const int n = trackExportGpx();
+            if (n >= 0) toast("%d points -> GPX", n);
             requestRedraw();
+        } else if (idx == 3) {
+            if (confirmTwice(1010, "clear the track")) { trackClear(); toast("Track cleared"); }
         }
         break;
 
@@ -3673,7 +3830,9 @@ void activateSetting(int idx) {
         break;
 
     case PG_POWER:
-        if (idx >= power::MODE_FULL && idx < power::MODE_CUSTOM) {
+        if (idx == power::MODE_CHECKIN) {
+            pushPage(PG_CHECKIN);
+        } else if (idx >= power::MODE_FULL && idx < power::MODE_CUSTOM) {
             g_pw.mode = (uint8_t)idx;
             power::save(g_pw);
             powerApply(true);
@@ -3701,9 +3860,23 @@ void activateSetting(int idx) {
         break;
 
     case PG_CHECKIN:
-        if (idx == 0) g_pw.checkinMin = power::nextCheckinMin(g_pw.checkinMin);
-        else if (idx == 1) g_pw.checkinEvery = power::nextCheckinEvery(g_pw.checkinEvery);
-        else break;
+        if (idx == 0) {                          // off: back to Balanced
+            g_pw.mode = g_pw.mode == power::MODE_CHECKIN ? power::MODE_BALANCED : power::MODE_CHECKIN;
+            toast("Power: %s", power::modeName(g_pw.mode));
+        } else if (idx == 1) {
+            char cur[8];
+            snprintf(cur, sizeof(cur), "%02u%02u", (unsigned)(g_cfg.clock12 && g_pw.checkinStart / 60 % 12 == 0 ? 12
+                                                               : g_cfg.clock12 ? g_pw.checkinStart / 60 % 12
+                                                                               : g_pw.checkinStart / 60),
+                     (unsigned)(g_pw.checkinStart % 60));
+            startEntry(Entry::CheckinTime, cur);
+            g_entryReplace = true;
+            break;
+        } else if (idx == 2 && g_cfg.clock12) {
+            g_pw.checkinStart = (uint16_t)((g_pw.checkinStart + 720) % 1440);
+        } else if (idx == 3) {
+            g_pw.checkinEvery = power::nextCheckinEvery(g_pw.checkinEvery);
+        } else break;
         power::save(g_pw);
         powerApply(true);
         requestRedraw();
@@ -3730,7 +3903,8 @@ void activateSetting(int idx) {
             case 6: c.keyLight = !c.keyLight; break;
             case 7: c.touchOnKey = !c.touchOnKey; break;
             case 8: c.mapGps = !c.mapGps; break;
-            case 9: c = power::preset(power::MODE_BALANCED); toast("Custom = Balanced"); break;
+            case 9: c.trackGps = !c.trackGps; break;
+            case 10: c = power::preset(power::MODE_BALANCED); toast("Custom = Balanced"); break;
             default: return;
         }
         g_pw.mode = power::MODE_CUSTOM;
@@ -3796,8 +3970,25 @@ void activateSetting(int idx) {
         }
         break;
 
+    case PG_LOWBAT:
+        if (idx == 0) {
+            static const uint8_t kSteps[5] = {0, 5, 10, 15, 20};
+            int k = 0;
+            while (k < 5 && kSteps[k] != g_cfg.lowBatPct) k++;
+            g_cfg.lowBatPct = kSteps[(k + 1) % 5];
+            saveConfig();
+            requestRedraw();
+        } else if (idx == 1) {
+            goScreen(SCR_CONTACTS);
+            g_shareActive = true;
+            g_pickLowbat = true;
+            toast("Pick who gets it");
+        }
+        break;
+
     case PG_BATTERY:
-        if (idx == 7) pushPage(PG_BATLOG);
+        if (idx == 11) pushPage(PG_LOWBAT);
+        else if (idx == 7) pushPage(PG_BATLOG);
         else if (idx == 9 && g_fullSoc < 100) { saveBatteryCal(100); readBattery(); toast("Calibration reset"); }
         break;
 
@@ -3846,6 +4037,13 @@ void activateSetting(int idx) {
 
     case PG_LORA:
         if (idx == 2) { applyLoraPreset(g_loraPreset + 1); requestRedraw(); }
+        else if (idx == 5) {
+            if (g_rtOn) { g_rtOpen = true; g_fullRefreshReq = true; requestRedraw(); break; }
+            goScreen(SCR_CONTACTS);
+            g_shareActive = true;
+            g_pickRt = true;
+            toast("Pick the other radio");
+        }
         break;
 
     case PG_ALERTS:
@@ -3861,7 +4059,28 @@ void activateSetting(int idx) {
             if (g_cfg.beep) g_audio.playMessage();
             if (g_cfg.vibe) vibrate(60);
             toast("Test alert");
+        } else if (idx == 4) pushPage(PG_GEOFS);
+        break;
+
+    case PG_GEOFS:
+        if (idx >= 0 && idx < g_geofCount) {
+            if (confirmTwice(2000 + idx, "remove this alert")) { geofRemove(idx); toast("Alert removed"); }
+        } else if (idx == g_geofCount && g_geofCount < kGeofMax) {
+            geofNewStart(nullptr);
         }
+        break;
+
+    case PG_GEOF_NEW:
+        if (idx == 0 && g_gnContactN) g_gnContact = (g_gnContact + 1) % g_gnContactN;
+        else if (idx == 1) g_gnPlace = (g_gnPlace + 1) % (g_wptCount + 1);
+        else if (idx == 2) g_gnDist = (g_gnDist + 1) % kGeofStepN;
+        else if (idx == 3) g_gnRepeat = !g_gnRepeat;
+        else if (idx == 4) {
+            if (!g_gnContactN) { toast("Save a contact first"); break; }
+            if (geofAdd(g_gnContacts[g_gnContact], g_gnPlace, kGeofSteps[g_gnDist], g_gnRepeat)) { toast("Alert saved"); popPage(); }
+            else toast("List full (8)");
+        }
+        requestRedraw();
         break;
 
     case PG_STORAGE:
@@ -3991,6 +4210,12 @@ void renderList() {
         int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
         if (pages > 1) snprintf(hdr, sizeof(hdr), "Inbox%s new %d", pg, unread > 99 ? 99 : unread);
         else           snprintf(hdr, sizeof(hdr), "Inbox  unread %02d", unread > 99 ? 99 : unread);
+    } else if (g_shareActive && g_pickRt) {
+        snprintf(hdr, sizeof(hdr), "Range test with:");
+    } else if (g_shareActive && g_pickLowbat) {
+        snprintf(hdr, sizeof(hdr), "Low battery notice to:");
+    } else if (g_shareActive && g_shareAll) {
+        snprintf(hdr, sizeof(hdr), "All contacts to:");
     } else if (g_shareActive) {
         char nm[24];
         peerName(g_sharePeer, nm, sizeof(nm));
@@ -4215,7 +4440,50 @@ void renderSettings() {
     drawFooter();
 }
 
+void smallText(int x, int y, const char* s, bool bold);
+
 // ---- Energy trend graph ------------------------------------------------------------
+// Time labels under the bars, rotated (read bottom to top) in a 5x7 font stamped after the
+// LVGL frame: the clock time at the start of the bar ("7:30", 12 h: "7:30a"), "-4.5h" when
+// the clock is not set, "now" under the newest.
+const char kTinyChars[] = "0123456789.:-hapnow";
+const uint8_t kTiny5x7[][7] = {
+    {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}, {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
+    {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}, {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E},
+    {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}, {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E},
+    {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}, {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
+    {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C}, {0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00},   // . :
+    {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00}, {0x10, 0x10, 0x16, 0x19, 0x11, 0x11, 0x11},   // - h
+    {0x00, 0x00, 0x0E, 0x01, 0x0F, 0x11, 0x0F}, {0x00, 0x00, 0x1E, 0x11, 0x1E, 0x10, 0x10},   // a p
+    {0x00, 0x00, 0x16, 0x19, 0x11, 0x11, 0x11}, {0x00, 0x00, 0x0E, 0x11, 0x11, 0x11, 0x0E},   // n o
+    {0x00, 0x00, 0x11, 0x11, 0x15, 0x15, 0x0A}};                                              // w
+struct GraphLabel { int16_t x, y; char t[8]; };
+GraphLabel g_graphLabels[25];
+int g_graphLabelN = 0;
+
+// Rotated 90 degrees counter-clockwise: the text starts at (x, yBottom) and runs upwards;
+// a character takes 6 px up and 7 px across.
+void stampTinyUp(int x, int yBottom, const char* t) {
+    const bool ink = !g_cfg.dark;
+    for (int k = 0; t[k]; k++) {
+        const char* f = strchr(kTinyChars, t[k]);
+        if (!f) continue;
+        const uint8_t* g = kTiny5x7[f - kTinyChars];
+        for (int r = 0; r < 7; r++)
+            for (int c = 0; c < 5; c++)
+                if (g[r] & (0x10 >> c)) {
+                    const int px = x + r, py = yBottom - (k * 6 + c);
+                    if (px >= 0 && py >= 0 && px < W && py < H) g_display.setPixel(px, py, ink);
+                }
+    }
+}
+
+void stampGraphLabels() {
+    for (int i = 0; i < g_graphLabelN; i++) stampTinyUp(g_graphLabels[i].x, g_graphLabels[i].y, g_graphLabels[i].t);
+    if (g_graphLabelN) g_display.markDirty();
+}
+
 // Average battery current per period (newest right). Filled bar = gauge measurement;
 // outlined bar = estimate only (period mostly on USB). The rightmost bar is the period in
 // progress. Below: the largest consumers over the shown periods.
@@ -4229,6 +4497,8 @@ void renderEnergyGraph() {
     constexpr int kBars = 24;
     float ma[kBars + 1];
     bool meas[kBars + 1];
+    uint32_t startEpoch[kBars + 1];         // wall clock at the start of each bar (0 = unknown)
+    const time_t nowT = time(nullptr);
     int n = energy::count() < kBars ? energy::count() : kBars;
     float sumCat[energy::CAT_COUNT] = {0};
     float maxMa = 10.0f;
@@ -4237,17 +4507,36 @@ void renderEnergyGraph() {
         float est = 0;
         for (int c = 0; c < energy::CAT_COUNT; c++) { est += r.est10[c] / 10.0f; sumCat[c] += r.est10[c] / 10.0f; }
         meas[i] = r.measuredS * 2 >= r.lenS && r.measuredS > 0;
+        if (i == n) startEpoch[i] = nowT > 1600000000 ? (uint32_t)(nowT - r.lenS) : 0;
+        else startEpoch[i] = r.epoch > 1600000000 ? r.epoch - r.lenS : 0;
         const float hrs = (meas[i] ? r.measuredS : r.lenS) / 3600.0f;
         ma[i] = hrs > 0 ? (meas[i] ? r.measured10 / 10.0f : est) / hrs : 0;
         if (ma[i] > maxMa) maxMa = ma[i];
     }
-    const int gx = 6, gy = LIST_TOP + 18, gw = W - 12, gh = 120;
+    // Left axis: mA, ticks at 0, half and the top (the largest bar rounded up to 1/2/2.5/5 x 10^n).
+    {
+        float step = 1.0f;
+        while (step * 10.0f < maxMa) step *= 10.0f;
+        const float nice[4] = {1.0f, 2.0f, 2.5f, 5.0f};
+        float top = step * 10.0f;
+        for (float f : nice) if (step * f >= maxMa) { top = step * f; break; }
+        maxMa = top;
+    }
+    const int gx = 30, gy = LIST_TOP + 18, gw = W - gx - 6, gh = 92;   // axis left, time labels below
     char t[40];
-    snprintf(t, sizeof(t), "max %.0f mA", maxMa);
-    text(gx, LIST_TOP, t);
+    smallText(2, LIST_TOP + 2, "mA", true);
     snprintf(t, sizeof(t), "%lu min/bar", (unsigned long)(energy::period() / 60));
     text(W - 6 - textW(t), LIST_TOP, t);
     box(gx, gy, gw, gh + 2, 1);
+    for (int k = 0; k <= 2; k++) {                  // 0, max/2, max
+        const float v = maxMa * k / 2.0f;
+        const int ty = gy + 1 + gh - (int)(gh * k / 2.0f + 0.5f);
+        fillRect(gx - 4, ty, 4, 1);
+        if (k == 1) for (int x = gx + 2; x < gx + gw - 2; x += 4) fillRect(x, ty, 1, 1);   // dotted half line
+        snprintf(t, sizeof(t), v >= 10 || v == 0 ? "%.0f" : "%.1f", v);
+        const int w = lv_txt_get_width(t, strlen(t), &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
+        smallText(gx - 6 - w, ty - 7, t, false);
+    }
     const int slots = n + 1;
     const int bw = (gw - 4) / (slots < 8 ? 8 : slots);
     for (int i = 0; i < slots; i++) {
@@ -4258,16 +4547,39 @@ void renderEnergyGraph() {
         if (meas[i]) fillRect(x, y, bw - 2 > 1 ? bw - 2 : 1, h);
         else         box(x, y, bw - 2 > 2 ? bw - 2 : 2, h, 1);
     }
-    const uint32_t backMin = (uint32_t)n * energy::period() / 60;
-    if (backMin >= 120) snprintf(t, sizeof(t), "%luh ago", (unsigned long)(backMin / 60));
-    else                snprintf(t, sizeof(t), "%lu min ago", (unsigned long)backMin);
-    text(gx, gy + gh + 4, n ? t : "");
-    text(W - 6 - textW("now"), gy + gh + 4, "now");
+    // A tick under every bar, a time label under every k-th one (k so labels are >= 9 px apart),
+    // always under the newest ("now").
+    g_graphLabelN = 0;
+    const int every = bw >= 9 ? 1 : (9 + bw - 1) / bw;
+    const int labelTop = gy + gh + 7;
+    for (int i = 0; i < slots; i++) {
+        const int cx = gx + 2 + i * bw + (bw - 2) / 2;
+        fillRect(cx, gy + gh + 2, 1, 3);
+        if (i != n && (n - i) % every) continue;
+        if (i == n - 1 && every > 1) continue;           // keep "now" clear of its neighbour
+        GraphLabel& L = g_graphLabels[g_graphLabelN++];
+        if (i == n) snprintf(L.t, sizeof(L.t), "now");
+        else if (startEpoch[i]) {
+            const time_t st = (time_t)startEpoch[i];
+            struct tm lt;
+            applyTz();
+            localtime_r(&st, &lt);
+            if (g_cfg.clock12) snprintf(L.t, sizeof(L.t), "%d:%02d%c", lt.tm_hour % 12 ? lt.tm_hour % 12 : 12, lt.tm_min,
+                                        lt.tm_hour < 12 ? 'a' : 'p');
+            else snprintf(L.t, sizeof(L.t), "%d:%02d", lt.tm_hour, lt.tm_min);
+        } else {
+            const uint32_t backS = (uint32_t)(n - i) * energy::period();
+            if (backS % 3600 == 0) snprintf(L.t, sizeof(L.t), "-%luh", (unsigned long)(backS / 3600));
+            else snprintf(L.t, sizeof(L.t), "-%.1fh", backS / 3600.0f);
+        }
+        L.x = (int16_t)(cx - 3);
+        L.y = (int16_t)(labelTop + (int)strlen(L.t) * 6);
+    }
 
     // Top consumers over the shown periods.
     float total = 0;
     for (int c = 0; c < energy::CAT_COUNT; c++) total += sumCat[c];
-    int y = gy + gh + 24;
+    int y = gy + gh + 50;
     for (int k = 0; k < 2 && total > 0; k++) {
         char line[48] = "";
         size_t len = 0;
@@ -4327,6 +4639,7 @@ void drawTopBar() {
 // Atlas letters (also used by mapKey and wptMapKey).
 // Alt+P adds a waypoint (and marks a trap in the game); Alt+SYM deletes the selected waypoint.
 constexpr char kKeyNav = 'K', kKeyFind = 'L', kKeyWpt = 'P', kKeyContact = 'N';
+constexpr char kKeyGo = 'G', kKeyBack = 'B';   // bearing + distance screen, track back
 bool isAltSym(const KeyEvent& ev) {
     return ev.alt && ev.opt && !ev.character && !ev.enter && !ev.del && !ev.space && !ev.fn;
 }
@@ -4336,8 +4649,8 @@ const NavKeyRow kAtlasKeys[] = {                 // two columns of 7, the 12 px 
     {"D", "centre on me"},   {"Z", "zoom in"},       {"W", "zoom out"},
     {"L", "locate a place"}, {"K", "hide keys"},     {"M ^", "menu, close"},
     {"N", "next contact"},   {"P", "next waypoint"}, {"Alt+P", "add waypoint"},
-    {"Alt+SYM", "delete waypt"}, {"12 Enter", "chat #12"}, {"M P", "Peers"},
-    {"C I H", "leave the map"},
+    {"Alt+SYM", "delete waypt"}, {"G", "arrow + distance"}, {"B", "track back"},
+    {"12 Enter", "chat #12"},
 };
 // Library reader and list (K there too).
 const NavKeyRow kReaderKeys[] = {
@@ -4585,6 +4898,7 @@ void openMap() {
 
 void closeMap() {
     g_navKeysOpen = false;
+    g_navOpen = false;
     mapview::close();
     mapReadDone();
     g_fullRefreshReq = true;
@@ -4693,6 +5007,11 @@ constexpr int kPlaceShowFwd = 6;
 void renderMapHeader() {
     char st[64];
     if (g_placeOpen) snprintf(st, sizeof(st), "Places: 1-%d go  ^ back", g_placeN < kPlaceShowFwd ? g_placeN : kPlaceShowFwd);
+    else if (g_tbOn) {
+        double la, lo; char d[20] = "?";
+        if (ownPosition(la, lo) && g_tbIdx < g_trackN) fmtDist(metersBetween(la, lo, g_track[2 * g_tbIdx], g_track[2 * g_tbIdx + 1]), d, sizeof(d));
+        snprintf(st, sizeof(st), "Back: %s  G arrow  B stop", d);
+    }
     else if (g_mapSel >= 0) snprintf(st, sizeof(st), "N next  #+Enter chat  D me");   // what to press
     else if (g_wptSel >= 0) snprintf(st, sizeof(st), "P next  Alt+SYM del  D me");
     else mapview::status(st, sizeof(st));
@@ -5112,6 +5431,110 @@ int cposSlot(const uint8_t dest[16]) {
     return i;
 }
 
+// ---- Arrival alerts (Settings S.8 Alerts > Arrival alerts) ---------------------------------
+// "Tell me when <contact> is within <distance> of <me | waypoint>": checked whenever their
+// shared position arrives. A beep (+ vibration) and a 15 s message; once = then removed,
+// repeat = again after they have been 25 % further away. Up to 8, NVS rs_geof.
+// (the data is next to the waypoint data near the top)
+
+void geofSave() {
+    Preferences p;
+    if (!p.begin("rs_geof", false)) return;
+    p.putBytes("list", g_geof, sizeof(Geof) * g_geofCount);
+    p.putUChar("n", (uint8_t)g_geofCount);
+    p.end();
+}
+
+void geofLoad() {
+    Preferences p;
+    if (!p.begin("rs_geof", true)) return;
+    const int n = p.getUChar("n", 0);
+    g_geofCount = n <= kGeofMax && p.getBytesLength("list") == sizeof(Geof) * (size_t)n ? n : 0;
+    if (g_geofCount) p.getBytes("list", g_geof, sizeof(Geof) * g_geofCount);
+    p.end();
+}
+
+void geofText(const Geof& g, char* out, size_t n) {
+    char nm[24], d[16];
+    peerName(g.dest, nm, sizeof(nm));
+    fmtDist(g.radius, d, sizeof(d));
+    if (g.place) snprintf(out, n, "%.10s %s of %.10s", nm, d, g.wname);
+    else snprintf(out, n, "%.12s within %s of me", nm, d);
+}
+
+// place 0 = me (wherever I am when their position arrives), n = waypoint n (its spot now).
+bool geofAdd(const uint8_t dest[16], int place, uint16_t radius, bool repeat) {
+    if (g_geofCount >= kGeofMax || radius < 10 || place < 0 || place > g_wptCount) return false;
+    Geof& g = g_geof[g_geofCount];
+    memset(&g, 0, sizeof(g));
+    memcpy(g.dest, dest, 16);
+    g.place = (uint8_t)place;
+    if (place) {
+        g.lat = g_wpt[place - 1].lat; g.lon = g_wpt[place - 1].lon;
+        snprintf(g.wname, sizeof(g.wname), "W%d %s", place, g_wpt[place - 1].name);
+    }
+    g.radius = radius;
+    g.repeat = repeat;
+    g.armed = 1;
+    g_geofCount++;
+    geofSave();
+    char t[40];
+    geofText(g, t, sizeof(t));
+    Serial.printf("[GEOF] new: %s%s\n", t, repeat ? " (repeat)" : "");
+    return true;
+}
+
+void geofRemove(int i) {
+    if (i < 0 || i >= g_geofCount) return;
+    for (int k = i; k < g_geofCount - 1; k++) g_geof[k] = g_geof[k + 1];
+    g_geofCount--;
+    geofSave();
+}
+
+void geofCheck(const uint8_t dest[16], double lat, double lon) {
+    bool changed = false;
+    for (int i = 0; i < g_geofCount; i++) {
+        Geof& g = g_geof[i];
+        if (memcmp(g.dest, dest, 16) != 0) continue;
+        double tla = g.lat, tlo = g.lon;
+        if (!g.place && !ownPosition(tla, tlo)) continue;   // "near me" needs my position
+        const float d = metersBetween(lat, lon, tla, tlo);
+        if (!g.armed) {                                     // repeat: re-arm once well outside
+            if (d > g.radius * 1.25f) { g.armed = 1; changed = true; }
+            continue;
+        }
+        if (d > g.radius) continue;
+        char nm[24], dd[16];
+        peerName(dest, nm, sizeof(nm));
+        fmtDist(d, dd, sizeof(dd));
+        Serial.printf("[GEOF] %s is %s from %s\n", nm, dd, g.place ? g.wname : "me");
+        if (g_cfg.beep) g_audio.playMessage();
+        if (g_cfg.vibe) vibrate(200);
+        toast("%.10s: %s from %.10s", nm, dd, g.place ? g.wname : "you");
+        g_toastUntil = millis() + 15000;
+        if (g.repeat) { g.armed = 0; changed = true; }
+        else { geofRemove(i); i--; changed = false; }
+        requestRedraw();
+    }
+    if (changed) geofSave();
+}
+
+// The New alert page, for a contact (nullptr = the first saved one).
+void geofNewStart(const uint8_t* dest) {
+    loadRows(SCR_CONTACTS);
+    g_gnContactN = 0;
+    g_gnContact = 0;
+    for (int i = 0; i < g_rowCount && g_gnContactN < MAX_ROWS; i++) {
+        if (isSelf(g_rows[i].peer)) continue;
+        if (dest && !memcmp(dest, g_rows[i].peer, 16)) g_gnContact = g_gnContactN;
+        memcpy(g_gnContacts[g_gnContactN++], g_rows[i].peer, 16);
+    }
+    g_gnPlace = g_wptSel >= 0 ? g_wptSel + 1 : 0;
+    g_gnDist = 2;
+    g_gnRepeat = false;
+    pushPage(PG_GEOF_NEW);
+}
+
 void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at) {
     if (isSelf(dest)) return;
     const int found = cposFind(dest);
@@ -5125,6 +5548,7 @@ void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at) {
     char nm[24];
     peerName(dest, nm, sizeof(nm));
     Serial.printf("[LOC] %s at %.5f,%.5f (#%u)\n", nm, lat, lon, (unsigned)g_cpos[i].num);
+    geofCheck(dest, lat, lon);
     if (mapview::isOpen()) requestRedraw();
 }
 
@@ -5416,6 +5840,8 @@ void wptCycle() {
 
 // ---- Track ---------------------------------------------------------------------------
 constexpr const char* kTrackFile = SD_PATH_ROOT "/tracks/track.bin";
+uint32_t g_trackLastAt = 0;                  // millis of the last point (every-10-min rule)
+char g_trackGpx[40] = "";                    // last GPX export (forward-declared above) (shown on the Track page)
 
 void trackPushRam(float la, float lo) {
     if (g_trackN >= kTrackRam) {             // drop the oldest
@@ -5459,6 +5885,7 @@ void trackClear() {
 
 void trackAdd(double la, double lo) {
     trackPushRam((float)la, (float)lo);
+    g_trackLastAt = millis() ? millis() : 1;
     if (sdMount()) {
         g_sdStore.ensureDir(SD_PATH_ROOT "/tracks");
         File f = g_sdStore.openFile(kTrackFile, FILE_APPEND);
@@ -5482,14 +5909,16 @@ void trackTick() {
     if (millis() - last < 5000) return;
     last = millis();
     if (!g_trackLoaded) trackLoad();
-    if (!gpsFresh()) {                       // keep fixes coming without a GPS always on
-        if (g_cfg.gpsOn && (!asked || millis() - asked > 120000)) { asked = millis(); gpsRequestVisit(); }
+    if (!gpsFresh()) {                       // only modes that allow it wake the GPS for the track
+        if (g_cfg.gpsOn && g_pwEff.trackGps && power::gpsIntervalMs(g_pwEff.gps) &&
+            (!asked || millis() - asked > 120000)) { asked = millis(); gpsRequestVisit("track"); }
         return;
     }
-    if (g_trackN) {
-        const double m = metersBetween(g_track[2 * g_trackN - 2], g_track[2 * g_trackN - 1], g_gpsLat, g_gpsLon);
-        if (m < 25.0) return;
-    }
+    // A point when moved >= 20 m, or every 10 min while standing (shows where you waited).
+    const bool moved = !g_trackN ||
+        metersBetween(g_track[2 * g_trackN - 2], g_track[2 * g_trackN - 1], g_gpsLat, g_gpsLon) >= 20.0;
+    const bool due = g_trackLastAt && millis() - g_trackLastAt >= 600000UL;
+    if (!moved && !due) return;
     trackAdd(g_gpsLat, g_gpsLon);
 }
 
@@ -5499,7 +5928,8 @@ int wptFeed(mapview::Marker* m, int n) {
         m[n++] = {g_wpt[i].lat, g_wpt[i].lon, i == g_wptSel, (uint8_t)(i + 1), true, false, 1};
     if (g_cfg.trackOn && !g_trackLoaded) trackLoad();
     mapview::setTrack(g_track, g_trackN);
-    if (g_wptSel >= 0 && g_wptSel < g_wptCount) mapview::setGuide(true, g_wpt[g_wptSel].lat, g_wpt[g_wptSel].lon);
+    if (g_tbOn && g_tbIdx >= 0 && g_tbIdx < g_trackN) mapview::setGuide(true, g_track[2 * g_tbIdx], g_track[2 * g_tbIdx + 1]);
+    else if (g_wptSel >= 0 && g_wptSel < g_wptCount) mapview::setGuide(true, g_wpt[g_wptSel].lat, g_wpt[g_wptSel].lon);
     else mapview::setGuide(false);
     return n;
 }
@@ -6410,6 +6840,29 @@ void cardKey(const KeyEvent& ev) {
 void shareAllTo(const uint8_t to[16]);
 
 void shareSendTo(int idx) {
+    if (g_pickLowbat) {
+        if (isSelf(g_rows[idx].peer)) { toast("Pick another radio"); return; }
+        memcpy(g_cfg.lowBatTo, g_rows[idx].peer, 16);
+        if (!g_cfg.lowBatPct) g_cfg.lowBatPct = 10;
+        saveConfig();
+        g_shareActive = false;
+        g_pickLowbat = false;
+        char nm[24];
+        peerName(g_cfg.lowBatTo, nm, sizeof(nm));
+        toast("Low battery -> %.14s at %u%%", nm, (unsigned)g_cfg.lowBatPct);
+        Serial.printf("[LOWBAT] to %s at %u%%\n", nm, (unsigned)g_cfg.lowBatPct);
+        goScreen(SCR_SETTINGS);
+        return;
+    }
+    if (g_pickRt) {
+        uint8_t to[16];
+        memcpy(to, g_rows[idx].peer, 16);
+        if (isSelf(to)) { toast("Pick another radio"); return; }
+        g_shareActive = false;
+        g_pickRt = false;
+        rtStart(to, 0);
+        return;
+    }
     if (g_shareAll) {
         uint8_t to[16];
         memcpy(to, g_rows[idx].peer, 16);
@@ -6717,7 +7170,15 @@ void renderWizard() {
         case WZ_POWER:
             for (int i = 0; i < 4; i++) {
                 snprintf(a, sizeof(a), "%d %s", i + 1, power::modeName(kWizModes[i]));
-                row(a, power::modeBlurb(kWizModes[i]), g_pw.mode == kWizModes[i]);
+                if (kWizModes[i] == power::MODE_CHECKIN) {
+                    char at[12], ev[16];
+                    fmtClockMin(g_pw.checkinStart, at, sizeof(at));
+                    checkinEveryText(ev, sizeof(ev));
+                    snprintf(b, sizeof(b), "LoRa at %s, every %s", at, ev);
+                    row(a, b, g_pw.mode == kWizModes[i]);
+                } else {
+                    row(a, power::modeBlurb(kWizModes[i]), g_pw.mode == kWizModes[i]);
+                }
             }
             break;
         case WZ_IDLE:
@@ -6765,6 +7226,486 @@ void renderWizard() {
     }
 }
 
+// ---- Track back, GPX export -------------------------------------------------------------
+// Track back (Atlas B, Settings S.1.10): from the track point nearest to you, walk the
+// recorded points backwards; the guide line (and G's arrow) points at the next one, which
+// moves on when you are within 25 m; at the first point: "Back at the start".
+constexpr float kTbReach = 25.0f, kTbStep = 30.0f;
+
+int tbStepBack(int from) {                  // the first earlier point at least kTbStep away
+    for (int j = from - 1; j >= 0; j--)
+        if (metersBetween(g_track[2 * j], g_track[2 * j + 1], g_track[2 * from], g_track[2 * from + 1]) >= kTbStep)
+            return j;
+    return 0;
+}
+
+bool tbStart() {
+    trackLoad();
+    double la, lo;
+    if (g_trackN < 2) { toast("No track yet (S.1.10)"); return false; }
+    if (!ownPosition(la, lo)) { toast("No position yet"); return false; }
+    int best = 0;
+    float bd = 1e30f;
+    for (int i = 0; i < g_trackN; i++) {
+        const float d = metersBetween(la, lo, g_track[2 * i], g_track[2 * i + 1]);
+        if (d < bd) { bd = d; best = i; }
+    }
+    if (best == 0 && bd < kTbReach) { toast("You are at the start"); return false; }
+    g_tbIdx = bd < kTbReach ? tbStepBack(best) : best;
+    g_tbOn = true;
+    Serial.printf("[TRACK] back on: point %d of %d (%.0f m off the track)\n", g_tbIdx + 1, g_trackN, bd);
+    toast("Track back: follow the line");
+    requestRedraw();
+    return true;
+}
+
+void tbStop(const char* why) {
+    if (!g_tbOn) return;
+    g_tbOn = false;
+    Serial.printf("[TRACK] back %s\n", why);
+    toast("Track back %s", why);
+    requestRedraw();
+}
+
+void tbTick() {
+    if (!g_tbOn) return;
+    double la, lo;
+    if (!ownPosition(la, lo) || g_tbIdx >= g_trackN) return;
+    if (metersBetween(la, lo, g_track[2 * g_tbIdx], g_track[2 * g_tbIdx + 1]) > kTbReach) return;
+    if (g_tbIdx == 0) {
+        if (g_cfg.beep) g_audio.playAnnounce();
+        tbStop("done: at the start");
+        return;
+    }
+    g_tbIdx = tbStepBack(g_tbIdx);
+    Serial.printf("[TRACK] back: next point %d\n", g_tbIdx + 1);
+    requestRedraw();
+}
+
+// The whole SD track as GPX 1.1 in <SD>/ratdeckpro/tracks/track-YYYYMMDD-HHMM.gpx.
+int trackExportGpx() {
+    if (!sdMount()) { toast("No SD card"); return -1; }
+    File in = g_sdStore.openFile(kTrackFile, FILE_READ);
+    if (!in) { toast("No track on the card"); return -1; }
+    struct tm t;
+    char name[40] = "track.gpx";
+    if (localNow(t)) snprintf(name, sizeof(name), "track-%04d%02d%02d-%02d%02d.gpx", t.tm_year + 1900, t.tm_mon + 1,
+                              t.tm_mday, t.tm_hour, t.tm_min);
+    char path[96];
+    snprintf(path, sizeof(path), "%s/tracks/%s", SD_PATH_ROOT, name);
+    File out = g_sdStore.openFile(path, FILE_WRITE);
+    if (!out) { in.close(); toast("Cannot write the GPX"); return -1; }
+    out.print("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+              "<gpx version=\"1.1\" creator=\"RatSpeak T-Deck Pro\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n"
+              "<trk><name>RatSpeak track</name><trkseg>\n");
+    uint8_t rec[12];
+    int n = 0;
+    while (in.read(rec, 12) == 12) {
+        uint32_t e; float la, lo;
+        memcpy(&e, rec, 4); memcpy(&la, rec + 4, 4); memcpy(&lo, rec + 8, 4);
+        if (e) {
+            const time_t tt = (time_t)e;
+            struct tm u;
+            gmtime_r(&tt, &u);
+            out.printf("<trkpt lat=\"%.6f\" lon=\"%.6f\"><time>%04d-%02d-%02dT%02d:%02d:%02dZ</time></trkpt>\n", la, lo,
+                       u.tm_year + 1900, u.tm_mon + 1, u.tm_mday, u.tm_hour, u.tm_min, u.tm_sec);
+        } else {
+            out.printf("<trkpt lat=\"%.6f\" lon=\"%.6f\"></trkpt>\n", la, lo);
+        }
+        n++;
+    }
+    out.print("</trkseg></trk>\n</gpx>\n");
+    out.close();
+    in.close();
+    snprintf(g_trackGpx, sizeof(g_trackGpx), "tracks/%s", name);
+    Serial.printf("[TRACK] %d points -> %s\n", n, path);
+    return n;
+}
+
+// ---- Bearing + distance (G on the Atlas) ------------------------------------------------
+// For when the map is too much: a big arrow to the selected contact, waypoint or track-back
+// point, the distance and the age of a contact's fix. No compass on board: while you move
+// (GPS speed over 1 knot) the arrow is relative to your course over ground ("ahead" = up),
+// standing still it is north-up.
+enum NavKind : uint8_t { NAV_CONTACT, NAV_WPT, NAV_TRACK };
+NavKind g_navKind = NAV_CONTACT;
+int     g_navIdx = 0;
+bool    g_navArrowOk = false;
+constexpr int kNavCy = 116, kNavR = 54, kNavNumY = 184;   // ring centre / radius, distance digits
+char    g_navNum[12] = "";                  // the distance number, drawn big by stampNav
+int     g_navNumX = 0;
+// 5x7 digits (and '.') at scale 5 for the distance.
+const uint8_t kBig5x7[11][7] = {
+    {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}, {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
+    {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}, {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E},
+    {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}, {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E},
+    {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}, {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
+    {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C}};                       // [10] = '.'
+constexpr int kBigScale = 4;
+int navBigWidth(const char* s) {
+    int w = 0;
+    for (; *s; s++) w += (*s == '.' ? 3 : 6) * kBigScale;
+    return w;
+}
+void navBigStamp(int x, int y, const char* s) {
+    const bool ink = !g_cfg.dark;
+    for (; *s; s++) {
+        const int g = *s == '.' ? 10 : (*s >= '0' && *s <= '9') ? *s - '0' : -1;
+        const int cols = *s == '.' ? 3 : 6;
+        if (g >= 0)
+            for (int r = 0; r < 7; r++)
+                for (int c = 0; c < 5; c++)
+                    if (kBig5x7[g][r] & (0x10 >> c))
+                        for (int dy = 0; dy < kBigScale; dy++)
+                            for (int dx = 0; dx < kBigScale; dx++) {
+                                const int px = x + (c - (g == 10 ? 2 : 0)) * kBigScale + dx, py = y + r * kBigScale + dy;
+                                if (px >= 0 && py >= 0 && px < W && py < H) g_display.setPixel(px, py, ink);
+                            }
+        x += cols * kBigScale;
+    }
+}
+float   g_navArrowDeg = 0;                 // screen angle: 0 = up, clockwise
+float   g_navShownM = -1, g_navShownBrg = -1000;
+uint32_t g_navShownMin = 0;
+
+void fmtDist(double m, char* out, size_t n) {
+    if (g_cfg.imperial) {
+        const double ft = m * 3.28084;
+        if (ft < 1000) snprintf(out, n, "%d ft", (int)(ft + 0.5));
+        else if (m < 160934) snprintf(out, n, "%.2f mi", m / 1609.344);
+        else snprintf(out, n, "%d mi", (int)(m / 1609.344));
+    } else {
+        if (m < 1000) snprintf(out, n, "%d m", (int)(m + 0.5));
+        else if (m < 100000) snprintf(out, n, "%.2f km", m / 1000.0);
+        else snprintf(out, n, "%d km", (int)(m / 1000.0));
+    }
+}
+
+bool navTarget(double& la, double& lo, char* name, size_t n) {
+    switch (g_navKind) {
+        case NAV_TRACK:
+            if (!g_tbOn || g_navIdx >= g_trackN) return false;
+            g_navIdx = g_tbIdx;
+            la = g_track[2 * g_navIdx]; lo = g_track[2 * g_navIdx + 1];
+            snprintf(name, n, "Track back, point %d", g_navIdx + 1);
+            return true;
+        case NAV_WPT:
+            if (g_navIdx < 0 || g_navIdx >= g_wptCount) return false;
+            la = g_wpt[g_navIdx].lat; lo = g_wpt[g_navIdx].lon;
+            snprintf(name, n, "W%d %s", g_navIdx + 1, g_wpt[g_navIdx].name);
+            return true;
+        default:
+            if (g_navIdx < 0 || g_navIdx >= g_cposCount || !g_cpos[g_navIdx].hasPos) return false;
+            la = g_cpos[g_navIdx].lat; lo = g_cpos[g_navIdx].lon;
+            char nm[24];
+            peerName(g_cpos[g_navIdx].dest, nm, sizeof(nm));
+            snprintf(name, n, "#%u %s", (unsigned)g_cpos[g_navIdx].num, nm);
+            return true;
+    }
+}
+
+void navOpen() {
+    if (g_tbOn) { g_navKind = NAV_TRACK; g_navIdx = g_tbIdx; }
+    else if (g_mapSel >= 0) { g_navKind = NAV_CONTACT; g_navIdx = g_mapSel; }
+    else if (g_wptSel >= 0) { g_navKind = NAV_WPT; g_navIdx = g_wptSel; }
+    else { toast("Pick a contact (N) or waypoint (P) first"); requestRedraw(); return; }
+    g_navOpen = true;
+    g_navKeysOpen = false;
+    g_navShownM = -1;
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.printf("[NAV] open kind=%d idx=%d\n", (int)g_navKind, g_navIdx);
+}
+
+void navClose() {
+    g_navOpen = false;
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.println("[NAV] closed");
+}
+
+void navKey(const KeyEvent& ev) {
+    const char c = (char)toupper((unsigned char)ev.character);
+    if (c == kKeyGo || ev.enter) { navClose(); return; }
+    if (c == 'M') { navClose(); openMenu(); return; }
+    if (c == kKeyBack) { if (g_tbOn) tbStop("stopped"); navClose(); return; }
+}
+
+bool navMoving() { return gpsFresh() && g_gpsCourseOk && g_gpsSpeedKn >= 1.0f && millis() - g_gpsCourseAt < 10000; }
+
+void renderNav() {
+    double tla, tlo, la, lo;
+    char name[40], line[64];
+    g_navArrowOk = false;
+    if (!navTarget(tla, tlo, name, sizeof(name))) { navClose(); return; }
+    drawHeader(name, false);
+    const bool own = ownPosition(la, lo);
+    if (!own) {
+        label(0, 120, W, 20, "No own position yet", true);
+        label(0, 142, W, 18, "(GPS or saved position S.1)");
+    } else {
+        const double m = metersBetween(la, lo, tla, tlo);
+        const double brg = bearingDeg(la, lo, tla, tlo);
+        const bool moving = navMoving();
+        g_navArrowDeg = (float)(moving ? fmod(brg - g_gpsCourse + 720.0, 360.0) : brg);
+        g_navArrowOk = true;
+        label(0, kNavCy - kNavR - 18, W, 16, moving ? "ahead" : "N", true);
+        char d[24];                                       // "1.24 km": big digits, then the unit
+        fmtDist(m, d, sizeof(d));
+        const char* sp = strchr(d, ' ');
+        const int nl0 = sp ? (int)(sp - d) : (int)strlen(d);
+        snprintf(g_navNum, sizeof(g_navNum), "%.*s", nl0, d);
+        const int unitX = (W - navBigWidth(g_navNum) - 34) / 2 + navBigWidth(g_navNum) + 6;
+        g_navNumX = (W - navBigWidth(g_navNum) - 34) / 2;
+        text(unitX, kNavNumY + 14, sp ? sp + 1 : "", true);
+        snprintf(line, sizeof(line), "%s %d deg%s", compass8(brg), (int)(brg + 0.5), moving ? "" : "  (north up)");
+        label(0, kNavNumY + 40, W, 16, line);
+        if (g_navKind == NAV_CONTACT) {
+            const uint32_t now = (uint32_t)time(nullptr), at = g_cpos[g_navIdx].at;
+            const uint32_t age = (at && now > at) ? (now - at) / 60 : 0;
+            if (age < 120) snprintf(line, sizeof(line), "their fix %lu min old", (unsigned long)age);
+            else snprintf(line, sizeof(line), "their fix %lu h old", (unsigned long)(age / 60));
+        } else if (moving) {
+            const float kmh = g_gpsSpeedKn * 1.852f;
+            if (g_cfg.imperial) snprintf(line, sizeof(line), "you: %.0f mph, course %d deg", kmh / 1.609f, (int)g_gpsCourse);
+            else snprintf(line, sizeof(line), "you: %.0f km/h, course %d deg", kmh, (int)g_gpsCourse);
+        } else {
+            snprintf(line, sizeof(line), "you: standing (no course)");
+        }
+        label(0, kNavNumY + 58, W, 16, line);
+        g_navShownM = (float)m;
+        g_navShownBrg = (float)brg;
+        g_navShownMin = millis() / 60000UL;
+    }
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : (g_tbOn ? "G map  B stop track back" : "G or ^ back to the map"));
+}
+
+// Thick line straight into the frame buffer (after LVGL's frame, like the map).
+void navLine(float x0, float y0, float x1, float y1, int thick) {
+    const bool ink = !g_cfg.dark;
+    const float len = sqrtf((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+    const int steps = (int)len + 1;
+    for (int i = 0; i <= steps; i++) {
+        const float x = x0 + (x1 - x0) * i / steps, y = y0 + (y1 - y0) * i / steps;
+        for (int dy = -thick / 2; dy <= thick / 2; dy++)
+            for (int dx = -thick / 2; dx <= thick / 2; dx++) {
+                const int px = (int)lroundf(x) + dx, py = (int)lroundf(y) + dy;
+                if (px >= 0 && py >= 0 && px < W && py < H) g_display.setPixel(px, py, ink);
+            }
+    }
+}
+
+void stampNav() {
+    if (!g_navArrowOk) return;
+    navBigStamp(g_navNumX, kNavNumY, g_navNum);
+    const float cx = W / 2.0f, cy = kNavCy, r = kNavR;
+    for (int a = 0; a < 360; a += 2) {                      // the ring
+        const float t = a * 3.14159265f / 180.0f;
+        navLine(cx + r * sinf(t), cy - r * cosf(t), cx + r * sinf(t), cy - r * cosf(t), 2);
+    }
+    const float t = g_navArrowDeg * 3.14159265f / 180.0f;
+    const float tipX = cx + (r - 6) * sinf(t), tipY = cy - (r - 6) * cosf(t);
+    const float tailX = cx - (r - 18) * sinf(t), tailY = cy + (r - 18) * cosf(t);
+    navLine(tailX, tailY, tipX, tipY, 5);
+    for (int side = -1; side <= 1; side += 2) {             // the head
+        const float h = t + side * 2.6f;
+        navLine(tipX, tipY, tipX + 26 * sinf(h), tipY - 26 * cosf(h), 5);
+    }
+    g_display.markDirty();
+}
+
+// Redraw when the numbers change (position, their fix, course) or each minute (ages).
+void navTick() {
+    tbTick();
+    if (!g_navOpen) return;
+    static uint32_t last = 0;
+    if (millis() - last < 2000) return;
+    last = millis();
+    double tla, tlo, la, lo;
+    char name[40];
+    if (!navTarget(tla, tlo, name, sizeof(name)) || !ownPosition(la, lo)) return;
+    const float m = metersBetween(la, lo, tla, tlo);
+    const float brg = (float)bearingDeg(la, lo, tla, tlo);
+    const bool far = g_navShownM < 0 || fabsf(m - g_navShownM) > (g_navShownM * 0.02f + 3.0f);
+    const bool turned = fabsf(brg - g_navShownBrg) > 5.0f;
+    if (far || turned || millis() / 60000UL != g_navShownMin || navMoving()) requestRedraw();
+}
+
+// ---- Range test (Settings S.7 LoRa > Range test) -----------------------------------------
+// Two units in range-test mode ping each other: every N s this one sends a ping to the chosen
+// partner; a unit in range-test mode answers a ping meant for it with a pong carrying the
+// RSSI / SNR it heard. Both log every event to <SD>/ratdeckpro/rangetest/rt-<date>-<time>.csv
+// (time, event, seq, peer, rssi, snr, peer_rssi, peer_snr, lat, lon, fix). Frames are raw LoRa
+// (first byte 0xFF = an "access code" frame other Reticulum nodes drop), so nothing reaches
+// the inbox. PC: tools/rangetest/rangetest_map.py makes a map / plot from the CSV.
+constexpr uint8_t kRtMagic[4] = {0xFF, 'R', 'T', '1'};
+uint8_t  g_rtPeer[16];
+uint16_t g_rtEvery = 15, g_rtSeq = 0;
+uint32_t g_rtSent = 0, g_rtGot = 0, g_rtLost = 0, g_rtHeard = 0, g_rtNextAt = 0;
+bool     g_rtWaiting = false;                // the last ping has no pong yet
+int      g_rtRssi = 0, g_rtPeerRssi = 0, g_rtHeardRssi = 0;
+float    g_rtSnr = 0, g_rtPeerSnr = 0, g_rtHeardSnr = 0;
+char     g_rtFile[40] = "";
+uint32_t g_rtShownAt = 0;
+
+void rtLog(const char* ev, uint16_t seq, int rssi, float snr, int prssi, float psnr) {
+    if (!g_rtFile[0] || !sdMount()) return;
+    char path[96];
+    snprintf(path, sizeof(path), "%s/rangetest/%s", SD_PATH_ROOT, g_rtFile);
+    File f = g_sdStore.openFile(path, FILE_APPEND);
+    if (!f) return;
+    char peer[33], ts[24] = "";
+    hashToHex(g_rtPeer, peer);
+    const time_t now = time(nullptr);
+    if (now > 1600000000) { struct tm u; gmtime_r(&now, &u); strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &u); }
+    const bool fix = gpsFresh();
+    double la = 0, lo = 0;
+    ownPosition(la, lo);
+    f.printf("%s,%s,%u,%.8s,%d,%.1f,%d,%.1f,%.6f,%.6f,%d\n", ts, ev, (unsigned)seq, peer, rssi, snr, prssi, psnr,
+             la, lo, fix ? 1 : 0);
+    f.close();
+}
+
+void rtSend(char type, uint16_t seq, const uint8_t to[16], int rssi, float snr) {
+    uint8_t b[18];
+    memcpy(b, kRtMagic, 4);
+    b[4] = (uint8_t)type;
+    b[5] = (uint8_t)(seq >> 8); b[6] = (uint8_t)seq;
+    memcpy(b + 7, g_selfHash, 4);
+    memcpy(b + 11, to, 4);
+    b[15] = (uint8_t)(int8_t)constrain(rssi, -127, 0);
+    b[16] = (uint8_t)(int8_t)constrain((int)lroundf(snr * 4), -127, 127);
+    b[17] = 0;
+    if (g_loraIf) g_loraIf->sendRaw(b, sizeof(b));
+}
+
+bool rtRxTap(const uint8_t* d, size_t n, int rssi, float snr) {
+    if (n != 18 || memcmp(d, kRtMagic, 4) != 0) return false;
+    if (!g_rtOn || memcmp(d + 11, g_selfHash, 4) != 0) return true;   // ours, but not for us: drop
+    const uint16_t seq = (uint16_t)(d[5] << 8 | d[6]);
+    if (d[4] == 'P') {                        // a ping: answer with what we heard
+        g_rtHeard++;
+        g_rtHeardRssi = rssi; g_rtHeardSnr = snr;
+        rtLog("ping-heard", seq, rssi, snr, 0, 0);
+        uint8_t from[16] = {0};
+        memcpy(from, d + 7, 4);
+        // The reply goes to the sender's prefix (it only checks the first 4 bytes).
+        rtSend('O', seq, from, rssi, snr);
+        Serial.printf("[RT] ping %u heard %d dBm %.1f dB\n", (unsigned)seq, rssi, snr);
+    } else if (d[4] == 'O' && memcmp(d + 7, g_rtPeer, 4) == 0) {
+        if (seq == g_rtSeq && g_rtWaiting) { g_rtWaiting = false; g_rtGot++; }
+        g_rtRssi = rssi; g_rtSnr = snr;
+        g_rtPeerRssi = (int8_t)d[15]; g_rtPeerSnr = (int8_t)d[16] / 4.0f;
+        rtLog("pong", seq, rssi, snr, g_rtPeerRssi, g_rtPeerSnr);
+        Serial.printf("[RT] pong %u: here %d dBm %.1f dB, there %d dBm %.1f dB\n", (unsigned)seq, rssi, snr,
+                      g_rtPeerRssi, g_rtPeerSnr);
+    }
+    if (g_rtOpen) requestRedraw();
+    return true;
+}
+
+void rtStart(const uint8_t peer[16], int everySecs) {
+    memcpy(g_rtPeer, peer, 16);
+    if (everySecs >= 5 && everySecs <= 600) g_rtEvery = (uint16_t)everySecs;
+    g_rtOn = true;
+    g_rtOpen = true;
+    g_rtSeq = 0;
+    g_rtSent = g_rtGot = g_rtLost = g_rtHeard = 0;
+    g_rtWaiting = false;
+    g_rtRssi = g_rtPeerRssi = g_rtHeardRssi = 0;
+    g_rtNextAt = millis() + 2000;
+    struct tm t;
+    if (localNow(t)) snprintf(g_rtFile, sizeof(g_rtFile), "rt-%04d%02d%02d-%02d%02d.csv", t.tm_year + 1900, t.tm_mon + 1,
+                              t.tm_mday, t.tm_hour, t.tm_min);
+    else snprintf(g_rtFile, sizeof(g_rtFile), "rt-%lu.csv", (unsigned long)(millis() / 1000));
+    if (sdMount()) {
+        g_sdStore.ensureDir(SD_PATH_ROOT "/rangetest");
+        char path[96];
+        snprintf(path, sizeof(path), "%s/rangetest/%s", SD_PATH_ROOT, g_rtFile);
+        File f = g_sdStore.openFile(path, FILE_WRITE);
+        if (f) { f.print("time_utc,event,seq,peer,rssi,snr,peer_rssi,peer_snr,lat,lon,fix\n"); f.close(); }
+    } else {
+        g_rtFile[0] = 0;
+        toast("No SD card: stats only");
+    }
+    char nm[24];
+    peerName(peer, nm, sizeof(nm));
+    Serial.printf("[RT] start with %s every %u s, file %s\n", nm, (unsigned)g_rtEvery, g_rtFile[0] ? g_rtFile : "-");
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void rtStop() {
+    if (!g_rtOn && !g_rtOpen) return;
+    if (g_rtOn) rtLog("stop", g_rtSeq, 0, 0, 0, 0);
+    g_rtOn = false;
+    g_rtOpen = false;
+    Serial.printf("[RT] stop: sent %lu replies %lu lost %lu heard %lu\n", (unsigned long)g_rtSent,
+                  (unsigned long)g_rtGot, (unsigned long)g_rtLost, (unsigned long)g_rtHeard);
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void rtTick() {
+    if (!g_rtOn) return;
+    if ((int32_t)(millis() - g_rtNextAt) < 0) return;
+    g_rtNextAt = millis() + g_rtEvery * 1000UL;
+    if (g_rtWaiting) {                        // no pong for the last one
+        g_rtLost++;
+        rtLog("lost", g_rtSeq, 0, 0, 0, 0);
+        Serial.printf("[RT] ping %u lost\n", (unsigned)g_rtSeq);
+    }
+    g_rtSeq++;
+    g_rtSent++;
+    g_rtWaiting = true;
+    rtSend('P', g_rtSeq, g_rtPeer, 0, 0);
+    rtLog("ping", g_rtSeq, 0, 0, 0, 0);
+    Serial.printf("[RT] ping %u sent\n", (unsigned)g_rtSeq);
+    if (g_rtOpen && millis() - g_rtShownAt > 5000) requestRedraw();
+}
+
+void rtKey(const KeyEvent& ev) {
+    const char c = ev.character;
+    static const uint16_t kEvery[4] = {10, 15, 30, 60};
+    if (c >= '1' && c <= '4') {
+        g_rtEvery = kEvery[c - '1'];
+        g_rtNextAt = millis() + g_rtEvery * 1000UL;
+        toast("Every %u s", (unsigned)g_rtEvery);
+        requestRedraw();
+        return;
+    }
+    if (toupper((unsigned char)c) == 'M') { g_rtOpen = false; openMenu(); return; }   // keeps running
+}
+
+void renderRangeTest() {
+    char nm[24], a[56];
+    peerName(g_rtPeer, nm, sizeof(nm));
+    snprintf(a, sizeof(a), "Range test: %.14s", nm);
+    drawHeader(a, false);
+    int y = LIST_TOP;
+    auto line = [&](const char* t, bool bold) { label(0, y, W, 18, t, bold); y += 20; };
+    const unsigned pct = g_rtSent ? (unsigned)((g_rtLost * 100 + g_rtSent / 2) / g_rtSent) : 0;
+    snprintf(a, sizeof(a), "pings %lu  replies %lu", (unsigned long)g_rtSent, (unsigned long)g_rtGot); line(a, true);
+    snprintf(a, sizeof(a), "lost %lu (%u%%)  every %u s", (unsigned long)g_rtLost, pct, (unsigned)g_rtEvery); line(a, false);
+    y += 4;
+    line("Last reply heard here:", false);
+    if (g_rtGot) { snprintf(a, sizeof(a), "%d dBm  SNR %.1f dB", g_rtRssi, g_rtSnr); line(a, true); }
+    else line("-", false);
+    line("They heard our ping:", false);
+    if (g_rtGot) { snprintf(a, sizeof(a), "%d dBm  SNR %.1f dB", g_rtPeerRssi, g_rtPeerSnr); line(a, true); }
+    else line("-", false);
+    snprintf(a, sizeof(a), "their pings heard: %lu", (unsigned long)g_rtHeard); line(a, false);
+    double la, lo;
+    if (gpsFresh() && ownPosition(la, lo)) snprintf(a, sizeof(a), "me %.5f,%.5f", la, lo);
+    else snprintf(a, sizeof(a), "me: no GPS fix (logged as such)");
+    line(a, false);
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "^ stop  1-4: 10/15/30/60 s");
+    g_rtShownAt = millis();
+}
+
 void render() {
     const uint32_t t0 = millis();
     clearRoot();
@@ -6782,6 +7723,8 @@ void render() {
     if (g_threadOpen)                  renderThread();
     else if (g_entry == Entry::Name)   renderRename();
     else if (g_wizOpen)                renderWizard();
+    else if (g_navOpen)                renderNav();
+    else if (g_rtOpen)                 renderRangeTest();
     else if (g_cardOpen)               renderCard();
     else if (g_libOpen)                renderLibrary();
     else if (g_gameOpen)               renderGame();
@@ -6795,8 +7738,12 @@ void render() {
     drawBottomBar();
     drawMenuOverlay();
     lv_refr_now(nullptr);
-    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_placeOpen)
+    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_placeOpen && !g_navOpen)
         stampMap();   // after LVGL's clear
+    if (g_navOpen && !g_menuOpen) stampNav();
+    if (g_screen == SCR_SETTINGS && g_page == PG_ENERGY_GRAPH && !g_menuOpen && !g_threadOpen && !mapview::isOpen() &&
+        !g_libOpen && !g_gameOpen && !g_wizOpen && !g_rtOpen)
+        stampGraphLabels();
     const uint32_t t1 = millis();
     // Clear the request first: keys queued during the panel refresh may ask again.
     g_redraw = false;
@@ -6836,8 +7783,11 @@ void drawIdleTop() {
     const int pct = g_bat.valid ? g_bat.pct : -1;
     const int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
     box(0, 0, W, kIdleMapTop, 1);
-    if (unread > 0) snprintf(line, sizeof(line), "%s  %d%%%s  %d NEW", t, pct, g_bat.charging ? "+" : "", unread);
-    else snprintf(line, sizeof(line), "%s  %d%%%s  no new", t, pct, g_bat.charging ? "+" : "");
+    char left[10] = "";
+    const int h10 = g_bat.usb ? -1 : batHoursLeft10(nullptr);
+    if (h10 >= 0) snprintf(left, sizeof(left), h10 < 480 ? " ~%dh" : " ~%dd", h10 < 480 ? (h10 + 5) / 10 : (h10 + 120) / 240);
+    if (unread > 0) snprintf(line, sizeof(line), "%s  %d%%%s%s  %d NEW", t, pct, g_bat.charging ? "+" : "", left, unread);
+    else snprintf(line, sizeof(line), "%s  %d%%%s%s  no new", t, pct, g_bat.charging ? "+" : "", left);
     label(0, 0, W, 20, line, true);
     snprintf(line, sizeof(line), "%s  %s", d, g_selfName);
     label(0, 18, W, 18, line);
@@ -7203,9 +8153,15 @@ void cancelEntry() {
 
 void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
+    if (g_navOpen && !entryActive()) { navClose(); return; }
     if (g_navKeysOpen && (mapview::isOpen() || g_libOpen || g_gameOpen) && !entryActive()) { navKeysToggle(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
-    if (g_shareActive && !entryActive()) { g_shareActive = false; g_shareAll = false; toast("Share cancelled"); return; }
+    if (g_rtOpen && !entryActive()) { rtStop(); return; }
+    if (g_shareActive && !entryActive()) {
+        g_shareActive = false; g_shareAll = false; g_pickRt = false; g_pickLowbat = false;
+        toast("Cancelled");
+        return;
+    }
     if (g_placeOpen && !entryActive()) { g_placeOpen = false; g_fullRefreshReq = true; requestRedraw(); return; }
     if (g_libOpen && !entryActive()) {
         if (g_libReading) { libRemember(); g_libReading = false; requestRedraw(); } else libClose();
@@ -7328,6 +8284,22 @@ void commitEntry() {
         cposAssign(g_cardPeer, (int)v);
         toast("Map #%ld", v);
         requestRedraw();
+        return;
+    }
+    case Entry::CheckinTime: {               // hhmm or hmm; 12 h clock: 1-12 + the am / pm row
+        long v;
+        if (!parseLong(g_buf, v) || g_bufLen < 3 || g_bufLen > 4) { toast("Type hhmm, e.g. 0730"); return; }
+        int h = (int)(v / 100), m = (int)(v % 100);
+        if (m > 59 || h > 23 || (g_cfg.clock12 && (h < 1 || h > 12))) { toast(g_cfg.clock12 ? "1:00 - 12:59" : "00:00 - 23:59"); return; }
+        if (g_cfg.clock12) h = h % 12 + (g_pw.checkinStart >= 720 ? 12 : 0);
+        g_pw.checkinStart = (uint16_t)(h * 60 + m);
+        power::save(g_pw);
+        powerApply(true);
+        endEntry();
+        char at[12];
+        fmtClockMin(g_pw.checkinStart, at, sizeof(at));
+        toast("Check-in at %s", at);
+        Serial.printf("[CHECKIN] time %s\n", at);
         return;
     }
     case Entry::FoundText:
@@ -7504,7 +8476,8 @@ void entryKey(const KeyEvent& ev) {
     if (g_entry == Entry::WifiPass && g_bufLen >= WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
     if (passEntry(g_entry) && g_bufLen >= kLockPassMax) { toast("Max 32 chars"); return; }
     if (g_entry == Entry::Search && g_bufLen >= sizeof(g_filter) - 1) return;
-    if ((g_entry == Entry::WptName || g_entry == Entry::FoundText) && g_entryReplace) {   // typing replaces the default
+    if ((g_entry == Entry::WptName || g_entry == Entry::FoundText || g_entry == Entry::CheckinTime) &&
+        g_entryReplace) {                                                                  // typing replaces the default
         bufClear(); g_entryReplace = false;
     }
     if (g_entry == Entry::WptName && g_bufLen >= 15) { toast("Max 15 chars"); return; }
@@ -7587,6 +8560,8 @@ void handleKey(const KeyEvent& ev) {
     if (g_libOpen) { libKey(ev); return; }
     if (g_gameOpen) { gameKey(ev); return; }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
+    if (g_rtOpen) { rtKey(ev); return; }
+    if (g_navOpen) { navKey(ev); return; }
     if (mapview::isOpen()) { mapKey(ev); return; }
     browseKey(ev);
 }
@@ -7606,6 +8581,8 @@ void mapKey(const KeyEvent& ev) {
         return;
     }
     if (mc == 'A') return;
+    if (mc == kKeyBack) { if (g_tbOn) tbStop("stopped"); else tbStart(); requestRedraw(); return; }
+    if (mc == kKeyGo) { navOpen(); return; }
     if (mc == kKeyFind) { startEntry(Entry::PlaceFind); return; }   // locate a place
     if (wptMapKey(ev)) return;                            // P next / Alt+P add / Alt+SYM delete
     if (mc == kKeyContact) { mapCycleContact(); return; } // next contact's last position
@@ -8301,8 +9278,72 @@ void handleSerialLine(char* p) {
         shareAllTo(to);
         return;
     }
+    if (!strncmp(p, "rt", 2) && (p[2] == 0 || p[2] == ' ')) {   // rt | rt start <hex> [secs] | rt stop
+        char hx[40] = "";
+        int secs = 0;
+        uint8_t h[16];
+        if (!strcmp(p, "rt stop")) rtStop();
+        else if (!strncmp(p, "rt start ", 9) && sscanf(p + 9, "%39s %d", hx, &secs) >= 1 && hexToHash(hx, h)) rtStart(h, secs);
+        Serial.printf("[RT] on=%d sent=%lu replies=%lu lost=%lu heard=%lu file=%s\n", g_rtOn, (unsigned long)g_rtSent,
+                      (unsigned long)g_rtGot, (unsigned long)g_rtLost, (unsigned long)g_rtHeard, g_rtFile);
+        return;
+    }
+    if (!strncmp(p, "batleft", 7)) {          // batleft [feed <mA> <min>]: estimate (bench: feed drain data)
+        int ma = 0, mins = 0;
+        if (sscanf(p + 7, " feed %d %d", &ma, &mins) == 2 && ma > 0 && mins > 0)
+            energy::addMeasured((int16_t)-ma, (uint32_t)mins * 60000UL);
+        char t[48];
+        batLeftText(t, sizeof(t));
+        Serial.printf("[BAT] left: %s\n", t);
+        return;
+    }
+    if (!strncmp(p, "lowbat", 6)) {           // lowbat <pct> <hex> | lowbat (status)
+        int pc = -1;
+        char hx[40] = "";
+        uint8_t h[16];
+        if (sscanf(p + 6, " %d %39s", &pc, hx) == 2 && hexToHash(hx, h)) {
+            g_cfg.lowBatPct = (uint8_t)pc; memcpy(g_cfg.lowBatTo, h, 16); g_cfg.lowBatSent = false; saveConfig();
+        }
+        Serial.printf("[LOWBAT] at %u%% sent=%d\n", (unsigned)g_cfg.lowBatPct, g_cfg.lowBatSent);
+        return;
+    }
+    if (!strncmp(p, "geof", 4) && (p[4] == 0 || p[4] == ' ')) {   // geof | geof add <hex> me|w<n> <m> [rep] | geof clear
+        char hx[40] = "", at[8] = "";
+        int m = 0, rep = 0;
+        uint8_t h[16];
+        if (!strcmp(p, "geof clear")) { g_geofCount = 0; geofSave(); }
+        else if (!strncmp(p, "geof add ", 9) && sscanf(p + 9, "%39s %7s %d %d", hx, at, &m, &rep) >= 3 && hexToHash(hx, h)) {
+            const int place = (at[0] == 'w' || at[0] == 'W') ? atoi(at + 1) : 0;
+            Serial.printf("[GEOF] add %s\n", geofAdd(h, place, (uint16_t)m, rep != 0) ? "ok" : "failed");
+        }
+        for (int i = 0; i < g_geofCount; i++) {
+            char t[40];
+            geofText(g_geof[i], t, sizeof(t));
+            Serial.printf("[GEOF] %d: %s%s%s\n", i + 1, t, g_geof[i].repeat ? " repeat" : "", g_geof[i].armed ? "" : " (inside)");
+        }
+        Serial.printf("[GEOF] %d alerts\n", g_geofCount);
+        return;
+    }
     if (!strcmp(p, "contacts export")) { Serial.printf("[CONTACTS] exported %d\n", contactsExport()); return; }
     if (!strcmp(p, "contacts import")) { Serial.printf("[CONTACTS] imported %d\n", contactsImport()); return; }
+    if (!strcmp(p, "setcheck")) {             // every Settings row whose title or value is wider than a row
+        int bad = 0;
+        for (int pg = 0; pg <= (int)PG_LOWBAT; pg++) {
+            if (pg == PG_ENERGY_GRAPH) continue;
+            buildSettingsRows((Page)pg);
+            for (int i = 0; i < g_srowCount; i++) {
+                const int tw = textW(g_srows[i].title), sw = textW(g_srows[i].sub);
+                if (tw > W - 16 || sw > W - 16) {
+                    Serial.printf("[SETCHECK] %s row %d: \"%s\" (%d) / \"%s\" (%d)\n", pageTitle((Page)pg), i + 1,
+                                  g_srows[i].title, tw, g_srows[i].sub, sw);
+                    bad++;
+                }
+            }
+        }
+        buildSettingsRows(g_page);
+        Serial.printf("[SETCHECK] %d rows too wide\n", bad);
+        return;
+    }
     if (!strncmp(p, "idlescr", 7)) {                   // idlescr [0-3]: idle screen; "idle now"
         const int v = p[7] ? atoi(p + 8) : -1;
         if (v >= 0 && v < IDLE_COUNT) { g_cfg.idleScreen = (uint8_t)v; saveConfig(); }
@@ -8347,9 +9388,17 @@ void handleSerialLine(char* p) {
         Serial.printf("[CLOCK] epoch %lld (%s)\n", (long long)time(nullptr),
                       handheld::ClockConfidence::synchronized() ? "synchronized" : "not synchronized");
     } else if (!strncmp(p, "checkin", 7)) {
-        int m = -1, e = -1;
-        if (sscanf(p + 7, "%d %d", &m, &e) >= 1 && m >= 0 && m <= 59) {
-            g_pw.checkinMin = (uint8_t)m;
+        // checkin [hh:mm | minute-of-hour] [every-min]
+        int h = -1, m = -1, e = -1;
+        bool set = false;
+        if (sscanf(p + 7, " %d:%d %d", &h, &m, &e) >= 2 && h >= 0 && h < 24 && m >= 0 && m < 60) {
+            g_pw.checkinStart = (uint16_t)(h * 60 + m);
+            set = true;
+        } else if (sscanf(p + 7, "%d %d", &m, &e) >= 1 && m >= 0 && m <= 59) {
+            g_pw.checkinStart = (uint16_t)(g_pw.checkinStart / 60 * 60 + m);   // minute of the hour
+            set = true;
+        }
+        if (set) {
             if (e >= 5 && e <= 1440) g_pw.checkinEvery = (uint16_t)e;   // any >= 5 for bench tests
             power::save(g_pw);
             powerApply(true);
@@ -8357,8 +9406,9 @@ void handleSerialLine(char* p) {
         const power::CheckinPhase ph = checkinNow();
         struct tm nt;
         localNow(nt);
-        Serial.printf("[CHECKIN] now %02d:%02d:%02d at :%02u every %u min; %s, change in %lu s, next in %lu s; %d queued; clock %s\n",
-                      nt.tm_hour, nt.tm_min, nt.tm_sec, (unsigned)g_pw.checkinMin, (unsigned)g_pw.checkinEvery,
+        Serial.printf("[CHECKIN] now %02d:%02d:%02d at %02u:%02u every %u min; %s, change in %lu s, next in %lu s; %d queued; clock %s\n",
+                      nt.tm_hour, nt.tm_min, nt.tm_sec, (unsigned)(g_pw.checkinStart / 60), (unsigned)(g_pw.checkinStart % 60),
+                      (unsigned)g_pw.checkinEvery,
                       ph.inWindow ? "window open" : "closed",
                       (unsigned long)ph.toChangeS, (unsigned long)ph.toNextS, g_outboxCount,
                       handheld::ClockConfidence::synchronized() ? "synced" : g_clkLastAt ? "from peer" : "own");
@@ -8386,6 +9436,7 @@ void handleSerialLine(char* p) {
             else if (!strcmp(k, "kbl")) c.keyLight = v != 0;
             else if (!strcmp(k, "touch")) c.touchOnKey = v != 0;
             else if (!strcmp(k, "mapgps")) c.mapGps = v != 0;
+            else if (!strcmp(k, "trackgps")) c.trackGps = v != 0;
             else { Serial.println("[POWER] pset: bad knob/value"); return; }
             g_pw.mode = power::MODE_CUSTOM;
             power::save(g_pw);
@@ -8505,8 +9556,21 @@ void handleSerialLine(char* p) {
     } else if (!strncmp(p, "sdarc ", 6)) {
         sdArchiveSet(atoi(p + 6) != 0);
         Serial.printf("[SD] message archive setting %s (applies at next boot)\n", sdArchiveEnabled() ? "on" : "off");
-    } else if (!strcmp(p, "wpt") || !strcmp(p, "wpt clear")) {
-        // wpt = list waypoints; wpt clear = remove all
+    } else if (!strcmp(p, "wpt") || !strcmp(p, "wpt clear") || !strncmp(p, "wpt add ", 8)) {
+        // wpt = list waypoints; wpt clear = remove all; wpt add <lat> <lon> <NAME> (bench)
+        double la = 0, lo = 0;
+        char nm[16] = "";
+        if (!strncmp(p, "wpt add ", 8)) {
+            if (sscanf(p + 8, "%lf %lf %15s", &la, &lo, nm) == 3 && g_wptCount < kWptMax) {
+                Wpt& w = g_wpt[g_wptCount++];
+                w.lat = (float)la; w.lon = (float)lo;
+                strlcpy(w.name, nm, sizeof(w.name));
+                w.at = 0;
+                wptSave();
+                Serial.printf("[WPT] W%d %s at %.5f,%.5f\n", g_wptCount, w.name, la, lo);
+            }
+            return;
+        }
         if (p[3]) { g_wptCount = 0; g_wptSel = -1; wptSave(); Serial.println("[WPT] cleared"); return; }
         for (int i = 0; i < g_wptCount; i++)
             Serial.printf("[WPT] W%d %s %.5f,%.5f\n", i + 1, g_wpt[i].name, g_wpt[i].lat, g_wpt[i].lon);
@@ -8515,6 +9579,9 @@ void handleSerialLine(char* p) {
         // track = status; bench: track add <lat> <lon> | track clear
         double la = 0, lo = 0;
         if (!strcmp(p, "track clear")) { trackClear(); return; }
+        if (!strcmp(p, "track gpx")) { Serial.printf("[TRACK] gpx %d points %s\n", trackExportGpx(), g_trackGpx); return; }
+        if (!strcmp(p, "track back")) { if (tbStart()) openMap(); return; }
+        if (!strcmp(p, "track back stop")) { tbStop("stopped"); return; }
         if (!strncmp(p, "track add ", 10) && sscanf(p + 10, "%lf %lf", &la, &lo) == 2) {
             if (!g_trackLoaded) trackLoad();
             trackAdd(la, lo);
@@ -8720,6 +9787,10 @@ void handleSerialLine(char* p) {
     } else if (!strncmp(p, "energy", 6)) {
         // energy | energy period <s> | energy clear
         if (!strncmp(p + 6, " period ", 8)) energy::setPeriod((uint32_t)atoi(p + 14));
+        else if (!strncmp(p + 6, " fill ", 6)) {
+            const time_t now = time(nullptr);
+            energy::benchFill(atoi(p + 12), now > 1600000000 ? (uint32_t)now : 0);
+        }
         else if (!strcmp(p + 6, " clear")) energy::clear();
         energyAccountAwake();
         energy::dump();
@@ -9031,6 +10102,72 @@ void pollSerial() {
 }
 
 // ---- Background watchers -------------------------------------------------------------
+// ---- Battery: measured time left, low-battery notice --------------------------------------
+// Time left: the gauge's remaining mAh over the drain the energy monitor measured on battery
+// (the period in progress + up to 12 closed ones, normally 1 h each); needs 30 min of data.
+int batHoursLeft10(int* dataMin) {
+    uint32_t sec = 0, mah10 = 0;
+    const energy::Record cur = energy::current(millis(), g_bat.valid ? g_bat.pct : -1);
+    sec += cur.measuredS; mah10 += cur.measured10;
+    for (int i = 0; i < energy::count() && i < 12; i++) {
+        const energy::Record& r = energy::closed(i);
+        sec += r.measuredS; mah10 += r.measured10;
+    }
+    if (dataMin) *dataMin = (int)(sec / 60);
+    if (sec < 1800 || !mah10 || !g_bat.valid) return -1;
+    const float ma = (mah10 / 10.0f) * 3600.0f / sec;
+    if (ma < 0.5f) return -1;
+    const float rem = g_bat.remMah ? (float)g_bat.remMah : 1450.0f * g_bat.pct / 100.0f;
+    return (int)(rem / ma * 10.0f);
+}
+
+void batLeftText(char* out, size_t n) {
+    int mins = 0;
+    const int h10 = batHoursLeft10(&mins);
+    if (g_bat.usb) snprintf(out, n, "on USB power");
+    else if (h10 < 0) snprintf(out, n, "not enough data yet (%d/30 min)", mins);
+    else if (h10 < 480) snprintf(out, n, "about %d h in %s", (h10 + 5) / 10, power::modeName(g_pw.mode));
+    else snprintf(out, n, "about %.1f days in %s", h10 / 240.0f, power::modeName(g_pw.mode));
+}
+
+// Low-battery notice (S.5 row 12): once per discharge, at the chosen %, one contact gets
+// "Battery dying (9%). Last position ..."; check-in mode queues it for the window.
+void lowBatTick() {
+    if (!g_bat.valid) return;
+    if (g_cfg.lowBatSent && (g_bat.usb || g_bat.charging || g_bat.pct >= g_cfg.lowBatPct + 5)) {
+        g_cfg.lowBatSent = false;                    // charged: armed again
+        saveConfig();
+        return;
+    }
+    if (!g_cfg.lowBatPct || g_cfg.lowBatSent || g_bat.usb || g_bat.charging || g_bat.pct > g_cfg.lowBatPct) return;
+    static const uint8_t zero[16] = {0};
+    if (!memcmp(g_cfg.lowBatTo, zero, 16)) return;
+    char body[120];
+    double la, lo;
+    if (g_gpsPosValid) {
+        const uint32_t age = (millis() - g_gpsPosAt) / 60000;
+        snprintf(body, sizeof(body), "Battery dying (%d%%). Last position %.5f, %.5f (%lu min old)", g_bat.pct,
+                 g_gpsLat, g_gpsLon, (unsigned long)age);
+    } else if (ownPosition(la, lo)) {
+        snprintf(body, sizeof(body), "Battery dying (%d%%). Saved position %.5f, %.5f (no GPS fix)", g_bat.pct, la, lo);
+    } else {
+        snprintf(body, sizeof(body), "Battery dying (%d%%). No position known.", g_bat.pct);
+    }
+    const power::CheckinPhase ph = checkinNow();
+    const bool queue = g_pwEff.checkin && !(ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS);
+    bool ok;
+    if (queue) ok = outboxAdd(g_cfg.lowBatTo, body);
+    else ok = sendOrQueue(g_cfg.lowBatTo, body) != SendResult::Failed;
+    char nm[24];
+    peerName(g_cfg.lowBatTo, nm, sizeof(nm));
+    Serial.printf("[LOWBAT] %s to %s: %s\n", ok ? (queue ? "queued" : "sent") : "FAILED", nm, body);
+    if (ok) {
+        g_cfg.lowBatSent = true;
+        saveConfig();
+        toast("Low battery: told %.14s", nm);
+    }
+}
+
 void watchBattery() {
     static uint32_t last = 0;
     if (millis() - last < 800) return;
@@ -9039,6 +10176,7 @@ void watchBattery() {
     const int pct = g_bat.pct;
     const bool wasValid = g_bat.valid;
     readBattery();
+    lowBatTick();
     if (g_idleActive) return;
     const bool changed = chg != g_bat.charging || usb != g_bat.usb || wasValid != g_bat.valid ||
                          (g_screen == SCR_HOME && pct != g_bat.pct);
@@ -9244,6 +10382,7 @@ bool begin() {
     ashareLoad();
     cposLoad();
     wptLoad();
+    geofLoad();
     bootMark("battery, power mode, GPS, vault, settings");
     mapview::setCoordFormatter(fmtCoord);
     g_proto.setMessageCallback(onCommittedMessage);
@@ -9282,6 +10421,8 @@ void loop() {
     autoShareTick();
     inboundTick();
     trackTick();
+    navTick();
+    rtTick();
 
     processKeys();         // again, in case a watcher above took a while
     pollTouch();

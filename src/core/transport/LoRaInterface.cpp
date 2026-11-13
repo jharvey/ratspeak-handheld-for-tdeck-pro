@@ -500,7 +500,9 @@ void LoRaInterface::loop() {
                   packetSize, header, payloadSize,
                   _lastRxRssi, _lastRxSnr);
 
-    if (_rawSink) {
+    if (_rxTap && _rxTap(raw + RNODE_HEADER_L, payloadSize, _lastRxRssi, _lastRxSnr)) {
+        // consumed by the application (not a Reticulum frame)
+    } else if (_rawSink) {
         _rawSink(raw + RNODE_HEADER_L, payloadSize);
     }
 
