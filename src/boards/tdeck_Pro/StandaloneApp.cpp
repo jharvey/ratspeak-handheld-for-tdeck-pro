@@ -730,6 +730,7 @@ uint8_t  g_gpsStep = 0;
 // then until it starts navigating.
 bool     g_gpsBbrFault = false;
 uint32_t g_gpsBbrFaultCount = 0, g_gpsPowerOffAt = 0, g_gpsNextCycleAt = 0;
+uint32_t g_gpsVisitStart = 0, g_gpsNextVisit = 0;   // periodic GPS schedule (powerGpsTick)
 
 GpsSky* gpsSkyFor(const char* talker) {
     GpsSky* freeSlot = nullptr;
@@ -4256,6 +4257,9 @@ void drawMenuOverlay() {
 }
 
 // ---- Offline map (MapView.cpp; tiles from the SD card) ----------------------------------
+void gpsRequestVisit(const char* why = "location share");
+void mapGpsAsk(bool opening);
+bool gpsFresh();
 bool g_mapSdTried = false;
 File g_mapFile;                  // pack file kept open between reads
 char g_mapFilePath[80] = "";
@@ -4320,8 +4324,10 @@ void mapPixel(int x, int y, bool black) {
     if (x >= 0 && y >= 0 && x < W && y < H) g_display.setPixel(x, y, black);
 }
 
+// Own marker: the GPS fix (fresh, else the last one: the newest real position), else the
+// saved position S.2.
 void mapFeedPosition() {
-    if (g_gpsPosValid && g_gpsFix) mapview::setPosition(true, g_gpsLat, g_gpsLon);
+    if (g_gpsPosValid) mapview::setPosition(true, g_gpsLat, g_gpsLon);
     else if (g_cfg.hasPos) mapview::setPosition(true, g_cfg.lat, g_cfg.lon);
     else mapview::setPosition(false, 0, 0);
 }
@@ -4337,6 +4343,7 @@ void openMapAt(double lat, double lon) {
     mapview::setReader(mapReadTile);
     g_mapSdTried = false;
     mapFeedPosition();
+    mapGpsAsk(true);                        // the own marker too
     mapview::open(lat, lon, true, false);   // explicit place: no follow
     mapview::fitZoom();                     // deepest zoom with a tile there
     g_fullRefreshReq = true;                // a map is mostly new pixels: avoid ghosting
@@ -4361,13 +4368,15 @@ void openMap() {
     mapview::setReader(mapReadTile);
     g_mapSdTried = false;
     mapFeedPosition();
+    mapGpsAsk(true);
+    // Centre on the newest position: a fresh fix, the last fix, the saved position (S.2).
     double lat = 0, lon = 0; bool have = false;
-    if (g_gpsPosValid && g_gpsFix) { lat = g_gpsLat; lon = g_gpsLon; have = true; }
-    else if (g_cfg.hasPos) { lat = g_cfg.lat; lon = g_cfg.lon; have = true; }
+    const char* how = "no position";
+    if (g_gpsPosValid) { lat = g_gpsLat; lon = g_gpsLon; have = true; how = gpsFresh() ? "GPS" : "last fix"; }
+    else if (g_cfg.hasPos) { lat = g_cfg.lat; lon = g_cfg.lon; have = true; how = "saved position"; }
     if (g_menuOpen) g_menuOpen = false;
     // No position: the card's own start view, maps/home.txt = "lat lon zoom"
     // (written by tools/maptiles/make_tiles.py), so the first view is not empty sea.
-    const char* how = have ? (g_gpsPosValid && g_gpsFix ? "GPS" : "saved position") : "no position";
     bool cardHome = false;
     int homeZoom = 0;
     if (!have) {
@@ -4376,7 +4385,7 @@ void openMap() {
         txt[n < sizeof(txt) ? n : sizeof(txt) - 1] = 0;
         if (n && sscanf(txt, "%lf %lf %d", &lat, &lon, &homeZoom) >= 2) { cardHome = true; how = "card home"; }
     }
-    mapview::open(lat, lon, have || cardHome, have);
+    mapview::open(lat, lon, have || cardHome, true);
     if (homeZoom > 0) mapview::setZoom(homeZoom);
     if (mapview::fitZoom()) Serial.printf("[MAP] zoom %d (deepest tiles here)\n", mapview::zoom());
     g_fullRefreshReq = true;
@@ -4448,8 +4457,21 @@ void heartbeatTick() {
 
 bool gpsFresh();
 
+// The map wants the own position: without a fresh fix ask for a GPS visit when it opens and
+// again each minute while it stays open and in use (keys in the last 5 min), so a scheduled
+// mode does not leave it on a 15-min-old (or no) fix. A visit indoors ends after 60 s.
+void mapGpsAsk(bool opening) {
+    static uint32_t asked = 0;
+    if (!g_cfg.gpsOn || g_pwEff.gps == power::GPS_OFF || gpsFresh()) return;
+    if (!opening && (!g_lastInputMs || millis() - g_lastInputMs > 300000)) return;
+    if (asked && millis() - asked < 60000) return;
+    asked = millis();
+    gpsRequestVisit("map");
+}
+
 void mapTick() {
     if (!mapview::isOpen()) return;
+    mapGpsAsk(false);
     mapFeedPosition();
     static bool lastFresh = false;
     const bool fresh = gpsFresh();
@@ -4529,7 +4551,6 @@ int g_ashareCount = 0;
 uint8_t g_autoForSel = 1;    // duration picked in the thread menu (4 h)
 
 bool gpsFresh() { return g_gpsFix && g_gpsPosValid && millis() - g_gpsPosAt < kFreshFixMs; }
-void gpsRequestVisit();
 
 void fmtAge(uint32_t s, char* out, size_t n) {
     if (s < 90) snprintf(out, n, "%u s", (unsigned)s);
@@ -4590,24 +4611,47 @@ void fmtCoord(double lat, double lon, char* out, size_t n) {
 }
 
 // One short line (fits the 240 px map footer): position, fix, age.
+// What the GPS receiver is doing now: "GPS off", "GPS backup fault", "GPS on 45s 3/9 sats"
+// (seconds into this visit, satellites heard / in view) or "GPS next 12m" between visits.
+void gpsStateText(char* out, size_t n) {
+    if (!g_cfg.gpsOn) { snprintf(out, n, "GPS off"); return; }
+    if (g_pwEff.gps == power::GPS_OFF) { snprintf(out, n, "GPS off (power)"); return; }
+    if (g_gpsBbrFault) { snprintf(out, n, "GPS backup fault"); return; }
+    int inView = 0, heard = 0, best = 0;
+    gpsSkySummary(inView, heard, best);
+    if (g_gpsAllowed) {
+        if (g_gpsVisitStart) snprintf(out, n, "GPS on %lus %d/%d sats",
+                                      (unsigned long)((millis() - g_gpsVisitStart) / 1000), heard, inView);
+        else snprintf(out, n, "GPS on %d/%d sats", heard, inView);
+        return;
+    }
+    const int32_t left = (int32_t)(g_gpsNextVisit - millis());
+    if (g_gpsNextVisit && left > 0) snprintf(out, n, "GPS next %lum", (unsigned long)((left + 59999) / 60000));
+    else snprintf(out, n, "GPS idle");
+}
+
 void gpsPosText(char* out, size_t n) {
     if (gpsFresh()) {
         char c[40];
         fmtCoord(g_gpsLat, g_gpsLon, c, sizeof(c));
         snprintf(out, n, "%s %usat", c, (unsigned)g_gpsSats);
-    } else if (g_gpsPosValid) {
+        return;
+    }
+    // No fresh fix: what the receiver is doing, after the age of the last fix (or "set" =
+    // the saved position S.2 is what the map shows). Fits the 240 px footer.
+    char st[28];
+    gpsStateText(st, sizeof(st));
+    if (g_gpsPosValid) {
         const uint32_t a = (millis() - g_gpsPosAt) / 1000;
         char age[8];
         if (a < 90) snprintf(age, sizeof(age), "%us", (unsigned)a);
         else if (a < 5400) snprintf(age, sizeof(age), "%um", (unsigned)((a + 30) / 60));
         else snprintf(age, sizeof(age), "%uh", (unsigned)((a + 1800) / 3600));
-        char c[40];
-        fmtCoord(g_gpsLat, g_gpsLon, c, sizeof(c));
-        snprintf(out, n, "old %s %s", c, age);
+        snprintf(out, n, "fix %s old, %s", age, st);
     } else if (g_cfg.hasPos) {
-        snprintf(out, n, "set %.4f,%.4f no fix", g_cfg.lat, g_cfg.lon);
+        snprintf(out, n, "saved pos, %s", st);
     } else {
-        snprintf(out, n, "%s", g_cfg.gpsOn ? "GPS: no fix yet" : "GPS off");
+        snprintf(out, n, "no fix, %s", st);
     }
 }
 
@@ -6783,8 +6827,6 @@ bool chargerSetHiz(bool on) {
     return chargerUpdateReg(0x00, 0x80, on ? 0x80 : 0x00);
 }
 
-uint32_t g_gpsVisitStart = 0, g_gpsNextVisit = 0;   // periodic GPS schedule (powerGpsTick)
-
 bool powerUsbPowered() { return g_bat.usb && !g_benchUntil; }
 
 void powerApply(bool force) {
@@ -6846,11 +6888,11 @@ void powerApply(bool force) {
 bool g_gpsVisitAsked = false;     // a feature (location auto-share) needs a fix now
 
 // Start a GPS visit at the next tick even between scheduled ones (any mode but GPS off).
-void gpsRequestVisit() {
+void gpsRequestVisit(const char* why) {
     if (g_gpsVisitStart) return;
     g_gpsVisitAsked = true;
     g_gpsNextVisit = millis();
-    Serial.println("[GPS] visit requested (location share)");
+    Serial.printf("[GPS] visit requested (%s)\n", why);
 }
 
 void powerGpsTick() {

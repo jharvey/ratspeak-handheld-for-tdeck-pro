@@ -665,11 +665,21 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
 ### 8.1 Offline map — Works (simulator; COM9 with test tiles on its card, 2026-11-11)
 
 The **Atlas** tab in the bottom bar, **L** on any screen, or **M → Atlas** (MENU row 6, hotkey **L**). The map is centred
-on the GPS fix, or on the saved position (S.2) without one, and follows it. With
-neither, it opens on the card's start view `maps/home.txt` (`lat lon zoom`, written by
+on the newest position: a fresh GPS fix, else the last fix (however old), else the saved
+position (S.2), and follows the own position until you pan (a fix that arrives while the
+map is open moves it there). With none of these, it opens on the card's start view `maps/home.txt` (`lat lon zoom`, written by
 the tile tool). If the card has no tile under the centre at that zoom, it zooms out to
 the deepest level that has one (a card often holds a wide area coarse and a small one
 in detail).
+
+**GPS while the map is open:** without a fresh fix, opening the map starts a GPS visit at
+once (in the scheduled power modes the receiver is otherwise only on every 15 min / hourly),
+and asks again each minute while the map stays open and in use. A visit indoors ends after
+60 s with no satellite heard. The footer line says what the receiver is doing:
+`17T PJ 3037 3462 7sat` (fresh fix) · `fix 28m old, GPS on 45s 3/9 sats` (last fix's age;
+searching, 45 s into the visit, 3 satellites heard of 9 in view) · `fix 28m old, GPS next
+12m` (receiver off until the next visit) · `saved pos, ...` / `no fix, ...` (no fix since
+boot) · `GPS off` (S.2) · `GPS off (power)` (power mode without GPS) · `GPS backup fault`.
 
 Ready-made set (2026-11-12): USGS National Map topo (public domain, credit U.S.
 Geological Survey) as 1-bit tiles at `--threshold 150`: the lower 48 states at zoom

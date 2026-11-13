@@ -30,6 +30,9 @@ START HERE (handoff 2026-11-11)
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
+- GPS + map (2026-11-13): openMap() centres on fresh fix > last fix (g_gpsPosValid) > saved pos > card home, follow on;
+  mapGpsAsk() requests a GPS visit on open and each minute while open + in use (no fresh fix); gpsPosText()
+  footer = fix age + gpsStateText() (GPS on Ns heard/inView, next Nm, off, backup fault). sim/scripts/gps_map.txt.
 - Map packs (2026-11-12): MapView reads /ratdeckpro/maps/packs/<z>/<x>>6>_<y>>6>.rmp first
   (make_packs.py). RMP2 (default) = context-model range coder, tools/maptiles/rmcodec.py
   and ctxDecode() in MapView.cpp MUST stay identical (10-px context, 12-bit probs, shift 5,
