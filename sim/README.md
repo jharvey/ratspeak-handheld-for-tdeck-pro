@@ -143,7 +143,7 @@ Radio channel: the simulated air is UDP multicast port 47999; `set RS_SIM_AIR_PO
 gives a group of simulators its own channel (the stress runner `tools/stress/pingpong.py`
 uses 48101 and TCP 5701/5702, so it can run beside other simulators).
 
-Checked build: `build-sim.bat checked` builds `simuild-checkedatspeak-sim.exe` with
+Checked build: `build-sim.bat checked` builds `sim\build-checked\ratspeak-sim.exe` with
 run-time checks (undefined behaviour and array bounds stop the program at the fault,
 libstdc++ assertions, stack protector, `_FORTIFY_SOURCE`); slower, for stress runs
 (`set RS_SIM_EXE=` to that exe for `tools/stress/*.py`). No AddressSanitizer on MinGW.

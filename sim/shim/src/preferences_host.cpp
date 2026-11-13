@@ -10,7 +10,10 @@
 #include <vector>
 
 namespace fsx = std::filesystem;
-namespace sim { std::string dataRoot(); }
+namespace sim {
+std::string dataRoot();
+void wearNvs(const std::string& ns, const std::string& key, size_t bytes, bool blob);
+}
 
 namespace {
 struct Entry { PreferenceType type; std::vector<uint8_t> data; };
@@ -93,7 +96,10 @@ size_t Preferences::putNum(const char* k, PreferenceType t, int64_t v, size_t sz
     if (!started_ || ro_ || !k || strlen(k) > 15) return 0;   // NVS key limit
     std::lock_guard<std::mutex> l(g_mu);
     Entry e{t, std::vector<uint8_t>((const uint8_t*)&v, (const uint8_t*)&v + 8)};
-    load(ns_)[k] = e;
+    auto& m = load(ns_);
+    auto it = m.find(k);
+    if (it == m.end() || it->second.type != t || it->second.data != e.data) sim::wearNvs(ns_, k, sz, false);
+    m[k] = e;
     save(ns_);
     return sz;
 }
@@ -114,14 +120,22 @@ double Preferences::getDouble(const char* k, double d) { double v; return getByt
 size_t Preferences::putString(const char* k, const char* v) {
     if (!started_ || ro_ || !k || !v || strlen(k) > 15) return 0;
     std::lock_guard<std::mutex> l(g_mu);
-    load(ns_)[k] = Entry{PT_STR, std::vector<uint8_t>(v, v + strlen(v))};
+    Entry e{PT_STR, std::vector<uint8_t>(v, v + strlen(v))};
+    auto& m = load(ns_);
+    auto it = m.find(k);
+    if (it == m.end() || it->second.type != PT_STR || it->second.data != e.data) sim::wearNvs(ns_, k, strlen(v) + 1, true);
+    m[k] = std::move(e);
     save(ns_);
     return strlen(v);
 }
 size_t Preferences::putBytes(const char* k, const void* v, size_t n) {
     if (!started_ || ro_ || !k || (!v && n) || strlen(k) > 15) return 0;
     std::lock_guard<std::mutex> l(g_mu);
-    load(ns_)[k] = Entry{PT_BLOB, std::vector<uint8_t>((const uint8_t*)v, (const uint8_t*)v + n)};
+    Entry e{PT_BLOB, std::vector<uint8_t>((const uint8_t*)v, (const uint8_t*)v + n)};
+    auto& m = load(ns_);
+    auto it = m.find(k);
+    if (it == m.end() || it->second.type != PT_BLOB || it->second.data != e.data) sim::wearNvs(ns_, k, n, true);
+    m[k] = std::move(e);
     save(ns_);
     return n;
 }

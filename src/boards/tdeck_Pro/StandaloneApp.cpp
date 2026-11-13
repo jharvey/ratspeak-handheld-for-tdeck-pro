@@ -89,7 +89,7 @@ extern void keyboardSetNumLayer(bool on);
 
 #if defined(SIMULATOR)
 namespace sim { void setPowerInfo(const char* line); }   // side panel (sim/shim)
-namespace sim { size_t processBytes(); }                 // real process memory (sim/shim)
+namespace sim { size_t processBytes(); void wearDump(); }   // sim/shim: process memory, flash wear counters
 #endif
 
 namespace standalone {
@@ -4355,6 +4355,7 @@ void heartbeatPrint() {
                   (unsigned)sp.usedPct, (unsigned long)sp.removed, sp.full ? 1 : 0);
 #if defined(SIMULATOR)
     Serial.printf(" proc=%u", (unsigned)(::sim::processBytes() >> 10));
+    ::sim::wearDump();                       // flash wear counters up to now (tools/stress/wear.py)
 #endif
     Serial.printf("\n");
 }

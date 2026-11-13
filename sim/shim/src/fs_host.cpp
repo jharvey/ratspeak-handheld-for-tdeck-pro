@@ -15,6 +15,8 @@ fs::LittleFSFS LittleFS;
 fs::SDFS SD;
 
 namespace sim {
+void wearFlashWrite(const std::string& vpath, uint64_t bytes);
+void wearFlashMeta(const char* what, const std::string& vpath);
 std::string dataRoot() {
     std::lock_guard<std::mutex> l(hw().mu);
     return hw().dataDir;
@@ -88,7 +90,9 @@ public:
             const int64_t delta = (int64_t)blocksFor(grown) - (int64_t)blocksFor(end);
             if (delta > 0 && !flashAdjust(delta)) return 0;
         }
-        return fwrite(b, 1, n, f_);
+        const size_t w = fwrite(b, 1, n, f_);
+        written_ += w; wrote_ |= w > 0;
+        return w;
     }
     size_t read(uint8_t* b, size_t n) override { return f_ ? fread(b, 1, n, f_) : 0; }
     void flush() override { if (f_) fflush(f_); }
@@ -107,7 +111,14 @@ public:
         return end < 0 ? 0 : (size_t)end;
     }
     bool setBufferSize(size_t) override { return true; }
-    void close() override { if (f_) { fclose(f_); f_ = nullptr; } open_ = false; }
+    void close() override {
+        if (f_) {
+            fclose(f_); f_ = nullptr;
+            if (flash_ && wrote_) sim::wearFlashWrite(vpath_, written_);
+        }
+        open_ = false;
+    }
+    void markTruncated() { wrote_ = true; }
     time_t getLastWrite() override { return 0; }
     const char* path() const override { return vpath_.c_str(); }
     const char* name() const override { return name_.c_str(); }
@@ -135,7 +146,8 @@ private:
     }
     std::string vpath_, host_, name_;
     FILE* f_ = nullptr;
-    bool dir_ = false, open_ = true, flash_ = false;
+    bool dir_ = false, open_ = true, flash_ = false, wrote_ = false;
+    uint64_t written_ = 0;
     std::vector<std::string> entries_;
     size_t pos_ = 0;
 };
@@ -164,7 +176,9 @@ fs::FileImplPtr openHost(const std::string& vpath, const std::string& host, cons
     if (flash && m == 'w' && fsx::is_regular_file(host, ec)) flashAdjust(-(int64_t)blocksFor(fsx::file_size(host, ec)));
     FILE* f = fopen(host.c_str(), cm);
     if (!f) return {};
-    return std::make_shared<HostFileImpl>(vpath, host, f, flash);
+    auto impl = std::make_shared<HostFileImpl>(vpath, host, f, flash);
+    if (m == 'w') impl->markTruncated();   // truncating counts as a write
+    return impl;
 }
 
 fs::FileImplPtr HostFileImpl::openNextFile(const char* mode) {
@@ -199,7 +213,7 @@ bool FS::remove(const char* path) {
     if (fsx::is_directory(h, ec) || !fsx::exists(h, ec)) return false;
     const uint64_t size = fsx::file_size(h, ec);
     if (!fsx::remove(h, ec)) return false;
-    if (sub_ == "littlefs") flashAdjust(-(int64_t)blocksFor(size));
+    if (sub_ == "littlefs") { flashAdjust(-(int64_t)blocksFor(size)); sim::wearFlashMeta("remove", normV(path)); }
     return true;
 }
 bool FS::rename(const char* a, const char* b) {
@@ -210,6 +224,7 @@ bool FS::rename(const char* a, const char* b) {
     const uint64_t replaced = hadTarget ? fsx::file_size(hb, ec) : 0;
     fsx::rename(ha, hb, ec);       // replaces an existing target, like LittleFS
     if (!ec && hadTarget && sub_ == "littlefs") flashAdjust(-(int64_t)blocksFor(replaced));
+    if (!ec && sub_ == "littlefs") sim::wearFlashMeta("rename", normV(b));
     return !ec;
 }
 bool FS::mkdir(const char* path) {
@@ -217,7 +232,7 @@ bool FS::mkdir(const char* path) {
     const auto h = hostPath(path);
     if (fsx::is_directory(h, ec)) return true;
     if (sub_ == "littlefs" && !flashAdjust(kDirBlocks)) return false;
-    if (fsx::create_directory(h, ec)) return true;
+    if (fsx::create_directory(h, ec)) { if (sub_ == "littlefs") sim::wearFlashMeta("mkdir", normV(path)); return true; }
     if (sub_ == "littlefs") flashAdjust(-(int64_t)kDirBlocks);
     return false;
 }

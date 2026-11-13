@@ -65,12 +65,17 @@ Tools:
   (records >= before + saves the heartbeat confirmed), every record readable (`msgstat`
   bad=0); deletes the test conversations above 1,000 records so the firmware's own
   removal at 85 % does not count as a loss. `--flashkb` for the full-flash path.
-- DONE: checked simulator build: `simuild-sim.bat checked` -> `simuild-checked`
+- DONE: checked simulator build: `sim\build-sim.bat checked` -> `sim\build-checked`
   (undefined-behaviour + array-bounds traps, libstdc++ assertions, stack protector,
   _FORTIFY_SOURCE). MinGW GCC has no AddressSanitizer, so heap use-after-free is not
-  caught. Runners use it with `set RS_SIM_EXE=...\simuild-checked
-atspeak-sim.exe`.
-- TODO: a random-key script command (`monkey <minutes> <seed>`), repeatable by seed.
+  caught. Runners use it with `set RS_SIM_EXE=...\sim\build-checked\ratspeak-sim.exe`.
+- DONE: `tools/stress/monkey.py`: rounds of random key taps (letters, digits, Enter, Back,
+  Backspace, Space, SYM / ALT combos, short pauses, now and then GPS / USB / SD / battery
+  changes) on a fresh simulator; FAIL on an exit without PASS, a trap / assert line, or a
+  heartbeat gap of 60 s. A failed round keeps its script (replay with `run-script.bat`).
+- DONE: flash wear counters in the simulator (`sim/shim/src/wear.cpp` -> `<data>/wear.txt`:
+  LittleFS writes per path pattern, renames / removes / mkdirs, changed NVS values) and
+  `tools/stress/wear.py` (idle run + ping-pong run -> erases per day, years to wear-out).
 
 ## 3. Layer 2: real units (24-72 hours)
 
@@ -170,11 +175,20 @@ Fixed findings:
 | 2026-11-12 | (index) | Power cuts with record index, normal flash | 60 cycles | PASS | 9 cuts in boot, 36 during saves, 15 while idle (around the 30 s index save); 14 boots from the saved index; index matched flash every cycle |
 | 2026-11-12 | (index) | Power cuts with record index, tiny flash (`--flashkb 1024`) | 30 cycles | PASS | removal active; 7 boots from the saved index; index matched flash every cycle |
 | 2026-11-12 | (index) | Ping-pong 8 min with record index | 0.13 | PASS | 51 + 50 msgs, all delivered; index matched flash on both sides |
+| 2026-11-12 | dad0b2f | UI branch merged into main: 21 sim scripts, ping-pong 4 min, power cuts | 25 cycles | PASS | 11 boots from the saved index; map / map_menu with test tiles |
+| 2026-11-12 | dad0b2f | Boot from the saved index on a unit (COM3, 212 messages) | 2 boots | PASS | message start 11.3 s (212 opens, 9.9 s opening) -> 0.58 s (4 opens); `msgidx check` 0 mismatches |
+| 2026-11-13 | (wear) | Flash wear: idle sim 1 h + ping-pong 30 min normal rate (115 msgs) + 60 min overload (705 msgs) | - | PASS | 500 msgs/day: LittleFS ~450 erases/day = 185 years with flash 85 % full (1,100 years mostly empty); NVS 114 years (busiest: clock save once a minute). Overload all day (outbox nearly full): NVS ~10 years (outbox rewrite) - see findings |
+| 2026-11-13 | (ping-pong) | Ping-pong 60 min overload (every ~8 s each way) | 0.13 | PASS | 352 + 353 msgs, all arrived once, all delivered, no restart, queues drained in 292 s |
 
 Open findings:
-- FIXED (simulator) 2026-11-12: boot time grew with stored messages (the startup scan opened
+- Flash wear (2026-11-13, simulator counters, `tools/stress/wear.py`): nothing near the
+  limit in normal use. The one item worth a later look: the outbox (NVS rs_outbox:q) is
+  rewritten whole (up to 8 x 177 B, ~41 NVS entries) on every add / send, so with the radio
+  overloaded all day, or check-in mode at hundreds of messages a day, NVS lasts ~10 years.
+  Storing only each text's used length would cut that 2-3x. Not urgent.
+- FIXED 2026-11-12: boot time grew with stored messages (the startup scan opened
   every record: ~36 ms each on COM5, 376 records = ~16 s; near the 85 % mark it would have
   passed a minute). A saved record index now replaces the scan when it matches the file
-  names (Description §8.4). Still to do: measure boot on a unit with ~1,000 messages.
+  names (Description §8.4). On COM3 (212 messages) message start went 11.3 s -> 0.58 s.
 - Under load, retried messages arrive late and the thread shows them in arrival order
   (e.g. "8" below "40"). Consider ordering threads by the sender's timestamp.

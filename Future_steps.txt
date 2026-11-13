@@ -185,14 +185,11 @@ Robustness to verify (before the stress-test pass)
 - DONE (sim + COM5) - idle screen password lock: S.3.2 "On + password" (password = vault password,
   asked new + repeat when the lock is turned on), boot lock, lockout after 3 wrong tries, messages keep arriving.
   Next: optional fully blank splash (no time/unread) and a duress/wipe-after-N option. 
-- FLASH WEAR (user asked 2026-11-12, do later): check that nothing exceeds the flash
-  write/erase cycle rating (NOR flash ~100k erase cycles per sector; SD cards vary).
-  Count writes per message (record + .bak + status/read rewrites), per announce/ratchet
-  file, NVS (settings, outbox, energy/battery logs, check-in state) and SD (archive,
-  batlog); add a bench write counter (bytes + erases per area per hour) and run the
-  ping-pong / soak tests with it; estimate years to wear-out at heavy use (e.g. 500
-  msgs/day); confirm LittleFS wear levelling (block_cycles) and NVS page rotation cover
-  the hot files; fix any hot spot (e.g. a file rewritten every few seconds).
+- DONE (sim) 2026-11-13 - FLASH WEAR: simulator write counters (sim/shim/src/wear.cpp) +
+  tools/stress/wear.py. 500 msgs/day: LittleFS ~185 years with flash 85 % full, NVS ~114
+  years. Only hot spot: the outbox blob is rewritten whole on each change (~10 years for NVS
+  if the radio is overloaded all day); optional fix: store texts by used length.
+  SD card writes (archive, batlog) not counted (the card does its own wear levelling).
 - DONE - add manual refresh button, for ghosting issues. Do full screen refresh. 
 - DONE - add GPS clock displayed on idle screen / header. 
 - DONE - add battery / charge indicator. Lighting bolt in the battery icon, or a plug icon? Something to say it's getting power over USB. 
