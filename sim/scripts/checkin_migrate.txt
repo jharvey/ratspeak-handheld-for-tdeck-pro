@@ -1,0 +1,9 @@
+# Run by checkin_migrate.py (it writes an old "ciMin" = 45 into the device's NVS first): the
+# check-in time comes up as 07:45 (minute of the hour kept), and is saved as ciStart.
+expect 60000 [BOOT] ready
+serial wiz skip
+serial checkin
+expect 3000 at 07:45 every 60 min
+serial checkin 08:10
+expect 3000 at 08:10 every 60 min
+quit

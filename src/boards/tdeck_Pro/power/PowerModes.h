@@ -42,7 +42,8 @@ struct Profile {
     bool     trackGps;    // track recording asks the GPS for a visit every ~2 min
 };
 
-// Check-in schedule: windows at checkinMin past midnight local time + k * checkinEvery.
+// Check-in schedule: windows at checkinStart (minute of the day, local) + k * checkinEvery.
+// Hourly at 07:30 = :30 every hour; daily = 07:30 only.
 constexpr uint32_t kCheckinLeadS = 60;      // LoRa on this early (clock differences)
 constexpr uint32_t kCheckinWindowS = 180;   // and this long after the check-in time
 constexpr uint32_t kCheckinSendS = 20;      // queued messages go this long after it
@@ -51,7 +52,7 @@ struct Settings {
     uint8_t mode      = MODE_BALANCED;
     bool    fullOnUsb = true;     // USB power present -> Full, whatever the mode
     bool    customSet = false;    // custom profile has been initialised
-    uint8_t checkinMin = 30;      // check-in minute (0-59)
+    uint16_t checkinStart = 450;  // check-in time, minute of the day (0-1439; default 07:30)
     uint16_t checkinEvery = 60;   // minutes between check-ins (15 ... 1440)
     // LoRa RX duty cycle in every sleeping mode (not Full): 0 = continuous receive,
     // else the preamble symbols one listen window must catch (2..8, default 4).
@@ -83,7 +84,6 @@ bool sameProfile(const Profile& a, const Profile& b);
 // the lead minute, returned as -1..-60 via sinceS).
 struct CheckinPhase { bool inWindow; uint32_t toChangeS; int32_t sinceS; uint32_t toNextS; };
 CheckinPhase checkinPhase(const Settings& s, uint32_t secOfDay);
-uint8_t  nextCheckinMin(uint8_t m);          // +5 min, wrapping
 uint16_t nextCheckinEvery(uint16_t mins);    // 15, 30, 60, 120, 180, 360, 720, 1440
 
 // Estimated average battery draw (mA) of a profile, from bench measurements on the

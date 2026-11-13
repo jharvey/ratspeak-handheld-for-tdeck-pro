@@ -158,6 +158,26 @@ void clear() {
     resetAcc(millis());
 }
 
+void benchFill(int n, uint32_t epochNow) {
+    clear();
+    for (int i = 0; i < n && i < kCap; i++) {
+        Record r = {};
+        r.lenS = g_periodS;
+        r.epoch = epochNow ? epochNow - (uint32_t)(n - 1 - i) * g_periodS : 0;
+        const float ma = 8.0f + (i * 7 % 11) + (i % 6 == 0 ? 25.0f : 0.0f);   // a few busy periods
+        r.measuredS = i % 5 == 4 ? 0 : g_periodS;                           // some on USB
+        r.measured10 = (uint16_t)(ma * g_periodS / 3600.0f * 10.0f);
+        r.est10[E_BOARD] = (uint16_t)(5.0f * g_periodS / 3600.0f * 10.0f);
+        r.est10[E_LORA_RX] = (uint16_t)(2.0f * g_periodS / 3600.0f * 10.0f);
+        r.est10[E_CPU] = (uint16_t)((ma - 7.0f) * g_periodS / 3600.0f * 10.0f);
+        r.awakePct = 5;
+        r.battPct = (uint8_t)(90 - i);
+        g_ring[g_head] = r;
+        g_head = (uint16_t)((g_head + 1) % kCap);
+        if (g_count < kCap) g_count++;
+    }
+}
+
 void dump() {
     Serial.printf("[ENERGY] period %lu s, %d closed records (newest first), mAh\n", (unsigned long)g_periodS, g_count);
     auto line = [](const char* tag, const Record& r) {

@@ -1,6 +1,8 @@
-# Check-in mode: pick it (Power row 6), open the schedule (row 8), queue a message.
+# Check-in mode (S.4.6 / S.4.8 open the Check-in page): turn it on, set the time 08:15
+# (hhmm), back to Power: the row reads "ON 08:15, every 1 h". Default time 07:30.
 usb off
 expect 20000 [BOOT] ready
+serial wiz skip
 wait 2000
 key M
 wait 800
@@ -8,16 +10,29 @@ key S
 wait 800
 key 4
 wait 1200
+shot checkin-00-power.png
 key 6
+wait 1200
+key 1
 expect 3000 [POWER] Check-in: cpu 240 MHz, sleep 5 min, awake 10s
 wait 1200
-shot checkin-01-power.png
+shot checkin-01-page.png
+key 2
+wait 600
+type 0815
+key ENTER
+expect 3000 [CHECKIN] time 08:15
+wait 1000
+shot checkin-02-time.png
+serial checkin
+expect 3000 at 08:15 every 60 min
+key BACK
+wait 1200
+shot checkin-03-power.png
 key 8
 wait 1200
-shot checkin-02-schedule.png
 key 1
-wait 1200
-serial checkin
-expect 3000 [CHECKIN] now
-shot checkin-03-minute.png
+expect 3000 [POWER] Balanced
+serial checkin 07:30
+expect 3000 at 07:30
 quit

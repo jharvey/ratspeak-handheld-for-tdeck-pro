@@ -728,6 +728,13 @@ void fmtTime(char* out, size_t n) {
     else snprintf(out, n, "%02d:%02d", t.tm_hour, t.tm_min);
 }
 
+// A minute of the day as "7:30 am" (12 h clock) or "07:30".
+void fmtClockMin(int m, char* out, size_t n) {
+    const int h = (m / 60) % 24, mm = m % 60;
+    if (g_cfg.clock12) snprintf(out, n, "%d:%02d %s", h % 12 ? h % 12 : 12, mm, h < 12 ? "am" : "pm");
+    else snprintf(out, n, "%02d:%02d", h, mm);
+}
+
 void fmtDate(char* out, size_t n) {
     struct tm t;
     if (localNow(t)) snprintf(out, n, "%02d/%02d/%04d", t.tm_mon + 1, t.tm_mday, t.tm_year + 1900);
@@ -2101,7 +2108,8 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              WptName,                           // map P: waypoint name
                              LibFind,                           // library: find text
                              PlaceFind,                         // map R: place name
-                             FoundText };                       // idle "If found": owner text
+                             FoundText,                         // idle "If found": owner text
+                             CheckinTime };                     // S.4.8: hhmm
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -2114,6 +2122,7 @@ bool passEntry(Entry e) { return e == Entry::PassOld || e == Entry::PassNew || e
 bool browseMode()  { return !entryActive(); }
 bool entryNumeric() {
     return g_entry == Entry::RtcField || g_entry == Entry::IdleSecs || g_entry == Entry::TcpPort ||
+           g_entry == Entry::CheckinTime ||
            g_entry == Entry::MapNum ||
            g_entry == Entry::Latitude || g_entry == Entry::Longitude;
 }
@@ -3024,6 +3033,8 @@ void srow(uint8_t kind, const char* name, const char* subFmt, ...) {
     if (g_srowCount >= MAX_SET_ROWS) return;
     SetRow& r = g_srows[g_srowCount];
     snprintf(r.title, sizeof(r.title), "%d : %s : %s", g_srowCount + 1, kKindName[kind], name);
+    if (textW(r.title) > W - 16)              // too long for one line: the kind word goes
+        snprintf(r.title, sizeof(r.title), "%d : %s", g_srowCount + 1, name);
     va_list ap;
     va_start(ap, subFmt);
     vsnprintf(r.sub, sizeof(r.sub), subFmt ? subFmt : "", ap);
@@ -3058,7 +3069,7 @@ const char* pageTitle(Page p) {
         case PG_POWER_CUSTOM: return "Custom power";
         case PG_ENERGY:       return "Energy monitor";
         case PG_ENERGY_GRAPH: return "Energy trend";
-        case PG_CHECKIN:      return "Check-in schedule";
+        case PG_CHECKIN:      return "Check-in";
         case PG_TCP:          return "TCP hub";
         case PG_IDS:          return "Identities";
         case PG_ID_ONE:       return "Identity slot";
@@ -3086,6 +3097,12 @@ const char* editingSub(Entry kind, int arg = 0) {
     if (g_bufLen > kShow) snprintf(s, sizeof(s), ">..%s_", g_buf + g_bufLen - (kShow - 2));
     else                  snprintf(s, sizeof(s), ">%s_", g_buf);
     return s;
+}
+
+void checkinEveryText(char* out, size_t n) {
+    if (g_pw.checkinEvery % 60) snprintf(out, n, "%u min", (unsigned)g_pw.checkinEvery);
+    else if (g_pw.checkinEvery == 1440) snprintf(out, n, "day");
+    else snprintf(out, n, "%u h", (unsigned)(g_pw.checkinEvery / 60));
 }
 
 void buildSettingsRows(Page p) {
@@ -3138,7 +3155,7 @@ void buildSettingsRows(Page p) {
             srow(RK_INFO, "GPS position", "%s", pos);
             if (ashareActive()) srow(RK_ACTION, "Location auto-share", "%d on; Enter = stop all", ashareActive());
             else srow(RK_INFO, "Location auto-share", "off (set in a chat: MIC)");
-            srow(RK_MENU, "Waypoints", "%d saved (map: Alt+P add, P next)", g_wptCount);
+            srow(RK_MENU, "Waypoints", "%d saved (Alt+P adds)", g_wptCount);
             srow(RK_MENU, "Track (breadcrumbs)", "%s, %d points%s", g_cfg.trackOn ? "ON" : "OFF", g_trackN,
                  g_tbOn ? ", track back" : "");
             srow(RK_PICK, "Units", "%s", g_cfg.imperial ? "ft / mi" : "m / km");
@@ -3159,7 +3176,7 @@ void buildSettingsRows(Page p) {
     case PG_WPTS: {
         double la = 0, lo = 0;
         const bool own = ownPosition(la, lo);
-        if (!g_wptCount) srow(RK_INFO, "No waypoints yet", "map: Alt+P marks one at the centre");
+        if (!g_wptCount) srow(RK_INFO, "No waypoints yet", "Alt+P on the map adds one");
         for (int i = 0; i < g_wptCount && i < MAX_SET_ROWS; i++) {
             char nm[24], d[24];
             snprintf(nm, sizeof(nm), "W%d %s", i + 1, g_wpt[i].name);
@@ -3267,14 +3284,17 @@ void buildSettingsRows(Page p) {
     case PG_POWER: {
         // Estimated runtime on a full battery (gauge FullChargeCapacity, else ~1450 mAh).
         const uint16_t cap = (g_bat.valid && g_bat.fccMah >= 500 && g_bat.fccMah <= 6000) ? g_bat.fccMah : 1450;
-        static const char* kNote[power::MODE_CUSTOM] = {"always awake", "wakes each 1s", "wakes each 60s",
+        static const char* kNote[power::MODE_CUSTOM] = {"always awake", "wake 1 s", "wake 60 s",
                                                         "LoRa only", "LoRa on key", ""};
-        char rt[16], ci[20];
-        snprintf(ci, sizeof(ci), "LoRa at :%02u", (unsigned)g_pw.checkinMin);
+        char rt[16], ci[24], at[12];
+        fmtClockMin(g_pw.checkinStart, at, sizeof(at));
+        checkinEveryText(ci, sizeof(ci));
         for (uint8_t m = power::MODE_FULL; m < power::MODE_CUSTOM; m++) {
             power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(power::preset(m)));
-            srow(RK_PICK, power::modeName(m), "%s%s, %s", g_pw.mode == m ? "ON " : "", rt,
-                 m == power::MODE_CHECKIN ? ci : kNote[m]);
+            if (m == power::MODE_CHECKIN)        // a menu: the Check-in page (time, every ...)
+                srow(RK_MENU, "Check-in", "%s%s, every %s", g_pw.mode == m ? "ON " : "", at, ci);
+            else
+                srow(RK_PICK, power::modeName(m), "%s%s, %s", g_pw.mode == m ? "ON " : "", rt, kNote[m]);
         }
         if (g_pw.customSet || g_pw.mode == power::MODE_CUSTOM) {
             power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(g_pw.custom));
@@ -3282,8 +3302,7 @@ void buildSettingsRows(Page p) {
         } else {
             srow(RK_MENU, "Custom", "set your own");
         }
-        srow(RK_MENU, "Check-in schedule", ":%02u every %u min%s", (unsigned)g_pw.checkinMin,
-             (unsigned)g_pw.checkinEvery, g_outboxCount ? ", msgs waiting" : "");
+        srow(RK_MENU, "Check-in sched", "%s, every %s%s", at, ci, g_outboxCount ? ", msgs wait" : "");
         srow(RK_MENU, "Energy monitor", "what uses the battery");
         srow(RK_TOGGLE, "Full power on USB", "%s", g_pw.fullOnUsb ? "ON" : "OFF");
         const uint32_t tot = g_pwAwakeMs + g_pwSleepMs;
@@ -3302,9 +3321,16 @@ void buildSettingsRows(Page p) {
 
     case PG_CHECKIN: {
         const power::CheckinPhase ph = checkinNow();
-        srow(RK_PICK, "Check-in minute", ":%02u (Enter = +5)", (unsigned)g_pw.checkinMin);
-        if (g_pw.checkinEvery % 60) srow(RK_PICK, "Every", "%u min", (unsigned)g_pw.checkinEvery);
-        else                        srow(RK_PICK, "Every", "%u h", (unsigned)(g_pw.checkinEvery / 60));
+        char at[12], ev[16];
+        fmtClockMin(g_pw.checkinStart, at, sizeof(at));
+        checkinEveryText(ev, sizeof(ev));
+        srow(RK_TOGGLE, "Use Check-in mode", "%s", g_pw.mode == power::MODE_CHECKIN ? "ON" : "OFF");
+        e = editingSub(Entry::CheckinTime);
+        if (e) srow(RK_ENTRY, "Check-in time (hhmm)", "%s", e);
+        else   srow(RK_ENTRY, "Check-in time", "%s", at);
+        if (g_cfg.clock12) srow(RK_PICK, "am / pm", "%s", g_pw.checkinStart < 720 ? "am" : "pm");
+        else               srow(RK_INFO, "am / pm", "- (24 h clock)");
+        srow(RK_PICK, "Every", "%s", ev);
         if (ph.inWindow) {
             srow(RK_INFO, "Now", "window open, LoRa on");
         } else {
@@ -3312,8 +3338,9 @@ void buildSettingsRows(Page p) {
             struct tm lt;
             applyTz();
             localtime_r(&at, &lt);
-            srow(RK_INFO, "Next check-in", "%02d:%02d (in %lu min)", lt.tm_hour, lt.tm_min,
-                 (unsigned long)(ph.toNextS / 60));
+            char nx[12];
+            fmtClockMin(lt.tm_hour * 60 + lt.tm_min, nx, sizeof(nx));
+            srow(RK_INFO, "Next check-in", "%s (in %lu min)", nx, (unsigned long)(ph.toNextS / 60));
         }
         srow(RK_INFO, "Messages waiting", "%d", g_outboxCount);
         if (handheld::ClockConfidence::synchronized()) {
@@ -3326,7 +3353,7 @@ void buildSettingsRows(Page p) {
         } else {
             srow(RK_INFO, "Clock", "own (not synced yet)");
         }
-        srow(RK_INFO, "How it works", "LoRa on 1 min early, 3 min after");
+        srow(RK_INFO, "How it works", "LoRa 1 min before, 3 after");
         break;
     }
 
@@ -3453,7 +3480,7 @@ void buildSettingsRows(Page p) {
         if (to) peerName(g_cfg.lowBatTo, nm, sizeof(nm)); else snprintf(nm, sizeof(nm), "nobody yet");
         srow(RK_ACTION, "Send to", "%s; Enter = pick", nm);
         srow(RK_INFO, "This discharge", "%s", g_cfg.lowBatSent ? "sent (again after charging)" : "not sent");
-        srow(RK_INFO, "Message", "battery %%, last position + age");
+        srow(RK_INFO, "Message", "battery %%, last position");
         break;
     }
 
@@ -3470,11 +3497,11 @@ void buildSettingsRows(Page p) {
         srow(RK_ENTRY, "Display name", "%s", g_selfName);
         srow(RK_INFO, "LXMF address", "..%.16s", g_destHex[0] ? g_destHex + 16 : "");
         srow(RK_ACTION, "Announce ID", "last: %s", g_announceStr);
-        srow(RK_MENU, "Identities", "%d saved (new / switch / erase)", g_idMgr.count());
+        srow(RK_MENU, "Identities", "%d saved: new/switch/erase", g_idMgr.count());
         srow(RK_ACTION, "Run setup wizard", "name, clock, energy, idle ...");
-        srow(RK_ACTION, "Share all contacts", "a card per contact to one radio");
-        srow(RK_ACTION, "Export contacts to SD", "ratdeckpro/contacts.txt");
-        srow(RK_ACTION, "Import contacts from SD", "ratdeckpro/contacts.txt");
+        srow(RK_ACTION, "Share all contacts", "every contact, as cards");
+        srow(RK_ACTION, "Export contacts (SD)", "ratdeckpro/contacts.txt");
+        srow(RK_ACTION, "Import contacts (SD)", "ratdeckpro/contacts.txt");
         break;
 
     case PG_IDS: {
@@ -3505,7 +3532,7 @@ void buildSettingsRows(Page p) {
              g_loraPreset ? " (peers need same)" : "");
         srow(RK_INFO, "Last RSSI", "%d dBm", loraRssi());
         srow(RK_INFO, "Last SNR", "%.1f dB", loraSnr());
-        srow(RK_ACTION, "Range test", g_rtOn ? "running; Enter = show" : "ping another radio, log to SD");
+        srow(RK_ACTION, "Range test", g_rtOn ? "running; Enter = show" : "ping a radio, log to SD");
         break;
 
     case PG_ALERTS:
@@ -3803,7 +3830,9 @@ void activateSetting(int idx) {
         break;
 
     case PG_POWER:
-        if (idx >= power::MODE_FULL && idx < power::MODE_CUSTOM) {
+        if (idx == power::MODE_CHECKIN) {
+            pushPage(PG_CHECKIN);
+        } else if (idx >= power::MODE_FULL && idx < power::MODE_CUSTOM) {
             g_pw.mode = (uint8_t)idx;
             power::save(g_pw);
             powerApply(true);
@@ -3831,9 +3860,23 @@ void activateSetting(int idx) {
         break;
 
     case PG_CHECKIN:
-        if (idx == 0) g_pw.checkinMin = power::nextCheckinMin(g_pw.checkinMin);
-        else if (idx == 1) g_pw.checkinEvery = power::nextCheckinEvery(g_pw.checkinEvery);
-        else break;
+        if (idx == 0) {                          // off: back to Balanced
+            g_pw.mode = g_pw.mode == power::MODE_CHECKIN ? power::MODE_BALANCED : power::MODE_CHECKIN;
+            toast("Power: %s", power::modeName(g_pw.mode));
+        } else if (idx == 1) {
+            char cur[8];
+            snprintf(cur, sizeof(cur), "%02u%02u", (unsigned)(g_cfg.clock12 && g_pw.checkinStart / 60 % 12 == 0 ? 12
+                                                               : g_cfg.clock12 ? g_pw.checkinStart / 60 % 12
+                                                                               : g_pw.checkinStart / 60),
+                     (unsigned)(g_pw.checkinStart % 60));
+            startEntry(Entry::CheckinTime, cur);
+            g_entryReplace = true;
+            break;
+        } else if (idx == 2 && g_cfg.clock12) {
+            g_pw.checkinStart = (uint16_t)((g_pw.checkinStart + 720) % 1440);
+        } else if (idx == 3) {
+            g_pw.checkinEvery = power::nextCheckinEvery(g_pw.checkinEvery);
+        } else break;
         power::save(g_pw);
         powerApply(true);
         requestRedraw();
@@ -4397,7 +4440,50 @@ void renderSettings() {
     drawFooter();
 }
 
+void smallText(int x, int y, const char* s, bool bold);
+
 // ---- Energy trend graph ------------------------------------------------------------
+// Time labels under the bars, rotated (read bottom to top) in a 5x7 font stamped after the
+// LVGL frame: the clock time at the start of the bar ("7:30", 12 h: "7:30a"), "-4.5h" when
+// the clock is not set, "now" under the newest.
+const char kTinyChars[] = "0123456789.:-hapnow";
+const uint8_t kTiny5x7[][7] = {
+    {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}, {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
+    {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}, {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E},
+    {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}, {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E},
+    {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}, {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
+    {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C}, {0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00},   // . :
+    {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00}, {0x10, 0x10, 0x16, 0x19, 0x11, 0x11, 0x11},   // - h
+    {0x00, 0x00, 0x0E, 0x01, 0x0F, 0x11, 0x0F}, {0x00, 0x00, 0x1E, 0x11, 0x1E, 0x10, 0x10},   // a p
+    {0x00, 0x00, 0x16, 0x19, 0x11, 0x11, 0x11}, {0x00, 0x00, 0x0E, 0x11, 0x11, 0x11, 0x0E},   // n o
+    {0x00, 0x00, 0x11, 0x11, 0x15, 0x15, 0x0A}};                                              // w
+struct GraphLabel { int16_t x, y; char t[8]; };
+GraphLabel g_graphLabels[25];
+int g_graphLabelN = 0;
+
+// Rotated 90 degrees counter-clockwise: the text starts at (x, yBottom) and runs upwards;
+// a character takes 6 px up and 7 px across.
+void stampTinyUp(int x, int yBottom, const char* t) {
+    const bool ink = !g_cfg.dark;
+    for (int k = 0; t[k]; k++) {
+        const char* f = strchr(kTinyChars, t[k]);
+        if (!f) continue;
+        const uint8_t* g = kTiny5x7[f - kTinyChars];
+        for (int r = 0; r < 7; r++)
+            for (int c = 0; c < 5; c++)
+                if (g[r] & (0x10 >> c)) {
+                    const int px = x + r, py = yBottom - (k * 6 + c);
+                    if (px >= 0 && py >= 0 && px < W && py < H) g_display.setPixel(px, py, ink);
+                }
+    }
+}
+
+void stampGraphLabels() {
+    for (int i = 0; i < g_graphLabelN; i++) stampTinyUp(g_graphLabels[i].x, g_graphLabels[i].y, g_graphLabels[i].t);
+    if (g_graphLabelN) g_display.markDirty();
+}
+
 // Average battery current per period (newest right). Filled bar = gauge measurement;
 // outlined bar = estimate only (period mostly on USB). The rightmost bar is the period in
 // progress. Below: the largest consumers over the shown periods.
@@ -4411,6 +4497,8 @@ void renderEnergyGraph() {
     constexpr int kBars = 24;
     float ma[kBars + 1];
     bool meas[kBars + 1];
+    uint32_t startEpoch[kBars + 1];         // wall clock at the start of each bar (0 = unknown)
+    const time_t nowT = time(nullptr);
     int n = energy::count() < kBars ? energy::count() : kBars;
     float sumCat[energy::CAT_COUNT] = {0};
     float maxMa = 10.0f;
@@ -4419,17 +4507,36 @@ void renderEnergyGraph() {
         float est = 0;
         for (int c = 0; c < energy::CAT_COUNT; c++) { est += r.est10[c] / 10.0f; sumCat[c] += r.est10[c] / 10.0f; }
         meas[i] = r.measuredS * 2 >= r.lenS && r.measuredS > 0;
+        if (i == n) startEpoch[i] = nowT > 1600000000 ? (uint32_t)(nowT - r.lenS) : 0;
+        else startEpoch[i] = r.epoch > 1600000000 ? r.epoch - r.lenS : 0;
         const float hrs = (meas[i] ? r.measuredS : r.lenS) / 3600.0f;
         ma[i] = hrs > 0 ? (meas[i] ? r.measured10 / 10.0f : est) / hrs : 0;
         if (ma[i] > maxMa) maxMa = ma[i];
     }
-    const int gx = 6, gy = LIST_TOP + 18, gw = W - 12, gh = 120;
+    // Left axis: mA, ticks at 0, half and the top (the largest bar rounded up to 1/2/2.5/5 x 10^n).
+    {
+        float step = 1.0f;
+        while (step * 10.0f < maxMa) step *= 10.0f;
+        const float nice[4] = {1.0f, 2.0f, 2.5f, 5.0f};
+        float top = step * 10.0f;
+        for (float f : nice) if (step * f >= maxMa) { top = step * f; break; }
+        maxMa = top;
+    }
+    const int gx = 30, gy = LIST_TOP + 18, gw = W - gx - 6, gh = 92;   // axis left, time labels below
     char t[40];
-    snprintf(t, sizeof(t), "max %.0f mA", maxMa);
-    text(gx, LIST_TOP, t);
+    smallText(2, LIST_TOP + 2, "mA", true);
     snprintf(t, sizeof(t), "%lu min/bar", (unsigned long)(energy::period() / 60));
     text(W - 6 - textW(t), LIST_TOP, t);
     box(gx, gy, gw, gh + 2, 1);
+    for (int k = 0; k <= 2; k++) {                  // 0, max/2, max
+        const float v = maxMa * k / 2.0f;
+        const int ty = gy + 1 + gh - (int)(gh * k / 2.0f + 0.5f);
+        fillRect(gx - 4, ty, 4, 1);
+        if (k == 1) for (int x = gx + 2; x < gx + gw - 2; x += 4) fillRect(x, ty, 1, 1);   // dotted half line
+        snprintf(t, sizeof(t), v >= 10 || v == 0 ? "%.0f" : "%.1f", v);
+        const int w = lv_txt_get_width(t, strlen(t), &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
+        smallText(gx - 6 - w, ty - 7, t, false);
+    }
     const int slots = n + 1;
     const int bw = (gw - 4) / (slots < 8 ? 8 : slots);
     for (int i = 0; i < slots; i++) {
@@ -4440,16 +4547,39 @@ void renderEnergyGraph() {
         if (meas[i]) fillRect(x, y, bw - 2 > 1 ? bw - 2 : 1, h);
         else         box(x, y, bw - 2 > 2 ? bw - 2 : 2, h, 1);
     }
-    const uint32_t backMin = (uint32_t)n * energy::period() / 60;
-    if (backMin >= 120) snprintf(t, sizeof(t), "%luh ago", (unsigned long)(backMin / 60));
-    else                snprintf(t, sizeof(t), "%lu min ago", (unsigned long)backMin);
-    text(gx, gy + gh + 4, n ? t : "");
-    text(W - 6 - textW("now"), gy + gh + 4, "now");
+    // A tick under every bar, a time label under every k-th one (k so labels are >= 9 px apart),
+    // always under the newest ("now").
+    g_graphLabelN = 0;
+    const int every = bw >= 9 ? 1 : (9 + bw - 1) / bw;
+    const int labelTop = gy + gh + 7;
+    for (int i = 0; i < slots; i++) {
+        const int cx = gx + 2 + i * bw + (bw - 2) / 2;
+        fillRect(cx, gy + gh + 2, 1, 3);
+        if (i != n && (n - i) % every) continue;
+        if (i == n - 1 && every > 1) continue;           // keep "now" clear of its neighbour
+        GraphLabel& L = g_graphLabels[g_graphLabelN++];
+        if (i == n) snprintf(L.t, sizeof(L.t), "now");
+        else if (startEpoch[i]) {
+            const time_t st = (time_t)startEpoch[i];
+            struct tm lt;
+            applyTz();
+            localtime_r(&st, &lt);
+            if (g_cfg.clock12) snprintf(L.t, sizeof(L.t), "%d:%02d%c", lt.tm_hour % 12 ? lt.tm_hour % 12 : 12, lt.tm_min,
+                                        lt.tm_hour < 12 ? 'a' : 'p');
+            else snprintf(L.t, sizeof(L.t), "%d:%02d", lt.tm_hour, lt.tm_min);
+        } else {
+            const uint32_t backS = (uint32_t)(n - i) * energy::period();
+            if (backS % 3600 == 0) snprintf(L.t, sizeof(L.t), "-%luh", (unsigned long)(backS / 3600));
+            else snprintf(L.t, sizeof(L.t), "-%.1fh", backS / 3600.0f);
+        }
+        L.x = (int16_t)(cx - 3);
+        L.y = (int16_t)(labelTop + (int)strlen(L.t) * 6);
+    }
 
     // Top consumers over the shown periods.
     float total = 0;
     for (int c = 0; c < energy::CAT_COUNT; c++) total += sumCat[c];
-    int y = gy + gh + 24;
+    int y = gy + gh + 50;
     for (int k = 0; k < 2 && total > 0; k++) {
         char line[48] = "";
         size_t len = 0;
@@ -7040,7 +7170,15 @@ void renderWizard() {
         case WZ_POWER:
             for (int i = 0; i < 4; i++) {
                 snprintf(a, sizeof(a), "%d %s", i + 1, power::modeName(kWizModes[i]));
-                row(a, power::modeBlurb(kWizModes[i]), g_pw.mode == kWizModes[i]);
+                if (kWizModes[i] == power::MODE_CHECKIN) {
+                    char at[12], ev[16];
+                    fmtClockMin(g_pw.checkinStart, at, sizeof(at));
+                    checkinEveryText(ev, sizeof(ev));
+                    snprintf(b, sizeof(b), "LoRa at %s, every %s", at, ev);
+                    row(a, b, g_pw.mode == kWizModes[i]);
+                } else {
+                    row(a, power::modeBlurb(kWizModes[i]), g_pw.mode == kWizModes[i]);
+                }
             }
             break;
         case WZ_IDLE:
@@ -7603,6 +7741,9 @@ void render() {
     if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_placeOpen && !g_navOpen)
         stampMap();   // after LVGL's clear
     if (g_navOpen && !g_menuOpen) stampNav();
+    if (g_screen == SCR_SETTINGS && g_page == PG_ENERGY_GRAPH && !g_menuOpen && !g_threadOpen && !mapview::isOpen() &&
+        !g_libOpen && !g_gameOpen && !g_wizOpen && !g_rtOpen)
+        stampGraphLabels();
     const uint32_t t1 = millis();
     // Clear the request first: keys queued during the panel refresh may ask again.
     g_redraw = false;
@@ -8145,6 +8286,22 @@ void commitEntry() {
         requestRedraw();
         return;
     }
+    case Entry::CheckinTime: {               // hhmm or hmm; 12 h clock: 1-12 + the am / pm row
+        long v;
+        if (!parseLong(g_buf, v) || g_bufLen < 3 || g_bufLen > 4) { toast("Type hhmm, e.g. 0730"); return; }
+        int h = (int)(v / 100), m = (int)(v % 100);
+        if (m > 59 || h > 23 || (g_cfg.clock12 && (h < 1 || h > 12))) { toast(g_cfg.clock12 ? "1:00 - 12:59" : "00:00 - 23:59"); return; }
+        if (g_cfg.clock12) h = h % 12 + (g_pw.checkinStart >= 720 ? 12 : 0);
+        g_pw.checkinStart = (uint16_t)(h * 60 + m);
+        power::save(g_pw);
+        powerApply(true);
+        endEntry();
+        char at[12];
+        fmtClockMin(g_pw.checkinStart, at, sizeof(at));
+        toast("Check-in at %s", at);
+        Serial.printf("[CHECKIN] time %s\n", at);
+        return;
+    }
     case Entry::FoundText:
         strlcpy(g_cfg.foundText, g_buf, sizeof(g_cfg.foundText));
         saveConfig();
@@ -8319,7 +8476,8 @@ void entryKey(const KeyEvent& ev) {
     if (g_entry == Entry::WifiPass && g_bufLen >= WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
     if (passEntry(g_entry) && g_bufLen >= kLockPassMax) { toast("Max 32 chars"); return; }
     if (g_entry == Entry::Search && g_bufLen >= sizeof(g_filter) - 1) return;
-    if ((g_entry == Entry::WptName || g_entry == Entry::FoundText) && g_entryReplace) {   // typing replaces the default
+    if ((g_entry == Entry::WptName || g_entry == Entry::FoundText || g_entry == Entry::CheckinTime) &&
+        g_entryReplace) {                                                                  // typing replaces the default
         bufClear(); g_entryReplace = false;
     }
     if (g_entry == Entry::WptName && g_bufLen >= 15) { toast("Max 15 chars"); return; }
@@ -9168,6 +9326,24 @@ void handleSerialLine(char* p) {
     }
     if (!strcmp(p, "contacts export")) { Serial.printf("[CONTACTS] exported %d\n", contactsExport()); return; }
     if (!strcmp(p, "contacts import")) { Serial.printf("[CONTACTS] imported %d\n", contactsImport()); return; }
+    if (!strcmp(p, "setcheck")) {             // every Settings row whose title or value is wider than a row
+        int bad = 0;
+        for (int pg = 0; pg <= (int)PG_LOWBAT; pg++) {
+            if (pg == PG_ENERGY_GRAPH) continue;
+            buildSettingsRows((Page)pg);
+            for (int i = 0; i < g_srowCount; i++) {
+                const int tw = textW(g_srows[i].title), sw = textW(g_srows[i].sub);
+                if (tw > W - 16 || sw > W - 16) {
+                    Serial.printf("[SETCHECK] %s row %d: \"%s\" (%d) / \"%s\" (%d)\n", pageTitle((Page)pg), i + 1,
+                                  g_srows[i].title, tw, g_srows[i].sub, sw);
+                    bad++;
+                }
+            }
+        }
+        buildSettingsRows(g_page);
+        Serial.printf("[SETCHECK] %d rows too wide\n", bad);
+        return;
+    }
     if (!strncmp(p, "idlescr", 7)) {                   // idlescr [0-3]: idle screen; "idle now"
         const int v = p[7] ? atoi(p + 8) : -1;
         if (v >= 0 && v < IDLE_COUNT) { g_cfg.idleScreen = (uint8_t)v; saveConfig(); }
@@ -9212,9 +9388,17 @@ void handleSerialLine(char* p) {
         Serial.printf("[CLOCK] epoch %lld (%s)\n", (long long)time(nullptr),
                       handheld::ClockConfidence::synchronized() ? "synchronized" : "not synchronized");
     } else if (!strncmp(p, "checkin", 7)) {
-        int m = -1, e = -1;
-        if (sscanf(p + 7, "%d %d", &m, &e) >= 1 && m >= 0 && m <= 59) {
-            g_pw.checkinMin = (uint8_t)m;
+        // checkin [hh:mm | minute-of-hour] [every-min]
+        int h = -1, m = -1, e = -1;
+        bool set = false;
+        if (sscanf(p + 7, " %d:%d %d", &h, &m, &e) >= 2 && h >= 0 && h < 24 && m >= 0 && m < 60) {
+            g_pw.checkinStart = (uint16_t)(h * 60 + m);
+            set = true;
+        } else if (sscanf(p + 7, "%d %d", &m, &e) >= 1 && m >= 0 && m <= 59) {
+            g_pw.checkinStart = (uint16_t)(g_pw.checkinStart / 60 * 60 + m);   // minute of the hour
+            set = true;
+        }
+        if (set) {
             if (e >= 5 && e <= 1440) g_pw.checkinEvery = (uint16_t)e;   // any >= 5 for bench tests
             power::save(g_pw);
             powerApply(true);
@@ -9222,8 +9406,9 @@ void handleSerialLine(char* p) {
         const power::CheckinPhase ph = checkinNow();
         struct tm nt;
         localNow(nt);
-        Serial.printf("[CHECKIN] now %02d:%02d:%02d at :%02u every %u min; %s, change in %lu s, next in %lu s; %d queued; clock %s\n",
-                      nt.tm_hour, nt.tm_min, nt.tm_sec, (unsigned)g_pw.checkinMin, (unsigned)g_pw.checkinEvery,
+        Serial.printf("[CHECKIN] now %02d:%02d:%02d at %02u:%02u every %u min; %s, change in %lu s, next in %lu s; %d queued; clock %s\n",
+                      nt.tm_hour, nt.tm_min, nt.tm_sec, (unsigned)(g_pw.checkinStart / 60), (unsigned)(g_pw.checkinStart % 60),
+                      (unsigned)g_pw.checkinEvery,
                       ph.inWindow ? "window open" : "closed",
                       (unsigned long)ph.toChangeS, (unsigned long)ph.toNextS, g_outboxCount,
                       handheld::ClockConfidence::synchronized() ? "synced" : g_clkLastAt ? "from peer" : "own");
@@ -9602,6 +9787,10 @@ void handleSerialLine(char* p) {
     } else if (!strncmp(p, "energy", 6)) {
         // energy | energy period <s> | energy clear
         if (!strncmp(p + 6, " period ", 8)) energy::setPeriod((uint32_t)atoi(p + 14));
+        else if (!strncmp(p + 6, " fill ", 6)) {
+            const time_t now = time(nullptr);
+            energy::benchFill(atoi(p + 12), now > 1600000000 ? (uint32_t)now : 0);
+        }
         else if (!strcmp(p + 6, " clear")) energy::clear();
         energyAccountAwake();
         energy::dump();

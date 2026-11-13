@@ -53,6 +53,7 @@ int count();                                    // closed records available
 const Record& closed(int i);                    // 0 = newest closed
 Record current(uint32_t nowMs, int battPct);    // the period in progress
 void clear();
+void benchFill(int n, uint32_t epochNow);         // console: n made-up closed periods (screenshots)
 void dump();                                    // console
 
 // Estimated current of a state, mA (also used for the live "now" figure).

@@ -280,7 +280,7 @@ Per-row **unrd ##** when unread.
 ### 4.8 Settings S.3 Screen & I/O
 ![Settings S.3](images/screen-settings-s3.png)
 
-### 4.9 Settings S.4 Power, S.4.7 Custom and S.4.8 Check-in schedule
+### 4.9 Settings S.4 Power, S.4.7 Custom and S.4.8 Check-in sched
 ![Settings S.4 Power](images/screen-settings-power.png)
 ![Settings S.4.7 Custom](images/screen-settings-power-custom.png)
 
@@ -329,9 +329,9 @@ S     Settings                      ← M then S
 │   ├── S.4.3  Saver
 │   ├── S.4.4  Ultra-low            LoRa listening only
 │   ├── S.4.5  On demand            LoRa 2 min after a key
-│   ├── S.4.6  Check-in             LoRa only in scheduled windows (§6.7)
+│   ├── S.4.6  Check-in             menu: the Check-in page (§6.7): use it, time (07:30), every
 │   ├── S.4.7  Custom               → S.4.7.1–9 knobs (§6.2)
-│   ├── S.4.8  Check-in schedule    minute · every · next · waiting · clock (§6.7)
+│   ├── S.4.8  Check-in sched       the same Check-in page (time · every · next · waiting · clock)
 │   ├── S.4.9  Energy monitor       per-part mAh vs gauge, trend graph (§6.5)
 │   ├── S.4.10 Full power on USB    ON (default) / OFF
 │   ├── S.4.11 Now                  CPU MHz and % of time asleep
@@ -630,11 +630,15 @@ in a short window around each check-in:
   converge on the fastest clock, synchronized ones give true time. A GPS fix now also
   marks the clock synchronized for the protocol (it did not before), so announces carry
   real time.
-- **S.4.8** sets the minute (Enter = +5) and the period (15 min … 24 h) and shows the next
-  check-in, messages waiting, and where the clock came from.
+- **S.4.6 Check-in** and **S.4.8 Check-in sched** open the Check-in page: **Use Check-in
+  mode** (on; off goes back to Balanced), **Check-in time** (type hhmm, default **07:30**; with
+  the 12 h clock 1-12 plus the **am / pm** row), **Every** (15 min … 24 h), then the next
+  check-in, messages waiting, and where the clock came from. Hourly at 07:30 = :30 every hour;
+  daily = 07:30 only. (Before 2026-11-13 only the minute was stored: an old minute m is kept
+  as 7:m.)
 - Clocks must start within ~1 minute (set the clock, or one GPS fix); each window then
   resyncs them. A clock far off (an hour) misses the windows entirely.
-- Console: `checkin` (status), `checkin <minute> [every-min]` (bench: any period ≥ 5 min),
+- Console: `checkin` (status), `checkin <hh:mm | minute> [every-min]` (bench: any period ≥ 5 min),
   `epoch [secs]` (show / set the clock).
 
 ### 6.8 Next
@@ -782,7 +786,8 @@ Tiles can go onto the card over USB with the card left in the unit:
 **E S X F** move up / left / down / right half a screen (a diamond around D), **D** or
 **Enter** back to your position (following again), **Z** zoom in, **W** zoom out (wider),
 **N** next contact, **P** next waypoint, **Alt+P** add a waypoint, **Alt+SYM** (twice) delete
-the selected waypoint, **L** locate a place, a number + **Enter** opens that contact's chat,
+the selected waypoint, **L** locate a place, **G** arrow + distance (§8.1b), **B** track back,
+a number + **Enter** opens that contact's chat,
 **M** the MENU, **Shift (^)** closes. **C I H** leave the map for Contacts / Inbox / Home;
 Peers is **M → P** from the Atlas (P is next waypoint there). **A** does nothing on the Atlas
 (next to S: a slip while panning is harmless). **K** (or the middle bottom tab, which reads "Nav / keys" on the Atlas) shows a card
@@ -805,6 +810,42 @@ and zooming out again need no card read; the SD card is mounted on the first map
 frame builds in 156 ms; the e-ink full refresh is 1.1 s. Console: `map`,
 `map <lat> <lon> [zoom]`, `map close`; bench `maptest <lat> <lon>` writes 18 grid test
 tiles (z14–15) to the card (2.1 s).
+
+### 8.1b Track, navigation, arrival alerts, range test, battery (2026-11-13, simulator)
+
+**Track (S.1 row 10, Track page):** Record on/off (a point every 20 m moved, or every 10 min
+standing; dotted line on the Atlas; all points in `<SD>/ratdeckpro/tracks/track.bin`), **Track
+back** (also **B** on the Atlas: from the nearest track point a line to the earlier points,
+one after the other, moving on within 25 m; a beep at the start), **Export as GPX**
+(`tracks/track-YYYYMMDD-HHMM.gpx`), Clear (Enter twice). The track logs when the GPS is on
+anyway; only Custom with **Track wakes GPS** (S.4.7) asks it for a visit every ~2 min.
+**Units** (S.1 row 11): m / km or ft / mi.
+
+**Bearing + distance (G on the Atlas):** for the selected contact (N), waypoint (P) or the
+track-back point: a big arrow in a ring, the distance in large digits, the compass direction
+and the age of a contact's fix. There is no compass: while moving (GPS speed > 1 knot) the
+arrow is relative to the course over ground ("ahead" = up), standing it is north-up. G, Enter
+or ^ goes back to the map.
+
+**Arrival alerts (S.8 Alerts row 5):** "tell me when <contact> is within <100 m - 5 km> of
+<me | a waypoint>", once or every time (again after they were 25 % further away). Checked when
+their shared position arrives: a beep, a vibration and a 15 s message. Up to 8 (NVS rs_geof).
+
+**Range test (S.7 LoRa row 6):** pick the other radio (it does the same); every 15 s (1-4 on
+the screen: 10 / 15 / 30 / 60 s) a ping, answered by a pong with the RSSI / SNR heard there.
+The screen shows pings, replies, lost %, the last signal both ways, their pings heard and
+your position; ^ stops, M leaves it running. Both log to
+`<SD>/ratdeckpro/rangetest/rt-<date>-<time>.csv` (time, event, seq, peer, rssi, snr,
+peer_rssi, peer_snr, lat, lon, fix). Raw LoRa frames (not Reticulum): nothing reaches the
+inbox. On a PC: `python tools/rangetest/rangetest_map.py rt-....csv` writes a KML (Google
+Earth, points coloured by RSSI, lost pings red) and an SVG plot. Needs the LoRa receiver on
+(not On demand / Check-in outside their windows).
+
+**Battery time left (S.5 row 11, idle strip `~34h`):** the gauge's remaining mAh over the drain
+the energy monitor measured on battery (up to the last 13 h); "not enough data yet" before
+30 min on battery. **Low-battery notice (S.5 row 12):** off by default; at 5 / 10 / 15 / 20 %
+one chosen contact gets "Battery dying (9%). Last position lat, lon (n min old)", once per
+discharge (again after charging); queued in check-in mode.
 
 ### 8.1a Library (reference texts)
 
