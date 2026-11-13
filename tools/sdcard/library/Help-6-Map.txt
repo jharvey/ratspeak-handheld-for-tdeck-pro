@@ -1,0 +1,18 @@
+HELP: THE MAP (ATLAS)
+
+Open it with L on any screen, or M then L. On a list row, L shows that contact's last position.
+
+W A S D = move half a screen
+Z / X = zoom in / out
+C or Enter = back to your position
+^ = close the map
+
+Top line: zoom, centre, scale bar; * means the map is not following you. Bottom line: your GPS position; "old ... 12m" is the last fix and its age.
+
+Contacts' last shared positions show as numbered rings. A thick ring is under an hour old.
+T steps through them, newest first: "#1 Alice 12km NE 8m ago".
+Type a number and Enter to open that contact's chat.
+
+Give a contact a number: C, pick, Enter, 4 (Map number), type 1-99, Enter.
+
+Waypoints and places: see Help-7.

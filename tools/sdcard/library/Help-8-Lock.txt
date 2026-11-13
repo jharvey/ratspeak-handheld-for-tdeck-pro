@@ -1,0 +1,15 @@
+HELP: PASSWORD LOCK
+
+M, S, 3, 2 (Idle splash), then:
+3 On + password: type a new password (4-32 characters), Enter, then the same again. The lock turns on only when both match.
+5 Set / Change password
+6 Remove password
+7 Lock now
+
+Typed characters show as *. MIC shows or hides what you typed. Letters type as capitals unless Alt is held.
+
+When locked, any key shows the password prompt. Messages still arrive. 3 wrong tries are free, then the wait grows: 30 s, 60 s ... up to 16 min.
+
+With a password set, the radio also locks at every power-on.
+
+Write the password down: the radio cannot be unlocked without it.

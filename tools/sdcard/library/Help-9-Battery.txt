@@ -1,0 +1,19 @@
+HELP: SETUP AND BATTERY
+
+First setup:
+1. Time: M, S, 1, then Set RTC and Time zone.
+2. Name this radio: C, row 0 (MyID), Enter, 2, type, Enter.
+3. Look: M, S, 3, 1 (Theme): White paper or Black ink.
+4. WiFi (optional): M, S, 2.
+5. Meet another radio: see Help-3.
+
+Battery: M, S, 4 (Power).
+Full: everything on, GPS on.
+Balanced: day to day; GPS looks every 15 min.
+Saver: longest; GPS hourly, no WiFi or key light.
+Custom: pick each setting. (Also Ultra-low, On demand, Check-in.)
+Keys and incoming messages stay instant in every mode. On USB power it runs Full anyway.
+
+No GPS fix in Balanced or Saver? Go outside and wait up to 15 min, or switch to Full for a while.
+
+Ghosting on the screen? MIC refreshes it.

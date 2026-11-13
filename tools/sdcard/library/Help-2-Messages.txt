@@ -1,0 +1,15 @@
+HELP: SEND A MESSAGE
+
+1. I opens the Inbox: your chats first, then every radio heard.
+2. Pick a row: type its number, or G / V then Enter.
+3. Type the message (Alt + key = other case, SYM = digits).
+4. Enter sends it.
+5. ^ goes back to the list.
+
+Short: I, pick, type, Enter.
+
+If the other radio is out of range, the message waits in a queue and goes out by itself when that radio is heard again.
+
+Long list? F, type part of the name, Enter. ^ clears the filter.
+
+The idle screen shows how many messages are unread.
