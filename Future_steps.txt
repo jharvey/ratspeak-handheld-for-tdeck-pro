@@ -1,6 +1,6 @@
 ================================================================================
 FUTURE STEPS — T-Deck Pro Ratspeak (long-term, update rarely)
-Last revised: 2026-11-10
+Last revised: 2026-11-13
 ================================================================================
 Short-term work stays in AI-guide.txt. This file is the backlog / vision list.
 ================================================================================
@@ -127,17 +127,14 @@ UI / UX
   zooms beyond the home/travel areas, render our own 1-bit tiles from public-domain vector
   data (TIGER/Line roads, NHD water, GNIS names in the US; NRCan CanVec in Canada; OSM
   extracts where the licence fits) with the render_world.py approach, fast and offline.
-  Master copy on the NAS (M:
-atspeak-maps); cards hold the travel set.
+  Master copy on the NAS (M:\ratspeak-maps); cards hold the travel set.
 - Reference library on the device (user asked 2026-11-12): a "Library" screen that reads
   plain-text files from <SD>/ratdeckpro/library/ (paged, find with F): frequency quick
   reference, NOAA Weather Radio list nearest to the GPS position, GhostNet / JS8Call notes,
-  first aid etc. Source copies are on the NAS (M:
-atspeak-info; PDFs need a text
+  first aid etc. Source copies are on the NAS (M:\ratspeak-info; PDFs need a text
   extract first - the e-ink panel cannot render PDF). Push them with push_tiles-style sdput.
 - RF coverage prediction (user asked 2026-11-12): Longley-Rice / ITM point-to-point and area
-  coverage for LoRa links from the 3DEP elevation now on the NAS (M:
-atspeak-maps\dem: 10 m
+  coverage for LoRa links from the 3DEP elevation now on the NAS (M:\ratspeak-maps\dem: 10 m
   around 04095, 30 m home/corridor/TN/NC, then the lower 48; Canada next: NRCan CDEM/HRDEM,
   Open Government Licence). PC side first (e.g. SPLAT!/Signal-Server style tool using our
   DEM, output as 1-bit coverage tiles the map can overlay); later a coarse on-device
@@ -200,7 +197,7 @@ Robustness to verify (before the stress-test pass)
 
 Audio / modes
 -------------
-- Voice / walkie-talkie mode: push-to-talk style over LoRa (or related path),
+- Voice / walkie-talkie mode (user asked again 2026-11-13): push-to-talk style over LoRa (or related path),
   separate from text LXMF and from simple beep/vibrate alerts. User asked again 2026-11-12:
   voice messages over Reticulum (record, Codec2 at 700-3200 bps, send as an LXMF audio
   field like Sideband's FIELD_AUDIO so other clients can play it; LoRa airtime limits
@@ -283,6 +280,48 @@ Home Assistant integration (user asked 2026-11-12)
 - Optional: report battery / GPS position to HA as sensors (opt-in, privacy).
 - Needs: a small bridge (Python, Reticulum + MQTT or an HA custom integration) on the home
   gateway; message format for commands (plain text first, then a field-tagged LXMF type).
+
+Feature ideas (user asked 2026-11-13: "add all of those to the future list")
+---------------------------------------------------------------------------
+Suggested order: 1, 4, 3 first. Items already elsewhere in this file are cross-referenced.
+Everyday use
+- 1. Quick replies: canned short messages ("OK", "On my way", "Where are you?", "Call me"),
+  one key from a thread; user-editable list in Settings. Cheap; also suits Simple mode.
+- 2. Simple mode for real: the Simple/Advanced choice is stored (setup wizard) but does
+  nothing yet. Simple = hide advanced menus, larger text, four main screens (Inbox,
+  Contacts, Atlas, Send).
+- 3. SOS / check-in beacon: a held key combination sends my position to chosen contacts and
+  repeats every few minutes until cancelled; clear on-screen state; works in every energy
+  mode (wakes GPS + radio).
+- 4. Firmware update from the SD card: the second 4 MB app slot (app1) is unused. Copy a
+  .bin to the card, Settings > Update, write to the other slot, boot it, automatic rollback
+  if the new image does not confirm itself. Replaces USB flashing in the field.
+- 5. Backup / restore to SD: identity, contacts, waypoints, settings, encrypted with the
+  lock password (see Security), to rebuild a lost or wiped unit.
+Maps / location
+- 6. Breadcrumb track: log my path to SD, draw it on the Atlas, export GPX, "track back".
+  (Also listed under the contacts-on-the-map Next items.)
+- 7. Bearing + distance screen to a contact or waypoint: big arrow + distance. (See
+  "Navigate to a contact" under Team awareness.)
+- 8. Arrival / geofence alerts: "tell me when <contact> is within 500 m of <waypoint>".
+Field / test tools
+- 9. Range-test mode: two units ping each other and log RSSI / SNR / GPS position to a CSV
+  on SD -> coverage map (pairs with RF coverage prediction above).
+- 10. Measured battery-life estimate on screen ("about 31 h left in Balanced") from the
+  actual drain; builds on the battery-life test (Stress_test_plan.md section 4b).
+- 11. Low-battery notice: at 10 %, send one chosen contact "battery dying" + my position.
+Nice to have
+- 12. Group threads: one message to a named set of contacts.
+- 13. Relay mode when plugged in: act as a Reticulum transport node on USB power to extend
+  range for nearby units (see also the propagation-node item under Hardware / platform).
+- 14. Notepad: write notes on the device, saved to the Library folder on SD.
+Also asked 2026-11-13
+- Voice walkie-talkies: see Audio / modes (Codec2 voice messages / push-to-talk).
+- USB hard drive / flash drive on the handheld (USB OTG host): read maps or archives from a
+  USB drive plugged into the unit. Same blocker as unit-to-unit USB copy above: host mode
+  must supply 5 V on VBUS and the USB-C is wired as a charge input; check the schematic.
+  Workaround: a powered USB hub / OTG adapter with its own supply, if the port can do host
+  data at all. The PC-side need (drag maps onto the card) is the USB mass-storage item.
 
 Build / devex
 -------------
