@@ -60,6 +60,13 @@
 #include "reticulum/AnnounceManager.h"
 #include "transport/LoRaInterface.h"
 #include "transport/WiFiInterface.h"
+#include "config/Config.h"
+#if !defined(SIMULATOR)
+#include "transport/TcpClientSet.h"     // TCP hub client (device only: FreeRTOS tasks + lwIP)
+#include "config/UserConfig.h"
+#include "hal/SharedSPIBus.h"
+#include "ff.h"                          // sdformat: FatFs f_mkfs / f_getfree on the card
+#endif
 #include "security/SecretVault.h"
 #include "remote/ScreenMirror.h"
 #include "power/PowerModes.h"
@@ -73,6 +80,7 @@
 #include "protocol/OutgoingContract.h"
 #include "runtime/TaskOwner.h"
 #include "ratspeak_protocol.h"
+#include <vector>
 #include "util/Bytes.h"
 #include "util/EventTrace.h"
 
@@ -114,11 +122,14 @@ constexpr const char* kDefaultSelfName = "MyRatSpeakPro";
 struct Config {
     bool     dark        = false;   // false = white paper, true = black ink
     int      tz          = 0;       // index into kTz
-    uint8_t  idleMode    = 1;       // 0 off, 1 on (no password)
+    uint8_t  idleMode    = 1;       // 0 off, 1 on (no password), 2 on + password lock
     uint32_t idleSecs    = 30;      // 10..99999
     bool     beep        = true;
     bool     vibe        = true;
-    uint8_t  volume      = 80;
+    uint8_t  volume      = 80;      // 0..100 %, steps of 20; 80 spares the small speaker
+    bool     idleMap     = false;   // idle screen = map around your position
+    bool     trackOn     = false;   // breadcrumb track recording (S.1.10)
+    uint8_t  coordFmt    = 0;       // 0 decimal degrees, 1 deg-min-sec, 2 MGRS (S.1.12)
     bool     kbLight     = false;
     bool     gpsOn       = true;
     bool     gpsAutoSync = true;
@@ -197,6 +208,10 @@ void loadConfig() {
     g_cfg.beep        = p.getBool("beep", true);
     g_cfg.vibe        = p.getBool("vibe", true);
     g_cfg.volume      = p.getUChar("vol", 80);
+    g_cfg.idleMap     = p.getBool("idleMap", false);
+    g_cfg.trackOn     = p.getBool("trackOn", false);
+    g_cfg.coordFmt    = p.getUChar("coordFmt", 0);
+    if (g_cfg.coordFmt > 2) g_cfg.coordFmt = 0;
     g_cfg.kbLight     = p.getBool("kbl", false);
     g_cfg.gpsOn       = p.getBool("gps", true);
     g_cfg.gpsAutoSync = p.getBool("gpsSync", true);
@@ -207,7 +222,7 @@ void loadConfig() {
     p.end();
 
     if (g_cfg.tz < 0 || g_cfg.tz >= kTzCount) g_cfg.tz = 0;
-    if (g_cfg.idleMode > 1) g_cfg.idleMode = 1;
+    if (g_cfg.idleMode > 2) g_cfg.idleMode = 1;   // 2 = on + password (needs a vault password)
     if (g_cfg.idleSecs < 10 || g_cfg.idleSecs > 99999) g_cfg.idleSecs = 30;
     if (g_cfg.volume > 100) g_cfg.volume = 80;
 
@@ -230,6 +245,9 @@ void saveConfig() {
     p.putBool("beep", g_cfg.beep);
     p.putBool("vibe", g_cfg.vibe);
     p.putUChar("vol", g_cfg.volume);
+    p.putBool("idleMap", g_cfg.idleMap);
+    p.putBool("trackOn", g_cfg.trackOn);
+    p.putUChar("coordFmt", g_cfg.coordFmt);
     p.putBool("kbl", g_cfg.kbLight);
     p.putBool("gps", g_cfg.gpsOn);
     p.putBool("gpsSync", g_cfg.gpsAutoSync);
@@ -668,6 +686,7 @@ uint8_t g_gpsSats = 0;
 bool    g_gpsPosValid = false;   // last GGA/RMC with a fix carried a position
 double  g_gpsLat = 0, g_gpsLon = 0;
 uint32_t g_gpsPosAt = 0;
+float   g_gpsHdop = 0;               // GGA horizontal dilution (accuracy ~ HDOP x 5 m)
 
 // NMEA ddmm.mmmm / dddmm.mmmm + hemisphere -> signed degrees. false if empty.
 bool nmeaDegrees(const char* v, const char* hemi, double& out) {
@@ -972,6 +991,7 @@ void gpsHandleSentence(char* line) {
         g_gpsFix = valid;
     } else if (gga && n > 7) {
         if (fld[7][0]) g_gpsSats = (uint8_t)atoi(fld[7]);
+        if (n > 8 && fld[8][0]) g_gpsHdop = (float)atof(fld[8]);
         if (fld[6][0]) g_gpsFix = fld[6][0] > '0';
         if (fld[6][0] > '0') gpsNotePosition(fld[2], fld[3], fld[4], fld[5]);
     } else {
@@ -1259,7 +1279,7 @@ void notifyInbound() {
 // 3. Peer rows, history, send
 // =============================================================================
 
-constexpr int MAX_ROWS = 10;      // Contacts 0..9; Inbox/Peers 1..9 (+1 spare)
+constexpr int MAX_ROWS = 48;      // list rows; shown in pages (Contacts 0..9, Inbox/Peers 1..9)
 struct PeerRow {
     uint8_t  peer[16];
     char     name[24];
@@ -1311,17 +1331,33 @@ int findRow(const uint8_t peer[16]) {
     return -1;
 }
 
+// List search (key F on Inbox / Contacts / Peers): rows whose name or hash contain the
+// text (any case). Cleared when the list screen changes or with ^.
+char g_filter[24] = "";
+
+bool containsNoCase(const char* hay, const char* needle) {
+    const size_t n = strlen(needle);
+    for (; *hay; hay++) {
+        size_t i = 0;
+        while (i < n && hay[i] && tolower((unsigned char)hay[i]) == tolower((unsigned char)needle[i])) i++;
+        if (i == n) return true;
+    }
+    return n == 0;
+}
+
 PeerRow* addRow(const uint8_t peer[16]) {
     if (g_rowCount >= MAX_ROWS || findRow(peer) >= 0) return nullptr;
-    PeerRow& r = g_rows[g_rowCount++];
+    PeerRow& r = g_rows[g_rowCount];
     memset(&r, 0, sizeof(r));
     memcpy(r.peer, peer, 16);
     r.self = isSelf(peer);
     peerName(peer, r.name, sizeof(r.name));
-    const DiscoveredNode* node = g_announceMgr.findNode(rs::Bytes(peer, 16));
-    r.saved = node && node->saved;
     char hex[33];
     hashToHex(peer, hex);
+    if (g_filter[0] && !containsNoCase(r.name, g_filter) && !containsNoCase(hex, g_filter)) return nullptr;
+    g_rowCount++;
+    const DiscoveredNode* node = g_announceMgr.findNode(rs::Bytes(peer, 16));
+    r.saved = node && node->saved;
     snprintf(r.sub, sizeof(r.sub), "%.24s", hex);
     return &r;
 }
@@ -1335,49 +1371,98 @@ bool waitResult(MessageStore::Ticket t, MessageStore::Result& res, int maxSpin =
     return false;
 }
 
-// Conversations (most recent first) with unread counts.
-void appendConversations(int limit) {
+// Conversations (most recent first) with unread counts. The store hands out pages of
+// up to ConversationPageCapacity (16 on the device); this walks up to `limit` with the
+// cursor. The result is cached until the store's revision changes, so typing a search
+// or coming back to the Inbox does not query the store again.
+struct ConvRow { uint8_t peer[16]; uint16_t unread; };
+ConvRow  g_convCache[MAX_ROWS];
+int      g_convCount = 0;
+uint32_t g_convRev = 0;
+bool     g_convValid = false;
+// Page size: the device store's (16 with async writes); the same in the simulator so
+// it walks the same multi-page path.
+constexpr int kConvPage = MessageStore::ConversationPageCapacity < 16 ? (int)MessageStore::ConversationPageCapacity : 16;
+
+int fetchConversationPage(handheld::storage::ConversationSelector* sel, int cap,
+                          const handheld::storage::ConversationCursor* after) {
     using namespace handheld::storage;
-    if (!g_storeReady || limit <= 0) return;
-    auto sub = g_msgStore.requestConversationPage({}, false, ConversationOrder::Recent,
-                                                  ConversationDirection::After, (uint8_t)limit);
+    const uint8_t lim = (uint8_t)std::min<int>(cap, kConvPage);
+    const ConversationCursor cur = after ? *after : ConversationCursor{};
+    auto sub = g_msgStore.requestConversationPage(cur, after != nullptr, ConversationOrder::Recent,
+                                                  ConversationDirection::After, lim);
     for (int a = 0; a < 8 && !sub.accepted(); a++) {
         unsigned r = (unsigned)sub.rejection;
         if (r != 1 && r != 8) break;            // only Busy / Recovering are worth retrying
         pumpFor(50, 12);
-        sub = g_msgStore.requestConversationPage({}, false, ConversationOrder::Recent,
-                                                 ConversationDirection::After, (uint8_t)limit);
+        sub = g_msgStore.requestConversationPage(cur, after != nullptr, ConversationOrder::Recent,
+                                                 ConversationDirection::After, lim);
     }
-    if (!sub.accepted()) { Serial.printf("[MSG] page rejected %u\n", (unsigned)sub.rejection); return; }
-
+    if (!sub.accepted()) { Serial.printf("[MSG] page rejected %u\n", (unsigned)sub.rejection); return -1; }
     MessageStore::Result res;
-    ConversationSelector sel[MAX_ROWS];
     size_t nSel = 0;
     if (waitResult(sub.ticket, res) && res.outcome == Outcome::Committed &&
         res.error == Error::None && res.length >= sizeof(ConversationSelector)) {
         nSel = res.length / sizeof(ConversationSelector);
-        if (nSel > (size_t)MAX_ROWS) nSel = MAX_ROWS;
+        if (nSel > (size_t)lim) nSel = lim;
         if (!g_msgStore.readPayload(sub.ticket, sel, nSel * sizeof(ConversationSelector))) nSel = 0;
     }
     g_msgStore.releaseResult(sub.ticket);
+    return (int)nSel;
+}
 
-    for (size_t i = 0; i < nSel; i++) {
-        if (isSelf(sel[i].cursor.peer)) continue;
-        uint16_t unread = 0;
-        if (sel[i].counter && sel[i].error == Error::None) {
-            auto d = g_msgStore.requestConversation(sel[i]);
-            if (d.accepted()) {
-                MessageStore::Result dres;
-                ConversationView view;
-                if (waitResult(d.ticket, dres) && dres.outcome == Outcome::Committed &&
-                    dres.error == Error::None && dres.length >= sizeof(ConversationView) &&
-                    g_msgStore.readPayload(d.ticket, &view, sizeof(view)))
-                    unread = (uint16_t)view.unreadCount;
-                g_msgStore.releaseResult(d.ticket);
+void loadConversations(int limit) {
+    using namespace handheld::storage;
+    const uint32_t t0 = millis();
+    g_convCount = 0;
+    g_convValid = false;
+    if (!g_storeReady) return;
+    const uint32_t rev = g_msgStore.revision();
+    static ConversationSelector sel[kConvPage];
+    ConversationCursor last{};
+    bool haveLast = false;
+    int pages = 0;
+    while (g_convCount < limit && pages < 8) {
+        const int n = fetchConversationPage(sel, limit - g_convCount, haveLast ? &last : nullptr);
+        if (n < 0) return;                      // keep "not valid": retried next time
+        pages++;
+        for (int i = 0; i < n && g_convCount < limit; i++) {
+            if (isSelf(sel[i].cursor.peer)) continue;
+            bool dup = false;
+            for (int k = 0; k < g_convCount && !dup; k++) dup = !memcmp(g_convCache[k].peer, sel[i].cursor.peer, 16);
+            if (dup) continue;
+            uint16_t unread = 0;
+            if (sel[i].counter && sel[i].error == Error::None) {
+                auto d = g_msgStore.requestConversation(sel[i]);
+                if (d.accepted()) {
+                    MessageStore::Result dres;
+                    ConversationView view;
+                    if (waitResult(d.ticket, dres) && dres.outcome == Outcome::Committed &&
+                        dres.error == Error::None && dres.length >= sizeof(ConversationView) &&
+                        g_msgStore.readPayload(d.ticket, &view, sizeof(view)))
+                        unread = (uint16_t)view.unreadCount;
+                    g_msgStore.releaseResult(d.ticket);
+                }
             }
+            memcpy(g_convCache[g_convCount].peer, sel[i].cursor.peer, 16);
+            g_convCache[g_convCount].unread = unread;
+            g_convCount++;
         }
-        if (PeerRow* r = addRow(sel[i].cursor.peer)) r->unread = unread;
+        if (n < kConvPage || n == 0) break;   // last page
+        last = sel[n - 1].cursor;
+        haveLast = true;
     }
+    g_convRev = rev;
+    g_convValid = true;
+    Serial.printf("[LIST] %d conversations in %lu ms (%d pages)\n", g_convCount,
+                  (unsigned long)(millis() - t0), pages);
+}
+
+void appendConversations(int limit) {
+    if (!g_storeReady || limit <= 0) return;
+    if (!g_convValid || g_convRev != g_msgStore.revision()) loadConversations(MAX_ROWS);
+    for (int i = 0; i < g_convCount && i < limit; i++)
+        if (PeerRow* r = addRow(g_convCache[i].peer)) r->unread = g_convCache[i].unread;
 }
 
 void appendAnnounced(bool savedOnly, bool withSignal) {
@@ -1398,9 +1483,105 @@ void appendAnnounced(bool savedOnly, bool withSignal) {
     }
 }
 
+// ---- Contact cards (share a contact as an LXMF message) -----------------------------
+// Plain text, readable on any LXMF client:   "Contact card: <name>\n<32 hex dest hash>"
+// This firmware recognises it in a thread ("[card] <name>") and offers to save it as a
+// contact (Enter on an empty draft). Sent from a contact's page: Share -> pick who gets it.
+constexpr const char* kCardPrefix = "Contact card: ";
+struct InCard { bool valid; uint8_t hash[16]; char name[24]; uint32_t counter; };
+InCard  g_threadCard = {};         // newest incoming card in the open thread
+bool    g_cardOpen = false;        // contact page (Message / Rename / Share) over Contacts / Peers
+uint8_t g_cardPeer[16];
+int     g_cardSel = 0;
+bool    g_shareActive = false;     // the Contacts list is picking who gets g_sharePeer
+uint8_t g_sharePeer[16];
+
+int hexNib(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+bool hexToHash(const char* s, uint8_t out[16]) {
+    for (int i = 0; i < 16; i++) {
+        const int h = hexNib(s[2 * i]), l = hexNib(s[2 * i + 1]);
+        if (h < 0 || l < 0) return false;
+        out[i] = (uint8_t)((h << 4) | l);
+    }
+    return true;
+}
+
+bool cardParse(const char* s, size_t len, uint8_t hash[16], char* name, size_t nameCap) {
+    const size_t pl = strlen(kCardPrefix);
+    if (len < pl + 1 + 1 + 32 || strncmp(s, kCardPrefix, pl) != 0) return false;
+    size_t i = pl, n = 0;
+    while (i < len && s[i] != '\n' && s[i] != '\r') {
+        if (n + 1 < nameCap && (uint8_t)s[i] >= 32 && (uint8_t)s[i] < 127) name[n++] = s[i];
+        i++;
+    }
+    while (n && name[n - 1] == ' ') n--;
+    name[n] = 0;
+    while (i < len && (s[i] == '\n' || s[i] == '\r' || s[i] == ' ')) i++;
+    if (i + 32 > len) return false;
+    for (int k = 0; k < 16; k++) {
+        const int h = hexNib(s[i + 2 * k]), l = hexNib(s[i + 2 * k + 1]);
+        if (h < 0 || l < 0) return false;
+        hash[k] = (uint8_t)((h << 4) | l);
+    }
+    if (i + 32 < len && hexNib(s[i + 32]) >= 0) return false;   // longer hex: not a dest hash
+    return n > 0;
+}
+
+int cardFormat(const uint8_t hash[16], const char* name, char* out, size_t n) {
+    char hex[33];
+    hashToHex(hash, hex);
+    return snprintf(out, n, "%s%.23s\n%s", kCardPrefix, name, hex);
+}
+
+bool cardIsSaved(const uint8_t hash[16]) {
+    if (isSelf(hash)) return true;
+    const DiscoveredNode* node = g_announceMgr.findNode(rs::Bytes(hash, 16));
+    return node && node->saved;
+}
+
+bool cardOffered() { return g_threadCard.valid && !cardIsSaved(g_threadCard.hash); }
+
+extern char g_placeLast[28];                 // place search (map F): last place jumped to
+// Waypoints + track data (functions in "Waypoints + breadcrumb track" below).
+struct Wpt { float lat, lon; char name[16]; uint32_t at; };
+constexpr int kWptMax = 32;
+Wpt g_wpt[kWptMax];
+int g_wptCount = 0;
+int g_wptSel = -1;                           // selected on the map (N), -1 = none
+uint32_t g_wptDelAt = 0;                     // Del pressed once (confirm within 3 s)
+constexpr int kTrackRam = 1000;
+float g_track[kTrackRam * 2];
+int g_trackN = 0;
+bool g_trackLoaded = false;
+bool ownPosition(double& lat, double& lon);
+void distText(double la, double lo, double tla, double tlo, char* out, size_t n);
+void trackLoad();
+void trackClear();
+void wptSelect(int i);
+void openMap();
+void wptOpenFromSettings(int i);
+
+// Location messages (see "Location sharing" below): newest incoming one in the thread.
+struct InLoc { bool valid; double lat, lon; uint32_t counter; };
+InLoc g_threadLoc = {};
+bool locParse(const char* s, size_t len, double& lat, double& lon, bool* autoUpdate = nullptr);
+void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at);
+uint32_t msgEpoch(double ts);
+// Enter on an empty draft: the newest of an unsaved card / a location wins.
+void gpsPosText(char* out, size_t n);
+int ashareActive();
+void ashareStopAll();
+bool locOffered() { return g_threadLoc.valid && (!cardOffered() || g_threadLoc.counter > g_threadCard.counter); }
+
 // ---- Thread history ------------------------------------------------------------
 constexpr int HIST_ROWS = 6;
-struct HistRow { char text[36]; char status[12]; bool incoming; };
+struct HistRow { char text[36]; char status[12]; bool incoming; bool autoLoc; };
 HistRow g_hist[HIST_ROWS];
 int  g_histCount = 0;
 char g_histNote[24] = "";
@@ -1409,6 +1590,8 @@ void loadHistory(const uint8_t peer[16]) {
     using namespace handheld::storage;
     g_histCount = 0;
     g_histNote[0] = 0;
+    g_threadCard.valid = false;
+    g_threadLoc.valid = false;
     if (!g_storeReady) { snprintf(g_histNote, sizeof(g_histNote), "(store off)"); return; }
 
     char hex[33];
@@ -1424,6 +1607,7 @@ void loadHistory(const uint8_t peer[16]) {
     }
     int ri = findRow(peer);
     if (ri >= 0) g_rows[ri].unread = 0;
+    g_convValid = false;
 
     auto sub = g_msgStore.requestHistoryPage(peerHex, HistoryEntry{}, (uint8_t)HIST_ROWS,
                                              HistoryDirection::Before);
@@ -1475,8 +1659,30 @@ void loadHistory(const uint8_t peer[16]) {
         if (off > got) off = got;
         size_t clen = hdr.contentLength;
         if (off + clen > got) clen = got - off;
+        uint8_t cardHash[16];
+        char cardName[24];
+        const bool isCard = cardParse((const char*)buf + off, clen, cardHash, cardName, sizeof(cardName));
+        if (isCard) {
+            snprintf(h.text, sizeof(h.text), "[card] %s", cardName);
+            if (h.incoming && (!g_threadCard.valid || entries[i].counter >= g_threadCard.counter)) {
+                g_threadCard.valid = true;
+                g_threadCard.counter = entries[i].counter;
+                memcpy(g_threadCard.hash, cardHash, 16);
+                strlcpy(g_threadCard.name, cardName, sizeof(g_threadCard.name));
+            }
+        }
+        double la = 0, lo = 0;
+        bool autoLoc = false;
+        const bool isLoc = !isCard && locParse((const char*)buf + off, clen, la, lo, &autoLoc);
+        if (isLoc) {
+            snprintf(h.text, sizeof(h.text), "[loc%s] %.4f,%.4f", autoLoc ? " auto" : "", la, lo);
+            h.autoLoc = autoLoc;
+            if (h.incoming && (!g_threadLoc.valid || entries[i].counter >= g_threadLoc.counter))
+                g_threadLoc = {true, la, lo, entries[i].counter};
+            if (h.incoming) cposNote(peer, la, lo, msgEpoch(hdr.timestamp));   // map marker
+        }
         if (clen >= sizeof(h.text)) clen = sizeof(h.text) - 1;
-        if (clen) {
+        if (clen && !isCard && !isLoc) {
             memcpy(h.text, buf + off, clen);
             h.text[clen] = 0;
             for (size_t k = 0; k < clen; k++)
@@ -1496,6 +1702,13 @@ void loadHistory(const uint8_t peer[16]) {
                 case 6:  snprintf(h.status, sizeof(h.status), "no proof"); break;
                 default: snprintf(h.status, sizeof(h.status), "s%u", (unsigned)hdr.status); break;
             }
+        }
+    }
+    // Auto location updates in a row (same direction): keep only the newest.
+    for (int i = g_histCount - 1; i > 0; i--) {
+        if (g_hist[i].autoLoc && g_hist[i - 1].autoLoc && g_hist[i].incoming == g_hist[i - 1].incoming) {
+            for (int k = i - 1; k < g_histCount - 1; k++) g_hist[k] = g_hist[k + 1];
+            g_histCount--;
         }
     }
     if (g_histCount == 0) snprintf(g_histNote, sizeof(g_histNote), "(no messages yet)");
@@ -1701,8 +1914,12 @@ const char* screenName(ScreenId s) {
 ScreenId g_screen = SCR_HOME;
 
 // MENU overlay rows (doc §4.3): Home · Settings · Contacts · Peers · Inbox
-const ScreenId kMenuScreens[5] = {SCR_HOME, SCR_SETTINGS, SCR_CONTACTS, SCR_PEERS, SCR_INBOX};
-const char*    kMenuLabels[5]  = {"Home", "Settings", "Contacts", "Peers", "Inbox"};
+// Last row "Map" is not a screen: it opens the offline map (same as L); hotkey A.
+// "Library" opens the reference texts on the SD card; hotkey R.
+constexpr int  kMenuCount = 7, kMenuMap = 5, kMenuLib = 6;
+const ScreenId kMenuScreens[kMenuCount] = {SCR_HOME, SCR_SETTINGS, SCR_CONTACTS, SCR_PEERS, SCR_INBOX, SCR_HOME, SCR_HOME};
+const char*    kMenuLabels[kMenuCount]  = {"Home", "Settings", "Contacts", "Peers", "Inbox", "Map", "Library"};
+const char     kMenuKeys[kMenuCount]    = {'H', 'S', 'C', 'P', 'I', 'A', 'R'};
 bool g_menuOpen = false;
 int  g_menuSel = 0;
 
@@ -1716,7 +1933,14 @@ bool    g_threadOpen = false;
 uint8_t g_threadPeer[16];
 
 // Entry mode: one text buffer, one owner.
-enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, Longitude, WifiPass };
+enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, Longitude, WifiPass,
+                             PassOld, PassNew, PassConfirm,     // Pass*: lock password (arg = purpose)
+                             Search,                            // list filter (Inbox / Contacts / Peers)
+                             TcpHost, TcpPort,
+                             MapNum,                            // contact page: map number
+                             WptName,                           // map P: waypoint name
+                             LibFind,                           // library: find text
+                             PlaceFind };                       // map F: place name
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -1725,9 +1949,11 @@ char    g_buf[BUF_CAP + 1] = "";
 size_t  g_bufLen = 0;
 
 bool entryActive() { return g_entry != Entry::None; }
+bool passEntry(Entry e) { return e == Entry::PassOld || e == Entry::PassNew || e == Entry::PassConfirm; }
 bool browseMode()  { return !entryActive(); }
 bool entryNumeric() {
-    return g_entry == Entry::RtcField || g_entry == Entry::IdleSecs ||
+    return g_entry == Entry::RtcField || g_entry == Entry::IdleSecs || g_entry == Entry::TcpPort ||
+           g_entry == Entry::MapNum ||
            g_entry == Entry::Latitude || g_entry == Entry::Longitude;
 }
 
@@ -1736,7 +1962,7 @@ enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
-    PG_CHECKIN
+    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -1777,16 +2003,26 @@ void bufSet(const char* s) {
     g_buf[g_bufLen] = 0;
 }
 
+bool g_showPass = false;
+bool g_entryReplace = false;                 // the default text goes on the first typed key            // MIC in a password field: show / hide what was typed
+
 void startEntry(Entry kind, const char* initial = nullptr, int arg = 0) {
     g_entry = kind;
+    g_showPass = false;
+    g_entryReplace = false;
     g_entryArg = arg;
     bufSet(initial);
     syncNumLayer();
     requestRedraw();
 }
 
+char g_passNew[33] = "";            // lock password typed once, waiting for the repeat
+
 void endEntry() {
     g_entry = Entry::None;
+    g_showPass = false;
+    memset(g_buf, 0, sizeof(g_buf));     // may have held a password
+    memset(g_passNew, 0, sizeof(g_passNew));
     bufClear();
     syncNumLayer();
     requestRedraw();
@@ -1833,7 +2069,7 @@ bool     g_joinAuto = true;
 
 bool isWifiPage(Page p) {
     return p == PG_WIFI || p == PG_WIFI_SCAN || p == PG_WIFI_SAVED ||
-           p == PG_WIFI_NET || p == PG_WIFI_JOIN;
+           p == PG_WIFI_NET || p == PG_WIFI_JOIN || p == PG_TCP;
 }
 
 void wifiUiChanged() {
@@ -2141,7 +2377,7 @@ constexpr int BOT_TOP     = H - BOT_H;               // 280
 constexpr int BOT_C_W     = 80;                      // Contact | Peers | Inbox
 constexpr int BOT_P_W     = 64;
 constexpr int BOT_I_W     = W - BOT_C_W - BOT_P_W;   // 96
-constexpr int MENU_ROW_H  = 36;
+constexpr int MENU_ROW_H  = 32;                        // 7 rows end at 260 (bottom bar 280)
 constexpr int HEADER_Y    = TOP_H + 1;               // path / title line
 constexpr int LIST_TOP    = TOP_H + 20;              // 56
 constexpr int FOOT_H      = 20;
@@ -2226,7 +2462,7 @@ void label(int x, int y, int w, int h, const char* s, bool bold = false, char ho
 // ---- Touch hit registry (filled while drawing) ------------------------------------
 enum HitAct : uint8_t {
     H_REFRESH, H_MENU, H_MENU_GO, H_TAB, H_ROW, H_BACK, H_ANNOUNCE,
-    H_TILE_AUDIO, H_UP, H_DOWN
+    H_TILE_AUDIO, H_UP, H_DOWN, H_CARD, H_TMENU
 };
 struct Hit { int16_t x, y, w, h; uint8_t act; int8_t arg; };
 constexpr int MAX_HITS = 32;
@@ -2330,6 +2566,290 @@ void clearRoot() {
 // 6. Screens
 // =============================================================================
 
+// ---- TCP hub (Settings > WiFi > TCP hub) -------------------------------------------
+// The core's Reticulum TCP client interface (TcpClientSet on the protocol pump, as the
+// Plus build uses), one endpoint: NVS rs_tcp (on, host, port), default off and
+// rns.ratspeak.org:4242. It runs only while WiFi is connected. Device only: the
+// simulator has no TCP stack (FreeRTOS tasks + lwIP sockets), so there it is settings only.
+struct TcpCfg { bool on = false; char host[64] = ""; uint16_t port = TCP_DEFAULT_PORT; };
+TcpCfg g_tcpCfg;
+bool   g_tcpApplied = false;          // endpoint handed to the client set
+bool   g_tcpDirty = false;            // settings changed: reload
+#if !defined(SIMULATOR)
+TcpClientSet g_tcp;
+#endif
+
+void tcpLoad() {
+    Preferences p;
+    strlcpy(g_tcpCfg.host, RATSPEAK_HUB_HOST, sizeof(g_tcpCfg.host));
+    if (!p.begin("rs_tcp", true)) return;
+    g_tcpCfg.on = p.getUChar("on", 0) != 0;
+    String h = p.getString("host", RATSPEAK_HUB_HOST);
+    strlcpy(g_tcpCfg.host, h.c_str(), sizeof(g_tcpCfg.host));
+    g_tcpCfg.port = p.getUShort("port", TCP_DEFAULT_PORT);
+    if (!g_tcpCfg.port) g_tcpCfg.port = TCP_DEFAULT_PORT;
+    p.end();
+}
+
+void tcpSave() {
+    Preferences p;
+    if (!p.begin("rs_tcp", false)) return;
+    p.putUChar("on", g_tcpCfg.on ? 1 : 0);
+    p.putString("host", g_tcpCfg.host);
+    p.putUShort("port", g_tcpCfg.port);
+    p.end();
+    g_tcpDirty = true;
+    Serial.printf("[TCP] settings %s %s:%u\n", g_tcpCfg.on ? "on" : "off", g_tcpCfg.host, (unsigned)g_tcpCfg.port);
+}
+
+int tcpUp() {
+    int up = 0;
+#if !defined(SIMULATOR)
+    for (auto* c : g_tcp) if (c && c->isConnected()) up++;
+#endif
+    return up;
+}
+
+const char* tcpStatus() {
+#if defined(SIMULATOR)
+    return g_tcpCfg.on ? "on (not in simulator)" : "off";
+#else
+    if (!g_tcpCfg.on) return "off";
+    if (!g_protoReady) return "protocol off";
+    if (!wifiConnected()) return "waiting for WiFi";
+    return tcpUp() ? "connected" : "connecting";
+#endif
+}
+
+void tcpTick() {
+#if !defined(SIMULATOR)
+    if (!g_protoReady) return;
+    const bool want = g_tcpCfg.on && g_tcpCfg.host[0] && wifiConnected();
+    if (want && (!g_tcpApplied || g_tcpDirty)) {
+        std::vector<TCPEndpoint> eps(1);
+        eps[0].host = g_tcpCfg.host;
+        eps[0].port = g_tcpCfg.port;
+        eps[0].autoConnect = true;
+        g_tcpDirty = false;
+        if (g_tcp.reload(g_proto.pump(), eps)) {
+            g_tcpApplied = true;
+            Serial.printf("[TCP] client %s:%u\n", g_tcpCfg.host, (unsigned)g_tcpCfg.port);
+        } else {
+            Serial.println("[TCP] endpoint rejected");
+        }
+    } else if (!want && g_tcpApplied) {
+        g_tcp.stop();
+        g_tcpApplied = false;
+        Serial.println("[TCP] stopped");
+    }
+    g_tcp.maintain();
+    if (g_tcpApplied) g_tcp.poll(20);
+    static int lastUp = 0;
+    const int up = tcpUp();
+    if (up != lastUp) {
+        lastUp = up;
+        Serial.printf("[TCP] %s\n", up ? "connected" : "disconnected");
+        if (g_screen == SCR_SETTINGS && g_page == PG_TCP) requestRedraw();
+    }
+#endif
+}
+
+// ---- Identities (Settings > Identity > Identities) ------------------------------------
+// The core's IdentityManager slots (as on the Plus build): list, create, switch, erase.
+// The protocol loads the active identity at boot, so a switch restarts the device.
+// Destructive actions need Enter twice within 5 s.
+int      g_idSel = 0;                 // slot shown on PG_ID_ONE
+void popPage();
+int      g_confirmKey = -1;
+uint32_t g_confirmAt = 0;
+
+bool confirmTwice(int key, const char* what) {
+    if (g_confirmKey == key && millis() - g_confirmAt < 5000) { g_confirmKey = -1; return true; }
+    g_confirmKey = key;
+    g_confirmAt = millis();
+    toast("Enter again: %s", what);
+    return false;
+}
+
+void identityRestart(const char* why) {
+    Serial.printf("[ID] %s - restarting\n", why);
+    saveConfig();
+    g_idMgr.flushPending();
+    delay(200);
+    ESP.restart();
+}
+
+int identityIndexOf(const std::string& hash) {
+    const auto& v = g_idMgr.identities();
+    for (size_t i = 0; i < v.size(); i++) if (v[i].hash == hash) return (int)i;
+    return -1;
+}
+
+void identityNew() {
+    const int k = g_idMgr.createIdentity(String(g_selfName));
+    if (k < 0) { toast("Create failed (max 8?)"); return; }
+    if (!g_idMgr.switchTo(k)) { toast("Switch failed"); return; }
+    identityRestart("new identity");
+}
+
+void identitySwitch(int i) {
+    if (i == g_idMgr.activeIndex()) { toast("Already active"); return; }
+    if (!g_idMgr.switchTo(i)) { toast("Switch failed"); return; }
+    identityRestart("identity switched");
+}
+
+// Erase a slot's key. The active one is replaced: a new identity becomes active first.
+void identityErase(int i) {
+    const auto& v = g_idMgr.identities();
+    if (i < 0 || i >= (int)v.size()) return;
+    const std::string hash = v[i].hash;
+    if (i != g_idMgr.activeIndex()) {
+        if (!g_idMgr.deleteIdentity(i)) { toast("Erase failed"); return; }
+        Serial.printf("[ID] erased %s\n", hash.c_str());
+        toast("Identity erased");
+        popPage();
+        return;
+    }
+    const int k = g_idMgr.createIdentity(String(g_selfName));
+    if (k < 0 || !g_idMgr.switchTo(k)) { toast("New identity failed"); return; }
+    const int old = identityIndexOf(hash);
+    if (old < 0 || !g_idMgr.deleteIdentity(old)) { toast("Old key not erased"); return; }
+    Serial.printf("[ID] erased active %s\n", hash.c_str());
+    identityRestart("active identity erased, new one made");
+}
+
+// ---- Idle password lock (Settings > Screen > Idle splash) ----------------------------
+// The lock password IS the SecretVault password: setting one makes the vault start
+// locked at every boot (saved WiFi passwords stay sealed until it is typed), and idle
+// mode 2 also locks after the idle timeout. LoRa / LXMF keep running while locked;
+// the screen shows only the time, battery and the unread count. Wrong tries:
+// 3 free, then 30 s, 60 s ... 16 min between tries (count kept in NVS rs_lock).
+bool     g_locked = false;
+char     g_lockBuf[33] = "";
+size_t   g_lockLen = 0;
+uint8_t  g_lockFails = 0;
+uint32_t g_lockUntil = 0;           // millis(): no tries before this (0 = none)
+constexpr uint8_t  kLockFreeTries = 3;
+constexpr uint32_t kLockPromptMs = 30000;   // prompt without keys -> back to the splash
+constexpr size_t   kLockPassMin = 4, kLockPassMax = 32;
+
+bool lockHasPassword() { return !vault::usingDefaultPassword(); }
+bool lockOnIdle()      { return g_cfg.idleMode == 2 && lockHasPassword(); }
+
+uint32_t lockWaitS() {
+    if (!g_lockUntil) return 0;
+    const int32_t left = (int32_t)(g_lockUntil - millis());
+    if (left <= 0) { g_lockUntil = 0; return 0; }
+    return (uint32_t)(left + 999) / 1000;
+}
+
+void lockSaveFails() {
+    Preferences p;
+    if (p.begin("rs_lock", false)) { p.putUChar("fails", g_lockFails); p.end(); }
+}
+
+void lockArmDelay() {
+    if (g_lockFails < kLockFreeTries) { g_lockUntil = 0; return; }
+    int sh = g_lockFails - kLockFreeTries;
+    if (sh > 5) sh = 5;
+    g_lockUntil = millis() + (30000UL << sh);
+    if (!g_lockUntil) g_lockUntil = 1;
+}
+
+void lockLoadFails() {
+    Preferences p;
+    if (p.begin("rs_lock", true)) { g_lockFails = p.getUChar("fails", 0); p.end(); }
+    lockArmDelay();                    // a reboot does not reset the wait
+}
+
+// Wrong password typed (lock prompt or Settings "current password").
+void lockNoteWrong() {
+    if (g_lockFails < 250) g_lockFails++;
+    lockSaveFails();
+    lockArmDelay();
+    Serial.printf("[LOCK] wrong password (%u in a row, wait %u s)\n", (unsigned)g_lockFails, (unsigned)lockWaitS());
+}
+
+void lockNoteRight() {
+    if (g_lockFails) { g_lockFails = 0; lockSaveFails(); }
+    g_lockUntil = 0;
+}
+
+void lockWipe() { memset(g_lockBuf, 0, sizeof(g_lockBuf)); g_lockLen = 0; g_showPass = false; }
+
+void enterIdle();
+void wifiLoad();
+
+void lockNow() {
+    if (!lockHasPassword()) return;
+    g_locked = true;
+    lockWipe();
+    Serial.println("[LOCK] locked");
+    enterIdle();
+}
+
+void lockTry() {
+    if (lockWaitS() || !g_lockLen) { requestRedraw(); return; }
+    const bool vaultWasLocked = !vault::unlocked();
+    const bool ok = vault::unlock(g_lockBuf);   // derives the key, or checks it when unlocked
+    lockWipe();
+    if (!ok) { lockNoteWrong(); requestRedraw(); return; }
+    lockNoteRight();
+    g_locked = false;
+    if (vaultWasLocked) wifiLoad();            // saved WiFi passwords readable now
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.println("[LOCK] unlocked");
+}
+
+void lockKey(const KeyEvent& ev) {
+    if (ev.up) {                               // ^ = clear, again = back to the splash
+        if (g_lockLen) lockWipe(); else enterIdle();
+        requestRedraw();
+        return;
+    }
+    if (ev.enter) { lockTry(); return; }
+    if (ev.del) { if (g_lockLen) g_lockBuf[--g_lockLen] = 0; requestRedraw(); return; }
+    if (ev.fn) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
+    char c = ev.space ? ' ' : ev.character;
+    if (c < 32 || c > 126) return;
+    if (ev.alt && isalpha((unsigned char)c)) c = isupper((unsigned char)c) ? (char)tolower(c) : (char)toupper(c);
+    if (lockWaitS()) { requestRedraw(); return; }
+    if (g_lockLen >= kLockPassMax) return;
+    g_lockBuf[g_lockLen++] = c;
+    g_lockBuf[g_lockLen] = 0;
+    requestRedraw();
+}
+
+void renderLock() {
+    label(0, 80, W, 22, "RatSpeak", true);
+    label(0, 102, W, 18, g_selfName);
+    label(0, 128, W, 22, "LOCKED", true);
+    const int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
+    char line[48];
+    if (unread > 0) snprintf(line, sizeof(line), "%d unread message%s", unread, unread == 1 ? "" : "s");
+    else            snprintf(line, sizeof(line), "No new messages");
+    label(0, 150, W, 18, line, unread > 0);
+    label(0, 184, W, 18, "Type password, Enter");
+    box(20, 206, W - 40, 30, 2);
+    size_t n = g_lockLen < 24 ? g_lockLen : 24;
+    for (size_t i = 0; i < n; i++) line[i] = g_showPass ? g_lockBuf[g_lockLen - n + i] : '*';
+    line[n] = '_'; line[n + 1] = 0;
+    label(20, 206, W - 40, 30, line, true);
+    const uint32_t wait = lockWaitS();
+    if (wait) {
+        snprintf(line, sizeof(line), "Wrong %u times: wait %u s", (unsigned)g_lockFails, (unsigned)wait);
+        g_redrawAt = millis() + (wait > 5 ? 5000 : wait * 1000 + 50);   // count down
+    } else if (g_lockFails) {
+        snprintf(line, sizeof(line), "Wrong password (%u)", (unsigned)g_lockFails);
+    } else {
+        line[0] = 0;
+    }
+    label(0, 244, W, 18, line, true);
+    label(0, 274, W, 18, g_showPass ? "MIC = hide password" : "MIC = show password");
+    label(0, 292, W, 18, "^ clear / back to splash");
+}
+
 // ---- Settings pages: single source of truth --------------------------------------
 enum RowKind : uint8_t { RK_MENU, RK_TOGGLE, RK_INFO, RK_ACTION, RK_ENTRY, RK_PICK };
 const char* kKindName[] = {"Menu", "Toggle", "Info", "Action", "Entry", "Pick"};
@@ -2378,6 +2898,10 @@ const char* pageTitle(Page p) {
         case PG_ENERGY:       return "Energy monitor";
         case PG_ENERGY_GRAPH: return "Energy trend";
         case PG_CHECKIN:      return "Check-in schedule";
+        case PG_TCP:          return "TCP hub";
+        case PG_IDS:          return "Identities";
+        case PG_ID_ONE:       return "Identity slot";
+        case PG_WPTS:         return "Waypoints";
     }
     return "";
 }
@@ -2387,6 +2911,13 @@ const char* editingSub(Entry kind, int arg = 0) {
     static char s[34];
     if (g_entry != kind || (kind == Entry::RtcField && g_entryArg != arg)) return nullptr;
     constexpr size_t kShow = 27;                 // keep the cursor end visible
+    if (passEntry(kind)) {                       // lock password: * unless MIC = show
+        size_t n = g_bufLen < kShow ? g_bufLen : kShow;
+        s[0] = '>';
+        for (size_t i = 0; i < n; i++) s[1 + i] = g_showPass ? g_buf[g_bufLen - n + i] : '*';
+        s[1 + n] = '_'; s[2 + n] = 0;
+        return s;
+    }
     if (g_bufLen > kShow) snprintf(s, sizeof(s), ">..%s_", g_buf + g_bufLen - (kShow - 2));
     else                  snprintf(s, sizeof(s), ">%s_", g_buf);
     return s;
@@ -2436,7 +2967,34 @@ void buildSettingsRows(Page p) {
         else              srow(RK_MENU, "Manual location", "not set");
         srow(RK_ACTION, "Sync GPS now", g_gpsFix ? "Enter = sync" : "needs GPS fix");
         srow(RK_TOGGLE, "Auto GPS sync", g_cfg.gpsAutoSync ? "ON (boot + daily)" : "OFF");
+        {
+            char pos[56];
+            gpsPosText(pos, sizeof(pos));
+            srow(RK_INFO, "GPS position", "%s", pos);
+            if (ashareActive()) srow(RK_ACTION, "Location auto-share", "%d on; Enter = stop all", ashareActive());
+            else srow(RK_INFO, "Location auto-share", "off (set in a chat: MIC)");
+            srow(RK_MENU, "Waypoints", "%d saved (map: P mark, N next)", g_wptCount);
+            srow(RK_TOGGLE, "Track (breadcrumbs)", "%s%s", g_cfg.trackOn ? "ON" : "OFF",
+                 g_cfg.trackOn ? ", GPS wakes ~2 min" : "");
+            srow(RK_ACTION, "Clear track", "%d points%s", g_trackN, g_trackLoaded ? "" : " (on SD)");
+            static const char* const kFmt[3] = {"Decimal 43.64012,-70.92011", "Deg min sec 43 38'24\"N", "MGRS 19T CJ 4513 3368"};
+            srow(RK_PICK, "Coordinates", "%s", kFmt[g_cfg.coordFmt % 3]);
+        }
         break;
+
+    case PG_WPTS: {
+        double la = 0, lo = 0;
+        const bool own = ownPosition(la, lo);
+        if (!g_wptCount) srow(RK_INFO, "No waypoints yet", "map: P marks one at the centre");
+        for (int i = 0; i < g_wptCount && i < MAX_SET_ROWS; i++) {
+            char nm[24], d[24];
+            snprintf(nm, sizeof(nm), "W%d %s", i + 1, g_wpt[i].name);
+            if (own) distText(la, lo, g_wpt[i].lat, g_wpt[i].lon, d, sizeof(d));
+            else snprintf(d, sizeof(d), "%.4f,%.4f", g_wpt[i].lat, g_wpt[i].lon);
+            srow(RK_ACTION, nm, "%s  Enter = map", d);
+        }
+        break;
+    }
 
     case PG_RTC: {
         static const char* names[5] = {"Hour (0-23)", "Minute (0-59)", "Month (1-12)", "Day (1-31)", "Year"};
@@ -2473,6 +3031,17 @@ void buildSettingsRows(Page p) {
         srow(RK_MENU, "Saved networks", "%d saved, encrypted%s", g_wifiSavedCount,
              wifiHasAutoCreds() ? ", auto" : "");
         srow(RK_ACTION, "Disconnect", g_wifiSt == WifiSt::Off ? "-" : "Enter = off (pause auto)");
+        srow(RK_MENU, "TCP hub", "%s", tcpStatus());
+        break;
+
+    case PG_TCP:
+        srow(RK_TOGGLE, "TCP hub", "%s", g_tcpCfg.on ? "ON (while WiFi is up)" : "OFF");
+        e = editingSub(Entry::TcpHost);
+        srow(RK_ENTRY, "Host", "%s", e ? e : g_tcpCfg.host);
+        e = editingSub(Entry::TcpPort);
+        if (e) srow(RK_ENTRY, "Port", "%s", e); else srow(RK_ENTRY, "Port", "%u", (unsigned)g_tcpCfg.port);
+        srow(RK_INFO, "Status", "%s", tcpStatus());
+        srow(RK_ACTION, "Use RatSpeak hub", "%s:%u", RATSPEAK_HUB_HOST, (unsigned)TCP_DEFAULT_PORT);
         break;
 
     case PG_WIFI_SCAN:
@@ -2649,14 +3218,27 @@ void buildSettingsRows(Page p) {
         srow(RK_TOGGLE, "Key backlight", "%s", g_cfg.kbLight ? "ON" : "OFF");
         break;
 
-    case PG_IDLE:
+    case PG_IDLE: {
+        const bool pw = lockHasPassword();
         srow(RK_PICK, "Off", "%s", g_cfg.idleMode == 0 ? "(current)" : "");
         srow(RK_PICK, "On, no password", "%s", g_cfg.idleMode == 1 ? "(current)" : "");
-        srow(RK_INFO, "On + password", "TBD (key: %s)", vault::status());
+        srow(RK_PICK, "On + password", "%s", lockOnIdle() ? "(current)" : pw ? "" : "asks for a password");
         e = editingSub(Entry::IdleSecs);
         if (e) srow(RK_ENTRY, "Timeout (10-99999 s)", "%s", e);
         else   srow(RK_ENTRY, "Timeout (10-99999 s)", "%u s", (unsigned)g_cfg.idleSecs);
+        if (passEntry(g_entry)) {
+            const char* t = g_entry == Entry::PassOld ? "Current password"
+                          : g_entry == Entry::PassNew ? "New pw (4-32)" : "Repeat new pw";
+            srow(RK_ENTRY, t, "%s", editingSub(g_entry));
+        } else {
+            srow(RK_ENTRY, pw ? "Change password" : "Set password", "%s",
+                 pw ? "set; asked at every boot" : "none (vault default key)");
+        }
+        srow(RK_ACTION, "Remove password", "%s", pw ? "Enter = remove" : "-");
+        srow(RK_ACTION, "Lock now", "%s", pw ? "Enter = lock" : "set a password first");
+        srow(RK_TOGGLE, "Idle screen", "%s", g_cfg.idleMap ? "MAP around you" : "splash (logo)");
         break;
+    }
 
     case PG_BATTERY:
         if (g_bat.valid) srow(RK_INFO, "Voltage", "%.3f V", g_bat.volts);
@@ -2690,7 +3272,29 @@ void buildSettingsRows(Page p) {
         srow(RK_ENTRY, "Display name", "%s", g_selfName);
         srow(RK_INFO, "LXMF address", "..%.16s", g_destHex[0] ? g_destHex + 16 : "");
         srow(RK_ACTION, "Announce ID", "last: %s", g_announceStr);
+        srow(RK_MENU, "Identities", "%d saved (new / switch / erase)", g_idMgr.count());
         break;
+
+    case PG_IDS: {
+        const auto& v = g_idMgr.identities();
+        for (size_t i = 0; i < v.size() && g_srowCount < MAX_SET_ROWS - 1; i++) {
+            const char* nm = v[i].displayName.length() ? v[i].displayName.c_str() : "(no name)";
+            srow(RK_MENU, nm, "%.16s%s", v[i].hash.c_str(), v[i].active ? " (active)" : "");
+        }
+        srow(RK_ACTION, "New identity", "make + switch + restart");
+        break;
+    }
+
+    case PG_ID_ONE: {
+        const auto& v = g_idMgr.identities();
+        if (g_idSel < 0 || g_idSel >= (int)v.size()) { srow(RK_INFO, "Gone", "^ = back"); break; }
+        const bool act = v[g_idSel].active;
+        srow(RK_INFO, "Hash", "%.16s", v[g_idSel].hash.c_str());
+        srow(RK_INFO, "", "%s", v[g_idSel].hash.size() > 16 ? v[g_idSel].hash.c_str() + 16 : "");
+        srow(RK_ACTION, "Switch to it", "%s", act ? "(active)" : "Enter x2 = switch + restart");
+        srow(RK_ACTION, "Erase it", "%s", act ? "Enter x2 = new ID + restart" : "Enter x2 = delete key");
+        break;
+    }
 
     case PG_LORA:
         srow(RK_INFO, "Radio", "%s", loraOnline() ? "online" : "offline");
@@ -2704,7 +3308,8 @@ void buildSettingsRows(Page p) {
     case PG_ALERTS:
         srow(RK_TOGGLE, "Beep on message", "%s", g_cfg.beep ? "ON" : "OFF");
         srow(RK_TOGGLE, "Vibrate on message", "%s", g_cfg.vibe ? "ON" : "OFF");
-        srow(RK_PICK, "Volume", "%u%%", (unsigned)g_cfg.volume);
+        srow(RK_PICK, "Volume", "%u%%%s", (unsigned)g_cfg.volume,
+             g_cfg.volume == 0 ? " (silent)" : g_cfg.volume == 80 ? " (default)" : g_cfg.volume == 100 ? " (max)" : "");
         srow(RK_ACTION, "Test alert", "Enter = play");
         break;
 
@@ -2806,6 +3411,28 @@ void activateSetting(int idx) {
         else if (idx == 3) pushPage(PG_LOC);
         else if (idx == 4) { if (gpsSyncClock()) toast("Clock synced from GPS"); else toast("No GPS fix yet"); }
         else if (idx == 5) { g_cfg.gpsAutoSync = !g_cfg.gpsAutoSync; saveConfig(); requestRedraw(); }
+        else if (idx == 7 && ashareActive()) { ashareStopAll(); toast("All auto-sharing stopped"); }
+        else if (idx == 8) pushPage(PG_WPTS);
+        else if (idx == 9) {
+            g_cfg.trackOn = !g_cfg.trackOn;
+            saveConfig();
+            if (g_cfg.trackOn) trackLoad();
+            toast(g_cfg.trackOn ? "Track on" : "Track off (kept)");
+            requestRedraw();
+        } else if (idx == 10) {
+            if (confirmTwice(1010, "clear the track")) { trackClear(); toast("Track cleared"); }
+        } else if (idx == 11) {
+            g_cfg.coordFmt = (uint8_t)((g_cfg.coordFmt + 1) % 3);
+            saveConfig();
+            Serial.printf("[CFG] coordinates %s\n", g_cfg.coordFmt == 2 ? "MGRS" : g_cfg.coordFmt == 1 ? "DMS" : "decimal");
+            requestRedraw();
+        }
+        break;
+
+    case PG_WPTS:
+        if (idx >= 0 && idx < g_wptCount) {
+            wptOpenFromSettings(idx);
+        }
         break;
 
     case PG_RTC:
@@ -2843,6 +3470,25 @@ void activateSetting(int idx) {
         if (idx == 2) { if (!g_wifiScanned || !g_wifiSeenCount) wifiStartScan(false); pushPage(PG_WIFI_SCAN); }
         else if (idx == 3) pushPage(PG_WIFI_SAVED);
         else if (idx == 4 && g_wifiSt != WifiSt::Off) { wifiDisconnect(); toast("WiFi off"); }
+        else if (idx == 5) pushPage(PG_TCP);
+        break;
+
+    case PG_TCP:
+        if (idx == 0) {
+            g_tcpCfg.on = !g_tcpCfg.on;
+            tcpSave();
+            if (g_tcpCfg.on && !wifiConnected()) toast("Starts when WiFi is up");
+            requestRedraw();
+        } else if (idx == 1) {
+            startEntry(Entry::TcpHost, g_tcpCfg.host);
+        } else if (idx == 2) {
+            char pb[8]; snprintf(pb, sizeof(pb), "%u", (unsigned)g_tcpCfg.port); startEntry(Entry::TcpPort, pb);
+        } else if (idx == 4) {
+            strlcpy(g_tcpCfg.host, RATSPEAK_HUB_HOST, sizeof(g_tcpCfg.host));
+            g_tcpCfg.port = TCP_DEFAULT_PORT;
+            tcpSave();
+            toast("RatSpeak hub set");
+        }
         break;
 
     case PG_WIFI_SCAN: {
@@ -2999,9 +3645,33 @@ void activateSetting(int idx) {
         break;
 
     case PG_IDLE:
-        if (idx == 0 || idx == 1) { g_cfg.idleMode = (uint8_t)idx; saveConfig(); requestRedraw(); }
-        else if (idx == 2) toast("Password lock: TBD");
-        else if (idx == 3) { char s[8]; snprintf(s, sizeof(s), "%u", (unsigned)g_cfg.idleSecs); startEntry(Entry::IdleSecs, s); }
+        if (idx == 0 || idx == 1) {
+            g_cfg.idleMode = (uint8_t)idx;
+            saveConfig();
+            if (lockHasPassword()) toast("Boot still asks password");
+            requestRedraw();
+        } else if (idx == 2) {
+            if (lockHasPassword()) { g_cfg.idleMode = 2; saveConfig(); toast("Locks after %u s idle", (unsigned)g_cfg.idleSecs); }
+            else {                               // no password yet: new + repeat, then lock on
+                g_sel = 4;                       // the password row shows the typing
+                startEntry(Entry::PassNew, nullptr, 2);
+                toast("Choose a password");
+            }
+        } else if (idx == 3) {
+            char s[8]; snprintf(s, sizeof(s), "%u", (unsigned)g_cfg.idleSecs); startEntry(Entry::IdleSecs, s);
+        } else if (idx == 4) {
+            startEntry(lockHasPassword() ? Entry::PassOld : Entry::PassNew, nullptr, 0);
+        } else if (idx == 5) {
+            if (lockHasPassword()) { g_sel = 4; startEntry(Entry::PassOld, nullptr, 1); }
+            else toast("No password set");
+        } else if (idx == 6) {
+            if (lockHasPassword()) lockNow(); else toast("Set a password first");
+        } else if (idx == 7) {
+            g_cfg.idleMap = !g_cfg.idleMap;
+            saveConfig();
+            toast(g_cfg.idleMap ? "Idle: map (needs SD tiles)" : "Idle: splash");
+            requestRedraw();
+        }
         break;
 
     case PG_BATTERY:
@@ -3034,6 +3704,18 @@ void activateSetting(int idx) {
         if (idx == 1 && g_haveSelf) startNameEntry(g_selfHash);
         else if (idx == 1) toast("Identity not loaded");
         else if (idx == 3) { doAnnounce(); if (g_cfg.beep) g_audio.playAnnounce(); toast("Announce: %s", g_announceStr); }
+        else if (idx == 4) pushPage(PG_IDS, g_idMgr.activeIndex() > 0 ? g_idMgr.activeIndex() : 0);
+        break;
+
+    case PG_IDS:
+        if (idx >= 0 && idx < g_idMgr.count()) { g_idSel = idx; pushPage(PG_ID_ONE, 2); }
+        else if (idx == g_idMgr.count() && confirmTwice(100, "new ID + restart")) identityNew();
+        break;
+
+    case PG_ID_ONE:
+        if (idx == 2 && confirmTwice(200 + g_idSel, "switch + restart")) identitySwitch(g_idSel);
+        else if (idx == 3 && confirmTwice(300 + g_idSel, g_idSel == g_idMgr.activeIndex() ? "erase active ID" : "erase key"))
+            identityErase(g_idSel);
         break;
 
     case PG_LORA:
@@ -3044,9 +3726,10 @@ void activateSetting(int idx) {
         if (idx == 0) { g_cfg.beep = !g_cfg.beep; g_audio.setEnabled(g_cfg.beep); saveConfig(); requestRedraw(); }
         else if (idx == 1) { g_cfg.vibe = !g_cfg.vibe; saveConfig(); requestRedraw(); }
         else if (idx == 2) {
-            g_cfg.volume = g_cfg.volume >= 100 ? 20 : g_cfg.volume + 20;
+            g_cfg.volume = g_cfg.volume >= 100 ? 0 : (uint8_t)((g_cfg.volume / 20 + 1) * 20);   // 0..100 by 20
             g_audio.setVolume(g_cfg.volume);
             saveConfig();
+            if (g_cfg.volume && g_cfg.beep) g_audio.playMessage();   // hear the new level
             requestRedraw();
         } else if (idx == 3) {
             if (g_cfg.beep) g_audio.playMessage();
@@ -3080,7 +3763,11 @@ void activateSetting(int idx) {
 }
 
 // ---- List screens (Inbox / Contacts / Peers) ------------------------------------
-int rowNumber(ScreenId s, int idx) { return s == SCR_CONTACTS ? idx : idx + 1; }
+// Lists are shown in pages that follow the selection: Contacts 10 rows (digits 0-9),
+// Inbox / Peers 9 rows (digits 1-9). Digits pick within the selected row's page;
+// N / B jump a page, G / V move across page edges.
+int pageSize(ScreenId s) { return s == SCR_CONTACTS ? 10 : 9; }
+int rowNumber(ScreenId s, int idx) { return s == SCR_CONTACTS ? idx % 10 : idx % 9 + 1; }
 
 void rememberSelection() {
     if (g_listSel >= 0 && g_listSel < g_rowCount) {
@@ -3092,9 +3779,8 @@ void rememberSelection() {
 void loadRows(ScreenId s) {
     g_rowCount = 0;
     if (s == SCR_INBOX) {
-        appendConversations(9);
+        appendConversations(MAX_ROWS);
         appendAnnounced(false, false);     // so a new peer can be messaged
-        if (g_rowCount > 9) g_rowCount = 9;
     } else if (s == SCR_CONTACTS) {
         if (g_haveSelf) {
             if (PeerRow* r = addRow(g_selfHash)) {
@@ -3105,7 +3791,6 @@ void loadRows(ScreenId s) {
         appendAnnounced(true, false);      // saved / named contacts
     } else if (s == SCR_PEERS) {
         appendAnnounced(false, true);
-        if (g_rowCount > 9) g_rowCount = 9;
     }
 
     // Restore selection by hash, else clamp.
@@ -3123,6 +3808,8 @@ void drawFooter() {
         const char* hint = "Enter=set  ^=cancel";
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) hint = "SPC=.  SYM+U=-";
         else if (g_entry == Entry::WifiPass) hint = "Alt+key=case  Enter=ok";
+        else if (g_entry == Entry::Search) hint = "Enter=keep  ^=clear";
+        else if (passEntry(g_entry)) hint = g_showPass ? "MIC=hide  Alt=case" : "MIC=show  Alt=case";
         box(0, FOOT_Y, W, FOOT_H, 1);
         label(0, FOOT_Y - 1, W, FOOT_H, third[0] ? third : hint);
         return;
@@ -3151,29 +3838,50 @@ void drawFooter() {
 void drawHeader(const char* left, bool moreUp) {
     text(4, HEADER_Y, left, true, moreUp ? MENU_X - 8 : W - 8);
     if (moreUp) {
-        box(MENU_X, TOP_H - 1, TAB_W, 18, 1);
-        label(MENU_X, TOP_H - 2, TAB_W, 18, "^ more");
-        addHit(MENU_X, TOP_H - 1, TAB_W, 18, H_UP);
+        // Hangs off MENU: same left/right edges, bottom edge = top line of
+        // the first list row, so it reads like the footer's "v more" cell.
+        const int h = LIST_TOP - (TOP_H - 1) + 1;
+        box(MENU_X, TOP_H - 1, TAB_W, h, 1);
+        label(MENU_X, TOP_H - 2, TAB_W, h, "^ more");
+        addHit(MENU_X, TOP_H - 1, TAB_W, h, H_UP);
     }
 }
 
 void renderList() {
-    char hdr[32];
-    if (g_screen == SCR_INBOX) {
+    char hdr[48];
+    const int ps = pageSize(g_screen), pages = (g_rowCount + ps - 1) / ps;
+    char pg[12] = "";
+    if (pages > 1) snprintf(pg, sizeof(pg), " p%d/%d", g_listSel / ps + 1, pages);
+    // The window never mixes pages: it scrolls inside the selected row's page.
+    const int pStart = (g_listSel / ps) * ps, pEnd = std::min(pStart + ps, g_rowCount);
+    if (g_listScroll < pStart) g_listScroll = pStart;
+    if (g_listSel >= g_listScroll + VIS_ROWS) g_listScroll = g_listSel - VIS_ROWS + 1;
+    if (g_listScroll > std::max(pStart, pEnd - VIS_ROWS)) g_listScroll = std::max(pStart, pEnd - VIS_ROWS);
+    if (g_entry == Entry::Search) {
+        snprintf(hdr, sizeof(hdr), "Find: %s_ (%d)", g_buf, g_rowCount);
+    } else if (g_filter[0] && !g_shareActive) {
+        snprintf(hdr, sizeof(hdr), "\"%.10s\" %d%s", g_filter, g_rowCount, pg);
+    } else if (g_screen == SCR_INBOX) {
         int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
-        snprintf(hdr, sizeof(hdr), "Inbox  unread %02d", unread > 99 ? 99 : unread);
+        if (pages > 1) snprintf(hdr, sizeof(hdr), "Inbox%s new %d", pg, unread > 99 ? 99 : unread);
+        else           snprintf(hdr, sizeof(hdr), "Inbox  unread %02d", unread > 99 ? 99 : unread);
+    } else if (g_shareActive) {
+        char nm[24];
+        peerName(g_sharePeer, nm, sizeof(nm));
+        snprintf(hdr, sizeof(hdr), "Send %.12s to:", nm);
     } else {
-        snprintf(hdr, sizeof(hdr), "%s (%d)", screenName(g_screen), g_rowCount);
+        snprintf(hdr, sizeof(hdr), pages > 1 ? "%s %d%s" : "%s (%d)%s", screenName(g_screen), g_rowCount, pg);
     }
     drawHeader(hdr, g_listScroll > 0);
 
     if (g_rowCount == 0) {
-        const char* empty = g_screen == SCR_CONTACTS ? "No contacts - see Peers"
+        const char* empty = g_filter[0] || g_entry == Entry::Search ? "No match"
+                          : g_screen == SCR_CONTACTS ? "No contacts - see Peers"
                           : g_screen == SCR_PEERS    ? "No peers - Announce on Home"
                                                      : "No chats yet";
         text(8, LIST_TOP + 8, empty);
     }
-    for (int i = g_listScroll; i < g_rowCount && i < g_listScroll + VIS_ROWS; i++) {
+    for (int i = g_listScroll; i < pEnd && i < g_listScroll + VIS_ROWS; i++) {
         const PeerRow& r = g_rows[i];
         const int y = LIST_TOP + (i - g_listScroll) * ROW_H;
         char title[36];
@@ -3200,12 +3908,25 @@ void drawBubble(int y, const char* s, bool incoming, const char* status) {
     if (status && status[0]) text(x + 2, y + 25, status);
 }
 
+extern bool g_tmenuOpen;
+void renderThreadMenu(int y);
+uint8_t ashareMinsFor(const uint8_t dest[16]);
+int ashareActive();
+
 void renderThread() {
-    char name[24], hdr[40];
+    char name[24], hdr[48];
     peerName(g_threadPeer, name, sizeof(name));
-    snprintf(hdr, sizeof(hdr), ">>> %s", name);
+    const uint8_t am = ashareMinsFor(g_threadPeer);
+    if (g_tmenuOpen && g_toast[0]) snprintf(hdr, sizeof(hdr), "%s", g_toast);   // menu: no strip
+    else if (g_tmenuOpen) snprintf(hdr, sizeof(hdr), "1-5 / Enter, MIC or ^ = back");
+    else if (am) snprintf(hdr, sizeof(hdr), ">>> %.14s [loc %um]", name, (unsigned)am);
+    else snprintf(hdr, sizeof(hdr), ">>> %s", name);
     text(4, HEADER_Y, hdr, true, W - 8);
     int y = HEADER_Y + 20;
+    if (g_tmenuOpen) {                       // MIC: location menu instead of the history
+        renderThreadMenu(y);                 // 5 rows down to y + 220 (= 277)
+        return;
+    }
     if (g_txStr[0]) {
         char st[32];
         snprintf(st, sizeof(st), "last send: %s", g_txStr);
@@ -3263,7 +3984,11 @@ void renderThread() {
     else           strncat(l2, "_", sizeof(l2) - strlen(l2) - 1);
     text(6, STRIP_Y + 1, l1, false, W - 12);
     text(6, STRIP_Y + STRIP_LINE, l2, false, W - 12);
-    text(6, STRIP_Y + STRIP_LINE * 2, g_toast[0] ? g_toast : "[Enter] send  [Alt] case", false, W - 12);
+    char hint[40] = "[Enter] send  [MIC] location";
+    const bool offer = !g_bufLen && (locOffered() || cardOffered());
+    if (!g_bufLen && locOffered()) snprintf(hint, sizeof(hint), "[Enter] map %.3f,%.3f", g_threadLoc.lat, g_threadLoc.lon);
+    else if (!g_bufLen && cardOffered()) snprintf(hint, sizeof(hint), "[Enter] save card: %.14s", g_threadCard.name);
+    text(6, STRIP_Y + STRIP_LINE * 2, g_toast[0] ? g_toast : hint, !g_toast[0] && offer, W - 12);
 }
 
 // ---- Rename (entry mode) ---------------------------------------------------------
@@ -3453,6 +4178,10 @@ void drawTopBar() {
     snprintf(md, sizeof(md), "%.5s", d);
     label(CLOCK_X, 1, TAB_W, 16, md);
     label(CLOCK_X, 17, TAB_W, 16, t);
+    if (ashareActive()) {                    // location auto-share on: small pin, top left
+        fillRect(CLOCK_X + 4, 4, 7, 7);
+        fillRect(CLOCK_X + 6, 11, 3, 4);
+    }
 
     navBox(MENU_X, 0, TAB_W, TOP_H, "MENU", g_menuOpen, browseMode() ? 'M' : 0);
     if (browseMode()) addHit(MENU_X, 0, TAB_W, TOP_H, H_MENU);
@@ -3481,9 +4210,9 @@ void drawBottomBar() {
 
 void drawMenuOverlay() {
     if (!g_menuOpen) return;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < kMenuCount; i++) {
         const int y = TOP_H + i * MENU_ROW_H;
-        navBox(MENU_X, y, TAB_W, MENU_ROW_H, kMenuLabels[i], i == g_menuSel, kMenuLabels[i][0]);
+        navBox(MENU_X, y, TAB_W, MENU_ROW_H, kMenuLabels[i], i == g_menuSel, kMenuKeys[i]);
         addHit(MENU_X, y, TAB_W, MENU_ROW_H, H_MENU_GO, i);
     }
 }
@@ -3491,7 +4220,7 @@ void drawMenuOverlay() {
 // ---- Offline map (MapView.cpp; tiles from the SD card) ----------------------------------
 bool g_mapSdTried = false;
 
-size_t mapReadTile(const char* rel, uint8_t* buf, size_t cap) {
+size_t mapReadTile(const char* rel, uint32_t offset, uint8_t* buf, size_t len) {
     if (!g_sdMounted) {
         if (g_mapSdTried) return 0;          // one mount attempt per map visit
         g_mapSdTried = true;
@@ -3502,7 +4231,8 @@ size_t mapReadTile(const char* rel, uint8_t* buf, size_t cap) {
     if (!g_sdStore.exists(path)) return 0;
     File f = g_sdStore.openFile(path, FILE_READ);
     if (!f) return 0;
-    size_t n = f.size() <= cap ? f.read(buf, f.size()) : 0;
+    size_t n = 0;
+    if (offset < f.size() && (offset == 0 || f.seek(offset))) n = f.read(buf, len);
     f.close();
     return n;
 }
@@ -3517,18 +4247,38 @@ void mapFeedPosition() {
     else mapview::setPosition(false, 0, 0);
 }
 
+extern int g_mapSel;
+
+void mapKeyHint();
+
 void openMapAt(double lat, double lon) {
     if (g_menuOpen) g_menuOpen = false;
+    g_cardOpen = false;                      // the map replaces a contact page
+    g_mapSel = -1;
     mapview::setReader(mapReadTile);
     g_mapSdTried = false;
     mapFeedPosition();
     mapview::open(lat, lon, true, false);   // explicit place: no follow
+    mapview::fitZoom();                     // deepest zoom with a tile there
     g_fullRefreshReq = true;                // a map is mostly new pixels: avoid ghosting
     requestRedraw();
     Serial.printf("[MAP] open %.5f,%.5f\n", lat, lon);
+    mapKeyHint();
+}
+
+int cposWithPos();
+
+// Key hints on the map's bottom line for 6 s after it opens (keys are not written anywhere).
+void mapKeyHint() {
+    const int n = cposWithPos();
+    if (n) toast("T %d contact%s  N/P waypts", n, n == 1 ? "" : "s");   // fits 240 px
+    else toast("Z/X zoom  N/P waypoints");
+    g_toastUntil = millis() + 6000;
 }
 
 void openMap() {
+    g_cardOpen = false;
+    g_mapSel = -1;                           // callers that show a contact select it after
     mapview::setReader(mapReadTile);
     g_mapSdTried = false;
     mapFeedPosition();
@@ -3536,10 +4286,24 @@ void openMap() {
     if (g_gpsPosValid && g_gpsFix) { lat = g_gpsLat; lon = g_gpsLon; have = true; }
     else if (g_cfg.hasPos) { lat = g_cfg.lat; lon = g_cfg.lon; have = true; }
     if (g_menuOpen) g_menuOpen = false;
-    mapview::open(lat, lon, have);
+    // No position: the card's own start view, maps/home.txt = "lat lon zoom"
+    // (written by tools/maptiles/make_tiles.py), so the first view is not empty sea.
+    const char* how = have ? (g_gpsPosValid && g_gpsFix ? "GPS" : "saved position") : "no position";
+    bool cardHome = false;
+    int homeZoom = 0;
+    if (!have) {
+        char txt[48] = "";
+        const size_t n = mapReadTile("/maps/home.txt", 0, (uint8_t*)txt, sizeof(txt) - 1);
+        txt[n < sizeof(txt) ? n : sizeof(txt) - 1] = 0;
+        if (n && sscanf(txt, "%lf %lf %d", &lat, &lon, &homeZoom) >= 2) { cardHome = true; how = "card home"; }
+    }
+    mapview::open(lat, lon, have || cardHome, have);
+    if (homeZoom > 0) mapview::setZoom(homeZoom);
+    if (mapview::fitZoom()) Serial.printf("[MAP] zoom %d (deepest tiles here)\n", mapview::zoom());
     g_fullRefreshReq = true;
     requestRedraw();
-    Serial.printf("[MAP] open (%s)\n", have ? (g_gpsPosValid && g_gpsFix ? "GPS" : "saved position") : "no position");
+    Serial.printf("[MAP] open (%s)\n", how);
+    mapKeyHint();
 }
 
 void closeMap() {
@@ -3601,28 +4365,1497 @@ void heartbeatTick() {
     heartbeatPrint();
 }
 
+bool gpsFresh();
+
 void mapTick() {
     if (!mapview::isOpen()) return;
     mapFeedPosition();
-    if (mapview::positionNeedsRedraw()) requestRedraw();
+    static bool lastFresh = false;
+    const bool fresh = gpsFresh();
+    if (mapview::positionNeedsRedraw() || fresh != lastFresh) requestRedraw();   // footer text
+    lastFresh = fresh;
 }
+
+constexpr int MAP_FOOT_H = 18;               // GPS position line under the map
+
+bool mapContactInfo(char* out, size_t n);   // contacts on the map (below)
+extern int g_mapNum;
+void mapContactsStamp();
+void mapContactsFeed();
+
+extern int g_mapSel;
+extern int g_wptSel;
+bool wptInfo(char* out, size_t n);
+extern bool g_placeOpen;
+extern int g_placeN;
+void renderPlaces();
+constexpr int kPlaceShowFwd = 6;
 
 void renderMapHeader() {
     char st[64];
-    mapview::status(st, sizeof(st));
+    if (g_placeOpen) snprintf(st, sizeof(st), "Places: 1-%d go  ^ back", g_placeN < kPlaceShowFwd ? g_placeN : kPlaceShowFwd);
+    else if (g_mapSel >= 0) snprintf(st, sizeof(st), "T next  #+Enter chat  C me");   // what to press
+    else if (g_wptSel >= 0) snprintf(st, sizeof(st), "N next  Del remove  C me");
+    else mapview::status(st, sizeof(st));
     drawHeader(st, false);
+    char pos[56];
+    if (g_placeOpen) renderPlaces();
+    if (g_entry == Entry::WptName) snprintf(pos, sizeof(pos), "Name: %s_", g_buf);
+    else if (g_entry == Entry::PlaceFind) snprintf(pos, sizeof(pos), "Find place: %s_", g_buf);
+    else if (g_toast[0]) snprintf(pos, sizeof(pos), "%s", g_toast);               // key hints
+    else if (wptInfo(pos, sizeof(pos))) {}
+    else if (g_mapNum) snprintf(pos, sizeof(pos), "open chat #%d_  (Enter)", g_mapNum);
+    else if (!mapContactInfo(pos, sizeof(pos))) gpsPosText(pos, sizeof(pos));
+    box(0, BOT_TOP - MAP_FOOT_H, W, MAP_FOOT_H, 1);
+    text(4, BOT_TOP - MAP_FOOT_H + 1, pos, false, W - 8);
 }
 
 void stampMap() {
-    mapview::draw(mapPixel, 0, LIST_TOP, W, BOT_TOP - LIST_TOP, g_cfg.dark);
+    mapContactsFeed();
+    mapview::draw(mapPixel, 0, LIST_TOP, W, BOT_TOP - MAP_FOOT_H - LIST_TOP, g_cfg.dark);
+    mapContactsStamp();                      // name tags over the markers
     g_display.markDirty();
+}
+
+
+// ---- Location sharing ------------------------------------------------------------------
+// Sent as plain LXMF text any client can read (rsLXMF has no field API on the send path):
+//   manual  "My location: 43.64012, -70.92011 (+-10 m, 14:32)"
+//   no fix  "My last location: 43.64012, -70.92011 (35 min old)"
+//   auto    "Loc: 43.64012, -70.92011 14:32"
+// A RatSpeak unit shows "[loc] ..." in the thread; Enter on an empty draft opens it on the
+// map. Auto-share: per contact, OFF by default, NVS rs_ashare; sends only with a fresh fix,
+// only after it moved > 50 m or two intervals passed; Check-in mode queues to the window.
+constexpr const char* kLocPrefix = "My location: ";
+constexpr const char* kLocLastPrefix = "My last location: ";
+constexpr const char* kLocAutoPrefix = "Loc: ";
+constexpr uint32_t kFreshFixMs = 120000;
+constexpr int kAutoShareMax = 8;
+const uint8_t kAutoMins[] = {0, 5, 15, 30, 60};           // 0 = off
+const uint16_t kAutoForMin[] = {60, 240, 0};               // 0 = until turned off
+const char* const kAutoForName[] = {"1 h", "4 h", "until off"};
+
+struct AutoShare {
+    uint8_t dest[16];
+    uint8_t mins;            // interval
+    uint8_t pad[3];
+    uint32_t until;          // epoch s, 0 = until turned off
+    uint32_t lastAt;         // epoch s of the last update sent
+    float lastLat, lastLon;
+};
+AutoShare g_ashare[kAutoShareMax];
+int g_ashareCount = 0;
+uint8_t g_autoForSel = 1;    // duration picked in the thread menu (4 h)
+
+bool gpsFresh() { return g_gpsFix && g_gpsPosValid && millis() - g_gpsPosAt < kFreshFixMs; }
+void gpsRequestVisit();
+
+void fmtAge(uint32_t s, char* out, size_t n) {
+    if (s < 90) snprintf(out, n, "%u s", (unsigned)s);
+    else if (s < 5400) snprintf(out, n, "%u min", (unsigned)((s + 30) / 60));
+    else snprintf(out, n, "%u h", (unsigned)((s + 1800) / 3600));
+}
+
+// ---- Coordinate formats (S.1.12) ---------------------------------------------------
+// Decimal degrees "43.64012,-70.92011", DMS "43 38'24"N 70 55'12"W", or MGRS to 10 m
+// "19T CJ 4513 3368" (WGS84 / UTM; Norway + Svalbard zone exceptions). Messages always
+// carry decimal degrees (machine-readable); MGRS is added to manual shares as text.
+void mgrsText(double lat, double lon, char* out, size_t n, int prec = 4) {
+    if (lat < -80 || lat > 84) { snprintf(out, n, "%.4f,%.4f", lat, lon); return; }   // UPS: not handled
+    const double a = 6378137.0, f = 1 / 298.257223563, e2 = f * (2 - f), ep2 = e2 / (1 - e2), k0 = 0.9996;
+    int zone = (int)floor((lon + 180) / 6) + 1;
+    if (lat >= 56 && lat < 64 && lon >= 3 && lon < 12) zone = 32;
+    if (lat >= 72 && lat < 84) {
+        if (lon >= 0 && lon < 9) zone = 31; else if (lon >= 9 && lon < 21) zone = 33;
+        else if (lon >= 21 && lon < 33) zone = 35; else if (lon >= 33 && lon < 42) zone = 37;
+    }
+    const double r = 3.14159265358979 / 180.0;
+    const double lon0 = ((zone - 1) * 6 - 180 + 3) * r, phi = lat * r, lam = lon * r;
+    const double sp = sin(phi), cp = cos(phi), tp = tan(phi);
+    const double N = a / sqrt(1 - e2 * sp * sp), T = tp * tp, C = ep2 * cp * cp, A = cp * (lam - lon0);
+    const double e4 = e2 * e2, e6 = e4 * e2;
+    const double M = a * ((1 - e2 / 4 - 3 * e4 / 64 - 5 * e6 / 256) * phi - (3 * e2 / 8 + 3 * e4 / 32 + 45 * e6 / 1024) * sin(2 * phi) +
+                          (15 * e4 / 256 + 45 * e6 / 1024) * sin(4 * phi) - (35 * e6 / 3072) * sin(6 * phi));
+    const double E = k0 * N * (A + (1 - T + C) * pow(A, 3) / 6 + (5 - 18 * T + T * T + 72 * C - 58 * ep2) * pow(A, 5) / 120) + 500000;
+    double Nn = k0 * (M + N * tp * (A * A / 2 + (5 - T + 9 * C + 4 * C * C) * pow(A, 4) / 24 +
+                                    (61 - 58 * T + T * T + 600 * C - 330 * ep2) * pow(A, 6) / 720));
+    if (lat < 0) Nn += 10000000;
+    const char band = "CDEFGHJKLMNPQRSTUVWXX"[(int)floor((lat + 80) / 8)];
+    static const char* const kCol[3] = {"ABCDEFGH", "JKLMNPQR", "STUVWXYZ"};
+    const int set = zone % 3;                // zones 1,4 -> A..H; 2,5 -> J..R; 3,6 -> S..Z
+    const int ci = (int)floor(E / 100000) - 1;
+    const char col = (ci >= 0 && ci < 8) ? kCol[set == 1 ? 0 : set == 2 ? 1 : 2][ci] : '?';
+    static const char* const kRow = "ABCDEFGHJKLMNPQRSTUV";
+    const char row = kRow[((int)floor(Nn / 100000) + (zone % 2 == 0 ? 5 : 0)) % 20];
+    long e = (long)fmod(E, 100000), nn = (long)fmod(Nn, 100000);
+    long d = 1;
+    for (int k = prec; k < 5; k++) d *= 10;
+    snprintf(out, n, "%d%c %c%c %0*ld %0*ld", zone, band, col, row, prec, e / d, prec, nn / d);
+}
+
+void fmtCoord(double lat, double lon, char* out, size_t n) {
+    if (g_cfg.coordFmt == 2) { mgrsText(lat, lon, out, n); return; }
+    if (g_cfg.coordFmt == 1) {
+        auto dms = [](double v, int& d, int& m, int& s) {
+            v = fabs(v); d = (int)v; const double mm = (v - d) * 60; m = (int)mm; s = (int)((mm - m) * 60 + 0.5);
+            if (s == 60) { s = 0; m++; } if (m == 60) { m = 0; d++; }
+        };
+        int ad, am, as, od, om, os;
+        dms(lat, ad, am, as); dms(lon, od, om, os);
+        snprintf(out, n, "%d %02d'%02d\"%c %d %02d'%02d\"%c", ad, am, as, lat < 0 ? 'S' : 'N', od, om, os, lon < 0 ? 'W' : 'E');
+        return;
+    }
+    snprintf(out, n, "%.5f,%.5f", lat, lon);
+}
+
+// One short line (fits the 240 px map footer): position, fix, age.
+void gpsPosText(char* out, size_t n) {
+    if (gpsFresh()) {
+        char c[40];
+        fmtCoord(g_gpsLat, g_gpsLon, c, sizeof(c));
+        snprintf(out, n, "%s %usat", c, (unsigned)g_gpsSats);
+    } else if (g_gpsPosValid) {
+        const uint32_t a = (millis() - g_gpsPosAt) / 1000;
+        char age[8];
+        if (a < 90) snprintf(age, sizeof(age), "%us", (unsigned)a);
+        else if (a < 5400) snprintf(age, sizeof(age), "%um", (unsigned)((a + 30) / 60));
+        else snprintf(age, sizeof(age), "%uh", (unsigned)((a + 1800) / 3600));
+        char c[40];
+        fmtCoord(g_gpsLat, g_gpsLon, c, sizeof(c));
+        snprintf(out, n, "old %s %s", c, age);
+    } else if (g_cfg.hasPos) {
+        snprintf(out, n, "set %.4f,%.4f no fix", g_cfg.lat, g_cfg.lon);
+    } else {
+        snprintf(out, n, "%s", g_cfg.gpsOn ? "GPS: no fix yet" : "GPS off");
+    }
+}
+
+bool locParse(const char* s, size_t len, double& lat, double& lon, bool* autoUpdate) {
+    char t[80];
+    if (len >= sizeof(t)) len = sizeof(t) - 1;
+    memcpy(t, s, len);
+    t[len] = 0;
+    const char* p = nullptr;
+    bool au = false;
+    if (!strncmp(t, kLocPrefix, strlen(kLocPrefix))) p = t + strlen(kLocPrefix);
+    else if (!strncmp(t, kLocLastPrefix, strlen(kLocLastPrefix))) p = t + strlen(kLocLastPrefix);
+    else if (!strncmp(t, kLocAutoPrefix, strlen(kLocAutoPrefix))) { p = t + strlen(kLocAutoPrefix); au = true; }
+    if (!p || sscanf(p, "%lf, %lf", &lat, &lon) != 2) return false;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return false;
+    if (autoUpdate) *autoUpdate = au;
+    return true;
+}
+
+void localHHMM(char* out, size_t n) {
+    const time_t now = time(nullptr);
+    struct tm lt;
+    applyTz();
+    localtime_r(&now, &lt);
+    snprintf(out, n, "%02d:%02d", lt.tm_hour, lt.tm_min);
+}
+
+// Location sends: queue for the next check-in window, else send now or queue in the outbox
+// when the radio is busy (sendOrQueue).
+SendResult locSendOrQueue(const uint8_t dest[16], const char* body) {
+    const power::CheckinPhase ph = checkinNow();
+    if (g_pwEff.checkin && !(ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS))
+        return outboxAdd(dest, body) ? SendResult::Queued : SendResult::Failed;
+    const SendResult r = sendOrQueue(dest, body);
+    requestRedraw();                         // sendMessage cleared the LVGL widgets
+    return r;
+}
+
+void shareMyLocation(const uint8_t dest[16]) {
+    char body[96], hhmm[8], age[16];
+    if (gpsFresh()) {
+        localHHMM(hhmm, sizeof(hhmm));
+        const int acc = g_gpsHdop > 0 ? (int)(g_gpsHdop * 5.0f + 0.5f) : 0;
+        char grid[28] = "";
+        if (g_cfg.coordFmt == 2) { mgrsText(g_gpsLat, g_gpsLon, grid, sizeof(grid)); strlcat(grid, ", ", sizeof(grid)); }
+        if (acc > 0) snprintf(body, sizeof(body), "%s%.5f, %.5f (%s+-%d m, %s)", kLocPrefix, g_gpsLat, g_gpsLon, grid, acc < 3 ? 3 : acc, hhmm);
+        else snprintf(body, sizeof(body), "%s%.5f, %.5f (%s%s)", kLocPrefix, g_gpsLat, g_gpsLon, grid, hhmm);
+    } else if (g_gpsPosValid) {
+        fmtAge((millis() - g_gpsPosAt) / 1000, age, sizeof(age));
+        snprintf(body, sizeof(body), "%s%.5f, %.5f (%s old)", kLocLastPrefix, g_gpsLat, g_gpsLon, age);
+    } else if (g_cfg.hasPos) {
+        snprintf(body, sizeof(body), "%s%.5f, %.5f (set by hand)", kLocLastPrefix, g_cfg.lat, g_cfg.lon);
+    } else {
+        toast(g_cfg.gpsOn ? "No GPS position yet" : "GPS is off (S.1)");
+        return;
+    }
+    const SendResult r = locSendOrQueue(dest, body);
+    Serial.printf("[LOC] share %s: %s\n", r == SendResult::Sent ? "sent" : r == SendResult::Queued ? "queued" : "failed", body);
+    if (!gpsFresh() && g_cfg.gpsOn) gpsRequestVisit();       // the next share can be fresh
+    toast(r == SendResult::Sent ? (gpsFresh() ? "Location sent" : "Last location sent") : r == SendResult::Queued ? "Location queued" : "Not sent: %s", g_txStr);
+}
+
+// ---- Auto-share list ---------------------------------------------------------------
+void ashareSave() {
+    Preferences p;
+    if (!p.begin("rs_ashare", false)) return;
+    p.putBytes("list", g_ashare, sizeof(AutoShare) * g_ashareCount);
+    p.putUChar("n", (uint8_t)g_ashareCount);
+    p.end();
+}
+
+void ashareLoad() {
+    Preferences p;
+    g_ashareCount = 0;
+    if (!p.begin("rs_ashare", true)) return;
+    const int n = p.getUChar("n", 0);
+    if (n > 0 && n <= kAutoShareMax && p.getBytes("list", g_ashare, sizeof(AutoShare) * n) == sizeof(AutoShare) * (size_t)n)
+        g_ashareCount = n;
+    p.end();
+}
+
+int ashareFind(const uint8_t dest[16]) {
+    for (int i = 0; i < g_ashareCount; i++) if (!memcmp(g_ashare[i].dest, dest, 16)) return i;
+    return -1;
+}
+
+uint8_t ashareMinsFor(const uint8_t dest[16]) { const int i = ashareFind(dest); return i >= 0 ? g_ashare[i].mins : 0; }
+int ashareActive() { return g_ashareCount; }
+
+void ashareRemove(int i) {
+    for (int k = i; k < g_ashareCount - 1; k++) g_ashare[k] = g_ashare[k + 1];
+    g_ashareCount--;
+}
+
+void ashareStopAll() {
+    g_ashareCount = 0;
+    ashareSave();
+    Serial.println("[LOC] auto-share: all stopped");
+    requestRedraw();
+}
+
+// Next interval for this contact (off -> 5 -> 15 -> 30 -> 60 -> off).
+void ashareCycle(const uint8_t dest[16]) {
+    int i = ashareFind(dest);
+    uint8_t cur = i >= 0 ? g_ashare[i].mins : 0;
+    size_t k = 0;
+    while (k < sizeof(kAutoMins) && kAutoMins[k] != cur) k++;
+    const uint8_t next = kAutoMins[(k + 1) % sizeof(kAutoMins)];
+    if (!next) {
+        if (i >= 0) ashareRemove(i);
+        toast("Auto-share off");
+    } else {
+        if (i < 0) {
+            if (g_ashareCount >= kAutoShareMax) { toast("Max %d auto-shares", kAutoShareMax); return; }
+            i = g_ashareCount++;
+            memset(&g_ashare[i], 0, sizeof(AutoShare));
+            memcpy(g_ashare[i].dest, dest, 16);
+        }
+        g_ashare[i].mins = next;
+        const uint16_t forMin = kAutoForMin[g_autoForSel];
+        const time_t now = time(nullptr);
+        g_ashare[i].until = forMin ? (uint32_t)now + forMin * 60UL : 0;
+        if (!g_cfg.gpsOn) toast("Every %u min; GPS is OFF (S.1)", (unsigned)next);
+        else toast("Every %u min, %s", (unsigned)next, kAutoForName[g_autoForSel]);
+    }
+    ashareSave();
+    Serial.printf("[LOC] auto-share %u min (%d on)\n", (unsigned)next, g_ashareCount);
+    requestRedraw();
+}
+
+float metersBetween(double la1, double lo1, double la2, double lo2) {
+    const double k = 3.14159265358979 / 180.0;
+    const double x = (lo2 - lo1) * k * cos((la1 + la2) * 0.5 * k), y = (la2 - la1) * k;
+    return (float)(sqrt(x * x + y * y) * 6371000.0);
+}
+
+void autoShareTick() {
+    static uint32_t last = 0;
+    if (!g_ashareCount || millis() - last < 5000) return;
+    last = millis();
+    const time_t now = time(nullptr);
+    if (now < 1600000000) return;            // clock not set yet
+    for (int i = 0; i < g_ashareCount; i++) {
+        AutoShare& a = g_ashare[i];
+        if (a.until && (uint32_t)now >= a.until) {
+            char nm[24]; peerName(a.dest, nm, sizeof(nm));
+            Serial.printf("[LOC] auto-share to %s ended\n", nm);
+            toast("Auto-share to %.12s ended", nm);
+            ashareRemove(i--);
+            ashareSave();
+            requestRedraw();
+            continue;
+        }
+        const uint32_t iv = a.mins * 60UL;
+        if (a.lastAt && (uint32_t)now - a.lastAt < iv) continue;
+        if (!gpsFresh()) {                   // no fresh fix: power the GPS for a visit
+            static uint32_t asked = 0;
+            if (g_cfg.gpsOn && (!asked || millis() - asked > 180000)) { asked = millis(); gpsRequestVisit(); }
+            continue;
+        }
+        const bool moved = !a.lastAt || metersBetween(a.lastLat, a.lastLon, g_gpsLat, g_gpsLon) > 50.0f;
+        if (!moved && (uint32_t)now - a.lastAt < 2 * iv) continue;
+        char body[64], hhmm[8];
+        localHHMM(hhmm, sizeof(hhmm));
+        snprintf(body, sizeof(body), "%s%.5f, %.5f %s", kLocAutoPrefix, g_gpsLat, g_gpsLon, hhmm);
+        const SendResult r = locSendOrQueue(a.dest, body);
+        Serial.printf("[LOC] auto %s: %s\n", r == SendResult::Sent ? "sent" : r == SendResult::Queued ? "queued" : "failed", body);
+        if (r != SendResult::Failed) {
+            a.lastAt = (uint32_t)now;
+            a.lastLat = (float)g_gpsLat;
+            a.lastLon = (float)g_gpsLon;
+            ashareSave();
+            if (g_threadOpen && !memcmp(g_threadPeer, a.dest, 16)) loadHistory(g_threadPeer);
+        }
+        break;                               // one send per tick
+    }
+}
+
+// ---- Contacts' last positions (map markers) ---------------------------------------------
+// Every incoming location message (manual or auto share, any client that uses the same
+// text) updates that contact's last position: NVS rs_cpos, newest 16 contacts. Fed by
+// the protocol's committed-message notice (queued, read in the main loop) and by
+// loadHistory() for messages that arrived before. Shown as markers on the map.
+// num = the contact's map number (1-99): set by hand on the contact page (4 Map number),
+// else the lowest free one when their first position arrives. hasPos = 0: a number set
+// before any position (no marker yet).
+struct CPos { uint8_t dest[16]; float lat, lon; uint32_t at; uint8_t num, hasPos, pad[2]; };
+struct CPosV1 { uint8_t dest[16]; float lat, lon; uint32_t at; };   // NVS before 2026-11-12
+constexpr int kCPosMax = 16;
+CPos g_cpos[kCPosMax];
+int g_cposCount = 0;
+handheld::storage::RecordKey g_inQ[8];
+int g_inQn = 0;
+
+void cposSave() {
+    Preferences p;
+    if (!p.begin("rs_cpos", false)) return;
+    p.putBytes("list", g_cpos, sizeof(CPos) * g_cposCount);
+    p.putUChar("n", (uint8_t)g_cposCount);
+    p.end();
+}
+
+void cposLoad() {
+    Preferences p;
+    g_cposCount = 0;
+    if (!p.begin("rs_cpos", true)) return;
+    const int n = p.getUChar("n", 0);
+    const size_t len = p.getBytesLength("list");
+    if (n > 0 && n <= kCPosMax && len == sizeof(CPos) * (size_t)n) {
+        if (p.getBytes("list", g_cpos, len) == len) g_cposCount = n;
+    } else if (n > 0 && n <= kCPosMax && len == sizeof(CPosV1) * (size_t)n) {   // migrate
+        CPosV1 old[kCPosMax];
+        if (p.getBytes("list", old, len) == len) {
+            for (int i = 0; i < n; i++) {
+                memset(&g_cpos[i], 0, sizeof(CPos));
+                memcpy(g_cpos[i].dest, old[i].dest, 16);
+                g_cpos[i].lat = old[i].lat; g_cpos[i].lon = old[i].lon; g_cpos[i].at = old[i].at;
+                g_cpos[i].num = (uint8_t)(i + 1);
+                g_cpos[i].hasPos = 1;
+            }
+            g_cposCount = n;
+        }
+    }
+    p.end();
+}
+
+int cposFind(const uint8_t dest[16]) {
+    for (int i = 0; i < g_cposCount; i++) if (!memcmp(g_cpos[i].dest, dest, 16)) return i;
+    return -1;
+}
+
+int cposByNum(int num) {
+    for (int i = 0; i < g_cposCount; i++) if (g_cpos[i].num == num) return i;
+    return -1;
+}
+
+int cposWithPos() {
+    int n = 0;
+    for (int i = 0; i < g_cposCount; i++) n += g_cpos[i].hasPos ? 1 : 0;
+    return n;
+}
+
+uint8_t cposFreeNum() {
+    for (int n = 1; n < 100; n++) if (cposByNum(n) < 0) return (uint8_t)n;
+    return 99;
+}
+
+// Slot for a contact (new one: lowest free number; full: replaces the oldest position).
+int cposSlot(const uint8_t dest[16]) {
+    int i = cposFind(dest);
+    if (i >= 0) return i;
+    if (g_cposCount < kCPosMax) i = g_cposCount++;
+    else {
+        i = 0;
+        for (int k = 1; k < kCPosMax; k++) if (g_cpos[k].at < g_cpos[i].at) i = k;
+    }
+    memset(&g_cpos[i], 0, sizeof(CPos));
+    memcpy(g_cpos[i].dest, dest, 16);
+    g_cpos[i].num = cposFreeNum();
+    return i;
+}
+
+void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at) {
+    if (isSelf(dest)) return;
+    const int found = cposFind(dest);
+    if (found >= 0 && g_cpos[found].hasPos && g_cpos[found].at > at) return;   // have a newer one
+    const int i = cposSlot(dest);
+    g_cpos[i].lat = (float)lat;
+    g_cpos[i].lon = (float)lon;
+    g_cpos[i].at = at;
+    g_cpos[i].hasPos = 1;
+    cposSave();
+    char nm[24];
+    peerName(dest, nm, sizeof(nm));
+    Serial.printf("[LOC] %s at %.5f,%.5f (#%u)\n", nm, lat, lon, (unsigned)g_cpos[i].num);
+    if (mapview::isOpen()) requestRedraw();
+}
+
+// Contact page "4 Map number": give this contact number n; whoever had it takes this
+// contact's old number (or the lowest free one).
+void cposAssign(const uint8_t dest[16], int n) {
+    const int i = cposSlot(dest);
+    const int other = cposByNum(n);
+    if (other >= 0 && other != i) {
+        g_cpos[other].num = g_cpos[i].num;
+        if (g_cpos[other].num == n || !g_cpos[other].num) g_cpos[other].num = cposFreeNum();
+    }
+    g_cpos[i].num = (uint8_t)n;
+    cposSave();
+    char nm[24];
+    peerName(dest, nm, sizeof(nm));
+    Serial.printf("[LOC] %s is map #%d\n", nm, n);
+}
+
+// Text of a stored message (content only, NUL-terminated); false if busy / missing.
+bool readRecordText(const handheld::storage::RecordKey& key, char* out, size_t cap, double* ts) {
+    using namespace handheld::storage;
+    auto rs = g_msgStore.requestRecord(key, 0, 256);
+    if (!rs.accepted()) return false;
+    MessageStore::Result rr;
+    uint8_t buf[256];
+    size_t got = 0;
+    if (waitResult(rs.ticket, rr) && rr.outcome == Outcome::Committed && rr.error == Error::None) {
+        got = rr.length < sizeof(buf) ? rr.length : sizeof(buf);
+        if (!g_msgStore.readPayload(rs.ticket, buf, got)) got = 0;
+    }
+    g_msgStore.releaseResult(rs.ticket);
+    if (got < sizeof(StoredRecordHeader)) return false;
+    StoredRecordHeader hdr;
+    memcpy(&hdr, buf, sizeof(hdr));
+    size_t off = sizeof(hdr) + hdr.titleLength;
+    if (off > got) off = got;
+    size_t clen = hdr.contentLength;
+    if (off + clen > got) clen = got - off;
+    if (clen >= cap) clen = cap - 1;
+    memcpy(out, buf + off, clen);
+    out[clen] = 0;
+    if (ts) *ts = hdr.timestamp;
+    return true;
+}
+
+// When a position is from: the sender's timestamp, but never later than our own clock (the
+// two units' clocks differ; a "future" time would read as old / unknown age on the map).
+uint32_t msgEpoch(double ts) {
+    const time_t now = time(nullptr);
+    const uint32_t mine = now > 1600000000 ? (uint32_t)now : 0;
+    if (ts > 1.6e9 && ts < (double)now + 86400.0) return mine && (uint32_t)ts > mine ? mine : (uint32_t)ts;
+    return mine;
+}
+
+// Called by the protocol (inside g_proto.loop()): only queue the key.
+void onCommittedMessage(const LXMFManager::CommittedMessage& m) {
+    if (!m.key.incoming || g_inQn >= (int)(sizeof(g_inQ) / sizeof(g_inQ[0]))) return;
+    g_inQ[g_inQn++] = m.key;
+}
+
+void inboundTick() {
+    if (!g_inQn || !g_storeReady) return;
+    const handheld::storage::RecordKey key = g_inQ[0];
+    char text[96];
+    double ts = 0;
+    if (!readRecordText(key, text, sizeof(text), &ts)) {
+        static uint8_t tries = 0;
+        if (++tries < 20) return;            // store busy: try again next loop
+        tries = 0;
+    } else {
+        double la, lo;
+        if (locParse(text, strlen(text), la, lo)) cposNote(key.peer, la, lo, msgEpoch(ts));
+    }
+    for (int k = 1; k < g_inQn; k++) g_inQ[k - 1] = g_inQ[k];
+    g_inQn--;
+}
+
+// ---- Contacts on the map ---------------------------------------------------------------
+// Map key T: next contact with a known position (newest first), centred, its marker
+// selected; the footer shows "Name 12.4km NE 8m ago". C / Enter: back to own position.
+int g_mapSel = -1;                           // index into g_cpos, -1 = none
+
+int cposOrder(int* idx) {                    // newest first
+    int n = 0;
+    for (int i = 0; i < g_cposCount; i++) if (g_cpos[i].hasPos) idx[n++] = i;
+    for (int a = 1; a < n; a++)
+        for (int b = a; b > 0 && g_cpos[idx[b]].at > g_cpos[idx[b - 1]].at; b--) std::swap(idx[b], idx[b - 1]);
+    return n;
+}
+
+bool ownPosition(double& lat, double& lon) {
+    if (g_gpsPosValid) { lat = g_gpsLat; lon = g_gpsLon; return true; }
+    if (g_cfg.hasPos) { lat = g_cfg.lat; lon = g_cfg.lon; return true; }
+    return false;
+}
+
+const char* compass8(double deg) {
+    static const char* k[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+    return k[(int)((deg + 22.5) / 45.0) & 7];
+}
+
+double bearingDeg(double la1, double lo1, double la2, double lo2) {
+    const double r = 3.14159265358979 / 180.0;
+    const double y = sin((lo2 - lo1) * r) * cos(la2 * r);
+    const double x = cos(la1 * r) * sin(la2 * r) - sin(la1 * r) * cos(la2 * r) * cos((lo2 - lo1) * r);
+    double b = atan2(y, x) / r;
+    return b < 0 ? b + 360.0 : b;
+}
+
+bool mapContactInfo(char* out, size_t n) {
+    if (g_mapSel < 0 || g_mapSel >= g_cposCount || !g_cpos[g_mapSel].hasPos) return false;
+    const CPos& c = g_cpos[g_mapSel];
+    char nm[24], age[12] = "?", dist[24] = "";
+    peerName(c.dest, nm, sizeof(nm));
+    const time_t now = time(nullptr);
+    if (c.at && now > (time_t)c.at) {
+        const uint32_t a = (uint32_t)(now - c.at);
+        if (a < 90) snprintf(age, sizeof(age), "%us", (unsigned)a);
+        else if (a < 5400) snprintf(age, sizeof(age), "%um", (unsigned)((a + 30) / 60));
+        else if (a < 172800) snprintf(age, sizeof(age), "%uh", (unsigned)((a + 1800) / 3600));
+        else snprintf(age, sizeof(age), "%ud", (unsigned)((a + 43200) / 86400));
+    }
+    double la, lo;
+    if (ownPosition(la, lo)) {
+        const double m = metersBetween(la, lo, c.lat, c.lon);
+        const char* dir = compass8(bearingDeg(la, lo, c.lat, c.lon));
+        if (m < 1000) snprintf(dist, sizeof(dist), "%dm %s", (int)m, dir);
+        else if (m < 100000) snprintf(dist, sizeof(dist), "%.1fkm %s", m / 1000.0, dir);
+        else snprintf(dist, sizeof(dist), "%dkm %s", (int)(m / 1000.0), dir);
+    } else {
+        snprintf(dist, sizeof(dist), "%.3f,%.3f", c.lat, c.lon);
+    }
+    snprintf(out, n, "#%u %.9s %s %s ago", (unsigned)c.num, nm, dist, age);
+    return true;
+}
+
+void mapCycleContact() {
+    int idx[kCPosMax];
+    const int n = cposOrder(idx);
+    if (!n) { toast("No contact positions yet"); return; }
+    int k = 0;
+    while (k < n && idx[k] != g_mapSel) k++;
+    g_mapSel = (k >= n) ? idx[0] : (k + 1 < n ? idx[k + 1] : -1);   // after the last: none
+    if (g_mapSel >= 0) {
+        mapview::centreOn(g_cpos[g_mapSel].lat, g_cpos[g_mapSel].lon);
+        mapview::fitZoom();
+        char info[56];
+        mapContactInfo(info, sizeof(info));
+        Serial.printf("[MAP] contact %s\n", info);
+    } else {
+        mapview::key('C', false);            // back to own position (follow)
+        Serial.println("[MAP] contact: none");
+    }
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+// Markers for every known contact position; name tags (LVGL labels on a white box)
+// drawn over the stamped map, so only those small areas are redrawn.
+int wptFeed(mapview::Marker* m, int n);
+
+void mapContactsFeed() {
+    mapview::Marker m[mapview::kMaxMarkers];
+    const time_t now = time(nullptr);
+    int n = 0;
+    for (int i = 0; i < g_cposCount; i++) {
+        if (!g_cpos[i].hasPos) continue;
+        const bool fresh = g_cpos[i].at && now >= (time_t)g_cpos[i].at && now - (time_t)g_cpos[i].at < 3600;
+        m[n++] = {g_cpos[i].lat, g_cpos[i].lon, i == g_mapSel, g_cpos[i].num, fresh, false, 0};
+    }
+    n = wptFeed(m, n);                       // waypoints (diamonds), track, guide line
+    mapview::setMarkers(m, n);
+}
+
+// ---- Waypoints + breadcrumb track ------------------------------------------------------
+// Waypoints: named places (up to 32, NVS rs_wpt), drawn as diamonds. Map keys: P = mark a
+// waypoint at the map centre (name it, Enter), N = next waypoint (centred, selected, a
+// dashed guide line from your position, footer "W2 Ballfield 2.1km SW"), Del twice =
+// remove the selected one. Settings S.1.9 lists them (Enter = show on the map).
+// Track: Settings S.1.10 on/off. Records a point when the GPS fix moved > 25 m (fresh fix
+// only; in Balanced / Saver it asks the GPS for a visit every ~2 min, so points are
+// sparser and the battery cost stays low). Last 1000 points in RAM, all of them appended
+// to <SD>/ratdeckpro/tracks/track.bin (uint32 epoch, float lat, float lon); dotted line on
+// the map. S.1.11 clears it.
+
+void wptSave() {
+    Preferences p;
+    if (!p.begin("rs_wpt", false)) return;
+    p.putBytes("list", g_wpt, sizeof(Wpt) * g_wptCount);
+    p.putUChar("n", (uint8_t)g_wptCount);
+    p.end();
+}
+
+void wptLoad() {
+    Preferences p;
+    g_wptCount = 0;
+    if (!p.begin("rs_wpt", true)) return;
+    const int n = p.getUChar("n", 0);
+    if (n > 0 && n <= kWptMax && p.getBytes("list", g_wpt, sizeof(Wpt) * n) == sizeof(Wpt) * (size_t)n)
+        g_wptCount = n;
+    p.end();
+}
+
+double g_wptNewLat = 0, g_wptNewLon = 0;     // where P was pressed (while the name is typed)
+
+void wptStartMark() {
+    if (g_wptCount >= kWptMax) { toast("Max %d waypoints", kWptMax); return; }
+    mapview::getCentre(g_wptNewLat, g_wptNewLon);
+    char def[16];
+    if (g_placeLast[0]) { strlcpy(def, g_placeLast, sizeof(def)); g_placeLast[0] = 0; }   // saved from F
+    else snprintf(def, sizeof(def), "WP%d", g_wptCount + 1);
+    startEntry(Entry::WptName, def);
+    g_entryReplace = true;                   // Enter keeps "WP3", the first key replaces it
+}
+
+void wptAdd(const char* name) {
+    if (g_wptCount >= kWptMax) return;
+    Wpt& w = g_wpt[g_wptCount++];
+    memset(&w, 0, sizeof(w));
+    w.lat = (float)g_wptNewLat;
+    w.lon = (float)g_wptNewLon;
+    strlcpy(w.name, name[0] ? name : "WP", sizeof(w.name));
+    const time_t now = time(nullptr);
+    w.at = now > 1600000000 ? (uint32_t)now : 0;
+    wptSave();
+    g_wptSel = g_wptCount - 1;
+    g_mapSel = -1;
+    Serial.printf("[WPT] W%d %s at %.5f,%.5f\n", g_wptCount, w.name, w.lat, w.lon);
+    requestRedraw();
+}
+
+void wptRemove(int i) {
+    if (i < 0 || i >= g_wptCount) return;
+    Serial.printf("[WPT] removed W%d %s\n", i + 1, g_wpt[i].name);
+    for (int k = i; k < g_wptCount - 1; k++) g_wpt[k] = g_wpt[k + 1];
+    g_wptCount--;
+    g_wptSel = -1;
+    wptSave();
+    requestRedraw();
+}
+
+void distText(double la, double lo, double tla, double tlo, char* out, size_t n) {
+    const double m = metersBetween(la, lo, tla, tlo);
+    const char* dir = compass8(bearingDeg(la, lo, tla, tlo));
+    if (m < 1000) snprintf(out, n, "%dm %s", (int)m, dir);
+    else if (m < 100000) snprintf(out, n, "%.1fkm %s", m / 1000.0, dir);
+    else snprintf(out, n, "%dkm %s", (int)(m / 1000.0), dir);
+}
+
+bool wptInfo(char* out, size_t n) {
+    if (g_wptSel < 0 || g_wptSel >= g_wptCount) return false;
+    const Wpt& w = g_wpt[g_wptSel];
+    char d[24] = "";
+    double la, lo;
+    if (ownPosition(la, lo)) distText(la, lo, w.lat, w.lon, d, sizeof(d));
+    else snprintf(d, sizeof(d), "%.4f,%.4f", w.lat, w.lon);
+    snprintf(out, n, "W%d %.11s %s", g_wptSel + 1, w.name, d);
+    return true;
+}
+
+void wptSelect(int i) {
+    if (i < 0 || i >= g_wptCount) return;
+    g_wptSel = i;
+    g_mapSel = -1;
+    mapview::centreOn(g_wpt[i].lat, g_wpt[i].lon);
+    mapview::fitZoom();
+    char info[64];
+    wptInfo(info, sizeof(info));
+    Serial.printf("[MAP] waypoint %s\n", info);
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void wptCycle() {
+    if (!g_wptCount) { toast("No waypoints: P marks one"); return; }
+    const int next = g_wptSel + 1;
+    if (next >= g_wptCount) {                // after the last: own position
+        g_wptSel = -1;
+        mapview::key('C', false);
+        Serial.println("[MAP] waypoint: none");
+        g_fullRefreshReq = true;
+        requestRedraw();
+        return;
+    }
+    wptSelect(next);
+}
+
+// ---- Track ---------------------------------------------------------------------------
+constexpr const char* kTrackFile = SD_PATH_ROOT "/tracks/track.bin";
+
+void trackPushRam(float la, float lo) {
+    if (g_trackN >= kTrackRam) {             // drop the oldest
+        memmove(g_track, g_track + 2, sizeof(float) * 2 * (kTrackRam - 1));
+        g_trackN = kTrackRam - 1;
+    }
+    g_track[2 * g_trackN] = la;
+    g_track[2 * g_trackN + 1] = lo;
+    g_trackN++;
+}
+
+void trackLoad() {                           // last kTrackRam points from the SD file
+    if (g_trackLoaded) return;
+    g_trackLoaded = true;
+    g_trackN = 0;
+    if (!sdMount()) return;
+    File f = g_sdStore.openFile(kTrackFile, FILE_READ);
+    if (!f) return;
+    const size_t n = f.size() / 12;
+    const size_t first = n > (size_t)kTrackRam ? n - kTrackRam : 0;
+    f.seek(first * 12);
+    uint8_t rec[12];
+    while (f.read(rec, 12) == 12) {
+        float la, lo;
+        memcpy(&la, rec + 4, 4);
+        memcpy(&lo, rec + 8, 4);
+        trackPushRam(la, lo);
+    }
+    f.close();
+    Serial.printf("[TRACK] loaded %d of %u points\n", g_trackN, (unsigned)n);
+}
+
+void trackClear() {
+    g_trackN = 0;
+    if (sdMount()) {
+        g_sdStore.remove(kTrackFile);
+    }
+    Serial.println("[TRACK] cleared");
+    requestRedraw();
+}
+
+void trackAdd(double la, double lo) {
+    trackPushRam((float)la, (float)lo);
+    if (sdMount()) {
+        g_sdStore.ensureDir(SD_PATH_ROOT "/tracks");
+        File f = g_sdStore.openFile(kTrackFile, FILE_APPEND);
+        if (f) {
+            const time_t now = time(nullptr);
+            const uint32_t t = now > 1600000000 ? (uint32_t)now : 0;
+            const float fla = (float)la, flo = (float)lo;
+            uint8_t rec[12];
+            memcpy(rec, &t, 4); memcpy(rec + 4, &fla, 4); memcpy(rec + 8, &flo, 4);
+            f.write(rec, 12);
+            f.close();
+        }
+    }
+    Serial.printf("[TRACK] point %d %.5f,%.5f\n", g_trackN, la, lo);
+    if (mapview::isOpen()) requestRedraw();
+}
+
+void trackTick() {
+    if (!g_cfg.trackOn) return;
+    static uint32_t last = 0, asked = 0;
+    if (millis() - last < 5000) return;
+    last = millis();
+    if (!g_trackLoaded) trackLoad();
+    if (!gpsFresh()) {                       // keep fixes coming without a GPS always on
+        if (g_cfg.gpsOn && (!asked || millis() - asked > 120000)) { asked = millis(); gpsRequestVisit(); }
+        return;
+    }
+    if (g_trackN) {
+        const double m = metersBetween(g_track[2 * g_trackN - 2], g_track[2 * g_trackN - 1], g_gpsLat, g_gpsLon);
+        if (m < 25.0) return;
+    }
+    trackAdd(g_gpsLat, g_gpsLon);
+}
+
+// Markers + track for the map (called before every map draw).
+int wptFeed(mapview::Marker* m, int n) {
+    for (int i = 0; i < g_wptCount && n < mapview::kMaxMarkers; i++)
+        m[n++] = {g_wpt[i].lat, g_wpt[i].lon, i == g_wptSel, (uint8_t)(i + 1), true, false, 1};
+    if (g_cfg.trackOn && !g_trackLoaded) trackLoad();
+    mapview::setTrack(g_track, g_trackN);
+    if (g_wptSel >= 0 && g_wptSel < g_wptCount) mapview::setGuide(true, g_wpt[g_wptSel].lat, g_wpt[g_wptSel].lon);
+    else mapview::setGuide(false);
+    return n;
+}
+
+// ---- Place search (map key F) ----------------------------------------------------------
+// Index on the SD card: <SD>/ratdeckpro/places/<first letter>.txt, lines
+// "Name|lat|lon|K|ST" sorted by name (tools/places/make_places.py, USGS GNIS: every US
+// town + summits, lakes, islands ... for the route states). F on the map: type the start
+// of a name, Enter: the 8 nearest matches (to you, else the map centre) as a list; a digit
+// jumps there; P right after saves it as a waypoint with that name. ^ closes the list.
+struct Place { char name[28]; float lat, lon; char kind, st[3]; };
+constexpr int kPlaceShow = 6, kPlaceKeep = 48;
+Place g_placeRes[kPlaceKeep];
+int g_placeN = 0;
+bool g_placeOpen = false;
+char g_placeLast[28] = "";                   // name of the last place jumped to (P default)
+
+const char* placeKindName(char k) {
+    switch (k) {
+        case 'P': return "town"; case 'S': return "summit"; case 'L': return "lake"; case 'I': return "island";
+        case 'B': return "bay"; case 'F': return "falls"; case 'G': return "gap"; case 'C': return "cape";
+        case 'H': return "beach"; default: return "";
+    }
+}
+
+void placeSearch(const char* q0) {
+    g_placeN = 0;
+    // "knoxville tn": a last word of two letters filters by state.
+    char q[28], stateF[3] = "";
+    strlcpy(q, q0, sizeof(q));
+    size_t ql = strlen(q);
+    while (ql && q[ql - 1] == ' ') q[--ql] = 0;
+    if (ql > 3 && q[ql - 3] == ' ' && isalpha((unsigned char)q[ql - 2]) && isalpha((unsigned char)q[ql - 1])) {
+        stateF[0] = (char)toupper((unsigned char)q[ql - 2]);
+        stateF[1] = (char)toupper((unsigned char)q[ql - 1]);
+        q[ql - 3] = 0;
+        ql -= 3;
+    }
+    if (!ql) return;
+    char low[28];
+    size_t k = 0;
+    for (; k < ql && k < sizeof(low) - 1; k++) low[k] = (char)tolower((unsigned char)q[k]);
+    low[k] = 0;
+    const char c0 = (low[0] >= 'a' && low[0] <= 'z') ? low[0] : '0';
+    char path[64];
+    snprintf(path, sizeof(path), "%s/places/%c.txt", SD_PATH_ROOT, c0);
+    if (!sdMount()) { toast("No SD card"); return; }
+    File f = g_sdStore.openFile(path, FILE_READ);
+    if (!f) { toast("No place index on the card"); return; }
+    double ola = 0, olo = 0;
+    if (!ownPosition(ola, olo)) mapview::getCentre(ola, olo);
+    char line[96];
+    const uint32_t t0 = millis();
+    static uint8_t rb[2048];                 // buffered line reader (works on the simulator too)
+    int rpos = 0, rlen = 0;
+    auto readLine = [&](char* out, size_t cap) -> bool {
+        size_t n = 0;
+        for (;;) {
+            if (rpos >= rlen) {
+                rlen = f.read(rb, sizeof(rb));
+                rpos = 0;
+                if (rlen <= 0) { out[n] = 0; return n > 0; }
+            }
+            const char ch = (char)rb[rpos++];
+            if (ch == '\n') { out[n] = 0; return true; }
+            if (n < cap - 1) out[n++] = ch;
+        }
+    };
+    while (readLine(line, sizeof(line))) {
+        size_t i = 0;                        // compare the name's start, case-insensitive
+        while (i < k && line[i] && line[i] != '|' && tolower((unsigned char)line[i]) == low[i]) i++;
+        if (i < k) {
+            // sorted by name: once past the query, stop
+            if (line[i] && line[i] != '|' && tolower((unsigned char)line[i]) > low[i]) break;
+            continue;
+        }
+        Place p{};
+        char* s1 = strchr(line, '|');
+        if (!s1) continue;
+        *s1 = 0;
+        float la = 0, lo = 0;
+        char kind = 0, st[3] = "";
+        if (sscanf(s1 + 1, "%f|%f|%c|%2s", &la, &lo, &kind, st) < 3) continue;
+        if (stateF[0] && strcmp(st, stateF) != 0) continue;
+        strlcpy(p.name, line, sizeof(p.name));
+        p.lat = la; p.lon = lo; p.kind = kind;
+        strlcpy(p.st, st, sizeof(p.st));
+        if (g_placeN < kPlaceKeep) g_placeRes[g_placeN++] = p;
+        else {                               // keep the nearest kPlaceKeep
+            int far = 0;
+            double fd = -1;
+            for (int j = 0; j < kPlaceKeep; j++) {
+                const double d = metersBetween(ola, olo, g_placeRes[j].lat, g_placeRes[j].lon);
+                if (d > fd) { fd = d; far = j; }
+            }
+            if (metersBetween(ola, olo, la, lo) < fd) g_placeRes[far] = p;
+        }
+        if ((g_placeN & 63) == 0) yield();
+    }
+    f.close();
+    for (int a2 = 1; a2 < g_placeN; a2++)    // nearest first
+        for (int b = a2; b > 0 && metersBetween(ola, olo, g_placeRes[b].lat, g_placeRes[b].lon) <
+                                      metersBetween(ola, olo, g_placeRes[b - 1].lat, g_placeRes[b - 1].lon); b--)
+            std::swap(g_placeRes[b], g_placeRes[b - 1]);
+    Serial.printf("[PLACE] \"%s\"%s%s: %d match%s in %lu ms\n", q, stateF[0] ? " in " : "", stateF, g_placeN,
+                  g_placeN == 1 ? "" : "es",
+                  (unsigned long)(millis() - t0));
+    if (!g_placeN) { toast("No place: %.16s", q); return; }
+    g_placeOpen = true;
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void placeJump(int i) {
+    if (i < 0 || i >= g_placeN || i >= kPlaceShow) return;
+    const Place& p = g_placeRes[i];
+    g_placeOpen = false;
+    g_mapSel = -1;
+    g_wptSel = -1;
+    mapview::centreOn(p.lat, p.lon);
+    mapview::fitZoom();
+    strlcpy(g_placeLast, p.name, sizeof(g_placeLast));
+    Serial.printf("[PLACE] go %s %s %.5f,%.5f\n", p.name, p.st, p.lat, p.lon);
+    toast("%.16s %s  (P = save)", p.name, p.st);
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void placeKey(const KeyEvent& ev) {
+    const char c = ev.character;
+    if (ev.up) { g_placeOpen = false; g_fullRefreshReq = true; requestRedraw(); return; }
+    if (c >= '1' && c <= '6') { placeJump(c - '1'); return; }
+    if (ev.enter) { placeJump(0); return; }
+}
+
+// Results list in place of the map (renderMapHeader draws it; stampMap skips the map).
+void renderPlaces() {
+    double ola = 0, olo = 0;
+    const bool own = ownPosition(ola, olo);
+    const int rowH = 34;                     // 6 x 34 = 204 px: two lines per place
+    for (int i = 0; i < g_placeN && i < kPlaceShow; i++) {
+        const Place& p = g_placeRes[i];
+        char t[48], d[24] = "", k[40];
+        if (own) distText(ola, olo, p.lat, p.lon, d, sizeof(d));
+        snprintf(t, sizeof(t), "%d %s, %s", i + 1, p.name, p.st);
+        snprintf(k, sizeof(k), "   %s  %s", placeKindName(p.kind), d);
+        const int y = LIST_TOP + i * rowH;
+        text(4, y, t, true, W - 8);
+        text(4, y + 16, k, false, W - 8);
+        fillRect(4, y + rowH - 1, W - 8, 1);
+    }
+}
+
+// Map keys for waypoints. Returns true if used.
+bool wptMapKey(const KeyEvent& ev) {
+    const char c = (char)toupper((unsigned char)ev.character);
+    if (c == 'P') { wptStartMark(); return true; }
+    if (c == 'N') { wptCycle(); return true; }
+    if (c == 'T') g_wptSel = -1;             // contacts take over
+    if (ev.del && g_wptSel >= 0) {
+        if (g_wptDelAt && millis() - g_wptDelAt < 3000) { g_wptDelAt = 0; wptRemove(g_wptSel); toast("Waypoint removed"); }
+        else { g_wptDelAt = millis(); toast("Del again: remove W%d", g_wptSel + 1); }
+        return true;
+    }
+    if (c == 'C' || ev.enter) g_wptSel = -1;
+    return false;
+}
+
+
+// The marker carries the contact's number (no name tags: the screen is small); the
+// selected contact's name, distance and age are on the map's bottom line.
+void mapContactsStamp() {}
+
+int g_mapNum = 0;                            // digits typed on the map: open that chat
+
+void openThread(const uint8_t peer[16]);
+void openMap();
+void closeThread();
+
+// Map centred on a contact's last position, its marker selected (lists: L, chat menu 5).
+bool mapShowContact(const uint8_t dest[16]) {
+    const int i = cposFind(dest);
+    if (i < 0 || !g_cpos[i].hasPos) { toast("No position from them yet"); return false; }
+    if (!mapview::isOpen()) openMap();
+    g_mapSel = i;
+    mapview::centreOn(g_cpos[i].lat, g_cpos[i].lon);
+    mapview::fitZoom();
+    g_fullRefreshReq = true;
+    requestRedraw();
+    char info[64];
+    mapContactInfo(info, sizeof(info));
+    Serial.printf("[MAP] contact %s\n", info);
+    return true;
+}
+
+// Digits + Enter on the map: open contact #n's chat. Returns true if the key was used.
+bool mapNumberKey(const KeyEvent& ev) {
+    const char c = ev.character;
+    if (c >= '0' && c <= '9' && !ev.enter) {
+        g_mapNum = (g_mapNum * 10 + (c - '0')) % 100;
+        requestRedraw();
+        return true;
+    }
+    if (ev.del && g_mapNum) { g_mapNum /= 10; requestRedraw(); return true; }
+    if (ev.enter && g_mapNum) {
+        const int n = g_mapNum;
+        g_mapNum = 0;
+        const int k = cposByNum(n);
+        if (k < 0) { toast("No contact #%d on the map", n); requestRedraw(); return true; }
+        uint8_t peer[16];
+        memcpy(peer, g_cpos[k].dest, 16);
+        Serial.printf("[MAP] open chat #%d\n", n);
+        closeMap();
+        openThread(peer);
+        return true;
+    }
+    return false;
+}
+
+// ---- Thread menu (MIC in a conversation) -----------------------------------------------
+bool g_tmenuOpen = false;
+int  g_tmenuSel = 0;
+constexpr int kTmenuRows = 5;
+
+void tmenuAct(int i) {
+    if (i == 0) { g_tmenuOpen = false; shareMyLocation(g_threadPeer); loadHistory(g_threadPeer); }
+    else if (i == 1) ashareCycle(g_threadPeer);
+    else if (i == 2) {
+        g_autoForSel = (uint8_t)((g_autoForSel + 1) % 3);
+        const int k = ashareFind(g_threadPeer);
+        if (k >= 0) {                        // applies to a running share too
+            const uint16_t m = kAutoForMin[g_autoForSel];
+            g_ashare[k].until = m ? (uint32_t)time(nullptr) + m * 60UL : 0;
+            ashareSave();
+        }
+    } else if (i == 3) { if (g_ashareCount) { ashareStopAll(); toast("All auto-sharing stopped"); } else toast("Nothing to stop"); }
+    else if (i == 4) {
+        uint8_t peer[16];
+        memcpy(peer, g_threadPeer, 16);
+        if (cposFind(peer) < 0 || !g_cpos[cposFind(peer)].hasPos) { toast("No position from them yet"); return; }
+        g_tmenuOpen = false;
+        closeThread();
+        mapShowContact(peer);
+        return;
+    }
+    requestRedraw();
+}
+
+void tmenuKey(const KeyEvent& ev) {
+    if (ev.up || ev.fn) { g_tmenuOpen = false; requestRedraw(); return; }
+    if (ev.enter) { tmenuAct(g_tmenuSel); return; }
+    const char c = (char)toupper((unsigned char)ev.character);
+    if (c >= '1' && c <= '0' + kTmenuRows) { g_tmenuSel = c - '1'; tmenuAct(g_tmenuSel); return; }
+    if (c == 'G' && g_tmenuSel > 0) g_tmenuSel--;
+    if (c == 'V' && g_tmenuSel < kTmenuRows - 1) g_tmenuSel++;
+    requestRedraw();
+}
+
+void renderThreadMenu(int y) {
+    char sub[40], a[40];
+    const int k = ashareFind(g_threadPeer);
+    gpsPosText(a, sizeof(a));
+    snprintf(sub, sizeof(sub), "%s", a);
+    listRow(y, "1 Share my location", sub, g_tmenuSel == 0);
+    addHit(2, y, W - 4, ROW_H, H_TMENU, 0); y += ROW_H;
+    if (k >= 0) {
+        char left[16] = "until off";
+        if (g_ashare[k].until) {
+            const int32_t s = (int32_t)(g_ashare[k].until - (uint32_t)time(nullptr));
+            fmtAge(s > 0 ? (uint32_t)s : 0, left, sizeof(left));
+            strlcat(left, " left", sizeof(left));
+        }
+        snprintf(sub, sizeof(sub), "every %u min, %s", (unsigned)g_ashare[k].mins, left);
+    } else {
+        snprintf(sub, sizeof(sub), "off (Enter: 5/15/30/60 min)");
+    }
+    listRow(y, "2 Auto-share location", sub, g_tmenuSel == 1);
+    addHit(2, y, W - 4, ROW_H, H_TMENU, 1); y += ROW_H;
+    listRow(y, "3 Auto-share for", kAutoForName[g_autoForSel], g_tmenuSel == 2);
+    addHit(2, y, W - 4, ROW_H, H_TMENU, 2); y += ROW_H;
+    snprintf(sub, sizeof(sub), "%d contact%s on", g_ashareCount, g_ashareCount == 1 ? "" : "s");
+    listRow(y, "4 Stop all auto-sharing", sub, g_tmenuSel == 3);
+    addHit(2, y, W - 4, ROW_H, H_TMENU, 3); y += ROW_H;
+    const int ci = cposFind(g_threadPeer);
+    if (ci >= 0 && g_cpos[ci].hasPos) {
+        const time_t now = time(nullptr);
+        const uint32_t a = (g_cpos[ci].at && now > (time_t)g_cpos[ci].at) ? (uint32_t)(now - g_cpos[ci].at) : 0;
+        char age[12];
+        fmtAge(a, age, sizeof(age));
+        snprintf(sub, sizeof(sub), "#%u, %s old", (unsigned)g_cpos[ci].num, g_cpos[ci].at ? age : "?");
+    } else {
+        snprintf(sub, sizeof(sub), "no position from them yet");
+    }
+    listRow(y, "5 Show them on the map", sub, g_tmenuSel == 4);
+    addHit(2, y, W - 4, ROW_H, H_TMENU, 4);
+}
+
+void openMenu();
+
+// ---- Library (reference texts on the SD card) -----------------------------------------
+// MENU -> Library: the files in <SD>/ratdeckpro/library/ (plain text: frequency card,
+// GhostNet / JS8Call notes, weather radio list ...). Enter / digit opens one; pages with
+// word wrap: N or V = next page, B or G = previous, F = find (case-insensitive, from the
+// next page on), ^ = back to the list / close. Copy files with tools/sdcard/push_files.py.
+constexpr const char* kLibDir = SD_PATH_ROOT "/library";
+constexpr int kLibMaxFiles = 24, kLibLines = 12, kLibLineH = 17;
+struct LibFile { char name[40]; uint32_t size; };
+LibFile g_libFiles[kLibMaxFiles];
+int g_libCount = 0, g_libSel = 0, g_libScroll = 0;
+bool g_libOpen = false, g_libReading = false;
+char g_libPath[96] = "";
+uint32_t g_libSize = 0;
+std::vector<uint32_t> g_libPages;            // start offset of every page read so far
+char g_libText[kLibLines][40];               // the current page, wrapped
+int g_libTextN = 0;
+uint32_t g_libNext = 0;                      // offset after the current page
+
+void libScan() {
+    g_libCount = 0;
+    if (!sdMount()) return;
+    g_sdStore.ensureDir(kLibDir);
+    File d = g_sdStore.openDir(kLibDir);
+    if (!d) return;
+    for (File e = d.openNextFile(); e && g_libCount < kLibMaxFiles; e = d.openNextFile()) {
+        if (!e.isDirectory()) {
+            const char* nm = strrchr(e.name(), '/');
+            nm = nm ? nm + 1 : e.name();
+            if (nm[0] != '.') {
+                strlcpy(g_libFiles[g_libCount].name, nm, sizeof(g_libFiles[0].name));
+                g_libFiles[g_libCount].size = (uint32_t)e.size();
+                g_libCount++;
+            }
+        }
+        e.close();
+    }
+    d.close();
+    for (int a = 1; a < g_libCount; a++)     // by name
+        for (int b = a; b > 0 && strcasecmp(g_libFiles[b].name, g_libFiles[b - 1].name) < 0; b--)
+            std::swap(g_libFiles[b], g_libFiles[b - 1]);
+}
+
+// UTF-8 punctuation the font may not have -> ASCII; other non-ASCII -> '?'.
+int libAscii(const uint8_t* p, int n, char& out) {
+    if (p[0] < 0x80) { out = (char)p[0]; return 1; }
+    if (n >= 3 && p[0] == 0xE2 && p[1] == 0x80) {
+        const uint8_t c = p[2];
+        out = (c == 0x98 || c == 0x99) ? '\'' : (c == 0x9C || c == 0x9D) ? '"' : (c == 0x93 || c == 0x94) ? '-' :
+              (c == 0xA2) ? '*' : (c == 0xA6) ? '.' : '?';
+        return 3;
+    }
+    int len = (p[0] & 0xE0) == 0xC0 ? 2 : (p[0] & 0xF0) == 0xE0 ? 3 : (p[0] & 0xF8) == 0xF0 ? 4 : 1;
+    if (len > n) len = n;
+    out = '?';
+    return len;
+}
+
+// Wrap text from `off` into kLibLines lines of at most W-12 px; sets g_libNext.
+void libLoadPage(uint32_t off) {
+    g_libTextN = 0;
+    g_libNext = off;
+    File f = g_sdStore.openFile(g_libPath, FILE_READ);
+    if (!f) return;
+    f.seek(off);
+    static uint8_t buf[2048];
+    const int n = f.read(buf, sizeof(buf));
+    f.close();
+    if (n <= 0) return;
+    const int maxW = W - 12;
+    int i = 0;
+    char line[40];
+    int ll = 0;
+    int lastSpace = -1, lastSpaceIn = 0;     // break point in `line` / in buf
+    int lineStartIn = 0;
+    while (i < n && g_libTextN < kLibLines) {
+        char c;
+        const int used = libAscii(buf + i, n - i, c);
+        if (c == '\r') { i += used; continue; }
+        if (c == '\t') c = ' ';
+        if (c == '\n' || ll >= (int)sizeof(line) - 1) {
+            line[ll] = 0;
+            strlcpy(g_libText[g_libTextN++], line, sizeof(line));
+            ll = 0; lastSpace = -1;
+            i += (c == '\n') ? used : 0;
+            lineStartIn = i;
+            continue;
+        }
+        line[ll] = c;
+        line[ll + 1] = 0;
+        if (textW(line) > maxW) {            // wrap at the last space, else hard
+            if (lastSpace > 0) {
+                line[lastSpace] = 0;
+                strlcpy(g_libText[g_libTextN++], line, sizeof(line));
+                i = lastSpaceIn + 1;
+            } else {
+                line[ll] = 0;
+                strlcpy(g_libText[g_libTextN++], line, sizeof(line));
+            }
+            ll = 0; lastSpace = -1;
+            lineStartIn = i;
+            continue;
+        }
+        if (c == ' ') { lastSpace = ll; lastSpaceIn = i; }
+        ll++;
+        i += used;
+    }
+    if (g_libTextN < kLibLines && ll > 0 && i >= n) {   // end of the chunk (= end of file if short)
+        line[ll] = 0;
+        strlcpy(g_libText[g_libTextN++], line, sizeof(line));
+        lineStartIn = i;
+    }
+    g_libNext = off + (uint32_t)lineStartIn;
+}
+
+void libOpenFile(int k) {
+    if (k < 0 || k >= g_libCount) return;
+    snprintf(g_libPath, sizeof(g_libPath), "%s/%s", kLibDir, g_libFiles[k].name);
+    g_libSize = g_libFiles[k].size;
+    g_libPages.clear();
+    g_libPages.push_back(0);
+    libLoadPage(0);
+    g_libReading = true;
+    Serial.printf("[LIB] open %s (%u bytes)\n", g_libFiles[k].name, (unsigned)g_libSize);
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void libOpen() {
+    if (g_menuOpen) g_menuOpen = false;
+    libScan();
+    g_libOpen = true;
+    g_libReading = false;
+    g_libSel = 0;
+    g_libScroll = 0;
+    Serial.printf("[LIB] %d files\n", g_libCount);
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void libClose() { g_libOpen = false; g_libReading = false; g_libPages.clear(); g_libPages.shrink_to_fit(); requestRedraw(); }
+
+void libPage(int dir) {
+    if (dir > 0) {
+        if (g_libNext >= g_libSize || g_libNext <= g_libPages.back()) { toast("End of file"); return; }
+        g_libPages.push_back(g_libNext);
+    } else {
+        if (g_libPages.size() <= 1) { toast("Start of file"); return; }
+        g_libPages.pop_back();
+    }
+    libLoadPage(g_libPages.back());
+    requestRedraw();
+}
+
+// Find (case-insensitive) after the current page; jumps to the line that holds it.
+void libFind(const char* what) {
+    const size_t wl = strlen(what);
+    if (!wl) return;
+    File f = g_sdStore.openFile(g_libPath, FILE_READ);
+    if (!f) return;
+    static uint8_t buf[2048 + 64];
+    uint32_t pos = g_libPages.back() + 1;
+    int32_t found = -1;
+    while (pos < g_libSize && found < 0) {
+        f.seek(pos);
+        const int n = f.read(buf, 2048 + 63);
+        if (n <= 0) break;
+        for (int i = 0; i + (int)wl <= n; i++) {
+            if (!strncasecmp((const char*)buf + i, what, wl)) { found = (int32_t)(pos + i); break; }
+        }
+        if (n < (int)wl) break;
+        pos += (uint32_t)(n - (int)wl + 1);
+        if (n < 2048) break;
+    }
+    if (found < 0) { f.close(); toast("Not found: %.14s", what); return; }
+    uint32_t ls = (uint32_t)found;           // back to the start of that line (max 200 bytes)
+    for (int k = 0; k < 200 && ls > 0; k++) {
+        f.seek(ls - 1);
+        if (f.read() == '\n') break;
+        ls--;
+    }
+    f.close();
+    g_libPages.push_back(ls);
+    libLoadPage(ls);
+    Serial.printf("[LIB] found \"%s\" at %ld\n", what, (long)found);
+    requestRedraw();
+}
+
+void libKey(const KeyEvent& ev) {
+    const char c = (char)toupper((unsigned char)ev.character);
+    if (g_libReading) {
+        if (c == 'N' || c == 'V' || ev.space) libPage(+1);
+        else if (c == 'B' || c == 'G') libPage(-1);
+        else if (c == 'F') startEntry(Entry::LibFind);
+        else if (c == 'M') { libClose(); openMenu(); }
+        return;
+    }
+    if (ev.enter) { libOpenFile(g_libSel); return; }
+    if (c >= '1' && c <= '9') { const int k = g_libScroll + (c - '1'); if (k < g_libCount) { g_libSel = k; libOpenFile(k); } return; }
+    if (c == 'V' && g_libSel < g_libCount - 1) g_libSel++;
+    if (c == 'G' && g_libSel > 0) g_libSel--;
+    if (c == 'M') { libClose(); openMenu(); return; }
+    if (g_libSel < g_libScroll) g_libScroll = g_libSel;
+    if (g_libSel >= g_libScroll + 4) g_libScroll = g_libSel - 3;
+    requestRedraw();
+}
+
+void renderLibrary() {
+    char hdr[48];
+    if (!g_libReading) {
+        drawHeader("Library", false);
+        if (!g_libCount) {
+            text(8, LIST_TOP + 8, "No files in ratdeckpro/library", false, W - 16);
+            text(8, LIST_TOP + 30, "on the SD card (push_files.py)", false, W - 16);
+        }
+        for (int r = 0; r < 4 && g_libScroll + r < g_libCount; r++) {
+            const int k = g_libScroll + r;
+            char t[48], sub[24];
+            snprintf(t, sizeof(t), "%d %s", r + 1, g_libFiles[k].name);
+            const uint32_t sz = g_libFiles[k].size;
+            if (sz < 2048) snprintf(sub, sizeof(sub), "%u bytes", (unsigned)sz);
+            else snprintf(sub, sizeof(sub), "%u KB", (unsigned)((sz + 512) / 1024));
+            listRow(LIST_TOP + r * ROW_H, t, sub, k == g_libSel);
+        }
+        box(0, FOOT_Y, W, FOOT_H, 1);
+        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4 / Enter  G/V  ^ close");
+        return;
+    }
+    const char* nm = strrchr(g_libPath, '/');
+    nm = nm ? nm + 1 : g_libPath;
+    const unsigned pct = g_libSize ? (unsigned)((uint64_t)g_libPages.back() * 100 / g_libSize) : 0;
+    snprintf(hdr, sizeof(hdr), "p%u %u%% %s", (unsigned)g_libPages.size(), pct, nm);
+    drawHeader(hdr, false);
+    for (int l = 0; l < g_libTextN; l++) text(6, LIST_TOP + l * kLibLineH, g_libText[l], false, W - 10);
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    if (g_entry == Entry::LibFind) {
+        char t[48];
+        snprintf(t, sizeof(t), "Find: %s_", g_buf);
+        label(0, FOOT_Y - 1, W, FOOT_H, t);
+    } else {
+        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "N/B page  F find  ^ list");
+    }
+}
+
+// ---- Contact page + share picker ----------------------------------------------------
+const char* const kCardActs[4] = {"Message", "Rename", "Share", "Map number"};
+const char* const kCardSubs[4] = {"open the chat", "name it on this radio", "send it to a contact", ""};
+
+void openCard(const uint8_t peer[16]) {
+    memcpy(g_cardPeer, peer, 16);
+    g_cardOpen = true;
+    g_cardSel = 0;
+    requestRedraw();
+}
+
+void closeCard() { g_cardOpen = false; requestRedraw(); }
+
+void renderCard() {
+    char name[24], hex[33], line[40];
+    peerName(g_cardPeer, name, sizeof(name));
+    hashToHex(g_cardPeer, hex);
+    snprintf(line, sizeof(line), "%s%s", isSelf(g_cardPeer) ? "MyID: " : "", name);
+    text(4, HEADER_Y, line, true, W - 8);
+    snprintf(line, sizeof(line), "%.20s..", hex);         // one line: room for 4 rows
+    text(6, HEADER_Y + 19, line);
+    int y = HEADER_Y + 39;
+    for (int i = 0; i < 4; i++) {
+        char sub[40];
+        snprintf(sub, sizeof(sub), "%s", kCardSubs[i]);
+        if (i == 3) {
+            const int ci = cposFind(g_cardPeer);
+            if (g_entry == Entry::MapNum) snprintf(sub, sizeof(sub), ">%s_  (1-99, Enter)", g_buf);
+            else if (ci >= 0) snprintf(sub, sizeof(sub), "#%u on the map%s", (unsigned)g_cpos[ci].num,
+                                       g_cpos[ci].hasPos ? "" : " (no position yet)");
+            else snprintf(sub, sizeof(sub), "none yet (1 = shown first)");
+        }
+        snprintf(line, sizeof(line), "%d : %s", i + 1, kCardActs[i]);
+        listRow(y, line, sub, i == g_cardSel);
+        addHit(2, y, W - 4, ROW_H, H_CARD, i);
+        y += ROW_H;
+    }
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4 / Enter    ^ = back");
+}
+
+void startNameEntry(const uint8_t peer[16]);
+void openThread(const uint8_t peer[16]);
+void goScreen(ScreenId s);
+void openMenu();
+
+void cardAct(int i) {
+    uint8_t peer[16];
+    memcpy(peer, g_cardPeer, 16);
+    switch (i) {
+        case 0:
+            if (isSelf(peer)) { toast("That is this radio"); return; }
+            closeCard();
+            openThread(peer);
+            break;
+        case 1:
+            closeCard();
+            startNameEntry(peer);
+            break;
+        case 2:
+            closeCard();
+            goScreen(SCR_CONTACTS);
+            memcpy(g_sharePeer, peer, 16);
+            g_shareActive = true;
+            toast("Pick who gets it");
+            Serial.println("[CARD] pick recipient");
+            break;
+        case 3: {                                   // map number (1 = wins at a shared spot)
+            if (isSelf(peer)) { toast("That is this radio"); return; }
+            const int ci = cposFind(peer);
+            char cur[4] = "";
+            if (ci >= 0) snprintf(cur, sizeof(cur), "%u", (unsigned)g_cpos[ci].num);
+            startEntry(Entry::MapNum, cur);
+            break;
+        }
+    }
+}
+
+void cardKey(const KeyEvent& ev) {
+    if (ev.enter) { cardAct(g_cardSel); return; }
+    const char raw = ev.character;
+    if (raw >= '1' && raw <= '4') { g_cardSel = raw - '1'; cardAct(g_cardSel); return; }
+    switch (toupper((unsigned char)raw)) {
+        case 'G': if (g_cardSel > 0) g_cardSel--; requestRedraw(); break;
+        case 'V': if (g_cardSel < 3) g_cardSel++; requestRedraw(); break;
+        case 'M': closeCard(); openMenu(); break;
+        default: break;
+    }
+}
+
+void shareSendTo(int idx) {
+    const uint8_t* to = g_rows[idx].peer;
+    if (isSelf(to) || !memcmp(to, g_sharePeer, 16)) { toast("Pick someone else"); return; }
+    char nm[24], toName[24], body[96];
+    peerName(g_sharePeer, nm, sizeof(nm));
+    peerName(to, toName, sizeof(toName));
+    cardFormat(g_sharePeer, nm, body, sizeof(body));
+    g_shareActive = false;
+    const power::CheckinPhase ph = checkinNow();
+    if (g_pwEff.checkin && !(ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS)) {
+        if (outboxAdd(to, body)) toast("Card queued (check-in)"); else toast("Outbox full (%d)", kOutboxCap);
+    } else if (sendMessage(to, body)) {
+        Serial.printf("[CARD] sent \"%s\" to %s\n", nm, toName);
+        toast("Card sent to %.12s", toName);
+    } else {
+        toast("Not sent: %s", g_txStr);
+    }
+    loadRows(g_screen);
+    requestRedraw();
+}
+
+void saveThreadCard() {
+    if (!cardOffered()) return;
+    saveContactName(g_threadCard.hash, g_threadCard.name);
+    char hex[33];
+    hashToHex(g_threadCard.hash, hex);
+    Serial.printf("[CARD] saved \"%s\" %s\n", g_threadCard.name, hex);
+    toast("Saved %.18s", g_threadCard.name);
 }
 
 void render() {
     const uint32_t t0 = millis();
     clearRoot();
+    if (g_locked) {                    // nothing else is drawn (no touch targets either)
+        renderLock();
+        lv_refr_now(nullptr);
+        drawLogo(W / 2, 36);
+        g_redraw = false;
+        if (g_fullRefreshReq) { g_fullRefreshReq = false; g_display.fullRefresh(); }
+        else g_display.refreshIfDirty();
+        keyboardSetNumLayer(false);
+        Serial.printf("[UI] lock frame %ums\n", (unsigned)(millis() - t0));
+        return;
+    }
     if (g_threadOpen)                  renderThread();
     else if (g_entry == Entry::Name)   renderRename();
+    else if (g_cardOpen)               renderCard();
+    else if (g_libOpen)                renderLibrary();
     else if (mapview::isOpen())        renderMapHeader();
     else switch (g_screen) {
         case SCR_HOME:     renderHome(); break;
@@ -3633,7 +5866,7 @@ void render() {
     drawBottomBar();
     drawMenuOverlay();
     lv_refr_now(nullptr);
-    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen) stampMap();   // after LVGL's clear
+    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_placeOpen) stampMap();   // after LVGL's clear
     const uint32_t t1 = millis();
     // Clear the request first: keys queued during the panel refresh may ask again.
     g_redraw = false;
@@ -3658,7 +5891,10 @@ void spaced(const char* in, char* out, size_t n) {
     out[j] = 0;
 }
 
+bool paintIdleMap();
+
 void paintIdle() {
+    if (g_cfg.idleMap && paintIdleMap()) return;
     clearRoot();
     const int y0 = 76, step = 20;
     label(0, y0, W, 20, "RatSpeak", true);
@@ -3691,13 +5927,72 @@ void paintIdle() {
              (unsigned long)((s / 3600UL) % 24UL), (unsigned long)((s / 60UL) % 60UL));
     label(0, y0 + 8 * step, W, 16, line);
     label(0, y0 + 9 * step, W, 18, g_selfName, true);
-    label(0, 292, W, 22, "press a KEY to wake", true);
+    label(0, 292, W, 22, g_locked ? "LOCKED | press a key" : "press a KEY to wake", true);
 
     lv_refr_now(nullptr);
     drawLogo(W / 2, 36);     // stamped after LVGL so the clear does not wipe it
     g_idleShownUnread = unread;
     g_idleShownPct = pct;
     g_idleShownMin = millis() / 60000UL;
+}
+
+// Idle screen "map around you" (S.3.2 row 8): the map centred on the GPS fix, else the
+// saved position, else the card's home.txt, at zoom 13 (or the deepest level with tiles),
+// with time / battery / unread across the top. false = no position: the splash is shown.
+constexpr int kIdleMapTop = 38, kIdleMapBottom = 300, kIdleMapZoom = 13;
+
+bool paintIdleMap() {
+    double lat = 0, lon = 0;
+    bool have = false;
+    if (g_gpsPosValid) { lat = g_gpsLat; lon = g_gpsLon; have = true; }
+    else if (g_cfg.hasPos) { lat = g_cfg.lat; lon = g_cfg.lon; have = true; }
+    mapview::setReader(mapReadTile);
+    g_mapSdTried = false;
+    if (!have) {
+        char txt[48] = "";
+        int z = 0;
+        const size_t n = mapReadTile("/maps/home.txt", 0, (uint8_t*)txt, sizeof(txt) - 1);
+        txt[n < sizeof(txt) ? n : sizeof(txt) - 1] = 0;
+        have = n && sscanf(txt, "%lf %lf %d", &lat, &lon, &z) >= 2;
+    }
+    if (!have) return false;
+    const bool wasOpen = mapview::isOpen();
+    if (!wasOpen) {
+        mapFeedPosition();
+        mapview::open(lat, lon, true, g_gpsPosValid);
+        mapview::setZoom(kIdleMapZoom);
+        mapview::fitZoom();
+    }
+
+    clearRoot();
+    char t[8], d[12], line[48];
+    fmtTime(t, sizeof(t));
+    fmtDate(d, sizeof(d));
+    const int pct = g_bat.valid ? g_bat.pct : -1;
+    const int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
+    box(0, 0, W, kIdleMapTop, 1);
+    if (unread > 0) snprintf(line, sizeof(line), "%s  %d%%%s  %d NEW", t, pct, g_bat.charging ? "+" : "", unread);
+    else snprintf(line, sizeof(line), "%s  %d%%%s  no new", t, pct, g_bat.charging ? "+" : "");
+    label(0, 0, W, 20, line, true);
+    snprintf(line, sizeof(line), "%.5s  %s", d, g_selfName);
+    label(0, 18, W, 18, line);
+    box(0, kIdleMapBottom, W, H - kIdleMapBottom, 1);
+    if (g_locked) {
+        label(0, kIdleMapBottom, W, H - kIdleMapBottom, "LOCKED | press a key", true);
+    } else {
+        char pos[56];
+        gpsPosText(pos, sizeof(pos));
+        label(0, kIdleMapBottom, W, H - kIdleMapBottom, pos);
+    }
+    lv_refr_now(nullptr);
+    mapContactsFeed();                       // contacts' last positions on the idle map too
+    mapview::draw(mapPixel, 0, kIdleMapTop, W, kIdleMapBottom - kIdleMapTop, g_cfg.dark);
+    g_display.markDirty();
+    if (!wasOpen) mapview::close();
+    g_idleShownUnread = unread;
+    g_idleShownPct = pct;
+    g_idleShownMin = millis() / 60000UL;
+    return true;
 }
 
 void enterIdle() {
@@ -3737,6 +6032,7 @@ void openThread(const uint8_t peer[16]) {
     if (isSelf(peer)) { toast("Pick a remote peer"); return; }
     memcpy(g_threadPeer, peer, 16);
     g_threadOpen = true;
+    g_tmenuOpen = false;
     g_txStr[0] = 0;
     loadHistory(peer);
     startEntry(Entry::Message);
@@ -3764,6 +6060,9 @@ void startNameEntry(const uint8_t peer[16]) {
 
 void goScreen(ScreenId s) {
     g_menuOpen = false;
+    g_libOpen = false;
+    g_cardOpen = false;
+    g_shareActive = false;
     if (mapview::isOpen()) mapview::close();
     if (g_threadOpen) { g_threadOpen = false; }
     if (entryActive()) endEntry();
@@ -3773,21 +6072,42 @@ void goScreen(ScreenId s) {
         g_sel = 0;
         g_scroll = 0;
     }
-    if (g_screen != s) g_listScroll = 0;
+    if (g_screen != s) { g_listScroll = 0; g_filter[0] = 0; }
     g_screen = s;
     if (s == SCR_INBOX || s == SCR_CONTACTS || s == SCR_PEERS) loadRows(s);
     requestRedraw();
     Serial.printf("[UI] -> %s\n", screenName(s));
 }
 
+// Settings > Waypoints > row: leave Settings, map over the Inbox, that waypoint selected.
+void wptOpenFromSettings(int i) {
+    goScreen(SCR_INBOX);
+    openMap();
+    wptSelect(i);
+}
+
 void openMenu() {
     g_menuOpen = true;
     g_menuSel = 0;
-    for (int i = 0; i < 5; i++) if (kMenuScreens[i] == g_screen) g_menuSel = i;
+    for (int i = 0; i < kMenuMap; i++) if (kMenuScreens[i] == g_screen) g_menuSel = i;   // not Map / Library
     requestRedraw();
 }
 
 void closeMenu() { g_menuOpen = false; requestRedraw(); }
+
+bool isListScreen(ScreenId s) { return s == SCR_INBOX || s == SCR_CONTACTS || s == SCR_PEERS; }
+
+void pageJump(int dir) {
+    if (!isListScreen(g_screen) || !g_rowCount) return;
+    const int ps = pageSize(g_screen), pages = (g_rowCount + ps - 1) / ps;
+    const int p = g_listSel / ps + dir;
+    if (p < 0 || p >= pages) { toast(dir > 0 ? "Last page" : "First page"); return; }
+    g_listSel = p * ps;
+    g_listScroll = g_listSel;
+    clampScroll(g_listSel, g_listScroll, g_rowCount);
+    rememberSelection();
+    requestRedraw();
+}
 
 void moveSelection(int delta) {
     if (g_screen == SCR_SETTINGS) {
@@ -3810,7 +6130,8 @@ void activateListRow(int idx) {
     g_listSel = idx;
     rememberSelection();
     if (g_screen == SCR_INBOX) openThread(g_rows[idx].peer);
-    else startNameEntry(g_rows[idx].peer);    // Contacts + Peers: Enter names the device
+    else if (g_shareActive) shareSendTo(idx);  // picking who gets a contact card
+    else openCard(g_rows[idx].peer);           // Contacts + Peers: Message / Rename / Share
 }
 
 void activateCurrent() {
@@ -3842,7 +6163,9 @@ void digitPressed(int d) {
         return;
     }
     if (g_screen == SCR_HOME) return;
-    int idx = (g_screen == SCR_CONTACTS) ? d : d - 1;
+    const int ps = pageSize(g_screen);
+    int idx = (g_listSel / ps) * ps + ((g_screen == SCR_CONTACTS) ? d : d - 1);
+    if (d == 0 && g_screen != SCR_CONTACTS) return;
     if (idx < 0 || idx >= g_rowCount) return;
     g_listSel = idx;
     clampScroll(g_listSel, g_listScroll, g_rowCount);
@@ -3852,12 +6175,21 @@ void digitPressed(int d) {
 
 void cancelEntry() {
     if (g_entry == Entry::Message) { closeThread(); return; }
+    if (g_entry == Entry::Search) { g_filter[0] = 0; endEntry(); loadRows(g_screen); return; }
     endEntry();
 }
 
 void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
-    if (mapview::isOpen() && !entryActive()) { closeMap(); return; }
+    if (g_cardOpen && !entryActive()) { closeCard(); return; }
+    if (g_shareActive && !entryActive()) { g_shareActive = false; toast("Share cancelled"); return; }
+    if (g_placeOpen && !entryActive()) { g_placeOpen = false; g_fullRefreshReq = true; requestRedraw(); return; }
+    if (g_libOpen && !entryActive()) {
+        if (g_libReading) { g_libReading = false; requestRedraw(); } else libClose();
+        return;
+    }
+    if (mapview::isOpen() && !entryActive()) { closeMap(); return; }    // map over a list: map first
+    if (g_filter[0] && !entryActive() && isListScreen(g_screen)) { g_filter[0] = 0; loadRows(g_screen); requestRedraw(); return; }
     if (entryActive())           { cancelEntry(); return; }
     if (g_screen == SCR_SETTINGS && g_navDepth > 0) { popPage(); return; }
 }
@@ -3879,7 +6211,20 @@ bool parseFloat(const char* s, float& out) {
 void commitEntry() {
     switch (g_entry) {
     case Entry::Message: {
-        if (!g_bufLen) return;
+        if (!g_bufLen) {                         // Enter on an empty draft: map or save card
+            if (locOffered()) {
+                const double la = g_threadLoc.lat, lo = g_threadLoc.lon;
+                uint8_t peer[16];
+                memcpy(peer, g_threadPeer, 16);
+                closeThread();
+                openMapAt(la, lo);
+                g_mapSel = cposFind(peer);            // their marker selected (name + age below)
+                Serial.printf("[LOC] show %.5f,%.5f on the map\n", la, lo);
+            } else {
+                saveThreadCard();
+            }
+            return;
+        }
         char body[BUF_CAP + 1];
         memcpy(body, g_buf, g_bufLen + 1);
         const power::CheckinPhase ph = checkinNow();
@@ -3930,6 +6275,37 @@ void commitEntry() {
         endEntry();
         return;
     }
+    case Entry::PlaceFind: {
+        char what[28];
+        strlcpy(what, g_buf, sizeof(what));
+        endEntry();
+        placeSearch(what);
+        return;
+    }
+    case Entry::LibFind: {
+        char what[40];
+        strlcpy(what, g_buf, sizeof(what));
+        endEntry();
+        libFind(what);
+        return;
+    }
+    case Entry::WptName: {
+        char nm[16];
+        strlcpy(nm, g_buf, sizeof(nm));
+        endEntry();
+        wptAdd(nm);
+        toast("Waypoint W%d", g_wptCount);
+        return;
+    }
+    case Entry::MapNum: {
+        long v;
+        if (!parseLong(g_buf, v) || v < 1 || v > 99) { toast("Map number 1-99"); return; }
+        endEntry();
+        cposAssign(g_cardPeer, (int)v);
+        toast("Map #%ld", v);
+        requestRedraw();
+        return;
+    }
     case Entry::IdleSecs: {
         long v;
         if (!parseLong(g_buf, v) || v < 10 || v > 99999) { toast("Out of range 10-99999"); return; }
@@ -3949,6 +6325,74 @@ void commitEntry() {
         g_cfg.hasPos = true;
         saveConfig();
         endEntry();
+        return;
+    }
+    case Entry::TcpHost: {
+        if (!g_bufLen || g_bufLen >= sizeof(g_tcpCfg.host) || strchr(g_buf, ' ')) { toast("Host: 1-63 chars, no spaces"); return; }
+        strlcpy(g_tcpCfg.host, g_buf, sizeof(g_tcpCfg.host));
+        endEntry();
+        tcpSave();
+        return;
+    }
+    case Entry::TcpPort: {
+        long v;
+        if (!parseLong(g_buf, v) || v < 1 || v > 65535) { toast("Port 1-65535"); return; }
+        g_tcpCfg.port = (uint16_t)v;
+        endEntry();
+        tcpSave();
+        return;
+    }
+    case Entry::Search:                          // keep the filter, back to browsing
+        endEntry();
+        Serial.printf("[LIST] filter \"%s\": %d rows\n", g_filter, g_rowCount);
+        return;
+    case Entry::PassOld: {                       // arg 0 = change, 1 = remove
+        if (lockWaitS()) { toast("Wrong too often: wait %u s", (unsigned)lockWaitS()); return; }
+        if (!vault::checkPassword(g_buf)) { lockNoteWrong(); endEntry(); toast("Wrong password"); return; }
+        lockNoteRight();
+        if (g_entryArg == 1) {
+            endEntry();
+            if (!vault::setPassword(nullptr)) { toast("Vault error"); return; }
+            wifiSaveAll();                       // re-seal saved WiFi passwords with the new key
+            if (g_cfg.idleMode == 2) { g_cfg.idleMode = 1; saveConfig(); }
+            Serial.println("[LOCK] password removed");
+            toast("Password removed");
+            return;
+        }
+        const int arg = g_entryArg;
+        startEntry(Entry::PassNew, nullptr, arg);
+        return;
+    }
+    case Entry::PassNew: {                       // arg 0 = set/change, 2 = then lock on idle
+        if (g_bufLen < kLockPassMin) { toast("Password: 4+ chars"); return; }
+        char keep[33];
+        strlcpy(keep, g_buf, sizeof(keep));
+        const int arg = g_entryArg;
+        startEntry(Entry::PassConfirm, nullptr, arg);   // startEntry keeps g_passNew
+        memcpy(g_passNew, keep, sizeof(g_passNew));
+        memset(keep, 0, sizeof(keep));
+        return;
+    }
+    case Entry::PassConfirm: {
+        if (strcmp(g_buf, g_passNew) != 0) {
+            const int arg = g_entryArg;
+            endEntry();
+            startEntry(Entry::PassNew, nullptr, arg);
+            toast("No match: type it again");
+            return;
+        }
+        char pw[33];
+        strlcpy(pw, g_passNew, sizeof(pw));
+        const int arg = g_entryArg;
+        endEntry();
+        const bool ok = vault::setPassword(pw);
+        memset(pw, 0, sizeof(pw));
+        if (!ok) { toast("Vault error"); return; }
+        wifiSaveAll();                           // re-seal saved WiFi passwords with the new key
+        lockNoteRight();
+        if (arg == 2) { g_cfg.idleMode = 2; saveConfig(); }
+        Serial.println("[LOCK] password set");
+        toast(arg == 2 ? "Password set; lock on" : "Password set");
         return;
     }
     case Entry::WifiPass: {
@@ -3986,18 +6430,31 @@ void bufAppend(char c) {
     g_buf[g_bufLen] = 0;
 }
 
+void searchChanged() {
+    strlcpy(g_filter, g_buf, sizeof(g_filter));
+    g_listSel = 0;
+    g_listScroll = 0;
+    g_rememberValid[g_screen] = false;
+    loadRows(g_screen);
+}
+
 void entryKey(const KeyEvent& ev) {
     if (ev.enter) { commitEntry(); return; }
     if (ev.del) {
         if (g_bufLen) g_buf[--g_bufLen] = 0;
+        if (g_entry == Entry::Search) searchChanged();
         requestRedraw();
         return;
     }
     char c = 0;
     if (ev.space) {
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) c = '.';
-        else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass) c = ' ';
+        else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass || passEntry(g_entry) ||
+                 g_entry == Entry::Search || g_entry == Entry::WptName || g_entry == Entry::LibFind ||
+                 g_entry == Entry::PlaceFind) c = ' ';
     } else if (ev.fn) {
+        if (passEntry(g_entry)) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
+        if (g_entry == Entry::Message && g_threadOpen) { g_tmenuOpen = true; g_tmenuSel = 0; requestRedraw(); return; }
         if (entryNumeric()) c = '0';          // MIC (+SYM) types 0 in number fields
     } else {
         c = ev.character;
@@ -4014,23 +6471,39 @@ void entryKey(const KeyEvent& ev) {
     }
     if (g_entry == Entry::Name && g_bufLen >= 23) { toast("Max 23 chars"); return; }
     if (g_entry == Entry::WifiPass && g_bufLen >= WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
+    if (passEntry(g_entry) && g_bufLen >= kLockPassMax) { toast("Max 32 chars"); return; }
+    if (g_entry == Entry::Search && g_bufLen >= sizeof(g_filter) - 1) return;
+    if (g_entry == Entry::WptName && g_entryReplace) { bufClear(); g_entryReplace = false; }   // typing replaces "WP3"
+    if (g_entry == Entry::WptName && g_bufLen >= 15) { toast("Max 15 chars"); return; }
+    if (g_entry == Entry::TcpHost && g_bufLen >= sizeof(g_tcpCfg.host) - 1) { toast("Max 63 chars"); return; }
     bufAppend(c);
+    if (g_entry == Entry::Search) searchChanged();
     // Show it on the next frame. Keys typed while that frame is on the panel are
     // queued by onPanelBusy() and land together in the frame after.
     requestRedraw();
 }
 
+void libOpen();
+
+void menuGo(int i) {
+    if (i == kMenuMap) { closeMenu(); openMap(); return; }
+    if (i == kMenuLib) { closeMenu(); libOpen(); return; }
+    goScreen(kMenuScreens[i]);
+}
+
 void menuKey(const KeyEvent& ev) {
-    if (ev.enter) { goScreen(kMenuScreens[g_menuSel]); return; }
+    if (ev.enter) { menuGo(g_menuSel); return; }
     const char c = (char)toupper((unsigned char)ev.character);
     if (c == 'M') { closeMenu(); return; }
     if (c == 'G') { if (g_menuSel > 0) g_menuSel--; requestRedraw(); return; }
-    if (c == 'V') { if (g_menuSel < 4) g_menuSel++; requestRedraw(); return; }
-    for (int i = 0; i < 5; i++)
-        if (c == kMenuLabels[i][0]) { goScreen(kMenuScreens[i]); return; }
+    if (c == 'V') { if (g_menuSel < kMenuCount - 1) g_menuSel++; requestRedraw(); return; }
+    if (c == 'L') { menuGo(kMenuMap); return; }
+    for (int i = 0; i < kMenuCount; i++)
+        if (c == kMenuKeys[i]) { menuGo(i); return; }
 }
 
 void browseKey(const KeyEvent& ev) {
+    if (g_cardOpen) { cardKey(ev); return; }
     if (ev.enter) { activateCurrent(); return; }
     if (ev.del || ev.space) return;
     const char raw = ev.character;
@@ -4047,7 +6520,17 @@ void browseKey(const KeyEvent& ev) {
         case 'A':
             if (g_screen == SCR_HOME) activateCurrent();
             break;
-        case 'L': openMap(); break;
+        case 'L':                                   // map; on a list row with a known position: there
+            if (isListScreen(g_screen) && g_listSel < g_rowCount && cposFind(g_rows[g_listSel].peer) >= 0 &&
+                g_cpos[cposFind(g_rows[g_listSel].peer)].hasPos)
+                mapShowContact(g_rows[g_listSel].peer);
+            else openMap();
+            break;
+        case 'F':                                   // find: type to filter the list
+            if (isListScreen(g_screen)) { startEntry(Entry::Search, g_filter); }
+            break;
+        case 'N': pageJump(+1); break;
+        case 'B': pageJump(-1); break;
         default: break;
     }
 }
@@ -4058,15 +6541,25 @@ void handleKey(const KeyEvent& ev) {
         noteInput();
         g_fullRefreshReq = true;
         requestRedraw();
-        Serial.println("[IDLE] wake");
+        Serial.println(g_locked ? "[IDLE] wake (locked)" : "[IDLE] wake");
         return;
     }
     noteInput();
+    if (g_locked) { lockKey(ev); return; }
+    if (g_threadOpen && g_tmenuOpen) { tmenuKey(ev); return; }
     if (ev.up) { goBack(); return; }                          // lone Shift = ^
     if (g_menuOpen) { menuKey(ev); return; }
     if (entryActive()) { entryKey(ev); return; }
+    if (g_libOpen) { libKey(ev); return; }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
     if (mapview::isOpen()) {
+        const char mc = (char)toupper((unsigned char)ev.character);
+        if (g_placeOpen) { placeKey(ev); return; }            // place results list (digits = go)
+        if (mapNumberKey(ev)) return;                         // "12" Enter: open chat #12
+        if (mc == 'F') { startEntry(Entry::PlaceFind); return; }   // find a place
+        if (wptMapKey(ev)) return;                            // P mark, N next waypoint, Del
+        if (mc == 'T') { mapCycleContact(); return; }        // next contact's last position
+        if (mc == 'C' || ev.enter) g_mapSel = -1;             // back to own position
         if (mapview::key(ev.character, ev.enter)) requestRedraw();
         return;
     }
@@ -4129,7 +6622,7 @@ bool cst328Read(int16_t& x, int16_t& y) {
 }
 
 void handleTouch(int16_t x, int16_t y) {
-    if (g_idleActive) return;                 // doc: key-only wake
+    if (g_idleActive || g_locked) return;     // doc: key-only wake; no touch while locked
     noteInput();
     const Hit* hit = nullptr;
     for (int i = g_hitCount - 1; i >= 0; i--) {      // last drawn = topmost
@@ -4142,12 +6635,14 @@ void handleTouch(int16_t x, int16_t y) {
     switch (hit->act) {
         case H_REFRESH:    g_fullRefreshReq = true; requestRedraw(); break;
         case H_MENU:       if (g_menuOpen) closeMenu(); else openMenu(); break;
-        case H_MENU_GO:    goScreen(kMenuScreens[hit->arg]); break;
+        case H_MENU_GO:    menuGo(hit->arg); break;
         case H_TAB:        goScreen((ScreenId)hit->arg); break;
         case H_BACK:       goBack(); break;
         case H_ANNOUNCE:   activateCurrent(); break;
         case H_UP:         moveSelection(-1); break;
         case H_DOWN:       moveSelection(+1); break;
+        case H_CARD:       if (g_cardOpen) { g_cardSel = hit->arg; cardAct(hit->arg); } break;
+        case H_TMENU:      if (g_tmenuOpen) { g_tmenuSel = hit->arg; tmenuAct(hit->arg); } break;
         case H_TILE_AUDIO:
             g_cfg.beep = !g_cfg.beep;
             g_audio.setEnabled(g_cfg.beep);
@@ -4268,6 +6763,16 @@ void powerApply(bool force) {
 // then rest until the next interval. The backup cell keeps ephemeris, so visits after
 // the first are usually hot starts of a few seconds.
 
+bool g_gpsVisitAsked = false;     // a feature (location auto-share) needs a fix now
+
+// Start a GPS visit at the next tick even between scheduled ones (any mode but GPS off).
+void gpsRequestVisit() {
+    if (g_gpsVisitStart) return;
+    g_gpsVisitAsked = true;
+    g_gpsNextVisit = millis();
+    Serial.println("[GPS] visit requested (location share)");
+}
+
 void powerGpsTick() {
     const uint32_t now = millis();
     const uint32_t ivl = power::gpsIntervalMs(g_pwEff.gps);
@@ -4299,7 +6804,9 @@ void powerGpsTick() {
             want = true;
         }
     } else if ((!g_gpsNextVisit || (int32_t)(now - g_gpsNextVisit) >= 0) &&
-               (g_pwEff.gps != power::GPS_ON_USE || (g_lastInputMs && now - g_lastInputMs < 10000))) {
+               (g_pwEff.gps != power::GPS_ON_USE || g_gpsVisitAsked ||
+                (g_lastInputMs && now - g_lastInputMs < 10000))) {
+        g_gpsVisitAsked = false;
         g_gpsVisitStart = now ? now : 1;
         Serial.println("[GPS] scheduled visit: receiver on");
         want = true;
@@ -4632,10 +7139,113 @@ void mirrorTick() {
     mirror::tick(g_display.framebuffer(), g_display.width(), g_display.height(), st);
 }
 
+// ---- sdput: file upload to the SD card over USB (tools/maptiles/push_tiles.py) ---------
+// "sdput <len> <crc32 hex> <path>" (path under /ratdeckpro, e.g. /maps/9/150/180.rmt).
+// The device answers "[SDPUT] ready", then reads exactly <len> raw bytes (no line
+// parsing meanwhile), checks the CRC-32 and writes the file: "[SDPUT] ok" or
+// "[SDPUT] err <why>". Payload is sent only after "ready", so a refused command (locked,
+// bad args) never lets binary bytes reach the line parser.
+constexpr size_t kSdPutMax = 16384;
+uint8_t* g_putBuf = nullptr;
+size_t   g_putLen = 0, g_putGot = 0;
+uint32_t g_putCrc = 0, g_putAt = 0;
+char     g_putPath[96] = "";
+uint32_t g_putOffset = 0;                    // > 0: append at this offset
+bool     g_putActive = false;
+
+uint32_t crc32Of(const uint8_t* d, size_t n) {
+    uint32_t c = 0xFFFFFFFFu;
+    for (size_t i = 0; i < n; i++) {
+        c ^= d[i];
+        for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u)));
+    }
+    return ~c;
+}
+
+void sdputStart(const char* args) {
+    unsigned long len = 0, crc = 0, off = 0;
+    char rel[80] = "";
+    // Optional 4th value: append at this byte offset (big files in 16 KB pieces; the
+    // file must already be exactly that long). Without it the file is (re)written.
+    if (sscanf(args, "%lu %lx %79s %lu", &len, &crc, rel, &off) < 3 || !len || len > kSdPutMax || rel[0] != '/' ||
+        strstr(rel, "..")) {
+        Serial.println("[SDPUT] err usage: sdput <len 1-16384> <crc32 hex> </path under ratdeckpro> [offset]");
+        return;
+    }
+    g_putOffset = off;
+    if (!g_putBuf) {
+#if !defined(SIMULATOR)
+        g_putBuf = (uint8_t*)heap_caps_malloc(kSdPutMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+        if (!g_putBuf) g_putBuf = (uint8_t*)malloc(kSdPutMax);
+        if (!g_putBuf) { Serial.println("[SDPUT] err no memory"); return; }
+    }
+    if (!sdMount()) { Serial.println("[SDPUT] err no SD card"); return; }
+    g_putLen = len; g_putGot = 0; g_putCrc = (uint32_t)crc; g_putAt = millis();
+    snprintf(g_putPath, sizeof(g_putPath), "%s%s", SD_PATH_ROOT, rel);
+    g_putActive = true;
+    Serial.println("[SDPUT] ready");
+}
+
+void sdputFinish() {
+    g_putActive = false;
+    if (crc32Of(g_putBuf, g_putLen) != g_putCrc) { Serial.println("[SDPUT] err crc"); return; }
+    static char lastDir[96] = "";
+    char dir[96];
+    snprintf(dir, sizeof(dir), "%s", g_putPath);
+    if (char* slash = strrchr(dir, '/')) *slash = 0;
+    if (strcmp(dir, lastDir) != 0) {            // tiles arrive grouped by folder
+        if (!g_sdStore.ensureDir(dir)) { lastDir[0] = 0; Serial.println("[SDPUT] err mkdir"); return; }
+        snprintf(lastDir, sizeof(lastDir), "%s", dir);
+    }
+    if (g_putOffset) {                          // append piece: the file must end at the offset
+        File af = g_sdStore.openFile(g_putPath, FILE_APPEND);
+        if (!af) { Serial.println("[SDPUT] err open"); return; }
+        if (af.size() != g_putOffset) { af.close(); Serial.printf("[SDPUT] err offset (file is %u)\n", (unsigned)af.size()); return; }
+        const size_t wr = af.write(g_putBuf, g_putLen);
+        af.close();
+        if (wr != g_putLen) { Serial.println("[SDPUT] err write"); return; }
+    } else if (!g_sdStore.writeSimple(g_putPath, g_putBuf, g_putLen)) { lastDir[0] = 0; Serial.println("[SDPUT] err write"); return; }
+    Serial.println("[SDPUT] ok");
+}
+
+// Returns true while a payload is being received (the line parser must not run).
+bool sdputPoll() {
+    if (!g_putActive) return false;
+    while (g_putGot < g_putLen && Serial.available()) {
+#if !defined(SIMULATOR)
+        const size_t got = Serial.read(g_putBuf + g_putGot, g_putLen - g_putGot);
+        if (!got) break;
+        g_putGot += got;
+#else
+        const int b = Serial.read();
+        if (b < 0) break;
+        g_putBuf[g_putGot++] = (uint8_t)b;
+#endif
+        g_putAt = millis();
+    }
+    if (g_putGot >= g_putLen) { sdputFinish(); return false; }
+    if (millis() - g_putAt > 3000) { g_putActive = false; Serial.println("[SDPUT] err timeout"); }
+    return g_putActive;
+}
+
 void handleSerialLine(char* p) {
     while (*p == ' ') p++;
     if (!*p) return;
-    if (p[0] == '@') { handleRemoteLine(p + 1); return; }
+    if (p[0] == '@') { handleRemoteLine(p + 1); return; }   // keys still meet the lock prompt
+    if (g_locked) {                       // locked: status only, nothing that reads or changes data
+        static const char* kOk[] = {"pw", "clk", "id", "lock", "ev", "rl", "sdinfo", "energy"};
+        bool ok = false;
+        for (const char* k : kOk) ok |= !strcmp(p, k);
+        if (!ok) { Serial.println("[CMD] locked: unlock on the device first"); return; }
+    }
+    if (!strncmp(p, "lock", 4) && (p[4] == 0 || p[4] == ' ')) {
+        if (!strcmp(p, "lock now")) lockNow();
+        Serial.printf("[LOCK] locked=%d password=%d idleMode=%u fails=%u wait=%us vault=%s\n", g_locked,
+                      lockHasPassword(), (unsigned)g_cfg.idleMode, (unsigned)g_lockFails, (unsigned)lockWaitS(),
+                      vault::status());
+        return;
+    }
     if ((p[0] == 't' || p[0] == 'T') && p[1] == ':') {
         if (!g_threadOpen) { Serial.println("[CMD] open a thread first"); return; }
         if (sendOrQueue(g_threadPeer, p + 2) != SendResult::Failed) loadHistory(g_threadPeer);
@@ -4785,9 +7395,10 @@ void handleSerialLine(char* p) {
         } else if (!mapview::isOpen()) openMap();   // "map" on an open map: status only
         char st[64]; mapview::status(st, sizeof(st));
         uint32_t ld, ms, hi; mapview::stats(ld, ms, hi);
-        Serial.printf("[MAP] %s %s; tiles loaded %lu missing %lu cache hits %lu\n",
-                      mapview::isOpen() ? "open" : "closed", st, (unsigned long)ld, (unsigned long)ms,
-                      (unsigned long)hi);
+        Serial.printf("[MAP] %s %s; tiles loaded %lu (packed %lu, %lu ms, decode %lu ms) missing %lu cache hits %lu\n",
+                      mapview::isOpen() ? "open" : "closed", st, (unsigned long)ld,
+                      (unsigned long)mapview::packedLoaded(), (unsigned long)mapview::packedMillis(),
+                      (unsigned long)mapview::decodeMillis(), (unsigned long)ms, (unsigned long)hi);
     } else if (!strncmp(p, "maptest ", 8)) {
         // Bench: write labelled grid test tiles (3x3 at z14 and z15) around <lat> <lon> on the SD card.
         double la = 0, lo = 0;
@@ -4822,11 +7433,195 @@ void handleSerialLine(char* p) {
     } else if (!strncmp(p, "sdarc ", 6)) {
         sdArchiveSet(atoi(p + 6) != 0);
         Serial.printf("[SD] message archive setting %s (applies at next boot)\n", sdArchiveEnabled() ? "on" : "off");
+    } else if (!strcmp(p, "wpt") || !strcmp(p, "wpt clear")) {
+        // wpt = list waypoints; wpt clear = remove all
+        if (p[3]) { g_wptCount = 0; g_wptSel = -1; wptSave(); Serial.println("[WPT] cleared"); return; }
+        for (int i = 0; i < g_wptCount; i++)
+            Serial.printf("[WPT] W%d %s %.5f,%.5f\n", i + 1, g_wpt[i].name, g_wpt[i].lat, g_wpt[i].lon);
+        Serial.printf("[WPT] %d waypoints\n", g_wptCount);
+    } else if (!strcmp(p, "track") || !strncmp(p, "track ", 6)) {
+        // track = status; bench: track add <lat> <lon> | track clear
+        double la = 0, lo = 0;
+        if (!strcmp(p, "track clear")) { trackClear(); return; }
+        if (!strncmp(p, "track add ", 10) && sscanf(p + 10, "%lf %lf", &la, &lo) == 2) {
+            if (!g_trackLoaded) trackLoad();
+            trackAdd(la, lo);
+            return;
+        }
+        Serial.printf("[TRACK] %s, %d points in RAM, waypoints %d\n", g_cfg.trackOn ? "on" : "off", g_trackN, g_wptCount);
+    } else if (!strcmp(p, "cpos") || !strncmp(p, "cpos ", 5)) {
+        // cpos = contacts' last positions; bench: cpos <hex32> <lat> <lon> [age min] |
+        // cpos num <hex32> <n> (map number) | cpos clear
+        if (!strcmp(p, "cpos clear")) { g_cposCount = 0; g_mapSel = -1; cposSave(); Serial.println("[LOC] cpos cleared"); return; }
+        if (!strncmp(p, "cpos num ", 9)) {
+            uint8_t d[16];
+            if (strlen(p + 9) < 34 || !hexToHash(p + 9, d) || atoi(p + 9 + 33) < 1 || atoi(p + 9 + 33) > 99) {
+                Serial.println("[LOC] cpos num <hex32> <1-99>");
+                return;
+            }
+            cposAssign(d, atoi(p + 9 + 33));
+            return;
+        }
+        if (p[4]) {
+            uint8_t d[16];
+            double la = 0, lo = 0;
+            int ageMin = 0;
+            if (strlen(p + 5) < 32 || !hexToHash(p + 5, d) || sscanf(p + 5 + 32, "%lf %lf %d", &la, &lo, &ageMin) < 2) {
+                Serial.println("[LOC] cpos <hex32> <lat> <lon> [age min]");
+                return;
+            }
+            cposNote(d, la, lo, (uint32_t)time(nullptr) - (uint32_t)ageMin * 60u);
+            return;
+        }
+        for (int i = 0; i < g_cposCount; i++) {
+            char nm[24], hex[33];
+            peerName(g_cpos[i].dest, nm, sizeof(nm));
+            hashToHex(g_cpos[i].dest, hex);
+            Serial.printf("[LOC] cpos #%u %s %s %.5f,%.5f at %lu%s\n", (unsigned)g_cpos[i].num, hex, nm,
+                          g_cpos[i].lat, g_cpos[i].lon, (unsigned long)g_cpos[i].at,
+                          g_cpos[i].hasPos ? "" : " (no position yet)");
+        }
+        Serial.printf("[LOC] cpos %d contacts\n", g_cposCount);
+    } else if (!strcmp(p, "loc")) {
+        char pos[56];
+        gpsPosText(pos, sizeof(pos));
+        Serial.printf("[LOC] %s (hdop %.1f)\n", pos, g_gpsHdop);
+        for (int i = 0; i < g_ashareCount; i++) {
+            char hex[33]; hashToHex(g_ashare[i].dest, hex);
+            Serial.printf("[LOC] auto %s every %u min until %lu last %lu\n", hex, (unsigned)g_ashare[i].mins,
+                          (unsigned long)g_ashare[i].until, (unsigned long)g_ashare[i].lastAt);
+        }
+    } else if (!strncmp(p, "locshare ", 9) || !strncmp(p, "ashare ", 7)) {
+        // Bench: locshare <hex32> = share my location; ashare <hex32> <0|5|15|30|60> | ashare off
+        const bool share = p[0] == 'l';
+        const char* a = p + (share ? 9 : 7);
+        if (!share && !strcmp(a, "off")) { ashareStopAll(); return; }
+        uint8_t dest[16];
+        if (strlen(a) < 32 || !hexToHash(a, dest)) { Serial.println("[LOC] need <hex32>"); return; }
+        if (share) { shareMyLocation(dest); return; }
+        const int mins = atoi(a + 32);
+        int i = ashareFind(dest);
+        if (!mins) { if (i >= 0) { ashareRemove(i); ashareSave(); } Serial.println("[LOC] auto-share off"); return; }
+        if (i < 0) {
+            if (g_ashareCount >= kAutoShareMax) return;
+            i = g_ashareCount++;
+            memset(&g_ashare[i], 0, sizeof(AutoShare));
+            memcpy(g_ashare[i].dest, dest, 16);
+        }
+        g_ashare[i].mins = (uint8_t)mins;
+        g_ashare[i].until = 0;
+        ashareSave();
+        Serial.printf("[LOC] auto-share every %d min\n", mins);
+        requestRedraw();
+    } else if (!strncmp(p, "sdput ", 6)) {
+        sdputStart(p + 6);
+    } else if (!strncmp(p, "sdget ", 6)) {
+        // Read one SD file (absolute card path, <= 16 KB): "[SDGET] <len> <crc32 hex>", then
+        // exactly <len> raw bytes (tools/maptiles/copy_tiles.py checks the CRC).
+        const char* path = p + 6;
+        if (!sdMount()) { Serial.println("[SDGET] err no SD card"); return; }
+        if (!g_putBuf) {
+#if !defined(SIMULATOR)
+            g_putBuf = (uint8_t*)heap_caps_malloc(kSdPutMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+            if (!g_putBuf) g_putBuf = (uint8_t*)malloc(kSdPutMax);
+            if (!g_putBuf) { Serial.println("[SDGET] err no memory"); return; }
+        }
+        size_t n = 0;
+        if (!g_sdStore.readFile(path, g_putBuf, kSdPutMax, n)) { Serial.println("[SDGET] err read"); return; }
+        Serial.printf("[SDGET] %u %08lx\n", (unsigned)n, (unsigned long)crc32Of(g_putBuf, n));
+        Serial.write(g_putBuf, n);
+        Serial.flush();
+    } else if (!strncmp(p, "sdrm ", 5)) {
+        // Delete one SD file, or an EMPTY folder (absolute card path). No recursion.
+        const char* path = p + 5;
+        if (!sdMount() || !path[0] || !strcmp(path, "/")) { Serial.println("[SDRM] err"); return; }
+        bool ok = g_sdStore.remove(path) || g_sdStore.removeDir(path);
+        Serial.printf("[SDRM] %s %s\n", ok ? "ok" : "err", path);
+    } else if (!strcmp(p, "sdls") || !strncmp(p, "sdls ", 5) || !strncmp(p, "sdlsa ", 6)) {
+        // List one SD folder (absolute card path, default "/"): name, size or <dir>.
+        // sdls shows the first 80 entries; sdlsa (for tools) shows all of them.
+        const bool all = p[4] == 'a';
+        const char* dirPath = all ? p + 6 : (p[4] ? p + 5 : "/");
+        if (!sdMount()) { Serial.println("[SD] no card"); return; }
+        File d = g_sdStore.openDir(dirPath);
+        if (!d) { Serial.printf("[SDLS] cannot open %s\n", dirPath); return; }
+        int n = 0;
+        for (File e = d.openNextFile(); e; e = d.openNextFile()) {
+            if (all || n++ < 80) {
+                if (all) n++;
+                if (e.isDirectory()) Serial.printf("[SDLS] <dir> %s\n", e.name());
+                else Serial.printf("[SDLS] %10lu %s\n", (unsigned long)e.size(), e.name());
+            }
+            e.close();
+            if ((n & 31) == 0) yield();
+        }
+        d.close();
+        Serial.printf("[SDLS] %d entries in %s\n", n, dirPath);
+    } else if (!strncmp(p, "sdformat", 8)) {
+        // sdformat <cluster bytes 512..32768> ERASE-ALL : new FAT32 on the card with that
+        // cluster size, then restart. Map tiles are 8 KB: 4096 wastes nothing (stock cards
+        // come with 32 KB clusters, 4x the space per tile). Everything on the card is lost.
+#if defined(SIMULATOR)
+        Serial.println("[SD] sdformat: not in the simulator");
+#else
+        unsigned long au = 0;
+        char conf[16] = "";
+        if (sscanf(p + 8, "%lu %15s", &au, conf) != 2 || strcmp(conf, "ERASE-ALL") || au < 512 || au > 32768 ||
+            (au & (au - 1))) {
+            Serial.println("[SD] usage: sdformat <512|1024|...|32768> ERASE-ALL");
+            return;
+        }
+        if (!sdMount()) { Serial.println("[SD] no card"); return; }
+        SharedSPILock lock;
+        FATFS* fs = nullptr;
+        DWORD freeClst = 0;
+        if (f_getfree("0:", &freeClst, &fs) != FR_OK || !fs) { Serial.println("[SD] drive 0: not found"); return; }
+#if FF_MAX_SS != FF_MIN_SS
+        const uint32_t ss = fs->ssize;
+#else
+        const uint32_t ss = FF_MAX_SS;
+#endif
+        const uint64_t vol = (uint64_t)(fs->n_fatent - 2) * fs->csize * ss;
+        const uint64_t card = g_sdStore.totalBytes();
+        if (vol > card + (64ULL << 20) || vol + (64ULL << 20) < card) {   // drive 0: must be this card
+            Serial.printf("[SD] drive 0: is %llu MB, card %llu MB: not formatting\n", vol >> 20, card >> 20);
+            return;
+        }
+        Serial.printf("[SD] formatting FAT32 with %lu-byte clusters (was %lu); takes a minute...\n", au,
+                      (unsigned long)(fs->csize * ss));
+        Serial.flush();
+        f_mount(nullptr, "0:", 0);
+        const UINT workLen = 16384;
+        void* work = heap_caps_malloc(workLen, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+        const FRESULT r = work ? f_mkfs("0:", FM_FAT32, (DWORD)au, work, workLen) : FR_NOT_ENOUGH_CORE;
+        if (work) free(work);
+        Serial.printf("[SD] format %s (%d); restarting\n", r == FR_OK ? "OK" : "FAILED", (int)r);
+        Serial.flush();
+        delay(500);
+        ESP.restart();
+#endif
     } else if (!strcmp(p, "sdinfo")) {
         Serial.printf("[SD] %s (mounting to check)%c", g_sdStatus, 10);
         sdMount();
         Serial.printf("[SD] %s; message archive %s%c", g_sdStatus,
                       g_sdArchiveActive ? "active" : sdArchiveEnabled() ? "on, not active" : "off", 10);
+#if !defined(SIMULATOR)
+        if (g_sdMounted) {
+            SharedSPILock lock;
+            FATFS* fs = nullptr;
+            DWORD freeClst = 0;
+            if (f_getfree("0:", &freeClst, &fs) == FR_OK && fs) {
+#if FF_MAX_SS != FF_MIN_SS
+                const uint32_t ss = fs->ssize;
+#else
+                const uint32_t ss = FF_MAX_SS;
+#endif
+                Serial.printf("[SD] FAT%s cluster %lu bytes, free %llu MB%c", fs->fs_type == FS_FAT32 ? "32" : "",
+                              (unsigned long)(fs->csize * ss), ((uint64_t)freeClst * fs->csize * ss) >> 20, 10);
+            }
+        }
+#endif
     } else if (!strncmp(p, "epdoff ", 7)) {
         g_epdOffInSleep = (uint8_t)atoi(p + 7);
         Serial.printf("[EINK] before sleep: %s%c", g_epdOffInSleep == 2 ? "controller deep sleep" : g_epdOffInSleep ? "power off" : "left on", 10);
@@ -4866,17 +7661,18 @@ void handleSerialLine(char* p) {
     } else if (!strncmp(p, "rmconv", 6) && (p[6] == 0 || p[6] == ' ')) {
         // Bench: "rmconv" lists conversations; "rmconv <peer>" deletes one; "rmconv all" deletes all.
         using namespace handheld::storage;
+        constexpr int kRmMax = 10;
         std::vector<std::string> peers;
         if (p[6] == ' ' && strlen(p + 7) == 32) peers.push_back(p + 7);
         else {
             auto sub = g_msgStore.requestConversationPage({}, false, ConversationOrder::Recent,
-                                                          ConversationDirection::After, (uint8_t)MAX_ROWS);
+                                                          ConversationDirection::After, (uint8_t)kRmMax);
             MessageStore::Result res;
-            ConversationSelector sel[MAX_ROWS];
+            ConversationSelector sel[kRmMax];
             size_t n = 0;
             if (sub.accepted() && waitResult(sub.ticket, res) && res.outcome == Outcome::Committed &&
                 res.error == Error::None) {
-                n = std::min(res.length / sizeof(ConversationSelector), (size_t)MAX_ROWS);
+                n = std::min(res.length / sizeof(ConversationSelector), (size_t)kRmMax);
                 if (!g_msgStore.readPayload(sub.ticket, sel, n * sizeof(ConversationSelector))) n = 0;
             }
             if (sub.accepted()) g_msgStore.releaseResult(sub.ticket);
@@ -5041,6 +7837,23 @@ void handleSerialLine(char* p) {
         Serial.printf("[FILL] saved %d, failed %d in %lu ms; flash %u of %u KB\n", saved, failed,
                       millis() - t0, (unsigned)(g_flash.usedBytes() >> 10), (unsigned)(g_flash.totalBytes() >> 10));
         requestRedraw();
+    } else if (!strncmp(p, "contact ", 8) && strlen(p) > 8 + 32 + 1) {
+        // Bench: contact <32 hex dest> <name>  - save a contact (sim list / paging tests)
+        uint8_t h[16];
+        bool ok = true;
+        for (int i = 0; i < 16 && ok; i++) {
+            const int a = hexNib(p[8 + 2 * i]), b = hexNib(p[9 + 2 * i]);
+            ok = a >= 0 && b >= 0;
+            h[i] = (uint8_t)((a << 4) | b);
+        }
+        if (ok) { saveContactName(h, p + 8 + 32 + 1); if (isListScreen(g_screen)) loadRows(g_screen); requestRedraw(); }
+        else Serial.println("[CMD] contact <32 hex dest> <name>");
+    } else if (!strcmp(p, "ids")) {
+        const auto& v = g_idMgr.identities();
+        for (size_t i = 0; i < v.size(); i++)
+            Serial.printf("[ID] slot %u %s %s%s\n", (unsigned)i, v[i].hash.c_str(), v[i].displayName.c_str(),
+                          v[i].active ? " (active)" : "");
+        Serial.printf("[ID] %u identities, tcp %s\n", (unsigned)v.size(), tcpStatus());
     } else if (!strcmp(p, "id")) {
         Serial.printf("[ID] dest=%s name=%s\n", g_destHex, g_selfName);
     } else if (!strncmp(p, "txp", 3) && (p[3] == ' ' || p[3] == 0)) {
@@ -5051,7 +7864,13 @@ void handleSerialLine(char* p) {
             if (pr.begin("rs_radio", false)) { pr.putChar("txp", (int8_t)v); pr.end(); }
             if (g_radio) g_radio->setTxPower(v);
         }
-        Serial.printf("[LORA] tx power %d dBm (saved)\n", loraTxPower());
+        // "(saved)" only when NVS holds a value: a build default (22, or -9 in a bench
+        // build) changes with the firmware that is flashed.
+        Preferences pr;
+        bool saved = false;
+        if (pr.begin("rs_radio", true)) { saved = pr.isKey("txp"); pr.end(); }
+        Serial.printf("[LORA] tx power %d dBm (%s)\n", loraTxPower(),
+                      saved ? "saved" : "build default - set with txp <dBm>");
     } else if (!strcmp(p, "tcxo") && g_radio) {
         // Bench: TCXO cold-start check at each delay (bit 0x20 = XOSC start error).
         static const uint32_t us[] = {5000, 10000, 20000, 40000, 640000};
@@ -5124,7 +7943,9 @@ void handleSerialLine(char* p) {
 void pollSerial() {
     static char line[180];
     static size_t len = 0;
+    if (sdputPoll()) return;
     while (Serial.available()) {
+        if (g_putActive) { if (sdputPoll()) return; continue; }
         char c = (char)Serial.read();
         if (c == '\r' || c == '\n') {
             if (!len) continue;
@@ -5160,6 +7981,10 @@ void watchMessages() {
     static uint32_t lastRev = 0, lastRedraw = 0;
     const uint32_t incoming = g_msgStore.incomingCommitted();
     if (incoming != lastIncoming) { lastIncoming = incoming; notifyInbound(); }
+    static int lastUnread = -1;
+    const int unread = g_msgStore.totalUnreadCount();
+    if (g_locked && !g_idleActive && unread != lastUnread) requestRedraw();   // lock prompt count
+    lastUnread = unread;
 
     const uint32_t rev = g_msgStore.revision();
     if (rev == lastRev || g_idleActive) return;
@@ -5210,8 +8035,16 @@ void watchClockAndToast() {
 
 void watchIdle() {
     if (g_idleActive) { updateIdle(); return; }
-    if (g_cfg.idleMode == 0 || g_bufLen) return;      // never hide an unsent draft
-    if (millis() - g_lastInputMs >= g_cfg.idleSecs * 1000UL) enterIdle();
+    if (g_locked) {                                    // prompt left alone -> splash
+        if (millis() - g_lastInputMs >= kLockPromptMs) { lockWipe(); enterIdle(); }
+        return;
+    }
+    if (g_cfg.idleMode == 0) return;
+    const bool lockIt = lockOnIdle();                  // the draft stays in its buffer
+    if (g_bufLen && !lockIt) return;                   // never hide an unsent draft
+    if (millis() - g_lastInputMs >= g_cfg.idleSecs * 1000UL) {
+        if (lockIt) lockNow(); else enterIdle();
+    }
 }
 
 }  // namespace
@@ -5317,8 +8150,16 @@ bool begin() {
     powerApply(true);                     // CPU clock, LoRa, WiFi, key light for the mode
     powerGpsTick();                       // decides whether the GPS starts powered
     gpsApplyPower();
-    vault::begin();                       // default password, applied automatically for now
-    wifiLoad();
+    vault::begin();                       // custom password -> stays locked until typed
+    lockLoadFails();
+    if (lockHasPassword()) { g_locked = true; Serial.println("[LOCK] boot locked (password set)"); }
+    if (vault::unlocked()) wifiLoad();    // else after unlock (lockTry)
+    tcpLoad();
+    ashareLoad();
+    cposLoad();
+    wptLoad();
+    mapview::setCoordFormatter(fmtCoord);
+    g_proto.setMessageCallback(onCommittedMessage);
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
     noteInput();
     goScreen(SCR_HOME);
@@ -5349,6 +8190,10 @@ void loop() {
     watchPeers();
     watchClockAndToast();
     watchWifi();
+    tcpTick();
+    autoShareTick();
+    inboundTick();
+    trackTick();
 
     processKeys();         // again, in case a watcher above took a while
     pollTouch();

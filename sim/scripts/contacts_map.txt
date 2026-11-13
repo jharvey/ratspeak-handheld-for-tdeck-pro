@@ -1,0 +1,82 @@
+# Contacts on the map (tiles near 04095 in build\simdata\cmap\sd, copied from the NAS copy).
+# Alice #1 (5 min old = black disc) and Carol #3 (10 min) at the same spot -> "1" with a "+";
+# Bob #2 2 h old = hollow. T cycles (selected one is drawn on top, footer "#n Name dist dir
+# age"); "2" Enter opens Bob's chat; Contacts > find Alice > L shows her on the map;
+# contact page 4 Map number: Carol -> #1 (Alice takes #3), then "1" Enter opens Carol's chat.
+expect 60000 [BOOT] ready
+serial cpos clear
+serial contact 0000000000000000000000000000a11c Alice
+serial contact 0000000000000000000000000000b0bb Bob
+serial contact 0000000000000000000000000000ca01 Carol
+wait 500
+serial cpos 0000000000000000000000000000a11c 43.70 -70.80 5
+expect 3000 [LOC] Alice at
+serial cpos 0000000000000000000000000000b0bb 43.52 -71.05 120
+expect 3000 [LOC] Bob at
+serial cpos 0000000000000000000000000000ca01 43.7003 -70.8004 10
+expect 3000 [LOC] Carol at
+serial map 43.66 -70.90 10
+wait 3000
+shot cmap-01-all.png
+key T
+expect 5000 [MAP] contact #1 Alice
+wait 2500
+shot cmap-02-alice.png
+key T
+expect 5000 [MAP] contact #3 Carol
+wait 2500
+shot cmap-03-carol-on-top.png
+key T
+expect 5000 [MAP] contact #2 Bob
+key T
+expect 5000 [MAP] contact: none
+key 2
+wait 800
+shot cmap-04-typing.png
+key ENTER
+expect 5000 [MAP] open chat #2
+wait 2000
+key BACK
+wait 1500
+key C
+wait 1500
+key F
+type Alice
+key ENTER
+wait 1000
+key 0
+key L
+expect 5000 [MAP] contact #1 Alice
+wait 2000
+shot cmap-05-from-list.png
+key BACK
+wait 1500
+key BACK
+wait 800
+key C
+wait 1500
+key F
+type Carol
+key ENTER
+wait 1000
+key 0
+key ENTER
+wait 1500
+key 4
+wait 800
+key BKSP
+type 1
+wait 500
+shot cmap-06-mapnum.png
+key ENTER
+expect 5000 [LOC] Carol is map #1
+wait 1500
+serial cpos
+expect 3000 [LOC] cpos #3 0000000000000000000000000000a11c
+serial map 43.66 -70.90 10
+wait 3000
+shot cmap-07-carol-is-1.png
+key 1
+key ENTER
+expect 5000 [MAP] open chat #1
+quit

@@ -1,0 +1,64 @@
+# Waypoints + track on the map (tiles near 04095 in build\simdata\cmap\sd).
+# P marks a waypoint at the map centre (name, Enter), N cycles them (centred, diamond
+# selected, dashed guide line from own position, footer "W1 NAME dist dir"), Del twice
+# removes; Settings S.1.9 lists them; the track (bench "track add") draws as a dotted line.
+expect 60000 [BOOT] ready
+serial track clear
+serial wpt clear
+wait 300
+serial map 43.64 -70.92 12
+wait 3000
+key P
+wait 500
+type BALLFIELD
+wait 300
+shot wpt-01-name.png
+key ENTER
+expect 3000 [WPT] W1 BALLFIELD
+key D
+wait 800
+key D
+wait 800
+key P
+type HOME
+key ENTER
+expect 3000 [WPT] W2 HOME
+serial track add 43.630 -70.950
+serial track add 43.634 -70.940
+serial track add 43.640 -70.930
+serial track add 43.643 -70.918
+serial track add 43.648 -70.905
+expect 3000 [TRACK] point 5
+# HOME is still selected after marking it: N goes back to own position first
+key N
+expect 3000 [MAP] waypoint: none
+key N
+expect 3000 [MAP] waypoint W1 BALLFIELD
+wait 2500
+shot wpt-02-w1.png
+key N
+expect 3000 [MAP] waypoint W2 HOME
+wait 2000
+key N
+expect 3000 [MAP] waypoint: none
+key N
+expect 3000 [MAP] waypoint W1
+key BKSP
+wait 300
+key BKSP
+expect 3000 [WPT] removed W1 BALLFIELD
+wait 1500
+key BACK
+wait 1500
+key M
+wait 800
+key S
+wait 800
+key 1
+wait 800
+key 9
+wait 1500
+shot wpt-03-list.png
+serial track
+expect 3000 [TRACK]
+quit

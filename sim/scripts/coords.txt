@@ -1,0 +1,35 @@
+# Coordinate formats (S.1.12): decimal -> DMS -> MGRS; map header and GPS line follow.
+# Tiles near 04095 in build\simdata\cmap\sd.
+expect 60000 [BOOT] ready
+wait 1500
+key M
+wait 800
+key S
+wait 800
+key 1
+wait 1000
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+wait 1000
+shot coord-01-row.png
+key ENTER
+expect 3000 [CFG] coordinates
+wait 800
+shot coord-02-next.png
+key ENTER
+expect 3000 [CFG] coordinates
+wait 500
+key H
+serial map 43.64 -70.92 12
+wait 3000
+shot coord-03-map.png
+quit

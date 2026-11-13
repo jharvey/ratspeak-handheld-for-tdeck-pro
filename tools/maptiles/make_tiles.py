@@ -14,8 +14,18 @@ Sources (pick one):
   --test              synthetic grid tiles labelled with z/x/y (no Pillow needed) to try
                       the map screen without real map data.
 
+  --overlay-url T     a second layer composited on top before the 1-bit step, e.g. Canada
+                      (NRCan CBMT, Open Government Licence - Canada; credit "Contains
+                      information licensed under the Open Government Licence - Canada"):
+                      --url .../BaseMaps/CBMT_CBCT_GEOM_3857/MapServer/tile/{z}/{y}/{x}
+                      --overlay-url .../BaseMaps/CBMT_TXT_3857/MapServer/tile/{z}/{y}/{x}
+                      (host maps-cartes.services.geo.ca/server2_serveur2/rest/services)
+                      with --threshold 200 (its roads are light grey).
+
 Area: --bbox MINLON,MINLAT,MAXLON,MAXLAT  or  --center LAT,LON --radius-km R
 Zoom: --zoom 12-16 (inclusive range) or a single level.
+Start view: maps/home.txt = "lat lon zoom", used when the device has no GPS fix or saved
+position (--home LAT,LON,ZOOM; else the first run's area centre at its lowest zoom).
 
 Conversion (Pillow, `pip install pillow`): grey -> auto contrast -> Floyd-Steinberg dither.
 --threshold N (0-255) instead gives clean black/white without dithering (good for line maps).
@@ -83,13 +93,21 @@ def pack_bits(black_rows):
     return bytes(out)
 
 
-def image_to_bits(data, threshold, invert):
+def image_to_bits(data, threshold, invert, overlay=None):
     from io import BytesIO
     try:
         from PIL import Image, ImageOps
     except ImportError:
         sys.exit("Pillow is needed for real map tiles: pip install pillow")
-    img = Image.open(BytesIO(data)).convert("L")
+    img = Image.open(BytesIO(data))
+    if overlay:                              # e.g. a transparent label layer on top
+        base = img.convert("RGBA")
+        top = Image.open(BytesIO(overlay)).convert("RGBA")
+        if top.size != base.size:
+            top = top.resize(base.size)
+        base.alpha_composite(top)
+        img = base
+    img = img.convert("L")
     if img.size != (TILE, TILE):
         img = img.resize((TILE, TILE))
     img = ImageOps.autocontrast(img, cutoff=1)
@@ -179,7 +197,10 @@ def main():
     src.add_argument("--mbtiles")
     src.add_argument("--url")
     src.add_argument("--test", action="store_true")
+    ap.add_argument("--overlay-url", help="second tile layer drawn on top (e.g. labels), same {z}/{x}/{y}")
     ap.add_argument("--bbox")
+    ap.add_argument("--bboxes", help="file with one MINLON,MINLAT,MAXLON,MAXLAT per line (e.g. a road "
+                                     "corridor); tiles of all boxes, each once")
     ap.add_argument("--center")
     ap.add_argument("--radius-km", type=float, default=2.0)
     ap.add_argument("--zoom", default="12-16")
@@ -190,20 +211,53 @@ def main():
     ap.add_argument("--delay", type=float, default=1.0, help="seconds between URL downloads")
     ap.add_argument("--max-tiles", type=int, default=5000)
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--raw", action="store_true",
+                    help="write tiles without the 8-byte header (8192 bytes; firmware 2026-11-12+), "
+                         "exactly 8 KB on the PC too")
+    ap.add_argument("--skip-pushed", action="store_true",
+                    help="skip tiles that every unit already has (all pushed_<dest>.txt in --out)")
+    ap.add_argument("--home", help="LAT,LON,ZOOM start view when the device has no position "
+                    "(maps/home.txt; default: centre of this area at its lowest zoom, "
+                    "written only if the card has no home.txt yet)")
+    ap.add_argument("--home-only", action="store_true", help="only write home.txt, no tiles")
     a = ap.parse_args()
 
-    if a.bbox:
+    boxes = None
+    if a.bboxes:
+        boxes = [tuple(float(v) for v in ln.split(",")) for ln in open(a.bboxes) if ln.strip() and ln[0] != "#"]
+        bbox = (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+    elif a.bbox:
         bbox = tuple(float(v) for v in a.bbox.split(","))
     elif a.center:
         lat, lon = (float(v) for v in a.center.split(","))
         bbox = bbox_from_center(lat, lon, a.radius_km)
     else:
-        sys.exit("give --bbox or --center")
+        sys.exit("give --bbox, --bboxes or --center")
     zooms = parse_zoom(a.zoom)
+    root = os.path.join(a.out, "ratdeckpro", "maps")
+    home = os.path.join(root, "home.txt")
+    if a.home or not os.path.exists(home):
+        if a.home:
+            hlat, hlon, hz = a.home.split(",")
+        else:
+            hlat, hlon, hz = (bbox[1] + bbox[3]) / 2, (bbox[0] + bbox[2]) / 2, min(zooms)
+        os.makedirs(root, exist_ok=True)
+        with open(home, "w", newline="\n") as f:
+            f.write("%.5f %.5f %d\n" % (float(hlat), float(hlon), int(hz)))
+        print("start view (no GPS / saved position): %s" % open(home).read().strip())
+    if a.home_only:
+        return
     jobs = []
     for z in zooms:
-        xs, ys = tile_range(bbox, z)
-        jobs += [(z, x, y) for x in xs for y in ys]
+        if boxes:
+            seen = set()
+            for b in boxes:
+                xs, ys = tile_range(b, z)
+                seen |= {(x, y) for x in xs for y in ys}
+            jobs += [(z, x, y) for x, y in sorted(seen)]
+        else:
+            xs, ys = tile_range(bbox, z)
+            jobs += [(z, x, y) for x in xs for y in ys]
     print("%d tiles over zoom %s (%.1f MB on the card)" % (len(jobs), a.zoom, len(jobs) * (8200 / 1e6)))
     if len(jobs) > a.max_tiles:
         sys.exit("more than --max-tiles %d; shrink the area or zoom range" % a.max_tiles)
@@ -215,12 +269,18 @@ def main():
         if not a.user_agent:
             sys.exit("--url needs --user-agent (identify your app to the tile server)")
         source = UrlSource(a.url, a.user_agent, a.delay)
+    overlay = UrlSource(a.overlay_url, a.user_agent, a.delay) if a.overlay_url else None
 
-    root = os.path.join(a.out, "ratdeckpro", "maps")
+    have = set()
+    if a.skip_pushed and os.path.isdir(a.out):
+        logs = [os.path.join(a.out, f) for f in os.listdir(a.out)
+                if f.startswith("pushed_") and f.endswith(".txt") and ".preformat" not in f]
+        sets = [set(open(p).read().split()) for p in logs]
+        have = set.intersection(*sets) if sets else set()
     done = skipped = 0
     for z, x, y in jobs:
         path = os.path.join(root, str(z), str(x), "%d.rmt" % y)
-        if os.path.exists(path) and not a.overwrite:
+        if (os.path.exists(path) and not a.overwrite) or "/maps/%d/%d/%d.rmt" % (z, x, y) in have:
             skipped += 1
             continue
         if a.test:
@@ -229,10 +289,11 @@ def main():
             data = source.get(z, x, y)
             if not data:
                 continue
-            bits = image_to_bits(data, a.threshold, a.invert)
+            over = overlay.get(z, x, y) if overlay else None
+            bits = image_to_bits(data, a.threshold, a.invert, over)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
-            f.write(HEADER + bits)
+            f.write(bits if a.raw else HEADER + bits)
         done += 1
         if done % 100 == 0:
             print("  %d / %d" % (done, len(jobs)))

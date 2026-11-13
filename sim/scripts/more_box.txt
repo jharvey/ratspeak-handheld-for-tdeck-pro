@@ -1,0 +1,16 @@
+# Settings scrolled down: the "^ more" cell under MENU must line up with MENU's
+# edges and the first row's top line (compare with the footer's "v more").
+expect 60000 [BOOT] ready
+wait 1500
+key M
+wait 1000
+key S
+wait 1500
+key V
+key V
+key V
+key V
+key V
+wait 1500
+shot more-box.png
+quit

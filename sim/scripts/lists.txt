@@ -1,0 +1,81 @@
+# Long lists: paging and search (run fresh: run-script.bat scripts\lists.txt lists fresh).
+# 25 contacts via the bench console, then Contacts: pages of 10 (N / B, V across the
+# edge, digits within the page), F = find (live filter), ^ clears it.
+expect 60000 [BOOT] ready
+serial contact 00000000000000000000000000000001 Alpha
+serial contact 00000000000000000000000000000002 Bravo
+serial contact 00000000000000000000000000000003 Charlie
+serial contact 00000000000000000000000000000004 Delta
+serial contact 00000000000000000000000000000005 Echo
+serial contact 00000000000000000000000000000006 Foxtrot
+serial contact 00000000000000000000000000000007 Golf
+serial contact 00000000000000000000000000000008 Hotel
+serial contact 00000000000000000000000000000009 India
+serial contact 0000000000000000000000000000000a Juliet
+serial contact 0000000000000000000000000000000b Kilo
+serial contact 0000000000000000000000000000000c Lima
+serial contact 0000000000000000000000000000000d Mike
+serial contact 0000000000000000000000000000000e November
+serial contact 0000000000000000000000000000000f Oscar
+serial contact 00000000000000000000000000000010 Papa
+serial contact 00000000000000000000000000000011 Quebec
+serial contact 00000000000000000000000000000012 Romeo
+serial contact 00000000000000000000000000000013 Sierra
+serial contact 00000000000000000000000000000014 Tango
+serial contact 00000000000000000000000000000015 Uniform
+serial contact 00000000000000000000000000000016 Victor
+serial contact 00000000000000000000000000000017 Whiskey
+serial contact 00000000000000000000000000000018 Xray
+serial contact 00000000000000000000000000000019 Yankee
+expect 10000 "Yankee" ok=1
+wait 1500
+key C
+wait 1500
+shot lists-01-page1.png
+key N
+wait 1000
+shot lists-02-page2.png
+key 5
+key ENTER
+wait 1000
+shot lists-03-card.png
+key BACK
+wait 800
+key N
+wait 1000
+shot lists-04-page3.png
+key N
+expect 3000 [UI] Last page
+key B
+key B
+wait 1000
+# Find: type "ar" -> Charlie, Oscar (names or hashes; hex has no "r").
+key F
+wait 500
+type ar
+wait 1000
+shot lists-05-find.png
+key ENTER
+expect 3000 [LIST] filter "ar": 2 rows
+wait 800
+key 1
+key ENTER
+wait 1000
+shot lists-06-found-card.png
+key BACK
+wait 800
+# ^ clears the filter: all 26 rows again (MyID + 25).
+key BACK
+wait 1000
+shot lists-07-cleared.png
+key F
+type zzz
+wait 800
+shot lists-08-nomatch.png
+key BACK
+wait 800
+key P
+wait 1000
+key I
+wait 1000
+quit

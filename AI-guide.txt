@@ -4,11 +4,18 @@ Last: 2026-11-11  (LoRa RX duty cycle, INA226 logger software, back-power rule)
 ================================================================================
 
 START HERE (handoff 2026-11-11)
+- Map / elevation downloads (2026-11-12): run from the user's NAS, M:\ratspeak-maps (mapped
+  \\192.168.0.202\maps). After any crash read M:\ratspeak-maps\RESUME.md + STATUS.txt and
+  restart there (every job resumes). Reference library: M:\ratspeak-info.
 - Bench units: only 3 USB ports free (user's mouse dongle) - COM5, COM6, COM9 attached;
   COM3 unplugged. All run RatSpeak in Balanced with the RX duty-cycle build (2026-11-11).
-  COM3 + COM6 = bench build at -9 dBm (antenna unknown); COM5 = normal build with
-  txp -9 saved in NVS; COM9 = normal build. COM8 unplugged (GPS fault). Only COM8 and
-  COM9 have SD cards. COM3/COM5 boot slowly (large message stores; COM5 281 s -> 98 s after the 2026-11-11 store fixes).
+  COM3 = bench build at -9 dBm (antenna unknown). COM5 + COM6 = normal build with
+  txp -9 saved in NVS (antenna unknown; COM6 moved off the bench build 2026-11-12 - it
+  had NO saved txp, so the normal build's 22 dBm default applied for one boot announce
+  before `txp -9` was saved). COM9 = normal build at 22 dBm. Before flashing a normal
+  build onto a unit, check that `txp` says "(saved)" - older firmware printed "(saved)"
+  even for the build default. COM8 unplugged (GPS fault). SD cards (29.5 GB): COM5
+  (holds 28 GB of camera videos in /VIDEO - not ours, keep), COM6, COM9 (maps). COM3/COM5 boot slowly (large message stores; COM5 281 s -> 98 s after the 2026-11-11 store fixes).
 - Bench build (-9 dBm, ~11 min): PLATFORMIO_BUILD_FLAGS="-DRS_BENCH_TX_DBM=-9"
   PLATFORMIO_BUILD_DIR=".pio/build_bench" pio run -e tdeck_pro_standalone
 - Flash app only: esptool.py --chip esp32s3 --port COMx --baud 115200 --before
@@ -23,6 +30,12 @@ START HERE (handoff 2026-11-11)
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
+- Map packs (2026-11-12): MapView reads /ratdeckpro/maps/packs/<z>/<x>>6>_<y>>6>.rmp first
+  (make_packs.py). RMP2 (default) = context-model range coder, tools/maptiles/rmcodec.py
+  and ctxDecode() in MapView.cpp MUST stay identical (10-px context, 12-bit probs, shift 5,
+  per-pack 1024-entry prior). RMP1 = raw deflate via ROM tinfl (<esp32s3/rom/miniz.h>; the
+  sim links sim/third_party/miniz). Then the loose .rmt. Console "map" prints packed ms.
+  TileReader is now (path, offset, buf, len). Cache 160 tiles in PSRAM, 4 pack indexes.
 - SD + maps (2026-11-11): MapView.cpp/.h (tiles /ratdeckpro/maps/z/x/y.rmt, 1-bit, made by
   tools/maptiles/make_tiles.py; --test = grid tiles). DisplayEink now takes SharedSPILock
   (SD shares the bus with e-ink + radio; the radio already locked). SD message archive
@@ -68,6 +81,24 @@ START HERE (handoff 2026-11-11)
   vs the PC clock (clk + rtcdrift log, Theil-Sen fit, late USB replies after a wake dropped):
   COM9 asleep on battery +33 ppm (+2.9 s/day), COM5 awake on USB +28 ppm (+2.4 s/day), fit rms
   < 4 ms. The 1 min lead covers ~20 days without a peer clock sync. PC clock not verified.
+- UI features (2026-11-11, branch claude/ui-features-fb43b8): idle password lock (S.3.2;
+  lock password = vault password, mode 3 asks new + repeat when none is set, boot lock,
+  lockout 3 free then 30 s..16 min, NVS rs_lock; console lock / lock now; locked console
+  = status commands only), share contact (contact page 1 Message / 2 Rename / 3 Share;
+  "Contact card: <name>\n<32 hex>" text, receiver Enter on empty draft saves), lists 48
+  rows with pages (N/B, digits per page) and find (F), TCP hub S.2.6 (device only, NVS
+  rs_tcp, default off) and identity slots S.6.5 (new / switch / erase, Enter x2, restart).
+  Console: ids, contact <hex> <name>. Sim scripts: lock(+_boot), share_a/_b, lists,
+  inbox_pages, identity(+_after), id, more_box, map_menu.
+  2026-11-12: no default lock password any more: mode 3 with none asks new + repeat (^ cancels, lock stays off). MIC
+  shows/hides a password while typing (settings fields + lock prompt). MENU row 6 "Map"
+  (hotkey A, L still works); with no position the map opens on SD maps/home.txt
+  ("lat lon zoom", make_tiles.py --home) and mapview::fitZoom() zooms out to the deepest
+  level with a tile. Ready-made tiles: USGS topo (public domain) US z3-8 + Maine z9-12,
+  threshold 150 (tools/maptiles/README.md). COM5 smoke-tested through live mode (lock, lists,
+  contact page). Not on hardware yet: share (needs 2 units), TCP (needs WiFi + a hub).
+  Worktree sim build: the protocol's ../../rsLXMFLite path does not resolve from
+  .claude/worktrees, so pass -DRUST_LIB=<main checkout>/protocol/target/release/libratspeak_protocol.a.
 Long-term backlog → Future_steps.txt (do not strip future items from there).
 User/developer guide → src/boards/tdeck_Pro/RatSpeak_TDeck-Pro_Description.md
 Simulator → sim/README.md
@@ -141,7 +172,7 @@ ENERGY MODES  (Settings S.4 Power; power/PowerModes.*, power/LightSleep.*)
        start before TX? reply timing?). rxdc 0 = continuous.
        Console rxdc 0|2..8 (NVS rs_power/rxdc, default 4), tcxo (bench check), pw line.
        Note: a reboot leaves peers "rejected 8" until an announce is heard - not loss.
-[TODO] GPS M10 power-save; idle-password lock
+[TODO] GPS M10 power-save   [DONE 2026-11-11] idle-password lock
 
 MEASURED (gauge avg, battery 4.0–4.2 V)
        awake 240 MHz ~99 mA · 80 MHz ~87 · 80 MHz LoRa off ~79
@@ -177,6 +208,29 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
   dctcxo <ms>     bench: lowest duty-cycle TCXO delay (0 auto)  fe 0|1  log RX freq error (Hz)
   clk             bench: wall clock to the us + uptime + clock source (RTC drift logging)
   rmconv [<peer>|all]  bench: list conversations / delete one / delete all (with messages)
+  lock | lock now  password lock status / lock     ids  identity slots + TCP status
+  contact <hex32> <name>  bench: save a contact
+  sdput <len> <crc32> </path>  upload a file to the SD card (under /ratdeckpro); answers
+                  "[SDPUT] ready", then reads <len> raw bytes -> "[SDPUT] ok|err".
+                  Use tools/maptiles/push_tiles.py (~7 tiles/s; USB RX queue raised
+                  to 17 KB in main.cpp, the 256-byte default dropped bytes)
+  sdformat <bytes> ERASE-ALL   FAT32 with that cluster size (8192 for maps: one
+                  header-less 8 KB tile = one cluster), then restart. COM5/COM6/COM9
+                  cards formatted 8 KB on 2026-11-12 (backups of their few non-map files
+                  were taken first). sdinfo prints FAT type / cluster / free.
+  sdput ... <offset>  (4th value) append a piece at that offset: big files in 8 KB pieces
+                  (tools/sdcard/push_files.py -> /library for MENU -> Library)
+  sdls [/path]    list an SD folder (absolute card path; sdlsa = all entries, for tools)
+  sdget </path>   read an SD file (<= 16 KB): "[SDGET] <len> <crc32>" + raw bytes
+                  (tools/maptiles/copy_tiles.py: card-to-card copy through the PC)
+  loc             GPS position line + auto-share list
+  cpos [<hex32> <lat> <lon> [age min] | clear]  contacts' last positions (map markers);
+                  fed by the LXMF committed-message callback (onCommittedMessage -> inboundTick)
+  locshare <hex32>  share my location with a contact (as the chat menu does)
+  ashare <hex32> <0|5|15|30|60> | ashare off   bench: set / stop location auto-share
+  sdrm </path>    delete an SD file or an empty folder (free space updates after a
+                  remount/reboot)
+  The simulator's serial is line-based: sdput works there, sdget does not (binary out).
   map | map <lat> <lon> [z] | map close   offline map (key L on list screens; tiles on SD)
   flash                flash use + oldest-message removal stats
   msgfill <n> [conv] [bytes]   bench: store n fake incoming messages (full-flash test)

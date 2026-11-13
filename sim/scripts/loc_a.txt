@@ -1,0 +1,35 @@
+# Share my location (run with loc_b.txt at the same time, two device names):
+#   run-script.bat scripts\loc_a.txt loca fresh   +   run-script.bat scripts\loc_b.txt locb fresh
+# A opens a chat with B (Peers > row 1 > 1 Message), MIC = location menu: 1 share now,
+# 2 auto-share (5 min: the first update goes at once), 4 stop all.
+# Needs a quiet virtual radio: with other simulators running, "Peers row 1" may be one of
+# them - use loc_pair.py then (finds B by its hash).
+expect 60000 [BOOT] ready
+wait 25000
+key P
+wait 1500
+key 1
+key ENTER
+wait 1000
+key 1
+wait 1500
+key MIC
+wait 1000
+shot loc-a-01-menu.png
+key 1
+expect 30000 [LOC] share sent
+wait 1500
+shot loc-a-02-sent.png
+key MIC
+wait 800
+key 2
+expect 3000 [LOC] auto-share 5 min
+expect 90000 [LOC] auto sent
+wait 1500
+shot loc-a-03-auto.png
+key 4
+expect 3000 [LOC] auto-share: all stopped
+wait 1000
+key BACK
+wait 40000
+quit

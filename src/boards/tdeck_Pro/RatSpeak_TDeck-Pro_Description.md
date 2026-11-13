@@ -40,14 +40,86 @@ I  →  select  →  type  →  Enter  →  ^ (optional)
 **Discover first (two radios):** on each device, Home → **Announce ID**, then open
 **Peers** (**P**) and confirm the other appears.
 
-1. **C** → Contacts *(or **P** Peers if they are not saved yet)*.  
-2. Select the device (touch, **V**/**G**, or digit).  
-3. **Enter** to open name edit, type the name (**Alt** for case), **Enter** to save.
+1. **C** → Contacts *(or **P** Peers if they are not saved yet)*.
+2. Select the device (touch, **V**/**G**, or digit).
+3. **Enter** opens the contact page: **1 Message · 2 Rename · 3 Share · 4 Map number**.
+4. **2** (Rename), type the name (**Alt** for case), **Enter** to save.
 
 Row **0** is always **this** device (**MyID**). Rename it the same way to set the
 local display name. The default is **TDP-** plus the last four hex digits of the MAC
 (e.g. `TDP-179C`), so units on one table can be told apart; console `name <text>` sets it
 too (`name` alone restores the default).
+
+### 1.2a Share a contact
+
+1. Open the contact (Contacts or Peers → row → **Enter**), then **3 Share**.
+   Row **0 MyID** shares this radio.
+2. The Contacts list now reads **Send <name> to:**. Pick who gets it, **Enter** (**^** cancels).
+3. It goes as an ordinary LXMF message, readable on any client:
+
+```
+Contact card: Alice
+39543b0f5fb5a72a2cb23b3014bd650a
+```
+
+On a RatSpeak T-Deck Pro the chat shows **[card] Alice** and the compose line offers
+**[Enter] save card: Alice**: **Enter** on the empty draft saves it as a contact. Until
+that contact announces (or a path is found), messages to it may wait in the queue.
+
+### 1.2b Long lists: pages and search
+
+Inbox, Contacts and Peers hold up to 48 rows, shown in pages: Contacts 10 rows (digits
+**0–9**), Inbox / Peers 9 rows (digits **1–9**). The header shows **p2/3**.
+
+- **N** / **B**: next / previous page. **G** / **V** move across page edges.
+- Digits pick a row on the page you are on.
+- **F** = find: type part of a name or hash (any case); the list filters as you type.
+  **Enter** keeps the filter, **^** clears it (changing list also clears it).
+
+### 1.2c Lock the device with a password
+
+**M → S → 3 → 2** (Idle splash):
+
+- **3 On + password**: with no password yet, it asks for a new password (4–32 chars), then
+  the same again; the lock turns on only when both match (no match: it says so and asks
+  again; **^** cancels and leaves the lock off). The keyboard types capitals unless
+  **Alt** is held.
+- **5 Set / Change password**: current password (when one is set), new (4–32 chars),
+  repeat. Typed characters show as `*`; **MIC** shows / hides what you typed (also on
+  the lock prompt; hidden again after each field).
+- **6 Remove password** (asks the current one) · **7 Lock now**.
+
+Locked: the idle splash says **LOCKED | press a key**; a key shows the password prompt
+(time, unread count only; **^** clears, again goes back to the splash; the prompt falls
+back to the splash after 30 s). Messages keep arriving. 3 wrong tries are free, then
+30 s, 60 s … up to 16 min between tries (also after a reboot). Touch is off and the USB
+console only answers status commands (`pw clk id lock ev rl sdinfo energy`).
+
+The password is the SecretVault password (§12): once set, the device **also locks at
+every boot**, and saved WiFi passwords stay sealed until it is typed (WiFi auto-connect
+waits). Picking Off / On (no password) keeps that; remove the password to stop it.
+
+### 1.2d Share my location
+
+In a chat, **MIC** opens the location menu (**MIC** or **^** goes back):
+
+1. **Share my location** sends a normal message any LXMF client can read:
+   `My location: 43.64012, -70.92011 (+-10 m, 14:32)`. Without a fresh fix (GPS resting
+   in Balanced / Saver, or indoors) it sends the last fix with its age, `My last
+   location: … (35 min old)`, or the manual location (S.1.4), and wakes the GPS for a visit.
+2. **Auto-share location**: Enter steps off → every 5 → 15 → 30 → 60 min → off.
+3. **Auto-share for**: 1 h / 4 h / until off (applies to the next and the running share).
+4. **Stop all auto-sharing** (also S.1.8).
+5. **Show them on the map** (their last shared position, see §8.1).
+
+Auto updates are short (`Loc: 43.64012, -70.92011 14:32`), go out only with a fresh fix
+(the GPS is woken for a visit when one is due), only after moving > 50 m or two intervals,
+and in Check-in mode wait for the window. The chat header shows **[loc 15m]** and the top
+bar a small pin while any auto-share is on. Settings are kept per contact (NVS rs_ashare).
+
+On a RatSpeak unit a received location shows as **[loc]** (consecutive auto updates fold
+into the newest); **Enter** on the empty draft opens it on the map. The LXMF telemetry
+field (Sideband) is not sent yet: the protocol library has no field API on the send path.
 
 ### 1.3 First-boot setup
 
@@ -104,10 +176,12 @@ changes. While USB power is plugged in the device runs **Full** anyway (row 5).
 | **I** | Inbox | types letter |
 | **C** | Contacts | types letter |
 | **P** | Peers | types letter |
-| **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox) | does **not** open the menu |
+| **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox · M**a**p · Lib**r**ary) | does **not** open the menu |
 | **H** | Home | — |
 | **G** / **V** | Up / down | — |
-| **1**–**9**, **0** | Lists: select row. Settings: select **and** activate row 1–9, **0** = row 10 | digits (numeric fields) |
+| **N** / **B** | Lists: next / previous page | — |
+| **F** | Lists: find (type to filter) | — |
+| **1**–**9**, **0** | Lists: select row on the page. Settings: select **and** activate row 1–9, **0** = row 10 | digits (numeric fields) |
 | **Enter** | Activate / open | Send / save |
 | **Alt** | — | Case shift while typing |
 | **SYM** | — | Digits / symbols |
@@ -156,7 +230,8 @@ Status tiles, **Announce ID**, device name. Bottom **Contact | Peers | Inbox**.
 ### 4.4 Contacts
 ![Contacts](images/screen-contacts.png)
 
-**0: MyID** = this radio.
+**0: MyID** = this radio. **Enter** on a row opens the contact page (Message / Rename /
+Share, §1.2a). Long lists: pages and **F** find (§1.2b).
 
 ### 4.5 Inbox (list)
 ![Inbox list](images/screen-inbox.png)
@@ -190,16 +265,30 @@ S     Settings                      ← M then S
 │   ├── S.1.3  Enable GPS           shows heard/in-view satellites, "backup cell low", or "resting"
 │   ├── S.1.4  Manual location      latitude / longitude / clear
 │   ├── S.1.5  Sync GPS now         needs a fix
-│   └── S.1.6  Auto GPS sync        boot + daily
+│   ├── S.1.6  Auto GPS sync        boot + daily
+│   ├── S.1.7  GPS position         lat, lon, satellites; or the last fix and its age
+│   ├── S.1.8  Location auto-share  how many contacts; Enter = stop all (set in a chat, §1.2d)
+│   ├── S.1.9  Waypoints            list with distance; Enter = show on the map (§8.1)
+│   ├── S.1.10 Track                breadcrumb recording on/off
+│   ├── S.1.11 Clear track          Enter twice
+│   └── S.1.12 Coordinates          Decimal 43.64012,-70.92011 / Deg min sec 43 38'24"N 70 55'12"W /
+│                                   MGRS 19T CJ 4513 3368 (10 m): map header, GPS lines, lists.
+│                                   Messages keep decimal degrees (other clients read them);
+│                                   with MGRS a manual share also names the grid square.
 ├── S.2   WiFi                      status, IP
 │   ├── S.2.3  Scan networks        pick → saved: join; new locked: type password
 │   │   └── …  Join WiFi            Password · Auto-connect · Join (saves on success)
 │   ├── S.2.4  Saved networks       up to 8; passwords sealed (§12)
 │   │   └── …  Saved network        Connect now · Auto-connect · Password · Forget
-│   └── S.2.5  Disconnect           radio off, auto-connect paused until a manual join
+│   ├── S.2.5  Disconnect           radio off, auto-connect paused until a manual join
+│   └── S.2.6  TCP hub              Reticulum TCP client while WiFi is up: on/off, host, port,
+│                                   status, "Use RatSpeak hub" (rns.ratspeak.org:4242); default off
 ├── S.3   Screen & I/O
 │   ├── S.3.1  Theme                White paper / Black ink
-│   ├── S.3.2  Idle splash          Off / On (no password) / On + password (planned) / timeout
+│   ├── S.3.2  Idle splash          Off / On (no password) / On + password / timeout /
+│   │                               set-change password / remove / lock now (§1.2c) /
+│   │                               idle screen: splash or MAP around you (time, battery %,
+│   │                               unread on top; GPS / saved / card home position, zoom 13)
 │   └── S.3.3  Key backlight        (a power mode may hold it off)
 ├── S.4   Power                     energy modes (§6)
 │   ├── S.4.1  Full power
@@ -218,8 +307,12 @@ S     Settings                      ← M then S
 │   ├── S.5.8  Battery log          internal RAM ring / SD CSV, dump to USB
 │   └── S.5.10 Reset calibration
 ├── S.6   Identity                  destination, display name, LXMF address, Announce
+│   └── S.6.5  Identities           slots; New identity (make + switch + restart); per slot:
+│                                   Switch (restart) / Erase (key deleted; the active one is
+│                                   replaced by a new identity first). Enter twice to confirm.
 ├── S.7   LoRa                      915 MHz; link preset (Long Fast / Long Slow / Medium / Fast Short)
-├── S.8   Alerts                    beep, vibrate, volume, test
+├── S.8   Alerts                    beep, vibrate, volume 0 (silent) / 20 … 80 (default) / 100 %
+│                                   (plays the new level), test
 ├── S.9   Diagnostics               paths/links, LXMF queue, peers, uptime
 └── S.10  Storage  (key 0)          heap, PSRAM, flash, messages, SD card (+ S.10.5 SD), secrets key
 ```
@@ -537,7 +630,8 @@ in a short window around each check-in:
 
 | Topic | Behaviour |
 |-------|-----------|
-| Timeout | **S.3.2** (10–99999 s, default 30 s); never while a draft is unsent |
+| Timeout | **S.3.2** (10–99999 s, default 30 s); never while a draft is unsent (with a password lock it locks anyway; the draft is kept) |
+| Password lock | **S.3.2** mode 3, see §1.2c |
 | Wake | Any **key** |
 | Unread on splash | Updates on receive without leaving idle |
 | Beep / vibe | **S.8** when enabled |
@@ -569,8 +663,72 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
 
 ### 8.1 Offline map — Works (simulator; COM9 with test tiles on its card, 2026-11-11)
 
-Press **L** on any list screen. The map is centred on the GPS fix, or on the saved
-position (S.2) without one, and follows it. **W A S D** pan half a screen, **Z / X**
+**M → Map** (MENU row 6, hotkey **A**), or **L** on any list screen. The map is centred
+on the GPS fix, or on the saved position (S.2) without one, and follows it. With
+neither, it opens on the card's start view `maps/home.txt` (`lat lon zoom`, written by
+the tile tool). If the card has no tile under the centre at that zoom, it zooms out to
+the deepest level that has one (a card often holds a wide area coarse and a small one
+in detail).
+
+Ready-made set (2026-11-12): USGS National Map topo (public domain, credit U.S.
+Geological Survey) as 1-bit tiles at `--threshold 150`: the lower 48 states at zoom
+3–8 and Maine at zoom 9–12, about 6,200 tiles / 50 MB; start view Maine at zoom 6.
+**Contacts on the map:** every location a contact shares (manual or auto, §1.2d) is kept
+as that contact's last position (16 contacts, NVS rs_cpos; older chats add theirs when
+opened). Each shows as a tag: its **map number** on a white centre, a black ring, a white
+halo outside. **Thick ring** = position less than an hour old, **thin ring** = older (check
+the age); **selected** = a second black ring around it. Contacts at the same spot: only the **lowest number** is shown, with a small boxed
+**+** at its top right (more here); when T selects one of the others, that tag shows
+selected and the bottom line names who it is.
+**Map numbers:** set on the contact page (Contacts / Peers → row → **Enter** → **4 Map
+number**, type 1–99, Enter) - e.g. your partner = 1, so they win at a shared spot; whoever
+had that number takes the old one. Unset: the lowest free number when their first
+position arrives. On the map:
+
+- **T** steps through them, newest first, centring each; the bottom line reads
+  `#1 Alice 12.4km NE 8m ago` (distance / direction from you, age of the position).
+  **T** after the last one, **C** or **Enter**: back to your own position.
+- On screen: for 6 s after the map opens the bottom line shows the keys
+  (`T: 3 contacts  Z/X zoom`); while a contact is selected the top line reads
+  `T next  #+Enter chat  C me`.
+- **Type the number, Enter** (e.g. `2` Enter): opens that contact's chat.
+
+From a list (Inbox / Contacts / Peers) **L** on a row shows that contact on the map; in
+a chat, **MIC → 5 Show them on the map**, or **Enter** on the empty draft under a received
+location. Markers also show on the map idle screen. Console `cpos` (`cpos clear`).
+
+**Waypoints:** on the map **P** marks one at the map centre: type a name (the default
+`WP3` goes on the first key; Enter alone keeps it), Enter. **N** steps through them: the map
+centres on it, the diamond is selected, a dashed line runs from your position to it and the
+bottom line reads `W2 BALLFIELD 2.1km SW`. **Del** twice removes the selected one. Up to 32
+(NVS rs_wpt); **S.1.9 Waypoints** lists them with distance (Enter = show on the map).
+
+**Find a place:** on the map **F**, type the start of a name (add a state to narrow it:
+`knoxville tn`), Enter: the 6 nearest matches with kind and distance (`2 Knoxville, PA /
+town 246km SE`); a digit jumps there; **P** right after saves it as a waypoint with that
+name; **^** closes the list. Index on the card: `<SD>/ratdeckpro/places/<letter>.txt`
+from USGS GNIS (public domain): every US town plus summits, lakes, islands, bays, falls,
+gaps, capes and beaches for the route states (252k places, 9.2 MB):
+
+```
+python tools/places/make_places.py --gnis DomesticNames_National_Text.zip --out sdcard
+python tools/sdcard/push_files.py --port COM5 --dest /places sdcard/ratdeckpro/places/*.txt
+```
+
+**Track (breadcrumbs):** **S.1.10** on/off. A point is added when the GPS fix has moved more
+than 25 m; in Balanced / Saver the GPS is woken about every 2 minutes for it (sparser
+points, small battery cost). The last 1000 points are drawn as a dotted line; all of them
+are appended to `<SD>/ratdeckpro/tracks/track.bin`. **S.1.11** clears it (Enter twice).
+Console `wpt` (`wpt clear`), `track` (`track add <lat> <lon>`, `track clear`).
+
+The map's bottom line shows the GPS position (`43.64012,-70.92011 8sat`, or `old … 12m`
+for the last fix and its age). World overview zoom 0–7 (country, state / province borders
+and names, big cities) is drawn from Natural Earth (public domain) by
+`tools/maptiles/render_world.py`; USGS topo takes over from zoom 8.
+Cards are best formatted with 8 KB clusters (console `sdformat 8192 ERASE-ALL`, erases
+the card): a header-less 8 KB tile then takes exactly 8 KB instead of 32 KB.
+Tiles can go onto the card over USB with the card left in the unit:
+`tools/maptiles/push_tiles.py` (console `sdput`, about 7 tiles/s; `sdls` lists a folder). **W A S D** pan half a screen, **Z / X**
 zoom, **C** or **Enter** returns to your position, **Shift (^)** closes. The header shows
 zoom, centre and the scale-bar length; `*` means the view is not following you. Missing
 tiles show a dotted grid and "no tiles".
@@ -578,11 +736,32 @@ tiles show a dotted grid and "no tiles".
 Tiles are 256×256 Web-Mercator tiles, converted on a PC to a 1-bit format
 (`.rmt`, 8 KB each) by `tools/maptiles/make_tiles.py` (from an MBTiles export or a tile
 server whose terms allow offline use; `--test` makes labelled grid tiles) and copied to
-`<SD>/ratdeckpro/maps/<z>/<x>/<y>.rmt`. See `tools/maptiles/README.md`. Six tiles stay in
-PSRAM; the SD card is mounted on the first map visit. On COM9: 4 tiles load and the
+`<SD>/ratdeckpro/maps/<z>/<x>/<y>.rmt`, or (preferred) compressed into pack files
+`<SD>/ratdeckpro/maps/packs/<z>/<bx>_<by>.rmp` (64×64 tiles each, `tools/maptiles/make_packs.py`):
+a context-model coder made for 1-bit maps, ~6.5× smaller than raw for USGS topo (half of
+deflate; deflate packs, inflated by the ESP32-S3's ROM, are also read). A tile missing from
+the packs is read loose. See `tools/maptiles/README.md`. 160 decoded tiles stay in PSRAM
+(~1.3 MB), so panning back
+and zooming out again need no card read; the SD card is mounted on the first map visit. On COM9: 4 tiles load and the
 frame builds in 156 ms; the e-ink full refresh is 1.1 s. Console: `map`,
 `map <lat> <lon> [zoom]`, `map close`; bench `maptest <lat> <lon>` writes 18 grid test
 tiles (z14–15) to the card (2.1 s).
+
+### 8.1a Library (reference texts)
+
+**M → Library** (hotkey **R**): the text files in `<SD>/ratdeckpro/library/` (frequency card,
+GhostNet / JS8Call notes, NOAA weather radio list ...), sorted by name. A digit or **Enter**
+opens one: word-wrapped pages, header `p3 12% name`; **N** / **V** / **Space** next page,
+**B** / **G** previous, **F** find (any case; jumps to the next match after this page), **^**
+back to the list, again to close. Plain text only (.txt / .md / .csv); a PDF needs a text
+version first. Copy files over USB without removing the card:
+
+```
+python tools/sdcard/push_files.py --port COM5 M:
+atspeak-inforequencies_quick_reference.txt
+```
+
+(8 KB pieces through `sdput <len> <crc> <path> <offset>`; any size.)
 
 ### 8.2 SD card
 
@@ -755,6 +934,9 @@ the device does not light-sleep.
 | `hb` / `hb <s>` / `hb 0` | stress-test heartbeat line (memory, outbox, unread, saved incoming, flash) once / every s seconds / off |
 | `msgstat <peer>` | stress test: a conversation's records by direction and status, numbered test messages (count, duplicates, gaps) |
 | `msgidx` / `msgidx check` | record index status (§8.4) / compare it with every message on flash |
+| `lock` / `lock now` | password lock status (locked, password set, idle mode, wrong tries, wait) / lock now |
+| `ids` | identity slots (active marked) and TCP hub status |
+| `contact <32 hex> <name>` | bench: save a contact (list tests) |
 | `FORMAT` | erase and format the data partition |
 | `@…` | screen-mirror protocol (§10.3) |
 
@@ -769,10 +951,11 @@ Saved secrets (today: WiFi passwords) are never written to flash as plaintext.
 **password + chip MAC + a random per-device salt** (NVS `rs_vault`), then seals each
 secret with AES-256-GCM (random nonce, SSID as associated data).
 
-- **Now:** the password is a built-in default, applied automatically at boot. This stops
-  a flash dump or copied NVS from being read on a PC, but not someone holding the device.
-- **Planned:** the idle-screen password (S.3.2 "On + password") becomes the vault
-  password; at boot the vault stays locked until it is typed, so WiFi auto-connect waits.
+- **Default:** a built-in password, applied automatically at boot. This stops a flash
+  dump or copied NVS from being read on a PC, but not someone holding the device.
+- **Your password (S.3.2, §1.2c):** the lock password is the vault password. At boot the
+  vault stays locked until it is typed, so WiFi auto-connect waits; changing or removing
+  it re-seals the saved WiFi passwords with the new key.
 - **Strongest option (not enabled):** ESP32-S3 flash + NVS encryption. Burns eFuses and
   can't be undone, so it is a deliberate per-device decision.
 
@@ -808,10 +991,13 @@ entry mode.
 | GPS check of all five units (`tools/gpscheck`): only COM8 has the backup fault; COM3, COM5, COM6, COM9 OK | Done — report to LilyGo next |
 | Message store performance (slow writes and boot with many messages) | Done: COM5 boot 281 → 29.8 s (sharded folders), incoming save 23 → 1.3 s, send → proof 28 → 4–5 s |
 | Offline map from SD tiles (§8.1) | Works: simulator and COM9 (test tiles); PC tile tool done; real map tiles need an MBTiles export or an allowed tile server |
-| SD card: shared-bus locking, message archive (§8.2) | Works on COM9 (32 GB card); archive off by default |
+| SD card: shared-bus locking, message archive (§8.2) | Works on COM9 (32 GB card); archive off by default; flash trim still not wired |
 | Full flash: oldest messages removed from 85 %, refused at 92 % (§8.3) | Works in the simulator; time the usage check (LittleFS walk) on a unit |
 | Fast boot with many messages: saved record index (§8.4) | Works in the simulator; measure boot on a unit with ~1,000 messages |
-| Idle password + vault unlock | Planned |
+| Idle password lock = vault password, boot lock, lockout (§1.2c) | Works (simulator; COM5 smoke test) |
+| Share a contact as an LXMF message, save on receipt (§1.2a) | Works in the simulator (two devices) |
+| Lists: 48 rows, pages, find (§1.2b) | Works (simulator) |
+| TCP hub client (S.2.6), identity slots (S.6.5) | Identities work in the simulator; TCP is device-only (sim: settings only), not yet tried against a hub |
 | LoRa RX duty cycle in sleeping modes (§6.3) | Works: 14/14, ~13 → 8 mA asleep (gauge); reply latency same as continuous (the ~1 in 3 retries were a test artifact) |
 | Deep-sleep storage mode, GPS power-save | Planned |
 | Repeater / propagation-node sync for Check-in and On demand | Planned |
@@ -836,3 +1022,4 @@ entry mode.
 | 0.11 | Thread status labels fixed (sent / delivered were swapped, failed showed "s5"); new-message beep no longer missed when old messages are removed; stress tools (`hb`, `msgstat`, `flashcap`, `tools/stress/pingpong.py`) |
 | 0.12 | Sending no longer freezes the screen when the radio is busy (was up to 16-24 s): busy or within 3 s of the last send, the message goes to the outbox ("Queued: radio busy") and is sent in the background, in order |
 | 0.13 | Boot no longer opens every saved message: a record index (saved after 30 s without a change, checked against the file names at boot) replaces the scan (§8.4); opening threads and mark-read use it too |
+| 0.14 | Password lock (§1.2c), contact sharing (§1.2a), list pages + find (§1.2b), TCP hub (S.2.6), identity slots (S.6.5) |

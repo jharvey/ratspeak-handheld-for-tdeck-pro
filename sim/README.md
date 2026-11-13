@@ -78,7 +78,8 @@ asleep, number of sleeps, CPU MHz and whether LoRa is on.
 ## Live-device mode (real T-Deck Pro over USB)
 
 ```bat
-simun-live.bat COM8
+sim
+un-live.bat COM8
 ```
 
 The same window, but no firmware runs on the PC: it opens the device's USB serial port,
@@ -89,7 +90,8 @@ console. The status line shows the device's live battery reading. Scripts work h
 so `key`/`type`/`shot`/`expect` can drive the real hardware for tutorials:
 
 ```bat
-buildatspeak-sim.exe --name tut --live COM8 --script my-tutorial.txt
+build
+atspeak-sim.exe --name tut --live COM8 --script my-tutorial.txt
 ```
 
 * The device needs firmware with `src/boards/tdeck_Pro/remote/ScreenMirror.cpp`.
@@ -107,8 +109,10 @@ buildatspeak-sim.exe --name tut --live COM8 --script my-tutorial.txt
 serial on a local TCP port, then attach a second one in live mode:
 
 ```bat
-buildatspeak-sim.exe --name livedev --serial-tcp 5577
-buildatspeak-sim.exe --name live --live tcp:127.0.0.1:5577 --script scripts\live_tcp.txt --quit
+build
+atspeak-sim.exe --name livedev --serial-tcp 5577
+build
+atspeak-sim.exe --name live --live tcp:127.0.0.1:5577 --script scripts\live_tcp.txt --quit
 ```
 
 `scripts/live_tcp.txt` checks that the screen mirror, keys and console all go through.
@@ -156,6 +160,11 @@ Included: `scripts/smoke.txt` (boot and menus), `scripts/wifi.txt` (scan, join w
 password, saved + encrypted), `scripts/announce_a.txt` + `announce_b.txt` (two devices
 discover each other; run both at once), `scripts/live_tcp.txt` (live-device mode, see above),
 `scripts/power.txt` (Settings > Power: Saver, sleep statistics, USB forces Full, Custom knobs).
+UI features: `lock.txt` then `lock_boot.txt` (password lock, same device name), `share_a.txt`
++ `share_b.txt` (share a contact, run together), `lists.txt` / `inbox_pages.txt` (pages and
+find), `identity.txt` then `identity_after.txt` (identity slots, TCP hub settings), `id.txt`
+(print the destination hash), `more_box.txt` (the "^ more" cell), `loc_a.txt` + `loc_b.txt` (share my location / auto-share, run together), `contacts_map.txt` (contacts' positions on the map, T cycles; tiles in `build\simdata\cmap\sd`), `loc_pair.py` (two sims over TCP serial: share → stored on the receiver; robust to other simulators on the shared radio), `waypoints.txt` (P / N / Del, S.1.9 list, track), `packs.txt` (same views from loose tiles on `cmap` and from pack files on `packsim`: shots must match; make the packs with `tools\maptiles\make_packs.py --out build\simdata\packsim\sd build\simdata\cmap\sd`), `library.txt` (MENU → Library, pages, find; push files to device `libsim` first with `tools\sdcard\push_files.py --port socket://127.0.0.1:5593` against `ratspeak-sim.exe --name libsim --serial-tcp 5593`), `map_menu.txt` (MENU → Map
+with no GPS: card start view, zoom fallback; needs tiles in `build\simdata\<name>\sd`). Scripts wait for `[BOOT] ready` rather than a fixed time.
 
 The energy modes run their real logic here; light sleep is a 20 ms pause, and the
 console command `pw` shows the mode, knobs and percent of time asleep.

@@ -1,0 +1,5 @@
+# Print this device's LXMF destination hash (first run creates the identity).
+expect 60000 [BOOT] ready
+serial id
+expect 3000 [ID] dest=
+quit

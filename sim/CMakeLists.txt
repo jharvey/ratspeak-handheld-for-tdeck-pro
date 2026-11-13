@@ -93,7 +93,14 @@ file(GLOB SHIM_SRCS CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/shim/src/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/hw/*.cpp)
 
+# Inflate for map pack files (the real unit uses the copy of miniz in the ESP32-S3's ROM).
+add_library(sim_miniz STATIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniz/miniz.c)
+target_compile_options(sim_miniz PRIVATE -w)
+target_compile_definitions(sim_miniz PRIVATE MINIZ_NO_ARCHIVE_APIS MINIZ_NO_TIME)
+
 add_library(sim_firmware STATIC ${FW_SRCS} ${CORE_SRCS} ${SHIM_SRCS})
+target_include_directories(sim_firmware PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniz)
+target_link_libraries(sim_firmware PUBLIC sim_miniz)
 target_compile_definitions(sim_firmware PRIVATE ${FW_DEFS})
 target_include_directories(sim_firmware PRIVATE ${FW_INCS} ${CMAKE_CURRENT_SOURCE_DIR})
 # newlib/POSIX extras + device clock for every firmware translation unit

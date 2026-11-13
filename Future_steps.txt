@@ -81,12 +81,28 @@ Boot / first impression
 UI / UX
 -------
 - DONE - Theme toggle: white paper (default) vs black ink background
-- Settings full parity with Plus (WiFi client, TCP, GPS time, identity create/erase)
+- DONE (sim; TCP device-only) - Settings parity with Plus: WiFi client + GPS time were already in;
+  added TCP hub client (S.2.6, TcpClientSet) and identity slots (S.6.5 new / switch / erase).
+  Next: try TCP against a hub on hardware (not done: needs WiFi + a hub); WiFi AP mode and
+  AutoInterface (LAN) not added - they need the Plus NetworkCoordinator; identity import
+  from SD not added (no file picker).
 - DONE - Contacts rename closer to Plus (context menu: Save Contact / Message / Close)
 - DONE - Inbox delivery status polish (queued / sent / delivered / fail)
 - DONE - Scroll indicators on long lists (Contacts, Peers, Settings)
 - Optional fuller LVGL screens later (keep standalone build rules)
 - DONE (sim + COM9) - Geo maps on SD: offline 1-bit tiles (tools/maptiles), own position, pan/zoom.
+- DONE (sim, two devices) - share my location (chat MIC menu): readable LXMF text, last fix
+  with its age when there is none, GPS visit on demand; per-contact auto-share 5/15/30/60
+  min for 1 h / 4 h / until off (moved > 50 m or 2 intervals, Check-in queues, header pin,
+  stop all in S.1.8); receiver shows [loc] and opens it on the map. GPS position text on the
+  map footer and S.1.7. World map z0-7 from Natural Earth (render_world.py).
+  Next: send the position in the LXMF telemetry field too (Sideband FIELD_TELEMETRY 0x02,
+  msgpack'd sensor data) - needs a fields argument on rsLXMFLite's send path; try between
+  two units outdoors.
+- DONE (sim, two devices) - contacts on the map (2026-11-12): last shared position per
+  contact as labelled markers, map key T cycles them with distance / direction / age.
+  Next: waypoints + breadcrumb track, place search (GNIS), coordinate formats (MGRS),
+  measure, touch pan, nearest NOAA weather radio, library viewer (user said yes to all).
   Next: contacts' positions on the map (needs location sharing), touch pan, real map tiles
 - Map data at country scale (user asked 2026-11-11: "something usable for the entire US").
   Contiguous-US bbox, raw 8 KB tiles: z0-12 ~2.6 GB, z13 +7.8 GB, z14 +31 GB, z15 +125 GB.
@@ -95,6 +111,61 @@ UI / UX
   per region/zoom + index) instead of millions of loose .rmt files: much faster to copy to
   the card, mostly-white tiles shrink 5-20x, skip empty ocean tiles. Target: US to z13-14 on
   a 32 GB card, z15-16 for chosen home areas.
+  Status 2026-11-12: COM5/COM6/COM9 carry USGS topo US z3-10 + Maine z9-13 as loose .rmt,
+  loaded over USB (sdput / push_tiles.py, ~7 tiles/s; card-to-card copy_tiles.py relays
+  sdget -> sdput through the PC, nothing stored on it). Loose files cost 32 KB each on the
+  stock 32 KB-cluster FAT32 cards (4x the 8 KB tile) and one FAT write per tile is what
+  limits speed, so pack files (above) are also the fix for copy speed.
+  Done 2026-11-12: pack files (tools/maptiles/make_packs.py -> maps/packs/<z>/<bx>_<by>.rmp,
+  context-model coder RMP2 ~1.2 KB/USGS tile = half of deflate, user chose it; RMP1 deflate via
+  ROM tinfl still read; loose .rmt fallback) + 160-tile PSRAM cache.
+  push_files.py --root copies a pack tree. Still to do: copy packs to the units (user: maps
+  stay on the NAS for now), measure render time / current with packs on hardware.
+- All zoom levels everywhere (user asked 2026-11-12): fetching raster tiles from USGS/NRCan
+  tops out at ~4.5 tiles/s per polite single connection (~390k tiles/day); the US at z14 is
+  3.8M tiles, z15 15M, z16 60M - weeks to months, and heavy on public servers. For deep
+  zooms beyond the home/travel areas, render our own 1-bit tiles from public-domain vector
+  data (TIGER/Line roads, NHD water, GNIS names in the US; NRCan CanVec in Canada; OSM
+  extracts where the licence fits) with the render_world.py approach, fast and offline.
+  Master copy on the NAS (M:
+atspeak-maps); cards hold the travel set.
+- Reference library on the device (user asked 2026-11-12): a "Library" screen that reads
+  plain-text files from <SD>/ratdeckpro/library/ (paged, find with F): frequency quick
+  reference, NOAA Weather Radio list nearest to the GPS position, GhostNet / JS8Call notes,
+  first aid etc. Source copies are on the NAS (M:
+atspeak-info; PDFs need a text
+  extract first - the e-ink panel cannot render PDF). Push them with push_tiles-style sdput.
+- RF coverage prediction (user asked 2026-11-12): Longley-Rice / ITM point-to-point and area
+  coverage for LoRa links from the 3DEP elevation now on the NAS (M:
+atspeak-maps\dem: 10 m
+  around 04095, 30 m home/corridor/TN/NC, then the lower 48; Canada next: NRCan CDEM/HRDEM,
+  Open Government Licence). PC side first (e.g. SPLAT!/Signal-Server style tool using our
+  DEM, output as 1-bit coverage tiles the map can overlay); later a coarse on-device
+  line-of-sight check to a contact's last shared position.
+- Share maps unit-to-unit over WiFi without a router (user asked 2026-11-12). Medium job:
+  ESP-NOW (no AP, no pairing UI, 250 B frames v1 / 1470 B v2, a few hundred KB/s) or one
+  unit as a SoftAP + HTTP file server the other pulls from (~1 MB/s, simpler resume).
+  Needs: a "Share maps" / "Receive maps" screen, region/zoom pick, progress, resume, and
+  pack files (loose tiles make the receiving card's FAT writes the bottleneck either way).
+  WiFi radio is shared with the client mode: pause it while sharing.
+- NEXT (user asked again 2026-11-12) - USB mass-storage mode: show the SD card as a USB drive on the PC
+  (ESP32-S3 TinyUSB MSC) so maps can be dragged on without a card reader. Needs the
+  TinyUSB USB stack (ARDUINO_USB_MODE=0) instead of USB Serial/JTAG while in that mode, so
+  the console and esptool auto-reset need care; a Settings > Storage "USB drive" toggle
+  that reboots into MSC and back. Faster than sdput (bulk USB, no per-file round trip).
+- Map data for new users (user asked 2026-11-12): today maps need the PC tools (make_tiles /
+  render_world / push_tiles). Plan: ready-made map packs (pack-file format above) per
+  region - world overview, each US state, Canadian provinces, etc. - published as
+  downloads (GitHub releases or a RatSpeak map server) with an index; on the device a
+  Settings > Maps page: "Download maps" over WiFi (pick region + detail, shows size and card
+  space, resumes), plus "Share maps" unit-to-unit (WiFi item above) and the USB-drive mode
+  for PC users. Build the packs from public-domain sources only (USGS topo in the US,
+  Natural Earth worldwide, our own render of OSM vector data where policy allows) and say
+  the source/credit on the device.
+- Unit-to-unit USB (OTG) copy: the ESP32-S3 has USB OTG, but host mode must supply 5 V on
+  VBUS to the other unit; the T-Deck Pro's USB-C is wired as a charge input, so check the
+  schematic before planning this. Likely not possible without hardware changes; WiFi
+  (above) is the practical unit-to-unit path.
 - Map heading: the BHI260AP IMU has accel + gyro; the factory code never enables a
   magnetometer and no BMM150 is known on the board -> probably no true compass. Options:
   GPS course-over-ground arrow while moving (RMC field 8); confirm with an I2C scan / the
@@ -111,6 +182,9 @@ Robustness to verify (before the stress-test pass)
   Next: time the usage check (LittleFS walk) and a removal pass on a unit with ~1,500
   messages (msgfill), once a unit is free from the map copies.
 - Same for a full SD card (archive + map tiles).
+- DONE (sim + COM5) - idle screen password lock: S.3.2 "On + password" (password = vault password,
+  asked new + repeat when the lock is turned on), boot lock, lockout after 3 wrong tries, messages keep arriving.
+  Next: optional fully blank splash (no time/unread) and a duress/wipe-after-N option. 
 - FLASH WEAR (user asked 2026-11-12, do later): check that nothing exceeds the flash
   write/erase cycle rating (NOR flash ~100k erase cycles per sector; SD cards vary).
   Count writes per message (record + .bak + status/read rewrites), per announce/ratchet
@@ -119,24 +193,32 @@ Robustness to verify (before the stress-test pass)
   ping-pong / soak tests with it; estimate years to wear-out at heavy use (e.g. 500
   msgs/day); confirm LittleFS wear levelling (block_cycles) and NVS page rotation cover
   the hot files; fix any hot spot (e.g. a file rewritten every few seconds).
-- IN PROGRESS - add a idle screen options, after like 1 min you need password to gain access to device, screen is blank when idle. 
 - DONE - add manual refresh button, for ghosting issues. Do full screen refresh. 
 - DONE - add GPS clock displayed on idle screen / header. 
 - DONE - add battery / charge indicator. Lighting bolt in the battery icon, or a plug icon? Something to say it's getting power over USB. 
 - DONE - incrase keypad refresh rate (key queue read during e-ink refresh)
-- add share contact option. If you click a contact, offer a share button, where you can share it with other contacts in your list. 
+- DONE (sim, two devices) - share contact: contact page (Message / Rename / Share), card sent as
+  "Contact card: <name>\n<hash>" LXMF text, receiver saves it with Enter.
+  Next: also carry it as an LXMF field so other clients can import it; try between two units. 
 
 Audio / modes
 -------------
 - Voice / walkie-talkie mode: push-to-talk style over LoRa (or related path),
-  separate from text LXMF and from simple beep/vibrate alerts
-- DONE - in settings, add volum controls for the beeps (S.8 Alerts)
+  separate from text LXMF and from simple beep/vibrate alerts. User asked again 2026-11-12:
+  voice messages over Reticulum (record, Codec2 at 700-3200 bps, send as an LXMF audio
+  field like Sideband's FIELD_AUDIO so other clients can play it; LoRa airtime limits
+  length - a few seconds per message at low bitrate).
+- DONE - in settings, add volum controls for the beeps (S.8 Alerts): 0 (silent) / 20 / 40 /
+  60 / 80 (default, spares the speaker) / 100 %, plays the level when picked (2026-11-12).
+- DONE (sim) - idle screen = map around you (S.3.2 row 8): GPS / saved / card home position at
+  z13, time + battery + unread across the top, GPS line at the bottom (2026-11-12).
 - intergreate audio, perhaps https://codeberg.org/rfnxdev/partyline
 - text to audio, so it can read you a message. 
 
 Protocol / mesh
 ---------------
-- Multi-peer UX at scale (pagination, search)
+- DONE (sim) - Multi-peer UX at scale: lists 48 rows, pages (N/B), find (F). Next: more than 48
+  (load pages from the store on demand), search older conversations than the newest 48.
 - Path / link live tiles — expand diagnostics beyond partial N3
 - Cooperative vs standalone feature matrix freeze (what each env owns)
 
