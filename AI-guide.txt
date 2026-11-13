@@ -91,8 +91,8 @@ START HERE (handoff 2026-11-11)
   Console: ids, contact <hex> <name>. Sim scripts: lock(+_boot), share_a/_b, lists,
   inbox_pages, identity(+_after), id, more_box, map_menu.
   2026-11-12: no default lock password any more: mode 3 with none asks new + repeat (^ cancels, lock stays off). MIC
-  shows/hides a password while typing (settings fields + lock prompt). MENU row 6 "Map"
-  (hotkey A, L still works); with no position the map opens on SD maps/home.txt
+  shows/hides a password while typing (settings fields + lock prompt). MENU row 6 "Atlas"
+  (hotkey L; 2026-11-13 the bottom bar's Peers tab became "Atlas" = map, P still opens Peers); with no position the map opens on SD maps/home.txt
   ("lat lon zoom", make_tiles.py --home) and mapview::fitZoom() zooms out to the deepest
   level with a tile. Ready-made tiles: USGS topo (public domain) US z3-8 + Maine z9-12,
   threshold 150 (tools/maptiles/README.md). COM5 smoke-tested through live mode (lock, lists,

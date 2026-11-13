@@ -1954,8 +1954,8 @@ ScreenId g_screen = SCR_HOME;
 // "Library" opens the reference texts on the SD card; hotkey R.
 constexpr int  kMenuCount = 7, kMenuMap = 5, kMenuLib = 6;
 const ScreenId kMenuScreens[kMenuCount] = {SCR_HOME, SCR_SETTINGS, SCR_CONTACTS, SCR_PEERS, SCR_INBOX, SCR_HOME, SCR_HOME};
-const char*    kMenuLabels[kMenuCount]  = {"Home", "Settings", "Contacts", "Peers", "Inbox", "Map", "Library"};
-const char     kMenuKeys[kMenuCount]    = {'H', 'S', 'C', 'P', 'I', 'A', 'R'};
+const char*    kMenuLabels[kMenuCount]  = {"Home", "Settings", "Contacts", "Peers", "Inbox", "Atlas", "Library"};
+const char     kMenuKeys[kMenuCount]    = {'H', 'S', 'C', 'P', 'I', 'L', 'R'};
 bool g_menuOpen = false;
 int  g_menuSel = 0;
 
@@ -2410,9 +2410,9 @@ constexpr int CLOCK_X     = REF_W + BAT_W;
 constexpr int MENU_X      = CLOCK_X + TAB_W;
 constexpr int BOT_H       = 40;
 constexpr int BOT_TOP     = H - BOT_H;               // 280
-constexpr int BOT_C_W     = 80;                      // Contact | Peers | Inbox
-constexpr int BOT_P_W     = 64;
-constexpr int BOT_I_W     = W - BOT_C_W - BOT_P_W;   // 96
+constexpr int BOT_C_W     = 80;                      // Contact | Atlas | Inbox
+constexpr int BOT_A_W     = 64;
+constexpr int BOT_I_W     = W - BOT_C_W - BOT_A_W;   // 96
 constexpr int MENU_ROW_H  = 32;                        // 7 rows end at 260 (bottom bar 280)
 constexpr int HEADER_Y    = TOP_H + 1;               // path / title line
 constexpr int LIST_TOP    = TOP_H + 20;              // 56
@@ -3861,13 +3861,13 @@ void drawFooter() {
     box(0, FOOT_Y, BOT_C_W, FOOT_H, 1);
     label(0, FOOT_Y - 1, BOT_C_W, FOOT_H, "V=Down", false, 'V');
     addHit(0, FOOT_Y, BOT_C_W, FOOT_H, H_DOWN);
-    box(BOT_C_W, FOOT_Y, BOT_P_W, FOOT_H, 1);
-    label(BOT_C_W, FOOT_Y - 1, BOT_P_W, FOOT_H, "G=up", false, 'G');
-    addHit(BOT_C_W, FOOT_Y, BOT_P_W, FOOT_H, H_UP);
-    box(BOT_C_W + BOT_P_W, FOOT_Y, BOT_I_W, FOOT_H, 1);
+    box(BOT_C_W, FOOT_Y, BOT_A_W, FOOT_H, 1);
+    label(BOT_C_W, FOOT_Y - 1, BOT_A_W, FOOT_H, "G=up", false, 'G');
+    addHit(BOT_C_W, FOOT_Y, BOT_A_W, FOOT_H, H_UP);
+    box(BOT_C_W + BOT_A_W, FOOT_Y, BOT_I_W, FOOT_H, 1);
     if (moreDn) {
-        label(BOT_C_W + BOT_P_W, FOOT_Y - 1, BOT_I_W, FOOT_H, "v more");
-        addHit(BOT_C_W + BOT_P_W, FOOT_Y, BOT_I_W, FOOT_H, H_DOWN);
+        label(BOT_C_W + BOT_A_W, FOOT_Y - 1, BOT_I_W, FOOT_H, "v more");
+        addHit(BOT_C_W + BOT_A_W, FOOT_Y, BOT_I_W, FOOT_H, H_DOWN);
     }
 }
 
@@ -4235,12 +4235,14 @@ void drawBottomBar() {
     }
     const bool hk = browseMode();
     navBox(0, BOT_TOP, BOT_C_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, hk ? 'C' : 0);
-    navBox(BOT_C_W, BOT_TOP, BOT_P_W, BOT_H, "Peers", g_screen == SCR_PEERS, hk ? 'P' : 0);
-    navBox(BOT_C_W + BOT_P_W, BOT_TOP, BOT_I_W, BOT_H, "Inbox", g_screen == SCR_INBOX, hk ? 'I' : 0);
+    // Atlas = the offline map (not a screen of its own; L opens it everywhere). Peers is
+    // still P in browse mode and M -> P.
+    navBox(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, "Atlas", mapview::isOpen(), hk ? 'L' : 0);
+    navBox(BOT_C_W + BOT_A_W, BOT_TOP, BOT_I_W, BOT_H, "Inbox", g_screen == SCR_INBOX, hk ? 'I' : 0);
     if (hk) {
         addHit(0, BOT_TOP, BOT_C_W, BOT_H, H_TAB, SCR_CONTACTS);
-        addHit(BOT_C_W, BOT_TOP, BOT_P_W, BOT_H, H_TAB, SCR_PEERS);
-        addHit(BOT_C_W + BOT_P_W, BOT_TOP, BOT_I_W, BOT_H, H_TAB, SCR_INBOX);
+        addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_MENU_GO, kMenuMap);
+        addHit(BOT_C_W + BOT_A_W, BOT_TOP, BOT_I_W, BOT_H, H_TAB, SCR_INBOX);
     }
 }
 
@@ -6576,7 +6578,6 @@ void menuKey(const KeyEvent& ev) {
     if (c == 'M') { closeMenu(); return; }
     if (c == 'G') { if (g_menuSel > 0) g_menuSel--; requestRedraw(); return; }
     if (c == 'V') { if (g_menuSel < kMenuCount - 1) g_menuSel++; requestRedraw(); return; }
-    if (c == 'L') { menuGo(kMenuMap); return; }
     for (int i = 0; i < kMenuCount; i++)
         if (c == kMenuKeys[i]) { menuGo(i); return; }
 }

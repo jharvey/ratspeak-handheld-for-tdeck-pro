@@ -176,7 +176,8 @@ changes. While USB power is plugged in the device runs **Full** anyway (row 5).
 | **I** | Inbox | types letter |
 | **C** | Contacts | types letter |
 | **P** | Peers | types letter |
-| **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox · M**a**p · Lib**r**ary) | does **not** open the menu |
+| **L** | Atlas (offline map; on a list row with a position: that contact) | types letter |
+| **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox · At**l**as · Lib**r**ary) | does **not** open the menu |
 | **H** | Home | — |
 | **G** / **V** | Up / down | — |
 | **N** / **B** | Lists: next / previous page | — |
@@ -222,7 +223,7 @@ most once a minute. **Press a key to wake** (touch does not wake).
 ### 4.2 Home
 ![Home screen](images/screen-home.png)
 
-Status tiles, **Announce ID**, device name. Bottom **Contact | Peers | Inbox**.
+Status tiles, **Announce ID**, device name. Bottom **Contact | Atlas | Inbox** (Atlas = the offline map, **L**; Peers is **P** or **M → P**).
 
 ### 4.3 Home with MENU overlay
 ![Home with MENU overlay](images/screen-home-menu.png)
@@ -663,7 +664,7 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
 
 ### 8.1 Offline map — Works (simulator; COM9 with test tiles on its card, 2026-11-11)
 
-**M → Map** (MENU row 6, hotkey **A**), or **L** on any list screen. The map is centred
+The **Atlas** tab in the bottom bar, **L** on any screen, or **M → Atlas** (MENU row 6, hotkey **L**). The map is centred
 on the GPS fix, or on the saved position (S.2) without one, and follows it. With
 neither, it opens on the card's start view `maps/home.txt` (`lat lon zoom`, written by
 the tile tool). If the card has no tile under the centre at that zoom, it zooms out to

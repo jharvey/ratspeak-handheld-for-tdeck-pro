@@ -1,4 +1,4 @@
-# Map from the MENU (row 6 "Map", hotkey A). No GPS / saved position: opens on the
+# Map from the MENU (row 6 "Atlas", hotkey L). No GPS / saved position: opens on the
 # card's maps/home.txt view, at the deepest zoom that has a tile under the centre.
 # Needs map tiles under build\simdata\<name>\sd\ratdeckpro\maps (tools/maptiles).
 gps off
@@ -7,7 +7,7 @@ wait 1500
 key M
 wait 1000
 shot map-01-menu.png
-key A
+key L
 expect 5000 [MAP] open (card home)
 wait 2000
 shot map-02-home.png
