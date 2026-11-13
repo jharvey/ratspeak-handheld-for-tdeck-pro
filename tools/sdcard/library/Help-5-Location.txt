@@ -12,4 +12,8 @@ While auto-share is on, the chat header shows [loc 15m] and the top bar a small 
 
 A position you receive shows as [loc]. Enter on the empty message line opens it on the map.
 
+Arrival alerts: M, S, 8, 5. "Tell me when Alice is within 500 m of me (or of a waypoint)": checked each time her position arrives; a beep and a message. Once, or every time she comes back.
+
+Range test: M, S, 7, 6, pick the other radio (it does the same). Both ping each other and log signal strength and GPS position to the SD card (ratdeckpro/rangetest). The screen shows pings, replies and lost ones; 1-4 sets 10/15/30/60 s, ^ stops. On a PC, tools/rangetest/rangetest_map.py turns the file into a map for Google Earth.
+
 GPS needs open sky. Indoors it often gets no fix.

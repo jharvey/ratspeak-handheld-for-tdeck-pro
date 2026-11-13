@@ -30,6 +30,12 @@ START HERE (handoff 2026-11-11)
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
+- Features 6-11 (2026-11-13, branch claude/features-6-11): Track page PG_TRACK (record, track back tb*, GPX
+  trackExportGpx), Profile.trackGps + Custom knob; Atlas G = navOpen (bearing screen, stampNav, big digits), B = track
+  back; RMC speed/course; g_cfg.imperial + fmtDist. Arrival alerts geof* (NVS rs_geof, checked in cposNote). Range
+  test rt* (raw frames 0xFF'RT1' via LoRaInterface::setRxTap, CSV rangetest/, tools/rangetest/rangetest_map.py).
+  batHoursLeft10/batLeftText (energy monitor measured drain), lowBatTick (g_cfg.lowBat*). Console: track gpx|back,
+  geof, wpt add, rt, batleft, lowbat. sim: track_nav, geofence, rangetest_screen, battery_left, rt_pair.py.
 - Keys (2026-11-13, user): always-navigate M C I A P H (A = Atlas, was L; P on the Atlas = next waypoint). L = locate
   (find) in lists / Atlas / reader. Home N = Announce. Atlas: E S X F, D centre, Z/W, N next contact, P next waypoint,
   Alt+P add, Alt+SYM (Keyboard.cpp emits alt+opt with no char; isAltSym) delete twice, A nothing, K card (7 rows/col).

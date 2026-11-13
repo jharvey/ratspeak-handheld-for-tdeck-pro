@@ -10,6 +10,8 @@ Z = zoom in, W = zoom out (wider)
 N = next contact, L = locate a place
 P = next waypoint, Alt+P = add a waypoint, Alt+SYM twice = delete it (Help-7)
 M = menu, ^ = close the map
+G = big arrow + distance to the selected contact or waypoint (or the track-back point). Moving, the arrow is relative to where you are going; standing, north is up. G or ^ goes back.
+B = track back: follow your recorded track back to where it started (B again stops).
 C I H leave the map for Contacts, Inbox, Home. Peers from the map: M then P.
 
 Top line: zoom, centre, scale bar; * means the map is not following you. Bottom line: your GPS position, or the last fix's age and what the GPS is doing:

@@ -14,4 +14,8 @@ No GPS fix in Balanced or Saver? Go outside and wait up to 15 min, or switch to 
 
 Idle screen (M, S, 3, 2, row 8): Splash, Map, Library page or If found. All show the time, battery, date and unread messages at the top. The e-ink keeps the last picture with no power at all, so an If found screen stays readable on a flat battery.
 
+Time left: M, S, 5, row 11 ("about 34 h in Balanced"), also on the idle screen (~34h). It is measured from the real drain after 30 min on battery.
+
+Low-battery notice: M, S, 5, row 12. Off by default. Pick the %, and who gets it: once per discharge they get "Battery dying (9%)" with your last position.
+
 Ghosting on the screen? MIC refreshes it.
