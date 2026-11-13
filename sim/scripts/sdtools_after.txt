@@ -1,0 +1,3 @@
+# Part 3: the restore runs at boot and restarts the unit.
+expect 60000 [RESTORE] Backup restored
+expect 5000 [RESTORE] restarting

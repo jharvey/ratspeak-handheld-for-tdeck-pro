@@ -1,0 +1,29 @@
+# Back up to the card, change the name, then the firmware update from /firmware
+# (S.10.5 rows 8 and 10). Then sdtools_restore.txt (row 9), sdtools_after.txt, sdtools_check.txt.
+#   copy .pio\build\tdeck_pro_standalone\firmware.bin to build\simdata\sdtools\sd\firmware\ first
+#   run-script.bat scripts\sdtools.txt sdtools fresh, then the other three with "sdtools"
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+serial name Alpha
+expect 3000 [NAME] this device is now Alpha
+key M
+wait 300
+key S
+wait 300
+key 0
+wait 300
+key 5
+wait 800
+shot sd-01-page.png
+key 8
+expect 30000 [BACKUP] ok
+wait 1500
+shot sd-02-backed-up.png
+serial sdtools
+expect 5000 1 backups
+serial name Bravo
+expect 3000 [NAME] this device is now Bravo
+serial fwupdate
+expect 20000 [OTA] installed
+expect 5000 [OTA] restarting

@@ -51,6 +51,7 @@
 #include "audio/AudioNotify.h"
 #include "hal/Keyboard.h"
 #include "hal/UsbDrive.h"
+#include "hal/SysImage.h"
 #include "radio/SX1262.h"
 #include "storage/FlashStore.h"
 #include "storage/SDStore.h"
@@ -65,9 +66,9 @@
 #if !defined(SIMULATOR)
 #include "transport/TcpClientSet.h"     // TCP hub client (device only: FreeRTOS tasks + lwIP)
 #include "config/UserConfig.h"
-#include "hal/SharedSPIBus.h"
 #include "ff.h"                          // sdformat: FatFs f_mkfs / f_getfree on the card
 #endif
+#include "hal/SharedSPIBus.h"
 #include "security/SecretVault.h"
 #include "remote/ScreenMirror.h"
 #include "power/PowerModes.h"
@@ -576,6 +577,19 @@ bool readBattery() {
 bool g_sdMounted = false;
 bool g_usbDrive = false;          // the card is a USB drive on the PC: no file access until restart
 void usbDriveStart();
+// SD tools (S.10.5 rows 8-10): back up / restore, firmware update. Defined after the USB block.
+constexpr int kMaxBackups = 12;
+char g_bkNames[kMaxBackups][24];
+int g_bkCount = 0;
+char g_fwName[40] = "";
+uint32_t g_fwSize = 0;
+bool g_fwInstalled = false;
+void sdToolsScan(bool force);
+void backupNow();
+void backupsOpen();
+void backupPick(int i);
+void fwUpdateKey();
+void backupPretty(const char* name, char* out, size_t cap);
 char g_sdStatus[28] = "not mounted";
 constexpr const char* kBatLogPath = "/batlog2.csv";
 constexpr const char* kBatLogHeader =
@@ -2136,7 +2150,8 @@ enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
-    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW, PG_LOWBAT
+    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW, PG_LOWBAT,
+    PG_BACKUPS
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -3082,6 +3097,7 @@ const char* pageTitle(Page p) {
         case PG_GEOFS:        return "Arrival alerts";
         case PG_LOWBAT:       return "Low-battery notice";
         case PG_GEOF_NEW:     return "New arrival alert";
+        case PG_BACKUPS:      return "Restore backup";
     }
     return "";
 }
@@ -3607,6 +3623,26 @@ void buildSettingsRows(Page p) {
         srow(RK_ACTION, "Message archive", "%s%s", sdArchiveEnabled() ? "On" : "Off",
              (sdArchiveEnabled() != g_sdArchiveActive) ? " (after reboot)" : "");
         srow(RK_ACTION, "USB drive", "%s", g_usbDrive ? "on the PC" : "card on PC");
+        sdToolsScan(false);
+        if (!g_sdMounted) srow(RK_ACTION, "Back up now", "copy all to card");
+        else if (g_bkCount) srow(RK_ACTION, "Back up now", "last %s", g_bkNames[0]);
+        else srow(RK_ACTION, "Back up now", "none on card yet");
+        if (!g_sdMounted) srow(RK_MENU, "Restore backup", "from the card");
+        else srow(RK_MENU, "Restore backup", g_bkCount ? "%d on card" : "none on card", g_bkCount);
+        if (!g_sdMounted) srow(RK_ACTION, "Update firmware", "from /firmware");
+        else if (!g_fwName[0]) srow(RK_ACTION, "Update firmware", "no .bin in /firmware");
+        else srow(RK_ACTION, "Update firmware", g_fwInstalled ? "%.13s (installed)" : "%.17s %u KB",
+                  g_fwName, (unsigned)(g_fwSize >> 10));
+        break;
+
+    case PG_BACKUPS:
+        sdToolsScan(false);
+        if (!g_bkCount) srow(RK_INFO, "No backups on card", "-");
+        for (int i = 0; i < g_bkCount; i++) {
+            char nm[24];
+            backupPretty(g_bkNames[i], nm, sizeof(nm));
+            srow(RK_ACTION, nm, "%s", i ? "Enter twice = restore" : "newest; Enter twice");
+        }
         break;
     }
 }
@@ -4103,10 +4139,20 @@ void activateSetting(int idx) {
             toast("Log file reset");
         } else if (idx == 6) {
             usbDriveStart();
+        } else if (idx == 7) {
+            backupNow();
+        } else if (idx == 8) {
+            backupsOpen();
+        } else if (idx == 9) {
+            fwUpdateKey();
         } else if (idx == 5) {
             sdArchiveSet(!sdArchiveEnabled());
             toast(sdArchiveEnabled() ? "Archive on: reboot to apply" : "Archive off: reboot to apply");
         }
+        break;
+
+    case PG_BACKUPS:
+        backupPick(idx);
         break;
 
     default:
@@ -4605,7 +4651,540 @@ void renderEnergyGraph() {
     drawFooter();
 }
 
-// ---- USB drive mode (S.9.5 row 6) -------------------------------------------------------
+// ---- SD tools: back up / restore, firmware update (S.10.5 rows 8-10) ------------------------
+// Backup: /backups/<YYYYMMDD-HHMM>/ on the card holds a copy of every file in the unit's
+// flash (flash/...), the settings, keys and message index from NVS (nvs.txt: one
+// "namespace<TAB>key<TAB>type<TAB>hex" per line) and info.txt, written last: a backup
+// without "complete 1" is never restored. The backup holds the identity's private key in
+// the clear: whoever has the card can be this unit.
+// Restore runs at the next boot, before anything opens the flash (restoreAtBoot): flash
+// files and our NVS namespaces are wiped, the backup is copied back, the unit restarts.
+// Settings tied to this unit's chip (Wi-Fi passwords sealed with the chip MAC, the password
+// lock, battery calibration) go back only onto the same unit.
+// Firmware update: the newest *.bin in /firmware is written to the other app slot
+// (hal/SysImage). The new firmware confirms itself 10 s after "[BOOT] ready"; if it crashes
+// or is reset before that, the bootloader starts the old one again.
+constexpr const char* kBackupRoot = "/backups";
+constexpr const char* kFwDir = "/firmware";
+constexpr const char* kFwMarker = "RatSpeak T-Deck Pro - standalone";   // boot banner, in every build
+constexpr size_t kSysBuf = 8192;
+uint32_t g_sdToolsScanAt = 0;
+uint32_t g_markValidAt = 0;
+
+bool backupNs(const char* ns) {
+    if (!strcmp(ns, "rs_restore") || !strcmp(ns, "rs_ota")) return false;
+    return !strncmp(ns, "rs_", 3) || !strcmp(ns, "gps") || !strcmp(ns, NVS_NS_IDENTITY) || !strcmp(ns, NVS_NS_MSG);
+}
+
+bool unitOnlyNs(const char* ns) {
+    return !strcmp(ns, "rs_vault") || !strcmp(ns, "rs_wifi") || !strcmp(ns, "rs_bat") || !strcmp(ns, "rs_lock");
+}
+
+void macHex(char out[13]) {
+    uint8_t m[6] = {};
+    esp_efuse_mac_get_default(m);
+    snprintf(out, 13, "%02x%02x%02x%02x%02x%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+}
+
+uint8_t* sysBuf() {
+    static uint8_t* b = nullptr;
+    if (!b) b = (uint8_t*)heap_caps_malloc(kSysBuf, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!b) b = (uint8_t*)malloc(kSysBuf);
+    return b;
+}
+
+// Second Enter on the same row within 5 s (keys 1009 = firmware, 1100 + i = backup i).
+bool askTwice(int what, const char* msg) {
+    const bool yes = confirmTwice(1000 + what, msg);
+    requestRedraw();
+    return yes;
+}
+
+// "20261113-1405" -> "2026-11-13 14:05" (other names as they are).
+void backupPretty(const char* n, char* out, size_t cap) {
+    bool stamp = strlen(n) >= 13 && n[8] == '-';
+    for (int i = 0; stamp && i < 13; i++) if (i != 8 && !isdigit((unsigned char)n[i])) stamp = false;
+    if (stamp) snprintf(out, cap, "%.4s-%.2s-%.2s %.2s:%.2s%s", n, n + 4, n + 6, n + 9, n + 11, n + 13);
+    else snprintf(out, cap, "%s", n);
+}
+
+void sdToolsScan(bool force) {
+    if (!force && g_sdToolsScanAt && millis() - g_sdToolsScanAt < 5000) return;
+    g_sdToolsScanAt = millis() ? millis() : 1;
+    g_bkCount = 0;
+    g_fwName[0] = 0;
+    g_fwSize = 0;
+    g_fwInstalled = false;
+    if (g_usbDrive || !g_sdMounted || !g_sdStore.isReady()) return;
+    SharedSPILock lock;
+    if (File d = g_sdStore.openDir(kBackupRoot)) {
+        for (File e = d.openNextFile(); e; e = d.openNextFile()) {
+            const char* nm = e.name();
+            if (e.isDirectory() && nm && *nm && strlen(nm) < sizeof(g_bkNames[0])) {
+                int pos = 0;                                   // newest (largest name) first
+                while (pos < g_bkCount && strcmp(nm, g_bkNames[pos]) < 0) pos++;
+                if (pos < kMaxBackups) {
+                    const int last = g_bkCount < kMaxBackups ? g_bkCount : kMaxBackups - 1;
+                    for (int i = last; i > pos; i--) memcpy(g_bkNames[i], g_bkNames[i - 1], sizeof(g_bkNames[0]));
+                    snprintf(g_bkNames[pos], sizeof(g_bkNames[0]), "%s", nm);
+                    if (g_bkCount < kMaxBackups) g_bkCount++;
+                }
+            }
+            e.close();
+        }
+        d.close();
+    }
+    if (File d = g_sdStore.openDir(kFwDir)) {
+        time_t best = 0;
+        for (File e = d.openNextFile(); e; e = d.openNextFile()) {
+            const char* nm = e.name();
+            const size_t len = nm ? strlen(nm) : 0;
+            if (!e.isDirectory() && len > 4 && len < sizeof(g_fwName) && !strcasecmp(nm + len - 4, ".bin")) {
+                const time_t t = e.getLastWrite();
+                if (!g_fwName[0] || t > best) {
+                    best = t;
+                    snprintf(g_fwName, sizeof(g_fwName), "%s", nm);
+                    g_fwSize = (uint32_t)e.size();
+                }
+            }
+            e.close();
+        }
+        d.close();
+    }
+    if (g_fwName[0]) {
+        Preferences p;
+        if (p.begin("rs_ota", true)) {
+            char last[40] = "";
+            p.getString("file", last, sizeof(last));
+            g_fwInstalled = !strcmp(last, g_fwName) && p.getUInt("fsize", 0) == g_fwSize;
+            p.end();
+        }
+    }
+}
+
+// Full-screen status while a long job blocks the loop (e-ink keeps it after a restart).
+void sysScreen(const char* title, const char* l1, const char* l2, const char* l3) {
+    clearRoot();
+    drawHeader(title, false);
+    int y = LIST_TOP + 8;
+    if (l1) { text(8, y, l1, true, W - 16); y += 26; }
+    if (l2) { text(8, y, l2, false, W - 16); y += 20; }
+    if (l3) { text(8, y, l3, false, W - 16); }
+    lv_refr_now(nullptr);
+    g_display.refreshIfDirty();
+}
+
+struct CopyStats {
+    uint32_t files = 0;
+    uint64_t bytes = 0;
+    uint64_t total = 0;          // for the progress line (0 = no progress shown)
+    int shown = 0;
+    const char* title = nullptr;
+};
+
+void copyProgress(CopyStats& st) {
+    if (!st.total || !st.title) return;
+    int pct = (int)(st.bytes * 100 / st.total);
+    if (pct > 99) pct = 99;
+    if (pct / 25 <= st.shown / 25) return;
+    st.shown = pct;
+    char l[32];
+    snprintf(l, sizeof(l), "%d%%  (%lu files)", pct, (unsigned long)st.files);
+    sysScreen(st.title, "Backing up...", l, "Keep the card in");
+}
+
+// One open file into another, 8 KB at a time; the SPI lock is taken per chunk so the
+// radio keeps its turns on the shared bus.
+bool copyStream(File& in, File& out, CopyStats& st) {
+    uint8_t* b = sysBuf();
+    if (!b) return false;
+    for (;;) {
+        size_t n;
+        { SharedSPILock l; n = in.read(b, kSysBuf); }
+        if (!n) break;
+        size_t w;
+        { SharedSPILock l; w = out.write(b, n); }
+        if (w != n) return false;
+        st.bytes += n;
+        copyProgress(st);
+        yield();
+    }
+    st.files++;
+    return true;
+}
+
+void joinPath(char* out, size_t cap, const char* dir, const char* name) {
+    const size_t dl = strlen(dir);
+    snprintf(out, cap, "%s%s%s", dir, (dl && dir[dl - 1] == '/') ? "" : "/", name);
+}
+
+// Unit flash -> card, recursive.
+bool copyFlashToSd(const char* fdir, const char* sdir, CopyStats& st) {
+    File d = g_flash.openDir(fdir);
+    if (!d || !d.isDirectory()) return false;
+    bool ok = true;
+    for (File e = d.openNextFile(); e && ok; e = d.openNextFile()) {
+        char fp[160], sp[192];
+        const char* nm = e.name();
+        joinPath(fp, sizeof(fp), fdir, nm);
+        joinPath(sp, sizeof(sp), sdir, nm);
+        if (e.isDirectory()) {
+            e.close();
+            ok = g_sdStore.ensureDir(sp) && copyFlashToSd(fp, sp, st);
+        } else {
+            File out = g_sdStore.openFile(sp, FILE_WRITE);
+            ok = out && copyStream(e, out, st);
+            if (out) { SharedSPILock l; out.close(); }
+            e.close();
+            if (!ok) Serial.printf("[BACKUP] copy failed: %s\n", fp);
+        }
+    }
+    d.close();
+    return ok;
+}
+
+// Card -> unit flash, recursive.
+bool copySdToFlash(const char* sdir, const char* fdir, CopyStats& st) {
+    File d = g_sdStore.openDir(sdir);
+    if (!d || !d.isDirectory()) return false;
+    bool ok = true;
+    for (File e = d.openNextFile(); e && ok; e = d.openNextFile()) {
+        char fp[160], sp[192];
+        const char* nm = e.name();
+        joinPath(sp, sizeof(sp), sdir, nm);
+        joinPath(fp, sizeof(fp), fdir, nm);
+        if (e.isDirectory()) {
+            e.close();
+            ok = g_flash.ensureDir(fp) && copySdToFlash(sp, fp, st);
+        } else {
+            File out = g_flash.openFile(fp, FILE_WRITE);
+            ok = out && copyStream(e, out, st);
+            if (out) out.close();
+            e.close();
+            if (!ok) Serial.printf("[RESTORE] copy failed: %s\n", fp);
+        }
+    }
+    d.close();
+    return ok;
+}
+
+// Every file and folder under fdir (the folder itself stays). One entry per pass, so
+// nothing is deleted while a listing is open.
+bool wipeFlashDir(const char* fdir) {
+    for (;;) {
+        char victim[160] = "";
+        bool isDir = false;
+        if (File d = g_flash.openDir(fdir)) {
+            if (File e = d.openNextFile()) {
+                joinPath(victim, sizeof(victim), fdir, e.name());
+                isDir = e.isDirectory();
+                e.close();
+            }
+            d.close();
+        }
+        if (!victim[0]) return true;
+        const bool gone = isDir ? (wipeFlashDir(victim) && g_flash.removeDir(victim)) : g_flash.remove(victim);
+        if (!gone) { Serial.printf("[RESTORE] cannot remove %s\n", victim); return false; }
+    }
+}
+
+struct NvsOut { File* f; int n; };
+
+bool nvsLine(const char* ns, const char* key, uint8_t type, const uint8_t* d, size_t len, void* ctx) {
+    auto* o = (NvsOut*)ctx;
+    if (!backupNs(ns)) return true;
+    static const char* hx = "0123456789abcdef";
+    SharedSPILock l;
+    o->f->printf("%s\t%s\t%u\t", ns, key, (unsigned)type);
+    char chunk[130];
+    size_t k = 0;
+    for (size_t i = 0; i < len; i++) {
+        chunk[k++] = hx[d[i] >> 4];
+        chunk[k++] = hx[d[i] & 15];
+        if (k >= 128) { chunk[k] = 0; o->f->print(chunk); k = 0; }
+    }
+    chunk[k++] = '\n';
+    chunk[k] = 0;
+    o->f->print(chunk);
+    o->n++;
+    return true;
+}
+
+void backupNow() {
+    if (g_usbDrive) { toast("USB drive mode is on"); return; }
+    if (!sdMount()) { toast("No SD card"); return; }
+    char stamp[24], dir[48], sub[64];
+    struct tm t;
+    if (localNow(t) && t.tm_year > 120)
+        snprintf(stamp, sizeof(stamp), "%04d%02d%02d-%02d%02d", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min);
+    else
+        snprintf(stamp, sizeof(stamp), "backup");
+    snprintf(dir, sizeof(dir), "%s/%s", kBackupRoot, stamp);
+    for (int k = 2; g_sdStore.exists(dir) && k < 100; k++) snprintf(dir, sizeof(dir), "%s/%s-%d", kBackupRoot, stamp, k);
+    const uint64_t used = g_flash.usedBytes();
+    if (g_sdStore.totalBytes() - g_sdStore.usedBytes() < used + (1u << 20)) { toast("SD card full"); return; }
+    snprintf(sub, sizeof(sub), "%s/flash", dir);
+    if (!g_sdStore.ensureDir(sub)) { toast("Cannot write the card"); return; }
+
+    const uint32_t t0 = millis();
+    CopyStats st;
+    st.total = used;
+    st.title = "Back up";
+    sysScreen("Back up", "Backing up...", "0%", "Keep the card in");
+    bool ok = copyFlashToSd("/", sub, st);
+    NvsOut no{nullptr, 0};
+    if (ok) {
+        char path[64];
+        snprintf(path, sizeof(path), "%s/nvs.txt", dir);
+        File f = g_sdStore.openFile(path, FILE_WRITE);
+        no.f = &f;
+        ok = f && sysimg::nvsForEach(nvsLine, &no) >= 0;
+        if (f) { SharedSPILock l; f.close(); }
+    }
+    if (ok) {
+        char path[64], mac[13];
+        snprintf(path, sizeof(path), "%s/info.txt", dir);
+        macHex(mac);
+        File f = g_sdStore.openFile(path, FILE_WRITE);
+        if (f) {
+            SharedSPILock l;
+            f.printf("ratspeak-backup 1\nname %s\nmac %s\nbuilt %s %s\nfiles %lu\nbytes %llu\nsettings %d\ncomplete 1\n",
+                     g_selfName, mac, __DATE__, __TIME__, (unsigned long)st.files, (unsigned long long)st.bytes, no.n);
+            f.close();
+        } else ok = false;
+    }
+    Serial.printf("[BACKUP] %s %s: %lu files, %lu KB, %d settings, %lu ms\n", ok ? "ok" : "FAILED", dir,
+                  (unsigned long)st.files, (unsigned long)(st.bytes >> 10), no.n, (unsigned long)(millis() - t0));
+    g_sdToolsScanAt = 0;
+    g_fullRefreshReq = true;
+    requestRedraw();
+    if (ok) toast("Backed up: %s", dir + strlen(kBackupRoot) + 1);
+    else toast("Backup failed");
+}
+
+void backupsOpen() {
+    if (!sdMount()) { toast("No SD card"); return; }
+    sdToolsScan(true);
+    if (!g_bkCount) { toast("No backups in /backups"); return; }
+    pushPage(PG_BACKUPS);
+}
+
+[[noreturn]] void restoreRequest(int i) {
+    char dir[48];
+    snprintf(dir, sizeof(dir), "%s/%s", kBackupRoot, g_bkNames[i]);
+    Preferences p;
+    if (p.begin("rs_restore", false)) { p.putString("dir", dir); p.end(); }
+    Serial.printf("[RESTORE] %s at the next boot: restarting\n", dir);
+    char nm[24];
+    backupPretty(g_bkNames[i], nm, sizeof(nm));
+    sysScreen("Restore backup", "Restoring...", nm, "Restarts by itself when done");
+    Serial.flush();
+    delay(100);
+    ESP.restart();
+    for (;;) delay(1000);
+}
+
+void backupPick(int i) {
+    if (i < 0 || i >= g_bkCount) return;
+    char path[64];
+    snprintf(path, sizeof(path), "%s/%s/info.txt", kBackupRoot, g_bkNames[i]);
+    if (g_sdStore.readString(path).indexOf("complete 1") < 0) { toast("Backup incomplete: skip"); return; }
+    if (!askTwice(100 + i, "replaces all")) return;
+    restoreRequest(i);
+}
+
+// Restore asked for before the restart: runs before the flash or NVS is used, then restarts.
+void restoreAtBoot() {
+    char dir[48] = "";
+    {
+        Preferences p;
+        if (!p.begin("rs_restore", false)) return;
+        p.getString("dir", dir, sizeof(dir));
+        if (dir[0]) p.remove("dir");                  // once only, even if this fails half-way
+        p.end();
+    }
+    if (!dir[0]) return;
+    Serial.printf("[RESTORE] %s\n", dir);
+    const uint32_t t0 = millis();
+    char msg[48] = "Restore failed";
+    char path[80];
+    CopyStats st;
+    int put = 0;
+    bool same = false;
+    do {
+        if (!sdMount()) { snprintf(msg, sizeof(msg), "Restore: no SD card"); break; }
+        snprintf(path, sizeof(path), "%s/info.txt", dir);
+        const String info = g_sdStore.readString(path);
+        if (info.indexOf("complete 1") < 0) { snprintf(msg, sizeof(msg), "Restore: backup incomplete"); break; }
+        char mine[13];
+        macHex(mine);
+        const int mi = info.indexOf("mac ");
+        same = mi >= 0 && info.substring(mi + 4, mi + 16).equalsIgnoreCase(mine);
+        if (!g_flash.begin() && !recoverCorruptLittleFS()) { snprintf(msg, sizeof(msg), "Restore: flash failed"); break; }
+
+        // 1. Files: wipe, copy back.
+        if (!wipeFlashDir("/")) { snprintf(msg, sizeof(msg), "Restore: flash wipe failed"); break; }
+        snprintf(path, sizeof(path), "%s/flash", dir);
+        if (!copySdToFlash(path, "/", st)) { snprintf(msg, sizeof(msg), "Restore: copy failed"); break; }
+
+        // 2. NVS: wipe our namespaces (not the unit-only ones on another unit), then put back.
+        char names[32][16];
+        int nn = 0;
+        struct Ctx { char (*names)[16]; int* nn; } c{names, &nn};
+        sysimg::nvsForEach([](const char* ns, const char*, uint8_t, const uint8_t*, size_t, void* v) {
+            auto* c = (Ctx*)v;
+            for (int i = 0; i < *c->nn; i++) if (!strcmp(c->names[i], ns)) return true;
+            if (*c->nn < 32) snprintf(c->names[(*c->nn)++], 16, "%s", ns);
+            return true;
+        }, &c);
+        for (int i = 0; i < nn; i++)
+            if (backupNs(names[i]) && (same || !unitOnlyNs(names[i]))) sysimg::nvsEraseNamespace(names[i]);
+        snprintf(path, sizeof(path), "%s/nvs.txt", dir);
+        File f = g_sdStore.openFile(path, FILE_READ);
+        if (!f) { snprintf(msg, sizeof(msg), "Restore: no settings file"); break; }
+        for (;;) {
+            String line;
+            { SharedSPILock l; if (!f.available()) break; line = f.readStringUntil('\n'); }
+            const int t1 = line.indexOf('\t'), t2 = line.indexOf('\t', t1 + 1), t3 = line.indexOf('\t', t2 + 1);
+            if (t1 <= 0 || t2 <= t1 || t3 <= t2) continue;
+            const String ns = line.substring(0, t1), key = line.substring(t1 + 1, t2);
+            if (!backupNs(ns.c_str()) || (!same && unitOnlyNs(ns.c_str()))) continue;
+            const uint8_t type = (uint8_t)line.substring(t2 + 1, t3).toInt();
+            const char* hex = line.c_str() + t3 + 1;
+            size_t hl = strlen(hex);
+            while (hl && (hex[hl - 1] == '\r' || hex[hl - 1] == ' ')) hl--;
+            const size_t len = hl / 2;
+            uint8_t* buf = (uint8_t*)malloc(len ? len : 1);
+            if (!buf) continue;
+            bool good = true;
+            for (size_t i = 0; i < len && good; i++) {
+                int v = 0;
+                for (int k = 0; k < 2; k++) {
+                    const char ch = hex[2 * i + k];
+                    const int d = isdigit((unsigned char)ch) ? ch - '0' : (ch >= 'a' && ch <= 'f') ? ch - 'a' + 10 : -1;
+                    if (d < 0) good = false;
+                    v = v * 16 + d;
+                }
+                buf[i] = (uint8_t)v;
+            }
+            if (good && sysimg::nvsPut(ns.c_str(), key.c_str(), type, buf, len)) put++;
+            else Serial.printf("[RESTORE] setting not restored: %s/%s\n", ns.c_str(), key.c_str());
+            free(buf);
+        }
+        { SharedSPILock l; f.close(); }
+        snprintf(msg, sizeof(msg), same ? "Backup restored" : "Restored (Wi-Fi pw not moved)");
+    } while (0);
+    Serial.printf("[RESTORE] %s: %lu files, %lu KB, %d settings, %s unit, %lu ms\n", msg, (unsigned long)st.files,
+                  (unsigned long)(st.bytes >> 10), put, same ? "same" : "another", (unsigned long)(millis() - t0));
+    Preferences p;
+    if (p.begin("rs_restore", false)) { p.putString("msg", msg); p.end(); }
+    Serial.println("[RESTORE] restarting");
+    Serial.flush();
+    delay(50);
+    ESP.restart();
+}
+
+// After "[BOOT] ready": the result of a restore that ran before the last restart.
+void restoreReport() {
+    Preferences p;
+    if (!p.begin("rs_restore", false)) return;
+    char msg[48] = "";
+    p.getString("msg", msg, sizeof(msg));
+    if (msg[0]) { p.remove("msg"); toast("%s", msg); Serial.printf("[RESTORE] report: %s\n", msg); }
+    p.end();
+}
+
+bool hasSeq(const uint8_t* h, size_t n, const char* s, size_t m) {
+    if (n < m) return false;
+    for (size_t i = 0; i + m <= n; i++) {
+        const uint8_t* p = (const uint8_t*)memchr(h + i, s[0], n - m + 1 - i);
+        if (!p) return false;
+        i = p - h;
+        if (!memcmp(p, s, m)) return true;
+    }
+    return false;
+}
+
+void fwUpdate() {
+    if (g_usbDrive) { toast("USB drive mode is on"); return; }
+    if (!g_fwName[0]) { toast("No .bin in /firmware"); Serial.println("[OTA] no .bin in /firmware"); return; }
+    if (g_bat.valid && !g_bat.usb && g_bat.pct < 30) { toast("Charge or plug in first"); return; }
+    char why[40] = "";
+    if (!sysimg::otaCheck(g_fwSize, why, sizeof(why))) { toast("Update: %s", why); Serial.printf("[OTA] refused: %s\n", why); return; }
+    char path[64];
+    snprintf(path, sizeof(path), "%s/%s", kFwDir, g_fwName);
+    File f = g_sdStore.openFile(path, FILE_READ);
+    uint8_t* b = sysBuf();
+    if (!f || !b) { toast("Cannot read %s", g_fwName); return; }
+    const uint32_t t0 = millis();
+    sysScreen("Update firmware", "Updating...", g_fwName, "Do not turn off");
+    bool ok = sysimg::otaBegin(g_fwSize, why, sizeof(why));
+    const size_t ml = strlen(kFwMarker);
+    uint8_t edge[128];                               // end of the last chunk + start of this one
+    size_t tail = 0;
+    bool marker = false;
+    uint32_t done = 0;
+    int shown = 0;
+    while (ok && done < g_fwSize) {
+        size_t n;
+        { SharedSPILock l; n = f.read(b, kSysBuf); }
+        if (!n) { snprintf(why, sizeof(why), "read error"); ok = false; break; }
+        // An app image: magic E9, and the app description (magic ABCD5432) right after the
+        // first segment header. A merged image (bootloader first) or other file fails here.
+        if (done == 0 && !(n >= 36 && b[0] == 0xE9 && b[32] == 0x32 && b[33] == 0x54 && b[34] == 0xCD && b[35] == 0xAB)) {
+            snprintf(why, sizeof(why), "not an app image");
+            ok = false;
+            break;
+        }
+        if (!marker) {
+            const size_t head = n < ml - 1 ? n : ml - 1;
+            memcpy(edge + tail, b, head);
+            marker = hasSeq(edge, tail + head, kFwMarker, ml) || hasSeq(b, n, kFwMarker, ml);
+            tail = n < ml - 1 ? n : ml - 1;
+            memcpy(edge, b + n - tail, tail);
+        }
+        if (!sysimg::otaWrite(b, n)) { snprintf(why, sizeof(why), "flash write failed"); ok = false; break; }
+        done += n;
+        const int pct = (int)((uint64_t)done * 100 / g_fwSize);
+        if (pct / 20 > shown / 20 && pct < 100) {
+            shown = pct;
+            char l[16];
+            snprintf(l, sizeof(l), "%d%%", pct);
+            sysScreen("Update firmware", "Updating...", l, "Do not turn off");
+        }
+        yield();
+    }
+    { SharedSPILock l; f.close(); }
+    if (ok && !marker) { snprintf(why, sizeof(why), "not T-Deck Pro firmware"); ok = false; }
+    if (ok) ok = sysimg::otaEnd(why, sizeof(why));
+    else sysimg::otaAbort();
+    Serial.printf("[OTA] %s: %s, %lu ms\n", ok ? "installed" : "FAILED", ok ? g_fwName : why, (unsigned long)(millis() - t0));
+    if (!ok) {
+        g_fullRefreshReq = true;
+        requestRedraw();
+        toast("Update failed: %s", why);
+        return;
+    }
+    Preferences p;
+    if (p.begin("rs_ota", false)) { p.putString("file", g_fwName); p.putUInt("fsize", g_fwSize); p.end(); }
+    sysScreen("Update firmware", "Installed.", "Restarting...", "Old one returns if it fails");
+    Serial.println("[OTA] restarting into the new firmware");
+    Serial.flush();
+    delay(200);
+    ESP.restart();
+}
+
+void fwUpdateKey() {
+    if (!sdMount()) { toast("No SD card"); return; }
+    sdToolsScan(true);
+    if (!g_fwName[0]) { toast("Put a .bin in /firmware"); return; }
+    char why[40];
+    if (!sysimg::otaCheck(g_fwSize, why, sizeof(why))) { toast("Update: %s", why); return; }
+    if (!askTwice(9, g_fwInstalled ? "install again" : "install it")) return;
+    fwUpdate();
+}
+
+// ---- USB drive mode (S.10.5 row 6) -------------------------------------------------------
 // The SD card becomes a USB drive on the PC (hal/UsbDrive). The firmware unmounts the card
 // and keeps its hands off it (sdMount() refuses) until the restart that ends the mode:
 // Eject on the PC (restarts by itself), or Enter / ^ on the unit. Messages still arrive and
@@ -9023,6 +9602,7 @@ void powerTick() {
 #endif
     checkinTick();
     usbDriveTick();
+    if (g_markValidAt && (int32_t)(millis() - g_markValidAt) >= 0) { g_markValidAt = 0; sysimg::markValid(); }
     peerClockTick();
     mapTick();
     flashSpaceTick();
@@ -9426,7 +10006,7 @@ void handleSerialLine(char* p) {
     if (!strcmp(p, "contacts import")) { Serial.printf("[CONTACTS] imported %d\n", contactsImport()); return; }
     if (!strcmp(p, "setcheck")) {             // every Settings row whose title or value is wider than a row
         int bad = 0;
-        for (int pg = 0; pg <= (int)PG_LOWBAT; pg++) {
+        for (int pg = 0; pg <= (int)PG_BACKUPS; pg++) {
             if (pg == PG_ENERGY_GRAPH) continue;
             buildSettingsRows((Page)pg);
             for (int i = 0; i < g_srowCount; i++) {
@@ -9934,8 +10514,32 @@ void handleSerialLine(char* p) {
                           done && r.outcome == Outcome::Committed ? "deleted" : "failed");
         }
         requestRedraw();
+    } else if (!strcmp(p, "backup")) {
+        backupNow();
+    } else if (!strncmp(p, "restore ", 8)) {
+        // "restore <folder name in /backups> | newest": as S.10.5 > Restore backup, without
+        // asking twice.
+        sdMount();
+        sdToolsScan(true);
+        int i = 0;
+        if (strcmp(p + 8, "newest")) while (i < g_bkCount && strcmp(g_bkNames[i], p + 8)) i++;
+        if (i == g_bkCount) Serial.printf("[RESTORE] no backup %s\n", p + 8);
+        else restoreRequest(i);
+    } else if (!strcmp(p, "sdtools")) {
+        sdMount();
+        sdToolsScan(true);
+        Serial.printf("[SDTOOLS] slot %s%s, firmware file %s (%lu bytes)%s, %d backups:", sysimg::runningSlot(),
+                      sysimg::pendingVerify() ? " (unconfirmed)" : "", g_fwName[0] ? g_fwName : "-",
+                      (unsigned long)g_fwSize, g_fwInstalled ? " installed" : "", g_bkCount);
+        for (int i = 0; i < g_bkCount; i++) Serial.printf(" %s", g_bkNames[i]);
+        Serial.println();
+    } else if (!strcmp(p, "fwupdate")) {
+        // As S.10.5 > Update firmware, without asking twice.
+        sdMount();
+        sdToolsScan(true);
+        fwUpdate();
     } else if (!strcmp(p, "usbdrive")) {
-        // The SD card becomes a USB drive on the PC (as S.9.5 row 6); this COM port goes away.
+        // The SD card becomes a USB drive on the PC (as S.10.5 row 6); this COM port goes away.
         usbDriveStart();
         if (!g_usbDrive) Serial.printf("[USB] drive mode not started: %s\n", usbdrive::message());
 #if defined(SIMULATOR)
@@ -10377,6 +10981,7 @@ bool begin() {
     Serial.println("========================================");
     Serial.println(" RatSpeak T-Deck Pro - standalone");
     Serial.println("========================================");
+    sysimg::bootCheck();
     loadConfig();
     outboxLoad();
     power::load(g_pw);
@@ -10438,6 +11043,7 @@ bool begin() {
     if (!initRadio()) Serial.println("[BOOT] radio failed");
 #endif
     bootMark("radio");
+    restoreAtBoot();                    // a restore asked for before the restart (restarts again)
     initStorageAndProto();
     bootMark("flash, messages, protocol");
 
@@ -10497,6 +11103,8 @@ bool begin() {
     goScreen(SCR_HOME);
     render();
     Serial.println("[BOOT] ready");
+    restoreReport();
+    if (sysimg::pendingVerify()) g_markValidAt = millis() + 10000;   // new firmware: confirm if it keeps running
     if (g_wizNeeded || (g_cfgFresh && !g_hadIdentity)) wizStart();   // a new device (or unfinished)
     return true;
 }

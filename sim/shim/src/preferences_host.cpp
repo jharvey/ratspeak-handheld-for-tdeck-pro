@@ -170,3 +170,57 @@ size_t Preferences::getBytes(const char* k, void* out, size_t max) {
     memcpy(out, it->second.data.data(), it->second.data.size());
     return it->second.data.size();
 }
+
+// ---- Raw access for hal/SysImage (backup / restore): every namespace on disk ------------
+namespace sim {
+namespace {
+const uint8_t kIdfType[] = {0x11, 0x01, 0x12, 0x02, 0x14, 0x04, 0x18, 0x08, 0x21, 0x42};   // by PreferenceType
+size_t numSize(PreferenceType t) { return t >= PT_STR ? 0 : (size_t)1 << (t / 2); }
+}
+
+int nvsForEach(bool (*visit)(const char*, const char*, uint8_t, const uint8_t*, size_t, void*), void* ctx) {
+    std::vector<std::string> names;
+    std::error_code ec;
+    for (auto& e : fsx::directory_iterator(fsx::path(dataRoot()) / "nvs", ec))
+        if (e.path().extension() == ".nvs") names.push_back(e.path().stem().string());
+    int n = 0;
+    for (auto& ns : names) {
+        Ns copy;
+        { std::lock_guard<std::mutex> l(g_mu); copy = load(ns); }
+        for (auto& [k, e] : copy) {
+            if (e.type >= PT_INVALID) continue;
+            const size_t len = e.type >= PT_STR ? e.data.size() : numSize(e.type);
+            n++;
+            if (!visit(ns.c_str(), k.c_str(), kIdfType[e.type], e.data.data(), len, ctx)) return n;
+        }
+    }
+    return n;
+}
+
+bool nvsEraseNamespace(const char* ns) {
+    std::lock_guard<std::mutex> l(g_mu);
+    load(ns).clear();
+    save(ns);
+    return true;
+}
+
+bool nvsPut(const char* ns, const char* key, uint8_t type, const uint8_t* d, size_t len) {
+    int t = -1;
+    for (int i = 0; i < (int)sizeof(kIdfType); i++) if (kIdfType[i] == type) t = i;
+    if (t < 0 || !key || strlen(key) > 15) return false;
+    Entry e{(PreferenceType)t, {}};
+    if (t >= PT_STR) e.data.assign(d, d + len);
+    else {
+        if (len != numSize((PreferenceType)t)) return false;
+        int64_t v = 0;
+        memcpy(&v, d, len);
+        const bool isSigned = (t % 2) == 0;
+        if (isSigned && len < 8 && (d[len - 1] & 0x80)) v |= ~(((int64_t)1 << (len * 8)) - 1);
+        e.data.assign((const uint8_t*)&v, (const uint8_t*)&v + 8);
+    }
+    std::lock_guard<std::mutex> l(g_mu);
+    load(ns)[key] = std::move(e);
+    save(ns);
+    return true;
+}
+}  // namespace sim

@@ -1,4 +1,4 @@
-# USB drive mode (S.9.5 row 6, console "usbdrive"): the SD card becomes a drive on the PC.
+# USB drive mode (S.10.5 row 6, console "usbdrive"): the SD card becomes a drive on the PC.
 # Refused on battery; on USB the drive screen shows, the firmware keeps off the card
 # (sdget fails), and the PC's Eject (sim: "usbeject") restarts the unit back to normal.
 #   run-script.bat scripts\usbdrive.txt usbdrive

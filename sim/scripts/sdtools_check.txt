@@ -1,0 +1,6 @@
+# Part 4: next boot reports the restore; the name is Alpha again (from the backup).
+expect 60000 [RESTORE] report: Backup restored
+wait 1500
+shot sd-05-restored.png
+serial id
+expect 3000 name=Alpha

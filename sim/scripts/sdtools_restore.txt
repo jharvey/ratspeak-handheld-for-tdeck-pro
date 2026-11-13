@@ -1,0 +1,21 @@
+# Part 2: S.10.5 row 9 opens the backup list, Enter twice on the newest restores it.
+expect 60000 [BOOT] ready
+wait 1500
+serial id
+expect 3000 name=Bravo
+key M
+wait 300
+key S
+wait 300
+key 0
+wait 300
+key 5
+wait 800
+key 9
+wait 800
+shot sd-03-backups.png
+key 1
+wait 500
+shot sd-04-ask.png
+key 1
+expect 5000 at the next boot: restarting

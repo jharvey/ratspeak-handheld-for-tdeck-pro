@@ -145,7 +145,7 @@ UI / UX
   Needs: a "Share maps" / "Receive maps" screen, region/zoom pick, progress, resume, and
   pack files (loose tiles make the receiving card's FAT writes the bottleneck either way).
   WiFi radio is shared with the client mode: pause it while sharing.
-- DONE (COM6, 2026-11-13) - USB drive mode: S.9.5 row 6 "USB drive" (console "usbdrive", on USB
+- DONE (COM6, 2026-11-13) - USB drive mode: S.10.5 row 7 "USB drive" (console "usbdrive", on USB
   power only) unmounts the card and moves the USB port from USB-Serial/JTAG to OTG (TinyUSB
   MSC, hal/UsbDrive). Windows sees "RatSpeak T-Deck SD card" (FAT32, 32 GB card): 10 MB write
   232 KB/s, read 570 KB/s (SPI 16 MHz, 8-sector transfers), data verified. Eject on the PC ->
@@ -301,11 +301,21 @@ Everyday use
 - 3. SOS / check-in beacon: a held key combination sends my position to chosen contacts and
   repeats every few minutes until cancelled; clear on-screen state; works in every energy
   mode (wakes GPS + radio).
-- 4. Firmware update from the SD card: the second 4 MB app slot (app1) is unused. Copy a
-  .bin to the card, Settings > Update, write to the other slot, boot it, automatic rollback
-  if the new image does not confirm itself. Replaces USB flashing in the field.
-- 5. Backup / restore to SD: identity, contacts, waypoints, settings, encrypted with the
-  lock password (see Security), to rebuild a lost or wiped unit.
+- DONE (COM6, 2026-11-13) - 4. Firmware update from the SD card: S.10.5 row 10 (console
+  "fwupdate") writes the newest *.bin in /firmware to the other app slot (hal/SysImage):
+  app image check (E9 + app description), "RatSpeak T-Deck Pro - standalone" banner must be
+  in the file, launcher layout (ota_2) refused, 30 % battery or USB. Bootloader rollback:
+  the new firmware confirms itself 10 s after "[BOOT] ready". After an SD update the unit
+  runs from app1; a later USB flash of app0 (0x10000) is noticed at boot (app0 SHA-256
+  differs from the one saved at the update) and app0 boots. COM6: 1.9 MB in 26 s.
+- DONE (COM6, 2026-11-13) - 5. Backup / restore to SD: S.10.5 row 8 "Back up now" (console
+  "backup") copies all flash files + every NVS setting/key (rs_*, gps, identity, message
+  index) to /backups/<YYYYMMDD-HHMM>/ (flash/, nvs.txt, info.txt with "complete 1" last).
+  Row 9 lists the backups; Enter twice restores at the next boot (wipe, copy back, restart;
+  console "restore <name>|newest"). Chip-bound settings (Wi-Fi passwords, lock, battery
+  calibration) go back only onto the same unit. COM6: backup 2.7 s, restore 4.6 s, same
+  identity after. NOT YET: encryption with the lock password - the backup holds the
+  private key in the clear (whoever has the card can be this unit).
 Maps / location
 - DONE 2026-11-13 (branch claude/features-6-11) - 6. Breadcrumb track: log my path to SD, draw it on the Atlas, export GPX, "track back".
   (Also listed under the contacts-on-the-map Next items.)
