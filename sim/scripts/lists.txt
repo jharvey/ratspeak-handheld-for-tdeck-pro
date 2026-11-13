@@ -2,6 +2,7 @@
 # 25 contacts via the bench console, then Contacts: pages of 10 (N / B, V across the
 # edge, digits within the page), F = find (live filter), ^ clears it.
 expect 60000 [BOOT] ready
+serial wiz skip
 serial contact 00000000000000000000000000000001 Alpha
 serial contact 00000000000000000000000000000002 Bravo
 serial contact 00000000000000000000000000000003 Charlie

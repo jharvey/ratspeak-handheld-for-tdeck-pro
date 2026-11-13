@@ -2,6 +2,7 @@
 # device at boot (the vault stays sealed until it is typed), then remove the password.
 expect 60000 [LOCK] boot locked (password set)
 expect 60000 [BOOT] ready
+serial wiz skip
 wait 1500
 shot lockboot-01.png
 serial s

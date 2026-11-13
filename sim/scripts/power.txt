@@ -1,6 +1,7 @@
 # Energy modes: Settings > Power, pick Saver, open Custom, USB power forces Full.
 usb off
 expect 20000 [BOOT] ready
+serial wiz skip
 wait 2000
 key M
 wait 800

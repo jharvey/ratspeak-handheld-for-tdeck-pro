@@ -2,6 +2,7 @@
 #   run-script.bat scripts\lock.txt lock fresh
 # then scripts\lock_boot.txt on the same device name (no "fresh"): it boots locked.
 expect 60000 [BOOT] ready
+serial wiz skip
 wait 1500
 key M
 wait 800

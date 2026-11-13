@@ -2,6 +2,7 @@
 #   sim\run-script.bat sim\scripts\hwmenu.txt hwmenu fresh
 # Afterwards build\simdata\hwmenu\sim.ini holds: sd = 64G, battery = 25, usb = on, gps = nofix.
 expect 60000 [BOOT] ready
+serial wiz skip
 wait 1500
 winshot menu-01-start.png
 menu SD card > Card size > 64 GB

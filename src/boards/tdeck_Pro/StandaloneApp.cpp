@@ -137,6 +137,9 @@ struct Config {
     char     libLast[40] = "";      // library file last read (idle screen "Library")
     uint32_t libLastOff  = 0;       // and the page it was on
     bool     libLastWrap = true;
+    bool     clock12     = false;   // 12 h clock (1:45 PM) instead of 24 h
+    bool     simple      = false;   // Simple mode (wizard step 7; the mode itself comes later)
+    bool     wizDone     = true;    // setup wizard finished or skipped
     bool     trackOn     = false;   // breadcrumb track recording (S.1.10)
     uint8_t  coordFmt    = 0;       // 0 decimal degrees, 1 deg-min-sec, 2 MGRS (S.1.12)
     bool     kbLight     = false;
@@ -207,9 +210,33 @@ const LoraPreset kLoraPresets[] = {
 constexpr int kLoraPresetCount = sizeof(kLoraPresets) / sizeof(kLoraPresets[0]);
 int g_loraPreset = 0;
 
+bool g_wizNeeded = false;          // boot: a wizard was started and not finished
+bool g_cfgFresh = false;           // no UI settings saved yet
+bool g_hadIdentity = false;        // an identity existed before this boot (not a new device)
+bool g_wizOpen = false;            // setup wizard on screen
+int  g_wizStep = 0, g_wizGot = 0;    // step; contacts added (radio + SD)
+bool g_wizListen = false;          // import step: incoming contact cards are saved
+void wizStart();
+void wizListen(bool on);
+void wizFinish(bool announce);
+void wizKey(const KeyEvent& ev);
+void wizCardIn(const char* text);
+void renderWizard();
+void shareAllStart();
+int contactsExport();
+int contactsImport();
+
 void loadConfig() {
     Preferences p;
-    if (!p.begin("rs_ui", true)) return;
+    // No settings at all (no namespace, or nothing saved in it yet): a fresh device.
+    // The wizard runs only if there is no identity from an earlier boot either (decided at
+    // the end of boot, see g_hadIdentity): a used unit whose owner never changed a setting
+    // does not see it.
+    if (!p.begin("rs_ui", true) || !p.isKey("idleMode")) {
+        p.end();
+        g_cfgFresh = true;
+        return;
+    }
     g_cfg.dark        = p.getBool("dark", false);
     g_cfg.tz          = p.getInt("tz", 0);
     g_cfg.idleMode    = p.getUChar("idleMode", 1);
@@ -226,6 +253,11 @@ void loadConfig() {
     p.getString("libLast", g_cfg.libLast, sizeof(g_cfg.libLast));
     g_cfg.libLastOff  = p.getUInt("libOff", 0);
     g_cfg.libLastWrap = p.getBool("libWrap", true);
+    g_cfg.clock12     = p.getBool("clk12", false);
+    g_cfg.simple      = p.getBool("simple", false);
+    // Units that had settings before the wizard existed never see it (flag absent = done).
+    g_cfg.wizDone     = p.isKey("wizDone") ? p.getBool("wizDone", true) : true;
+    g_wizNeeded       = !g_cfg.wizDone;
     g_cfg.trackOn     = p.getBool("trackOn", false);
     g_cfg.coordFmt    = p.getUChar("coordFmt", 0);
     if (g_cfg.coordFmt > 2) g_cfg.coordFmt = 0;
@@ -269,6 +301,9 @@ void saveConfig() {
     p.putString("libLast", g_cfg.libLast);
     p.putUInt("libOff", g_cfg.libLastOff);
     p.putBool("libWrap", g_cfg.libLastWrap);
+    p.putBool("clk12", g_cfg.clock12);
+    p.putBool("simple", g_cfg.simple);
+    p.putBool("wizDone", g_cfg.wizDone);
     p.putBool("trackOn", g_cfg.trackOn);
     p.putUChar("coordFmt", g_cfg.coordFmt);
     p.putBool("kbl", g_cfg.kbLight);
@@ -674,8 +709,10 @@ bool localNow(struct tm& t) {
 
 void fmtTime(char* out, size_t n) {
     struct tm t;
-    if (localNow(t)) snprintf(out, n, "%02d:%02d", t.tm_hour, t.tm_min);
-    else snprintf(out, n, "--:--");
+    if (!localNow(t)) snprintf(out, n, "--:--");
+    else if (g_cfg.clock12) snprintf(out, n, "%d:%02d %s", t.tm_hour % 12 ? t.tm_hour % 12 : 12, t.tm_min,
+                                     t.tm_hour < 12 ? "AM" : "PM");
+    else snprintf(out, n, "%02d:%02d", t.tm_hour, t.tm_min);
 }
 
 void fmtDate(char* out, size_t n) {
@@ -1216,6 +1253,7 @@ void initStorageAndProto() {
         if (!recoverCorruptLittleFS()) { Serial.println("[FLASH] recovery failed"); return; }
     }
     g_idMgr.begin(&g_flash, nullptr);
+    g_hadIdentity = g_idMgr.count() > 0;     // before the protocol makes one for a new device
     const bool archive = sdArchiveEnabled() && sdMount();
     if (!g_msgStore.begin(&g_flash, archive ? &g_sdStore : nullptr, archive)) {
         Serial.println("[MSG] store failed"); return;
@@ -1525,6 +1563,7 @@ bool    g_cardOpen = false;        // contact page (Message / Rename / Share) ov
 uint8_t g_cardPeer[16];
 int     g_cardSel = 0;
 bool    g_shareActive = false;     // the Contacts list is picking who gets g_sharePeer
+bool    g_shareAll = false;        // ... and gets every contact's card (Settings S.6)
 uint8_t g_sharePeer[16];
 
 int hexNib(char c) {
@@ -3343,6 +3382,10 @@ void buildSettingsRows(Page p) {
         srow(RK_INFO, "LXMF address", "..%.16s", g_destHex[0] ? g_destHex + 16 : "");
         srow(RK_ACTION, "Announce ID", "last: %s", g_announceStr);
         srow(RK_MENU, "Identities", "%d saved (new / switch / erase)", g_idMgr.count());
+        srow(RK_ACTION, "Run setup wizard", "name, clock, energy, idle ...");
+        srow(RK_ACTION, "Share all contacts", "a card per contact to one radio");
+        srow(RK_ACTION, "Export contacts to SD", "ratdeckpro/contacts.txt");
+        srow(RK_ACTION, "Import contacts from SD", "ratdeckpro/contacts.txt");
         break;
 
     case PG_IDS: {
@@ -3784,6 +3827,10 @@ void activateSetting(int idx) {
         else if (idx == 1) toast("Identity not loaded");
         else if (idx == 3) { doAnnounce(); if (g_cfg.beep) g_audio.playAnnounce(); toast("Announce: %s", g_announceStr); }
         else if (idx == 4) pushPage(PG_IDS, g_idMgr.activeIndex() > 0 ? g_idMgr.activeIndex() : 0);
+        else if (idx == 5) wizStart();
+        else if (idx == 6) shareAllStart();
+        else if (idx == 7) { const int n = contactsExport(); if (n >= 0) toast("%d contacts -> contacts.txt", n); }
+        else if (idx == 8) { const int n = contactsImport(); if (n >= 0) toast("%d contacts imported", n); }
         break;
 
     case PG_IDS:
@@ -4251,7 +4298,7 @@ void drawTopBar() {
     drawBatteryIcon(REF_W + 5, 3, BAT_W - 10, TOP_H - 6, g_bat.valid ? g_bat.pct : -1);
 
     box(CLOCK_X, 0, TAB_W, TOP_H, 1);
-    char d[12], t[8];
+    char d[12], t[12];                       // "11:30 PM" with the 12 h clock
     fmtDate(d, sizeof(d));                   // MM/DD/YYYY
     fmtTime(t, sizeof(t));
     if (textW(d) <= TAB_W - 4) {
@@ -4339,6 +4386,12 @@ void drawNavKeys(int y0, const NavKeyRow* rows = kAtlasKeys) {
 }
 
 void drawBottomBar() {
+    if (g_wizOpen && g_entry != Entry::Name) {
+        box(0, BOT_TOP, W, BOT_H, 1);
+        label(0, BOT_TOP + 2, W, 18, "Enter next   ^ back");
+        label(0, BOT_TOP + 20, W, 18, "0 = skip setup (defaults)");
+        return;
+    }
     if (g_threadOpen || g_entry == Entry::Name) {
         char back[32];
         ScreenId to = g_threadOpen ? SCR_INBOX : g_screen;
@@ -5133,6 +5186,7 @@ void inboundTick() {
     } else {
         double la, lo;
         if (locParse(text, strlen(text), la, lo)) cposNote(key.peer, la, lo, msgEpoch(ts));
+        wizCardIn(text);
     }
     for (int k = 1; k < g_inQn; k++) g_inQ[k - 1] = g_inQ[k];
     g_inQn--;
@@ -6336,7 +6390,16 @@ void cardKey(const KeyEvent& ev) {
     }
 }
 
+void shareAllTo(const uint8_t to[16]);
+
 void shareSendTo(int idx) {
+    if (g_shareAll) {
+        uint8_t to[16];
+        memcpy(to, g_rows[idx].peer, 16);
+        if (isSelf(to)) { toast("Pick someone else"); return; }
+        shareAllTo(to);
+        return;
+    }
     const uint8_t* to = g_rows[idx].peer;
     if (isSelf(to) || !memcmp(to, g_sharePeer, 16)) { toast("Pick someone else"); return; }
     char nm[24], toName[24], body[96];
@@ -6366,6 +6429,325 @@ void saveThreadCard() {
     toast("Saved %.18s", g_threadCard.name);
 }
 
+// ---- Contacts: share all, export / import (Settings S.6, setup wizard) -----------------
+constexpr const char* kContactsFile = SD_PATH_ROOT "/contacts.txt";   // "name<TAB>32 hex" per line
+
+// Every saved contact as a contact card to one radio (it saves them while its setup wizard
+// listens, or one by one from the chat). Check-in mode: they wait for the window.
+void shareAllTo(const uint8_t to[16]) {
+    g_shareActive = false;
+    g_shareAll = false;
+    loadRows(SCR_CONTACTS);
+    static uint8_t peers[MAX_ROWS][16];
+    static char names[MAX_ROWS][24];
+    int n = 0;
+    for (int i = 0; i < g_rowCount && n < MAX_ROWS; i++) {
+        const uint8_t* h = g_rows[i].peer;
+        if (isSelf(h) || !memcmp(h, to, 16)) continue;
+        memcpy(peers[n], h, 16);
+        peerName(h, names[n], sizeof(names[n]));
+        n++;
+    }
+    // The first goes now; the rest wait in the outbox (one send at a time, 3 s apart).
+    // Check-in mode: all of them wait for the window.
+    int sent = 0, queued = 0;
+    const power::CheckinPhase ph = checkinNow();
+    const bool queue = g_pwEff.checkin && !(ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS);
+    for (int i = 0; i < n; i++) {
+        char body[96];
+        cardFormat(peers[i], names[i], body, sizeof(body));
+        if (queue) { if (outboxAdd(to, body)) queued++; continue; }
+        const SendResult r = sendOrQueue(to, body);
+        if (r == SendResult::Sent) sent++;
+        else if (r == SendResult::Queued) queued++;
+    }
+    char toName[24];
+    peerName(to, toName, sizeof(toName));
+    Serial.printf("[CARD] shareall %d of %d to %s (%d now, %d queued)\n", sent + queued, n, toName, sent, queued);
+    if (sent + queued < n) toast("%d of %d cards: outbox full", sent + queued, n);
+    else toast("%d cards to %.12s", n, toName);
+    loadRows(g_screen);
+    requestRedraw();
+}
+
+void shareAllStart() {
+    goScreen(SCR_CONTACTS);
+    memset(g_sharePeer, 0, sizeof(g_sharePeer));
+    g_shareActive = true;
+    g_shareAll = true;
+    toast("Pick who gets all contacts");
+    Serial.println("[CARD] pick recipient (all contacts)");
+}
+
+int contactsExport() {
+    if (!sdMount()) { toast("No SD card"); return -1; }
+    File f = g_sdStore.openFile(kContactsFile, FILE_WRITE);
+    if (!f) { toast("Cannot write contacts.txt"); return -1; }
+    loadRows(SCR_CONTACTS);
+    int n = 0;
+    for (int i = 0; i < g_rowCount; i++) {
+        if (isSelf(g_rows[i].peer)) continue;
+        char nm[24], hex[33];
+        peerName(g_rows[i].peer, nm, sizeof(nm));
+        hashToHex(g_rows[i].peer, hex);
+        f.printf("%s\t%s\n", nm, hex);
+        n++;
+    }
+    f.close();
+    loadRows(g_screen);
+    Serial.printf("[CONTACTS] %d -> contacts.txt\n", n);
+    return n;
+}
+
+int contactsImport() {
+    if (!sdMount()) { toast("No SD card"); return -1; }
+    File f = g_sdStore.openFile(kContactsFile, FILE_READ);
+    if (!f) { toast("No ratdeckpro/contacts.txt"); return -1; }
+    char line[96];
+    int len = 0, n = 0;
+    auto take = [&]() {
+        line[len] = 0;
+        len = 0;
+        char* tab = strchr(line, '\t');
+        if (!tab) return;
+        *tab = 0;
+        const char* hex = tab + 1;
+        uint8_t h[16];
+        if (strlen(hex) < 32 || !hexToHash(hex, h) || isSelf(h) || !line[0]) return;
+        saveContactName(h, line);
+        n++;
+    };
+    while (f.available()) {
+        const int c = f.read();
+        if (c < 0) break;
+        if (c == '\n') take();
+        else if (c != '\r' && len < (int)sizeof(line) - 1) line[len++] = (char)c;
+    }
+    if (len) take();
+    f.close();
+    if (g_screen == SCR_CONTACTS || g_screen == SCR_PEERS) loadRows(g_screen);
+    Serial.printf("[CONTACTS] imported %d from contacts.txt\n", n);
+    return n;
+}
+
+// ---- Setup wizard (fresh device, or Settings S.6 "Run setup wizard") --------------------
+// One screen per step, "Step 3/10" in the header. Enter keeps what is shown and goes on, ^
+// goes back a step, 0 finishes with the rest left as it is. A digit picks a row: on a
+// choice step it also goes on.
+enum WizStep : uint8_t { WZ_WELCOME, WZ_NAME, WZ_TIME, WZ_CLOCK, WZ_POWER, WZ_IDLE, WZ_MODE, WZ_LOCK,
+                         WZ_IMPORT, WZ_DONE, WZ_COUNT };
+const char* const kWizTitle[WZ_COUNT] = {"Welcome", "Device name", "Time zone", "Clock", "Energy mode",
+                                         "Idle screen", "Simple / Advanced", "Password lock",
+                                         "Import contacts", "Done"};
+const uint8_t kWizModes[4] = {power::MODE_FULL, power::MODE_BALANCED, power::MODE_SAVER, power::MODE_CHECKIN};
+
+void wizStart() {
+    g_menuOpen = false;
+    g_wizOpen = true;
+    g_wizStep = WZ_WELCOME;
+    g_wizListen = false;
+    g_wizGot = 0;
+    g_cfg.wizDone = false;                   // a setting saved meanwhile keeps it pending (reboot: again)
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.println("[WIZ] start");
+}
+
+void wizListen(bool on) {
+    g_wizListen = on;
+    if (on) g_wizGot = 0;
+    Serial.printf("[WIZ] listen %s\n", on ? "on" : "off");
+    requestRedraw();
+}
+
+// A contact card that arrived while the wizard listens: saved at once.
+void wizCardIn(const char* text) {
+    if (!g_wizOpen || !g_wizListen) return;
+    uint8_t h[16];
+    char nm[24];
+    if (!cardParse(text, strlen(text), h, nm, sizeof(nm)) || isSelf(h)) return;
+    saveContactName(h, nm);
+    g_wizGot++;
+    Serial.printf("[WIZ] contact saved \"%s\" (%d)\n", nm, g_wizGot);
+    requestRedraw();
+}
+
+void wizFinish(bool announce) {
+    if (!g_wizOpen && g_cfg.wizDone) return;
+    g_wizOpen = false;
+    g_wizListen = false;
+    g_cfg.wizDone = true;
+    saveConfig();
+    Serial.printf("[WIZ] %s\n", announce ? "done" : "skipped");
+    goScreen(SCR_HOME);
+    if (announce) { doAnnounce(); toast("Announced: others can see you"); }
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void wizNext() {
+    if (g_wizStep == WZ_IMPORT && g_wizListen) wizListen(false);
+    if (g_wizStep >= WZ_DONE) { wizFinish(true); return; }
+    g_wizStep++;
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.printf("[WIZ] step %d %s\n", g_wizStep + 1, kWizTitle[g_wizStep]);
+}
+
+// Digit k (1-based) on the current step. true = a choice was made: go on.
+bool wizPick(int k) {
+    switch (g_wizStep) {
+        case WZ_NAME:
+            if (k == 1 && g_haveSelf) startNameEntry(g_selfHash);
+            return false;
+        case WZ_TIME:
+            if (k == 1) { g_cfg.tz = (g_cfg.tz + 1) % kTzCount; saveConfig(); applyTz(); requestRedraw(); }
+            return false;
+        case WZ_CLOCK:
+            if (k < 1 || k > 2) return false;
+            g_cfg.clock12 = k == 2; saveConfig();
+            return true;
+        case WZ_POWER:
+            if (k < 1 || k > 4) return false;
+            g_pw.mode = kWizModes[k - 1]; power::save(g_pw); powerApply(true);
+            return true;
+        case WZ_IDLE:
+            if (k < 1 || k > IDLE_COUNT) return false;
+            g_cfg.idleScreen = (uint8_t)(k - 1); saveConfig();
+            if (g_cfg.idleScreen == IDLE_FOUND) {      // the text right away
+                startEntry(Entry::FoundText, g_cfg.foundText);
+                g_entryReplace = true;
+                return false;
+            }
+            return true;
+        case WZ_MODE:
+            if (k < 1 || k > 2) return false;
+            g_cfg.simple = k == 1; saveConfig();
+            return true;
+        case WZ_LOCK:
+            if (k == 1) return true;
+            if (k == 2) { startEntry(Entry::PassNew, nullptr, 2); toast("Choose a password"); }
+            return false;
+        case WZ_IMPORT:
+            if (k == 1) wizListen(!g_wizListen);
+            else if (k == 2) { const int n = contactsImport(); if (n >= 0) { g_wizGot += n; toast("%d contacts imported", n); } }
+            requestRedraw();
+            return false;
+        default:
+            return false;
+    }
+}
+
+void wizKey(const KeyEvent& ev) {
+    if (ev.up) {
+        if (g_wizStep > WZ_WELCOME) {
+            if (g_wizStep == WZ_IMPORT && g_wizListen) wizListen(false);
+            g_wizStep--;
+            g_fullRefreshReq = true;
+            requestRedraw();
+        }
+        return;
+    }
+    if (ev.enter) { wizNext(); return; }
+    const char c = ev.character;
+    if (c == '0') { wizFinish(false); return; }
+    if (c >= '1' && c <= '9' && wizPick(c - '0')) wizNext();
+}
+
+void renderWizard() {
+    char hdr[40], a[48], b[48];
+    snprintf(hdr, sizeof(hdr), "Setup %d/%d  %s", g_wizStep + 1, WZ_COUNT, kWizTitle[g_wizStep]);
+    drawHeader(hdr, false);
+    int y = LIST_TOP;
+    auto row = [&](const char* t, const char* sub, bool sel) { listRow(y, t, sub, sel); y += ROW_H; };
+    auto line = [&](const char* t, bool bold) { label(0, y, W, 18, t, bold); y += 20; };
+    switch (g_wizStep) {
+        case WZ_WELCOME:
+            y += 6;
+            line("Welcome to RatSpeak", true);
+            line("Text messages over LoRa", false);
+            line("radio: no phone network,", false);
+            line("no internet needed.", false);
+            y += 8;
+            line("A few questions follow.", false);
+            line("Enter = next, ^ = back", true);
+            line("a digit picks a row", false);
+            line("0 = skip setup", false);
+            break;
+        case WZ_NAME:
+            snprintf(a, sizeof(a), "1 Name: %s", g_selfName);
+            row(a, "1 = change it, Enter = keep", false);
+            y += 6;
+            line("Others see this name", false);
+            line("when you announce.", false);
+            break;
+        case WZ_TIME: {
+            snprintf(a, sizeof(a), "1 %s %s", tzCur().name, tzCur().label);
+            row(a, "1 = next time zone", false);
+            char d[12], t[12];
+            fmtDate(d, sizeof(d)); fmtTime(t, sizeof(t));
+            snprintf(a, sizeof(a), "Clock: %s %s", d, t);
+            row(a, "sets itself from GPS / radios", false);
+            y += 6;
+            line("By hand later: Settings", false);
+            line("S.1 Time > Set RTC", false);
+            break;
+        }
+        case WZ_CLOCK:
+            row("1 24 h", "13:45", !g_cfg.clock12);
+            row("2 12 h", "1:45 PM", g_cfg.clock12);
+            break;
+        case WZ_POWER:
+            for (int i = 0; i < 4; i++) {
+                snprintf(a, sizeof(a), "%d %s", i + 1, power::modeName(kWizModes[i]));
+                row(a, power::modeBlurb(kWizModes[i]), g_pw.mode == kWizModes[i]);
+            }
+            break;
+        case WZ_IDLE:
+            for (int i = 0; i < IDLE_COUNT; i++) {
+                snprintf(a, sizeof(a), "%d %s", i + 1, kIdleScreenName[i]);
+                static const char* kSub[IDLE_COUNT] = {"logo, battery, time", "the map around you",
+                                                       "the page you last read", "who to return it to"};
+                row(a, kSub[i], g_cfg.idleScreen == i);
+            }
+            if (g_entry == Entry::FoundText) { snprintf(b, sizeof(b), "%s_", g_buf); line(b, false); }
+            break;
+        case WZ_MODE:
+            row("1 Simple", "fewer options (coming later)", g_cfg.simple);
+            row("2 Advanced", "everything (today's screens)", !g_cfg.simple);
+            y += 6;
+            line("Simple mode: coming later", false);
+            break;
+        case WZ_LOCK:
+            row(lockHasPassword() ? "1 Keep the password" : "1 No password", "anyone can use it", false);
+            row("2 Set a password", "asked after idle and at boot", lockOnIdle());
+            if (passEntry(g_entry)) {
+                snprintf(b, sizeof(b), "%s: %s", g_entry == Entry::PassConfirm ? "Again" : "Password",
+                         editingSub(g_entry));
+                line(b, false);
+            }
+            break;
+        case WZ_IMPORT:
+            snprintf(b, sizeof(b), g_wizListen ? "listening: %d received" : "the other: S.6 Share all", g_wizGot);
+            row(g_wizListen ? "1 Stop listening" : "1 Listen over the radio", b, g_wizListen);
+            row("2 Read contacts.txt (SD)", "ratdeckpro/contacts.txt", false);
+            y += 6;
+            snprintf(a, sizeof(a), "%d contact%s added", g_wizGot, g_wizGot == 1 ? "" : "s");
+            line(a, g_wizGot > 0);
+            break;
+        case WZ_DONE:
+            snprintf(a, sizeof(a), "Name: %s", g_selfName); line(a, false);
+            snprintf(a, sizeof(a), "Time: %s, %s", tzCur().name, g_cfg.clock12 ? "12 h" : "24 h"); line(a, false);
+            snprintf(a, sizeof(a), "Energy: %s", power::modeName(g_pw.mode)); line(a, false);
+            snprintf(a, sizeof(a), "Idle: %s", kIdleScreenName[g_cfg.idleScreen]); line(a, false);
+            snprintf(a, sizeof(a), "Lock: %s", lockHasPassword() ? "password" : "none"); line(a, false);
+            y += 8;
+            line("Enter = announce + finish", true);
+            line("so others see this radio", false);
+            break;
+    }
+}
+
 void render() {
     const uint32_t t0 = millis();
     clearRoot();
@@ -6382,6 +6764,7 @@ void render() {
     }
     if (g_threadOpen)                  renderThread();
     else if (g_entry == Entry::Name)   renderRename();
+    else if (g_wizOpen)                renderWizard();
     else if (g_cardOpen)               renderCard();
     else if (g_libOpen)                renderLibrary();
     else if (g_gameOpen)               renderGame();
@@ -6430,7 +6813,7 @@ constexpr int kIdleMapTop = 38, kIdleMapBottom = 300;
 // Every idle screen: time, battery and unread across the top, the date and the radio's name
 // under them, and the wake / LOCKED line at the bottom.
 void drawIdleTop() {
-    char t[8], d[12], line[48];
+    char t[12], d[12], line[48];
     fmtTime(t, sizeof(t));
     fmtDate(d, sizeof(d));
     const int pct = g_bat.valid ? g_bat.pct : -1;
@@ -6708,6 +7091,7 @@ void wptOpenFromSettings(int i) {
 }
 
 void openMenu() {
+    if (g_wizOpen) return;                   // finish or skip the wizard first
     g_menuOpen = true;
     g_menuSel = 0;
     for (int i = 0; i < kMenuMap; i++) if (kMenuScreens[i] == g_screen) g_menuSel = i;   // not Map / Library
@@ -6804,7 +7188,7 @@ void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
     if (g_navKeysOpen && (mapview::isOpen() || g_libOpen) && !entryActive()) { navKeysToggle(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
-    if (g_shareActive && !entryActive()) { g_shareActive = false; toast("Share cancelled"); return; }
+    if (g_shareActive && !entryActive()) { g_shareActive = false; g_shareAll = false; toast("Share cancelled"); return; }
     if (g_placeOpen && !entryActive()) { g_placeOpen = false; g_fullRefreshReq = true; requestRedraw(); return; }
     if (g_libOpen && !entryActive()) {
         if (g_libReading) { libRemember(); g_libReading = false; requestRedraw(); } else libClose();
@@ -7179,6 +7563,7 @@ void handleKey(const KeyEvent& ev) {
     noteInput();
     if (g_locked) { lockKey(ev); return; }
     if (g_threadOpen && g_tmenuOpen) { tmenuKey(ev); return; }
+    if (g_wizOpen && !entryActive()) { wizKey(ev); return; }   // setup wizard (^ = step back)
     if (ev.up) { goBack(); return; }                          // lone Shift = ^
     if (g_menuOpen) { menuKey(ev); return; }
     if (entryActive()) { entryKey(ev); return; }
@@ -7883,6 +8268,23 @@ void handleSerialLine(char* p) {
         for (const char* k : kOk) ok |= !strcmp(p, k);
         if (!ok) { Serial.println("[CMD] locked: unlock on the device first"); return; }
     }
+    if (!strncmp(p, "wiz", 3) && (p[3] == 0 || p[3] == ' ')) {   // wiz [start|skip|listen|step <n>]
+        if (!strcmp(p, "wiz start")) wizStart();
+        else if (!strcmp(p, "wiz skip")) wizFinish(false);
+        else if (!strcmp(p, "wiz listen")) { if (g_wizOpen) { g_wizStep = WZ_IMPORT; wizListen(true); } }
+        else if (!strncmp(p, "wiz step ", 9) && g_wizOpen) { g_wizStep = constrain(atoi(p + 9), 0, WZ_COUNT - 1); requestRedraw(); }
+        Serial.printf("[WIZ] open=%d step=%d listen=%d got=%d done=%d\n", g_wizOpen, g_wizStep, g_wizListen, g_wizGot,
+                      g_cfg.wizDone);
+        return;
+    }
+    if (!strncmp(p, "shareall ", 9)) {                     // shareall <32 hex dest>: every contact's card
+        uint8_t to[16];
+        if (strlen(p + 9) < 32 || !hexToHash(p + 9, to)) { Serial.println("[CARD] shareall <32 hex>"); return; }
+        shareAllTo(to);
+        return;
+    }
+    if (!strcmp(p, "contacts export")) { Serial.printf("[CONTACTS] exported %d\n", contactsExport()); return; }
+    if (!strcmp(p, "contacts import")) { Serial.printf("[CONTACTS] imported %d\n", contactsImport()); return; }
     if (!strncmp(p, "idlescr", 7)) {                   // idlescr [0-3]: idle screen; "idle now"
         const int v = p[7] ? atoi(p + 8) : -1;
         if (v >= 0 && v < IDLE_COUNT) { g_cfg.idleScreen = (uint8_t)v; saveConfig(); }
@@ -8832,6 +9234,7 @@ bool begin() {
     goScreen(SCR_HOME);
     render();
     Serial.println("[BOOT] ready");
+    if (g_wizNeeded || (g_cfgFresh && !g_hadIdentity)) wizStart();   // a new device (or unfinished)
     return true;
 }
 

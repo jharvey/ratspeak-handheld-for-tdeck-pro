@@ -2,6 +2,7 @@
 # about 100 messages, then 300 fake 50-character messages go through the normal save path.
 # Run: run-script.bat scripts\flashcap.txt flashcap fresh
 expect 60000 [BOOT] ready
+serial wiz skip
 wait 1000
 serial flashcap 100
 expect 3000 [FLASH] message cap

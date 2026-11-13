@@ -4,6 +4,7 @@
 # The firmware must see a 32 GB card and USB power (the top bar shows 61 %); then the
 # card is pulled, USB unplugged and the battery drops to 15 %.
 expect 60000 [BOOT] ready
+serial wiz skip
 wait 1500
 serial sdinfo
 expect 5000 /32768 MB

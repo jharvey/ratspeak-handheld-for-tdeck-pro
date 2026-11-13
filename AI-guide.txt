@@ -30,6 +30,11 @@ START HERE (handoff 2026-11-11)
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
+- Setup wizard (2026-11-13): g_wizNeeded at loadConfig (rs_ui without idleMode = fresh; wizDone key absent = done);
+  wizStart/renderWizard/wizKey/wizPick (WZ_* steps), digits pick, Enter next, ^ back, 0 skip. g_cfg.clock12 (fmtTime),
+  g_cfg.simple. shareAllTo() (cards via sendOrQueue), contactsExport/Import (contacts.txt), wizCardIn in
+  inboundTick. Console: wiz [start|skip|listen|step n], shareall <hex>, contacts export|import. Fresh-device sim
+  scripts start with "serial wiz skip". sim: wizard.txt, wizard_existing.txt, wizard_skip.txt, wiz_pair.py.
 - Idle screens (2026-11-13): g_cfg.idleScreen (NVS idleScr; old idleMap true -> Map) Splash/Map/Library/IfFound,
   drawIdleTop()/drawIdleFoot() on all; Library page = g_cfg.libLast/libLastOff (libRemember()); If found = foundText
   (';' new line) + name + g_destHex; locked: Map/Library fall back to Splash. Console idlescr <n>, idle now.

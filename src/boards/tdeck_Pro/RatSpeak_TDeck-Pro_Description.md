@@ -121,16 +121,30 @@ On a RatSpeak unit a received location shows as **[loc]** (consecutive auto upda
 into the newest); **Enter** on the empty draft opens it on the map. The LXMF telemetry
 field (Sideband) is not sent yet: the protocol library has no field API on the send path.
 
-### 1.3 First-boot setup
+### 1.3 First-boot setup: the setup wizard
 
-| Step | What | How |
-|------|------|-----|
-| 1 | **Time** | **M → S → 1** (Time & Location) → Set RTC (**S.1.1**), Time zone (**S.1.2**) |
-| 2 | **Theme** | **M → S → 3** (Screen & I/O) → **1** Theme: **White paper** / **Black ink** |
-| 3 | **Power mode** | **M → S → 4** (Power) → Full / Balanced / Saver / Custom (§6) |
-| 4 | **Name this device** | **C** → row **0 MyID** → type name → **Enter** |
-| 5 | **WiFi** (optional) | **M → S → 2** — scan, join, saved networks, auto-connect |
-| 6 | **Meet the other radio** | Announce ID on both → **P** → name contact (§1.2) → test send (§1.1) |
+A new device (no settings saved and no identity from an earlier boot) opens the **setup
+wizard** at its first boot; a unit that was used before never sees it by itself (a wizard
+left unfinished comes back at the next boot). **M → S → 6** (Identity) row 6 **Run
+setup wizard** runs it again. One screen per step, `Setup 3/10` in the header: **Enter**
+keeps what is shown and goes on, **^** goes back a step, a digit picks a row (on a choice
+step it also goes on), **0** skips the rest (left as it is).
+
+| Step | What |
+|------|------|
+| 1 | Welcome (what RatSpeak is, the keys) |
+| 2 | Device name (**1** = change; default TDP-xxxx) |
+| 3 | Time zone (**1** = next zone); the clock sets itself from GPS or radios heard (by hand: S.1.1) |
+| 4 | Clock: **1** 24 h (13:45) / **2** 12 h (1:45 PM): top bar, idle screens, Settings |
+| 5 | Energy mode: Full / Balanced (default) / Saver / Check-in (§6) |
+| 6 | Idle screen: Splash / Map / Library page / If found (asks for the text, §4.1) |
+| 7 | Simple / Advanced (stored; Simple mode itself comes later, today both are the same) |
+| 8 | Password lock: none / set one (§1.2c) |
+| 9 | Import contacts: **1** listen over the radio (every contact card that arrives is saved; the other radio uses S.6 **Share all contacts**), **2** read `ratdeckpro/contacts.txt` from the SD card |
+| 10 | Done: a summary; **Enter** announces this radio and finishes |
+
+Then, if you like: theme (**M → S → 3 → 1**), WiFi (**M → S → 2**), and meet the other
+radio (Announce ID on both → **P** → name the contact, §1.2 → test send, §1.1).
 
 A **second LoRa RatSpeak device** in range is needed to check messaging.
 
@@ -324,7 +338,10 @@ S     Settings                      ← M then S
 ├── S.5   Battery                   volts, %, current, charger status, capacity
 │   ├── S.5.8  Battery log          internal RAM ring / SD CSV, dump to USB
 │   └── S.5.10 Reset calibration
-├── S.6   Identity                  destination, display name, LXMF address, Announce
+├── S.6   Identity                  destination, display name, LXMF address, Announce,
+│   │                               Run setup wizard (§1.3), Share all contacts (a card per
+│   │                               contact to one radio), Export / Import contacts
+│   │                               (<SD>/ratdeckpro/contacts.txt, "name<TAB>32 hex" per line)
 │   └── S.6.5  Identities           slots; New identity (make + switch + restart); per slot:
 │                                   Switch (restart) / Erase (key deleted; the active one is
 │                                   replaced by a new identity first). Enter twice to confirm.
