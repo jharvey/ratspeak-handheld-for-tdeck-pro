@@ -1,0 +1,47 @@
+# Rat Trap: MENU -> Library, last row. Runs with or without an SD card (the game row is
+# always there). Opens the middle square (never a trap), marks one, moves, then a new game.
+expect 60000 [BOOT] ready
+wait 1500
+key M
+wait 600
+key R
+expect 5000 [LIB]
+wait 1000
+shot game-00-library.png
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+wait 400
+key ENTER
+expect 5000 [GAME] Rat Trap open
+wait 1000
+shot game-01-new.png
+key ENTER
+wait 800
+shot game-02-opened.png
+key D
+key D
+key S
+key F
+wait 800
+shot game-03-marked.png
+key N
+wait 800
+key BACK
+expect 5000 [LIB]
+wait 800
+shot game-04-back.png
+battery 15
+wait 2500
+key ENTER
+wait 800
+shot game-05-lowbatt.png

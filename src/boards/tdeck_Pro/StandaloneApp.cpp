@@ -5796,6 +5796,7 @@ void libFind(const char* what) {
     requestRedraw();
 }
 
+bool gameOpen();
 void libKey(const KeyEvent& ev) {
     const char c = (char)toupper((unsigned char)ev.character);
     if (g_libReading) {
@@ -5805,9 +5806,13 @@ void libKey(const KeyEvent& ev) {
         else if (c == 'M') { libClose(); openMenu(); }
         return;
     }
-    if (ev.enter) { libOpenFile(g_libSel); return; }
-    if (c >= '1' && c <= '9') { const int k = g_libScroll + (c - '1'); if (k < g_libCount) { g_libSel = k; libOpenFile(k); } return; }
-    if (c == 'V' && g_libSel < g_libCount - 1) g_libSel++;
+    auto pick = [](int k) {                      // the row after the files is the game
+        if (k == g_libCount) { if (gameOpen()) { g_libOpen = false; } else requestRedraw(); }
+        else libOpenFile(k);
+    };
+    if (ev.enter) { pick(g_libSel); return; }
+    if (c >= '1' && c <= '9') { const int k = g_libScroll + (c - '1'); if (k <= g_libCount) { g_libSel = k; pick(k); } return; }
+    if (c == 'V' && g_libSel < g_libCount) g_libSel++;
     if (c == 'G' && g_libSel > 0) g_libSel--;
     if (c == 'M') { libClose(); openMenu(); return; }
     if (g_libSel < g_libScroll) g_libScroll = g_libSel;
@@ -5820,12 +5825,17 @@ void renderLibrary() {
     if (!g_libReading) {
         drawHeader("Library", false);
         if (!g_libCount) {
-            text(8, LIST_TOP + 8, "No files in ratdeckpro/library", false, W - 16);
-            text(8, LIST_TOP + 30, "on the SD card (push_files.py)", false, W - 16);
+            text(8, LIST_TOP + ROW_H + 8, "No files in ratdeckpro/library", false, W - 16);
+            text(8, LIST_TOP + ROW_H + 30, "on the SD card (push_files.py)", false, W - 16);
         }
-        for (int r = 0; r < 4 && g_libScroll + r < g_libCount; r++) {
+        for (int r = 0; r < 4 && g_libScroll + r <= g_libCount; r++) {
             const int k = g_libScroll + r;
             char t[48], sub[24];
+            if (k == g_libCount) {
+                snprintf(t, sizeof(t), "%d Rat Trap (game)", r + 1);
+                listRow(LIST_TOP + r * ROW_H, t, "a short puzzle; battery 25%+", k == g_libSel);
+                continue;
+            }
             snprintf(t, sizeof(t), "%d %s", r + 1, g_libFiles[k].name);
             const uint32_t sz = g_libFiles[k].size;
             if (sz < 2048) snprintf(sub, sizeof(sub), "%u bytes", (unsigned)sz);
@@ -5850,6 +5860,178 @@ void renderLibrary() {
     } else {
         label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "N/B page  F find  ^ list");
     }
+}
+
+// ---- Rat Trap (a small puzzle game, MENU -> Library, last row) -----------------------
+// A 10 x 9 field hides 12 traps. Open every safe square; a number tells how many traps
+// touch that square (8 neighbours). W A S D move, Enter / Space opens, F marks a trap,
+// N new game, ^ back. The first square opened is never a trap. Turn-based, so the e-ink
+// only refreshes on a key. Not offered on battery below 25 % (messages come first).
+constexpr int kGameCols = 10, kGameRows = 9, kGameTraps = 12, kGameCell = 22;
+constexpr int kGameX = (W - kGameCols * kGameCell) / 2;
+constexpr int kGameY = LIST_TOP + 2;
+constexpr int kGameMinBattery = 25;
+enum : uint8_t { GC_TRAP = 1, GC_OPEN = 2, GC_FLAG = 4 };
+uint8_t g_gameCell[kGameRows][kGameCols];
+bool g_gameOpen = false, g_gamePlaced = false, g_gameOver = false, g_gameWon = false;
+int g_gameCx = 0, g_gameCy = 0, g_gameFlags = 0, g_gameOpened = 0;
+uint32_t g_gameStart = 0, g_gameEnd = 0, g_gameBest = 0, g_gameWins = 0;
+
+int gameAround(int x, int y) {
+    int n = 0;
+    for (int dy = -1; dy <= 1; dy++)
+        for (int dx = -1; dx <= 1; dx++) {
+            const int ax = x + dx, ay = y + dy;
+            if ((dx || dy) && ax >= 0 && ay >= 0 && ax < kGameCols && ay < kGameRows && (g_gameCell[ay][ax] & GC_TRAP)) n++;
+        }
+    return n;
+}
+
+void gameNew() {
+    memset(g_gameCell, 0, sizeof(g_gameCell));
+    g_gamePlaced = g_gameOver = g_gameWon = false;
+    g_gameCx = kGameCols / 2;
+    g_gameCy = kGameRows / 2;
+    g_gameFlags = g_gameOpened = 0;
+    g_gameStart = g_gameEnd = 0;
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+// Traps go in after the first open, never on or next to that square.
+void gamePlace(int sx, int sy) {
+    int placed = 0;
+    while (placed < kGameTraps) {
+        const int x = (int)(esp_random() % kGameCols), y = (int)(esp_random() % kGameRows);
+        if (abs(x - sx) <= 1 && abs(y - sy) <= 1) continue;
+        if (g_gameCell[y][x] & GC_TRAP) continue;
+        g_gameCell[y][x] |= GC_TRAP;
+        placed++;
+    }
+    g_gamePlaced = true;
+    g_gameStart = millis();
+}
+
+void gameOpenCell(int x, int y) {
+    // Flood fill without recursion: a small stack of squares with no traps around.
+    static uint8_t stack[kGameRows * kGameCols];
+    int sp = 0;
+    auto push = [&](int ax, int ay) {
+        uint8_t& c = g_gameCell[ay][ax];
+        if (c & (GC_OPEN | GC_FLAG | GC_TRAP)) return;
+        c |= GC_OPEN;
+        g_gameOpened++;
+        if (!gameAround(ax, ay)) stack[sp++] = (uint8_t)(ay * kGameCols + ax);
+    };
+    push(x, y);
+    while (sp) {
+        const int p = stack[--sp], px = p % kGameCols, py = p / kGameCols;
+        for (int dy = -1; dy <= 1; dy++)
+            for (int dx = -1; dx <= 1; dx++) {
+                const int ax = px + dx, ay = py + dy;
+                if (ax >= 0 && ay >= 0 && ax < kGameCols && ay < kGameRows) push(ax, ay);
+            }
+    }
+}
+
+void gameSaveScore() {
+    Preferences p;
+    if (!p.begin("rs_game", false)) return;
+    p.putUInt("best", g_gameBest);
+    p.putUInt("wins", g_gameWins);
+    p.end();
+}
+
+bool gameOpen() {
+    if (!g_bat.usb && g_bat.valid && g_bat.pct < kGameMinBattery) {
+        toast("Battery under %d%%: no game", kGameMinBattery);
+        return false;
+    }
+    Preferences p;
+    if (p.begin("rs_game", true)) {
+        g_gameBest = p.getUInt("best", 0);
+        g_gameWins = p.getUInt("wins", 0);
+        p.end();
+    }
+    g_gameOpen = true;
+    gameNew();
+    Serial.println("[GAME] Rat Trap open");
+    return true;
+}
+
+void gameClose() { g_gameOpen = false; g_fullRefreshReq = true; requestRedraw(); }
+
+void gameDig() {
+    if (g_gameOver) return;
+    uint8_t& c = g_gameCell[g_gameCy][g_gameCx];
+    if (c & (GC_OPEN | GC_FLAG)) return;
+    if (!g_gamePlaced) gamePlace(g_gameCx, g_gameCy);
+    if (c & GC_TRAP) {
+        g_gameOver = true;
+        g_gameEnd = millis();
+        Serial.println("[GAME] trap - game over");
+        return;
+    }
+    gameOpenCell(g_gameCx, g_gameCy);
+    if (g_gameOpened == kGameCols * kGameRows - kGameTraps) {
+        g_gameOver = g_gameWon = true;
+        g_gameEnd = millis();
+        const uint32_t s = (g_gameEnd - g_gameStart + 999) / 1000;
+        g_gameWins++;
+        if (!g_gameBest || s < g_gameBest) g_gameBest = s;
+        gameSaveScore();
+        Serial.printf("[GAME] cleared in %lu s (best %lu, wins %lu)\n", (unsigned long)s,
+                      (unsigned long)g_gameBest, (unsigned long)g_gameWins);
+    }
+}
+
+void gameKey(const KeyEvent& ev) {
+    const char c = (char)toupper((unsigned char)ev.character);
+    if (c == 'M') { gameClose(); openMenu(); return; }
+    if (c == 'N') { gameNew(); return; }
+    if (c == 'W' && g_gameCy > 0) g_gameCy--;
+    else if (c == 'S' && g_gameCy < kGameRows - 1) g_gameCy++;
+    else if (c == 'A' && g_gameCx > 0) g_gameCx--;
+    else if (c == 'D' && g_gameCx < kGameCols - 1) g_gameCx++;
+    else if (ev.enter || ev.space) gameDig();
+    else if (c == 'F' && !g_gameOver) {
+        uint8_t& cell = g_gameCell[g_gameCy][g_gameCx];
+        if (!(cell & GC_OPEN)) { cell ^= GC_FLAG; g_gameFlags += (cell & GC_FLAG) ? 1 : -1; }
+    } else return;
+    requestRedraw();
+}
+
+void renderGame() {
+    char hdr[48];
+    const uint32_t end = g_gameEnd ? g_gameEnd : millis();
+    const uint32_t s = g_gameStart ? (end - g_gameStart) / 1000 : 0;
+    snprintf(hdr, sizeof(hdr), "Rat Trap  traps %d  %lu:%02lu", kGameTraps - g_gameFlags,
+             (unsigned long)(s / 60), (unsigned long)(s % 60));
+    drawHeader(hdr, false);
+    for (int y = 0; y < kGameRows; y++)
+        for (int x = 0; x < kGameCols; x++) {
+            const int px = kGameX + x * kGameCell, py = kGameY + y * kGameCell;
+            const uint8_t c = g_gameCell[y][x];
+            const bool cur = x == g_gameCx && y == g_gameCy;
+            box(px, py, kGameCell + 1, kGameCell + 1, cur ? 3 : 1);
+            if (c & GC_OPEN) {
+                const int n = gameAround(x, y);
+                if (n) { char t[2] = {(char)('0' + n), 0}; label(px, py + 1, kGameCell, kGameCell, t, n >= 3); }
+            } else if ((c & GC_TRAP) && g_gameOver) {
+                label(px, py + 1, kGameCell, kGameCell, g_gameWon ? "o" : "X", true);
+            } else if (c & GC_FLAG) {
+                label(px, py + 1, kGameCell, kGameCell, "F", true);
+            } else {
+                fillRect(px + 5, py + 5, kGameCell - 9, kGameCell - 9);   // still covered
+            }
+        }
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    char foot[48];
+    if (g_toast[0]) snprintf(foot, sizeof(foot), "%s", g_toast);
+    else if (g_gameWon) snprintf(foot, sizeof(foot), "Cleared! best %lus  N new", (unsigned long)g_gameBest);
+    else if (g_gameOver) snprintf(foot, sizeof(foot), "Trapped!  N new game  ^ back");
+    else snprintf(foot, sizeof(foot), "WASD  Enter open  F mark");
+    label(0, FOOT_Y - 1, W, FOOT_H, foot);
 }
 
 // ---- Contact page + share picker ----------------------------------------------------
@@ -5990,6 +6172,7 @@ void render() {
     else if (g_entry == Entry::Name)   renderRename();
     else if (g_cardOpen)               renderCard();
     else if (g_libOpen)                renderLibrary();
+    else if (g_gameOpen)               renderGame();
     else if (mapview::isOpen())        renderMapHeader();
     else switch (g_screen) {
         case SCR_HOME:     renderHome(); break;
@@ -6000,7 +6183,7 @@ void render() {
     drawBottomBar();
     drawMenuOverlay();
     lv_refr_now(nullptr);
-    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_placeOpen) stampMap();   // after LVGL's clear
+    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_placeOpen) stampMap();   // after LVGL's clear
     const uint32_t t1 = millis();
     // Clear the request first: keys queued during the panel refresh may ask again.
     g_redraw = false;
@@ -6195,6 +6378,7 @@ void startNameEntry(const uint8_t peer[16]) {
 void goScreen(ScreenId s) {
     g_menuOpen = false;
     g_libOpen = false;
+    g_gameOpen = false;
     g_cardOpen = false;
     g_shareActive = false;
     if (mapview::isOpen()) { mapview::close(); mapReadDone(); }
@@ -6322,6 +6506,7 @@ void goBack() {
         if (g_libReading) { g_libReading = false; requestRedraw(); } else libClose();
         return;
     }
+    if (g_gameOpen && !entryActive()) { gameClose(); libOpen(); return; }   // back to the Library list
     if (mapview::isOpen() && !entryActive()) { closeMap(); return; }    // map over a list: map first
     if (g_filter[0] && !entryActive() && isListScreen(g_screen)) { g_filter[0] = 0; loadRows(g_screen); requestRedraw(); return; }
     if (entryActive())           { cancelEntry(); return; }
@@ -6684,6 +6869,7 @@ void handleKey(const KeyEvent& ev) {
     if (g_menuOpen) { menuKey(ev); return; }
     if (entryActive()) { entryKey(ev); return; }
     if (g_libOpen) { libKey(ev); return; }
+    if (g_gameOpen) { gameKey(ev); return; }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
     if (mapview::isOpen()) {
         const char mc = (char)toupper((unsigned char)ev.character);
