@@ -653,8 +653,8 @@ void fmtTime(char* out, size_t n) {
 
 void fmtDate(char* out, size_t n) {
     struct tm t;
-    if (localNow(t)) snprintf(out, n, "%02d/%02d/%02d", t.tm_mon + 1, t.tm_mday, (t.tm_year + 1900) % 100);
-    else snprintf(out, n, "--/--/--");
+    if (localNow(t)) snprintf(out, n, "%02d/%02d/%04d", t.tm_mon + 1, t.tm_mday, t.tm_year + 1900);
+    else snprintf(out, n, "--/--/----");
 }
 
 // Set UTC clock from broken-down UTC fields.
@@ -4209,11 +4209,19 @@ void drawTopBar() {
     drawBatteryIcon(REF_W + 5, 3, BAT_W - 10, TOP_H - 6, g_bat.valid ? g_bat.pct : -1);
 
     box(CLOCK_X, 0, TAB_W, TOP_H, 1);
-    char d[12], t[8], md[8];
-    fmtDate(d, sizeof(d));
+    char d[12], t[8];
+    fmtDate(d, sizeof(d));                   // MM/DD/YYYY
     fmtTime(t, sizeof(t));
-    snprintf(md, sizeof(md), "%.5s", d);
-    label(CLOCK_X, 1, TAB_W, 16, md);
+    if (textW(d) <= TAB_W - 4) {
+        label(CLOCK_X, 1, TAB_W, 16, d);
+    } else {                                 // wide digits (08/08/2028): the 12 px font
+        lv_obj_t* o = lv_label_create(g_root);
+        lv_label_set_text(o, d);
+        lv_obj_set_style_text_font(o, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(o, fg(), 0);
+        const int w = lv_txt_get_width(d, strlen(d), &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
+        lv_obj_set_pos(o, CLOCK_X + (TAB_W - w) / 2, 3);
+    }
     label(CLOCK_X, 17, TAB_W, 16, t);
     if (ashareActive()) {                    // location auto-share on: small pin, top left
         fillRect(CLOCK_X + 4, 4, 7, 7);
@@ -4463,6 +4471,7 @@ bool gpsFresh();
 void mapGpsAsk(bool opening) {
     static uint32_t asked = 0;
     if (!g_cfg.gpsOn || g_pwEff.gps == power::GPS_OFF || gpsFresh()) return;
+    if (!power::gpsIntervalMs(g_pwEff.gps) && g_pwEff.gps != power::GPS_ON_USE) return;   // always on
     if (!opening && (!g_lastInputMs || millis() - g_lastInputMs > 300000)) return;
     if (asked && millis() - asked < 60000) return;
     asked = millis();
@@ -6099,7 +6108,7 @@ bool paintIdleMap() {
     if (unread > 0) snprintf(line, sizeof(line), "%s  %d%%%s  %d NEW", t, pct, g_bat.charging ? "+" : "", unread);
     else snprintf(line, sizeof(line), "%s  %d%%%s  no new", t, pct, g_bat.charging ? "+" : "");
     label(0, 0, W, 20, line, true);
-    snprintf(line, sizeof(line), "%.5s  %s", d, g_selfName);
+    snprintf(line, sizeof(line), "%s  %s", d, g_selfName);
     label(0, 18, W, 18, line);
     box(0, kIdleMapBottom, W, H - kIdleMapBottom, 1);
     if (g_locked) {
