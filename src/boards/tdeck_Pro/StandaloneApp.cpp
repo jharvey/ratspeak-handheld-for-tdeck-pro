@@ -140,6 +140,9 @@ struct Config {
     bool     libLastWrap = true;
     bool     clock12     = false;   // 12 h clock (1:45 PM) instead of 24 h
     bool     imperial    = false;   // distances in ft / mi instead of m / km
+    uint8_t  lowBatPct   = 0;       // low-battery notice at this % (0 = off)
+    uint8_t  lowBatTo[16] = {};     // ... sent to this contact
+    bool     lowBatSent  = false;   // sent in this discharge (reset when charging)
     bool     simple      = false;   // Simple mode (wizard step 7; the mode itself comes later)
     bool     wizDone     = true;    // setup wizard finished or skipped
     bool     trackOn     = false;   // breadcrumb track recording (S.1.10)
@@ -257,6 +260,9 @@ void loadConfig() {
     g_cfg.libLastWrap = p.getBool("libWrap", true);
     g_cfg.clock12     = p.getBool("clk12", false);
     g_cfg.imperial    = p.getBool("imperial", false);
+    g_cfg.lowBatPct   = p.getUChar("lbPct", 0);
+    p.getBytes("lbTo", g_cfg.lowBatTo, 16);
+    g_cfg.lowBatSent  = p.getBool("lbSent", false);
     g_cfg.simple      = p.getBool("simple", false);
     // Units that had settings before the wizard existed never see it (flag absent = done).
     g_cfg.wizDone     = p.isKey("wizDone") ? p.getBool("wizDone", true) : true;
@@ -306,6 +312,9 @@ void saveConfig() {
     p.putBool("libWrap", g_cfg.libLastWrap);
     p.putBool("clk12", g_cfg.clock12);
     p.putBool("imperial", g_cfg.imperial);
+    p.putUChar("lbPct", g_cfg.lowBatPct);
+    p.putBytes("lbTo", g_cfg.lowBatTo, 16);
+    p.putBool("lbSent", g_cfg.lowBatSent);
     p.putBool("simple", g_cfg.simple);
     p.putBool("wizDone", g_cfg.wizDone);
     p.putBool("trackOn", g_cfg.trackOn);
@@ -1579,6 +1588,7 @@ int     g_cardSel = 0;
 bool    g_shareActive = false;     // the Contacts list is picking who gets g_sharePeer
 bool    g_shareAll = false;        // ... and gets every contact's card (Settings S.6)
 bool    g_pickRt = false;          // ... or is the range-test partner (Settings S.7)
+bool    g_pickLowbat = false;      // ... or gets the low-battery notice (Settings S.5)
 uint8_t g_sharePeer[16];
 
 int hexNib(char c) {
@@ -1654,6 +1664,8 @@ bool tbStart();
 void tbStop(const char* why);
 int  trackExportGpx();
 bool g_navOpen = false;              // bearing + distance screen (G on the Atlas)
+int  batHoursLeft10(int* dataMin);
+void batLeftText(char* out, size_t n);
 bool g_rtOn = false, g_rtOpen = false; // range test running / its screen shown
 void rtStart(const uint8_t peer[16], int everySecs);
 void rtStop();
@@ -2111,7 +2123,7 @@ enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
-    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW
+    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW, PG_LOWBAT
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -3053,6 +3065,7 @@ const char* pageTitle(Page p) {
         case PG_WPTS:         return "Waypoints";
         case PG_TRACK:        return "Track";
         case PG_GEOFS:        return "Arrival alerts";
+        case PG_LOWBAT:       return "Low-battery notice";
         case PG_GEOF_NEW:     return "New arrival alert";
     }
     return "";
@@ -3424,7 +3437,25 @@ void buildSettingsRows(Page p) {
         srow(RK_INFO, "Full-charge cal", g_fullSoc < 100 ? "gauge %u%% = 100%%" : "none yet (charge to full)",
              (unsigned)g_fullSoc);
         srow(RK_ACTION, "Reset calibration", g_fullSoc < 100 ? "Enter = reset" : "-");
+        {
+            char t[48];
+            batLeftText(t, sizeof(t));
+            srow(RK_INFO, "Time left (measured)", "%s", t);
+        }
+        srow(RK_MENU, "Low-battery notice", "%s", g_cfg.lowBatPct ? "on" : "off");
         break;
+
+    case PG_LOWBAT: {
+        if (g_cfg.lowBatPct) srow(RK_PICK, "Send at", "%u %%", (unsigned)g_cfg.lowBatPct);
+        else srow(RK_PICK, "Send at", "off");
+        char nm[24];
+        const bool to = memcmp(g_cfg.lowBatTo, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) != 0;
+        if (to) peerName(g_cfg.lowBatTo, nm, sizeof(nm)); else snprintf(nm, sizeof(nm), "nobody yet");
+        srow(RK_ACTION, "Send to", "%s; Enter = pick", nm);
+        srow(RK_INFO, "This discharge", "%s", g_cfg.lowBatSent ? "sent (again after charging)" : "not sent");
+        srow(RK_INFO, "Message", "battery %%, last position + age");
+        break;
+    }
 
     case PG_BATLOG:
         srow(RK_TOGGLE, "Internal log", "%s (%u samples)", g_batLogInternal ? "ON" : "OFF", (unsigned)g_batLogCount);
@@ -3896,8 +3927,25 @@ void activateSetting(int idx) {
         }
         break;
 
+    case PG_LOWBAT:
+        if (idx == 0) {
+            static const uint8_t kSteps[5] = {0, 5, 10, 15, 20};
+            int k = 0;
+            while (k < 5 && kSteps[k] != g_cfg.lowBatPct) k++;
+            g_cfg.lowBatPct = kSteps[(k + 1) % 5];
+            saveConfig();
+            requestRedraw();
+        } else if (idx == 1) {
+            goScreen(SCR_CONTACTS);
+            g_shareActive = true;
+            g_pickLowbat = true;
+            toast("Pick who gets it");
+        }
+        break;
+
     case PG_BATTERY:
-        if (idx == 7) pushPage(PG_BATLOG);
+        if (idx == 11) pushPage(PG_LOWBAT);
+        else if (idx == 7) pushPage(PG_BATLOG);
         else if (idx == 9 && g_fullSoc < 100) { saveBatteryCal(100); readBattery(); toast("Calibration reset"); }
         break;
 
@@ -4121,6 +4169,8 @@ void renderList() {
         else           snprintf(hdr, sizeof(hdr), "Inbox  unread %02d", unread > 99 ? 99 : unread);
     } else if (g_shareActive && g_pickRt) {
         snprintf(hdr, sizeof(hdr), "Range test with:");
+    } else if (g_shareActive && g_pickLowbat) {
+        snprintf(hdr, sizeof(hdr), "Low battery notice to:");
     } else if (g_shareActive && g_shareAll) {
         snprintf(hdr, sizeof(hdr), "All contacts to:");
     } else if (g_shareActive) {
@@ -6660,6 +6710,20 @@ void cardKey(const KeyEvent& ev) {
 void shareAllTo(const uint8_t to[16]);
 
 void shareSendTo(int idx) {
+    if (g_pickLowbat) {
+        if (isSelf(g_rows[idx].peer)) { toast("Pick another radio"); return; }
+        memcpy(g_cfg.lowBatTo, g_rows[idx].peer, 16);
+        if (!g_cfg.lowBatPct) g_cfg.lowBatPct = 10;
+        saveConfig();
+        g_shareActive = false;
+        g_pickLowbat = false;
+        char nm[24];
+        peerName(g_cfg.lowBatTo, nm, sizeof(nm));
+        toast("Low battery -> %.14s at %u%%", nm, (unsigned)g_cfg.lowBatPct);
+        Serial.printf("[LOWBAT] to %s at %u%%\n", nm, (unsigned)g_cfg.lowBatPct);
+        goScreen(SCR_SETTINGS);
+        return;
+    }
     if (g_pickRt) {
         uint8_t to[16];
         memcpy(to, g_rows[idx].peer, 16);
@@ -7578,8 +7642,11 @@ void drawIdleTop() {
     const int pct = g_bat.valid ? g_bat.pct : -1;
     const int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
     box(0, 0, W, kIdleMapTop, 1);
-    if (unread > 0) snprintf(line, sizeof(line), "%s  %d%%%s  %d NEW", t, pct, g_bat.charging ? "+" : "", unread);
-    else snprintf(line, sizeof(line), "%s  %d%%%s  no new", t, pct, g_bat.charging ? "+" : "");
+    char left[10] = "";
+    const int h10 = g_bat.usb ? -1 : batHoursLeft10(nullptr);
+    if (h10 >= 0) snprintf(left, sizeof(left), h10 < 480 ? " ~%dh" : " ~%dd", h10 < 480 ? (h10 + 5) / 10 : (h10 + 120) / 240);
+    if (unread > 0) snprintf(line, sizeof(line), "%s  %d%%%s%s  %d NEW", t, pct, g_bat.charging ? "+" : "", left, unread);
+    else snprintf(line, sizeof(line), "%s  %d%%%s%s  no new", t, pct, g_bat.charging ? "+" : "", left);
     label(0, 0, W, 20, line, true);
     snprintf(line, sizeof(line), "%s  %s", d, g_selfName);
     label(0, 18, W, 18, line);
@@ -7950,7 +8017,7 @@ void goBack() {
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
     if (g_rtOpen && !entryActive()) { rtStop(); return; }
     if (g_shareActive && !entryActive()) {
-        g_shareActive = false; g_shareAll = false; g_pickRt = false;
+        g_shareActive = false; g_shareAll = false; g_pickRt = false; g_pickLowbat = false;
         toast("Cancelled");
         return;
     }
@@ -9063,6 +9130,25 @@ void handleSerialLine(char* p) {
                       (unsigned long)g_rtGot, (unsigned long)g_rtLost, (unsigned long)g_rtHeard, g_rtFile);
         return;
     }
+    if (!strncmp(p, "batleft", 7)) {          // batleft [feed <mA> <min>]: estimate (bench: feed drain data)
+        int ma = 0, mins = 0;
+        if (sscanf(p + 7, " feed %d %d", &ma, &mins) == 2 && ma > 0 && mins > 0)
+            energy::addMeasured((int16_t)-ma, (uint32_t)mins * 60000UL);
+        char t[48];
+        batLeftText(t, sizeof(t));
+        Serial.printf("[BAT] left: %s\n", t);
+        return;
+    }
+    if (!strncmp(p, "lowbat", 6)) {           // lowbat <pct> <hex> | lowbat (status)
+        int pc = -1;
+        char hx[40] = "";
+        uint8_t h[16];
+        if (sscanf(p + 6, " %d %39s", &pc, hx) == 2 && hexToHash(hx, h)) {
+            g_cfg.lowBatPct = (uint8_t)pc; memcpy(g_cfg.lowBatTo, h, 16); g_cfg.lowBatSent = false; saveConfig();
+        }
+        Serial.printf("[LOWBAT] at %u%% sent=%d\n", (unsigned)g_cfg.lowBatPct, g_cfg.lowBatSent);
+        return;
+    }
     if (!strncmp(p, "geof", 4) && (p[4] == 0 || p[4] == ' ')) {   // geof | geof add <hex> me|w<n> <m> [rep] | geof clear
         char hx[40] = "", at[8] = "";
         int m = 0, rep = 0;
@@ -9827,6 +9913,72 @@ void pollSerial() {
 }
 
 // ---- Background watchers -------------------------------------------------------------
+// ---- Battery: measured time left, low-battery notice --------------------------------------
+// Time left: the gauge's remaining mAh over the drain the energy monitor measured on battery
+// (the period in progress + up to 12 closed ones, normally 1 h each); needs 30 min of data.
+int batHoursLeft10(int* dataMin) {
+    uint32_t sec = 0, mah10 = 0;
+    const energy::Record cur = energy::current(millis(), g_bat.valid ? g_bat.pct : -1);
+    sec += cur.measuredS; mah10 += cur.measured10;
+    for (int i = 0; i < energy::count() && i < 12; i++) {
+        const energy::Record& r = energy::closed(i);
+        sec += r.measuredS; mah10 += r.measured10;
+    }
+    if (dataMin) *dataMin = (int)(sec / 60);
+    if (sec < 1800 || !mah10 || !g_bat.valid) return -1;
+    const float ma = (mah10 / 10.0f) * 3600.0f / sec;
+    if (ma < 0.5f) return -1;
+    const float rem = g_bat.remMah ? (float)g_bat.remMah : 1450.0f * g_bat.pct / 100.0f;
+    return (int)(rem / ma * 10.0f);
+}
+
+void batLeftText(char* out, size_t n) {
+    int mins = 0;
+    const int h10 = batHoursLeft10(&mins);
+    if (g_bat.usb) snprintf(out, n, "on USB power");
+    else if (h10 < 0) snprintf(out, n, "not enough data yet (%d/30 min)", mins);
+    else if (h10 < 480) snprintf(out, n, "about %d h in %s", (h10 + 5) / 10, power::modeName(g_pw.mode));
+    else snprintf(out, n, "about %.1f days in %s", h10 / 240.0f, power::modeName(g_pw.mode));
+}
+
+// Low-battery notice (S.5 row 12): once per discharge, at the chosen %, one contact gets
+// "Battery dying (9%). Last position ..."; check-in mode queues it for the window.
+void lowBatTick() {
+    if (!g_bat.valid) return;
+    if (g_cfg.lowBatSent && (g_bat.usb || g_bat.charging || g_bat.pct >= g_cfg.lowBatPct + 5)) {
+        g_cfg.lowBatSent = false;                    // charged: armed again
+        saveConfig();
+        return;
+    }
+    if (!g_cfg.lowBatPct || g_cfg.lowBatSent || g_bat.usb || g_bat.charging || g_bat.pct > g_cfg.lowBatPct) return;
+    static const uint8_t zero[16] = {0};
+    if (!memcmp(g_cfg.lowBatTo, zero, 16)) return;
+    char body[120];
+    double la, lo;
+    if (g_gpsPosValid) {
+        const uint32_t age = (millis() - g_gpsPosAt) / 60000;
+        snprintf(body, sizeof(body), "Battery dying (%d%%). Last position %.5f, %.5f (%lu min old)", g_bat.pct,
+                 g_gpsLat, g_gpsLon, (unsigned long)age);
+    } else if (ownPosition(la, lo)) {
+        snprintf(body, sizeof(body), "Battery dying (%d%%). Saved position %.5f, %.5f (no GPS fix)", g_bat.pct, la, lo);
+    } else {
+        snprintf(body, sizeof(body), "Battery dying (%d%%). No position known.", g_bat.pct);
+    }
+    const power::CheckinPhase ph = checkinNow();
+    const bool queue = g_pwEff.checkin && !(ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS);
+    bool ok;
+    if (queue) ok = outboxAdd(g_cfg.lowBatTo, body);
+    else ok = sendOrQueue(g_cfg.lowBatTo, body) != SendResult::Failed;
+    char nm[24];
+    peerName(g_cfg.lowBatTo, nm, sizeof(nm));
+    Serial.printf("[LOWBAT] %s to %s: %s\n", ok ? (queue ? "queued" : "sent") : "FAILED", nm, body);
+    if (ok) {
+        g_cfg.lowBatSent = true;
+        saveConfig();
+        toast("Low battery: told %.14s", nm);
+    }
+}
+
 void watchBattery() {
     static uint32_t last = 0;
     if (millis() - last < 800) return;
@@ -9835,6 +9987,7 @@ void watchBattery() {
     const int pct = g_bat.pct;
     const bool wasValid = g_bat.valid;
     readBattery();
+    lowBatTick();
     if (g_idleActive) return;
     const bool changed = chg != g_bat.charging || usb != g_bat.usb || wasValid != g_bat.valid ||
                          (g_screen == SCR_HOME && pct != g_bat.pct);

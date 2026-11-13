@@ -1,0 +1,47 @@
+# Measured battery time left (S.5 row 11, idle strip) and the low-battery notice (S.5 row 12).
+# Drain data is fed with the console (batleft feed <mA> <minutes>), as the energy monitor
+# would collect it on battery. Run: run-script.bat scripts\battery_left.txt batt fresh
+usb off
+battery 60
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+serial batleft
+expect 3000 not enough data yet
+serial batleft feed 25 60
+expect 3000 [BAT] left: about
+wait 500
+key M
+wait 600
+key S
+wait 600
+key 5
+wait 1000
+shot bat-01-page.png
+key BACK
+wait 400
+key BACK
+wait 400
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+shot bat-02-idle.png
+key G
+wait 800
+# Low-battery notice to Alice at 10 %: once at 9 %, not again at 8 %, armed again after USB
+serial contact 0000000000000000000000000000a11c Alice
+serial lowbat 10 0000000000000000000000000000a11c
+expect 3000 [LOWBAT] at 10% sent=0
+battery 9
+expect 10000 [LOWBAT] 
+serial lowbat
+expect 3000 sent=1
+battery 8
+wait 3000
+serial lowbat
+expect 3000 sent=1
+usb on
+wait 3000
+serial lowbat
+expect 3000 sent=0
+quit
