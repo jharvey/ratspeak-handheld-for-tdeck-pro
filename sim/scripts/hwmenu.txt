@@ -1,0 +1,19 @@
+# Menu bar: change the hardware from the menus, save the setup as the device's sim.ini.
+#   sim\run-script.bat sim\scripts\hwmenu.txt hwmenu fresh
+# Afterwards build\simdata\hwmenu\sim.ini holds: sd = 64G, battery = 25, usb = on, gps = nofix.
+expect 60000 [BOOT] ready
+wait 1500
+winshot menu-01-start.png
+menu SD card > Card size > 64 GB
+menu Power > Battery level > 25 %
+menu Power > USB connected
+menu GPS > Fix
+menu GPS > Satellites > 3
+wait 1500
+serial sdinfo
+expect 5000 /65536 MB
+serial pw
+expect 5000 usb=1
+menu Device > Save this setup
+wait 500
+winshot menu-02-changed.png

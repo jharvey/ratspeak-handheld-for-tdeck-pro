@@ -126,8 +126,7 @@ What is designed for this today (to prove, not assume):
 - An incoming message's delivery proof is only sent after it is saved, so a cut before
   the save makes the sender retry instead of losing it.
 - Settings, TX power, identity: NVS / atomic files.
-- Map copies and downloads on the PC side resume from the NAS (`M:
-atspeak-maps\STATUS.txt`).
+- Map copies and downloads on the PC side resume from the NAS (`M:\ratspeak-maps\STATUS.txt`).
 
 Tests:
 | Test | How | Pass |
@@ -136,6 +135,54 @@ Tests:
 | **Real power cut** | Battery-only unit, pull the battery during saves / map copy / settings change (10-20 times by hand) | Same as above; settings unchanged |
 | **Simulator kill** | Kill the simulator process at random points during saves, restart, repeat | Same as above, fast enough for hundreds of runs overnight |
 | **Brown-out** | Run the battery down under load | Clean stop; normal boot when charged |
+
+## 4b. Battery life: normal use, unplugged, until empty (planned, week of 2026-11-16)
+
+Goal: real runtime numbers for each energy mode, measured on units used the way a person
+would use them, as the basis for the time estimates in Settings > Power (S.4.12) and the
+guide. Start only after the current development is done (user, 2026-11-13).
+
+**Traffic pattern (normal use):** once an hour, unit A sends a message, B answers, A
+answers, B answers: 4 messages per hour, 96 per day, each 40-80 characters, with a counter
+and A's battery % / B's battery % in the text. Between exchanges the units sit idle with
+the screen on the idle splash (lock off), as in a pocket.
+
+**Unplugged = no PC.** The units run on battery only, so the traffic must come from the
+firmware itself:
+- New console command (set over USB before unplugging, kept in NVS): `bench chat <peer>
+  every 60 [lead|answer]` - the lead unit starts an exchange every 60 min at a fixed
+  minute; the answer unit replies to bench messages after a short random delay (5-30 s),
+  up to the 4th message. `bench off` stops it. Normal messages are not touched.
+- Every exchange and every 10 min: one line to `<SD>/ratdeckpro/logs/battery.csv`
+  (the S.5.8 battery log): time, uptime, %, mV, mA (gauge), power mode, messages sent /
+  received / failed, delivery time of each message. Also in the RTC power log (`rl`),
+  which survives the final brown-out.
+- At the end the last CSV line shows the cut-off point; the % reading vs. real time left
+  also checks the gauge (the 85 % "full" calibration, S.5.10).
+
+**Runs (each until the unit shuts down, then charge to full and start the next):**
+
+| Run | Units | Mode | Expected (rough, to be replaced by the result) |
+|---|---|---|---|
+| 1 | COM5 + COM9 | Balanced (default) | 2-4 days |
+| 2 | COM3 + COM6 | Saver | 5-8 days (~7 mA asleep) |
+| 3 | COM5 + COM9 | Full | under 1 day |
+| 4 | COM3 + COM6 | Check-in (windows every 60 min, exchange inside the window) | longest |
+
+Runs 1 + 2 can go at the same time (two pairs, different modes); 3 + 4 after. A pair
+holds the same mode so both ends behave alike. Same TX power on both (22 dBm with
+antennas). Full charge first (charge-done on the charger), same room temperature,
+units 2-5 m apart; GPS left at the mode's default.
+
+**Before the real runs:**
+1. Simulator: the `bench chat` command with two simulators (scripted, fast clock not
+   needed: 1-minute interval for the test), battery drain from the simulated gauge.
+2. A short 2-hour run on one pair on USB with the PC logging the console, to check the
+   CSV lines and that 4 messages per hour really go out and arrive.
+
+**Results:** hours to shutdown per mode, mAh per day (gauge), messages delivered / lost,
+average delivery time, gauge % vs. real time left. They feed the S.4.12 "estimated time
+left" and the table in the guide's §6.
 
 ## 5. Order of work
 

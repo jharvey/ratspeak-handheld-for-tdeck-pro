@@ -30,6 +30,10 @@ public:
 
 private:
     void buildPanel(QWidget* panel);
+    void buildMenus();
+    void resetDevice();                 // bottom side button: restart like a power cut
+    void saveSetup();                   // write the current hardware to <data>/sim.ini
+    void setSdSize(uint64_t bytes);
     void drainSerial();
     void applyBattery();
     void saveShot(const QString& file, bool wholeDevice, bool window = false);
@@ -47,11 +51,13 @@ private:
     QCheckBox* usb_ = nullptr;
     QCheckBox* full_ = nullptr;
     QCheckBox* gps_ = nullptr;
+    QCheckBox* sd_ = nullptr;
     QCheckBox* realistic_ = nullptr;
     QLabel* status_ = nullptr;
     QLabel* liveInfo_ = nullptr;
     QGroupBox* powerBox_ = nullptr;
     QGroupBox* envBox_ = nullptr;
+    QWidget* sidePanel_ = nullptr;
     LiveLink* live_ = nullptr;
 
     QStringList script_;

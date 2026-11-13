@@ -1,0 +1,22 @@
+# Hardware setup options. Run with
+#   set SIM_ARGS=--sd 32G --battery 61 --usb --gps nofix
+#   sim\run-script.bat sim\scripts\hwconfig.txt hwcfg fresh
+# The firmware must see a 32 GB card and USB power (the top bar shows 61 %); then the
+# card is pulled, USB unplugged and the battery drops to 15 %.
+expect 60000 [BOOT] ready
+wait 1500
+serial sdinfo
+expect 5000 /32768 MB
+serial pw
+expect 5000 usb=1
+winshot hw-01-start.png
+sd out
+battery 15
+usb off
+wait 3000
+serial sdinfo
+expect 5000 [SD]
+serial pw
+expect 5000 usb=0
+wait 1500
+winshot hw-02-changed.png
