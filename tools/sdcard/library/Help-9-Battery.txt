@@ -16,4 +16,6 @@ Keys and incoming messages stay instant in every mode. On USB power it runs Full
 
 No GPS fix in Balanced or Saver? Go outside and wait up to 15 min, or switch to Full for a while.
 
+Idle screen (M, S, 3, 2, row 8): Splash, Map, Library page or If found. All show the time, battery, date and unread messages at the top. The e-ink keeps the last picture with no power at all, so an If found screen stays readable on a flat battery.
+
 Ghosting on the screen? MIC refreshes it.

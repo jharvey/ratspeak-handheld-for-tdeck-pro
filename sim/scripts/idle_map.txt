@@ -1,4 +1,4 @@
-# Idle screen = map (S.3.2 row 8). No GPS: centred on the card's home.txt at zoom 13 or
+# Idle screen = map (S.3.2 row 8 "Idle screen" -> Map; set here with "serial idlescr 1"). No GPS: centred on the card's home.txt at zoom 13 or
 # the deepest level with tiles; time / battery / unread on top. Needs tiles in
 # build\simdata\<name>\sd (see map_menu.txt). Also checks the volume pick (0..100 by 20).
 gps off
@@ -12,7 +12,8 @@ key 3
 wait 800
 key 2
 wait 800
-key 8
+serial idlescr 1
+expect 3000 [IDLE] screen Map
 wait 800
 shot idlemap-01-setting.png
 key BACK

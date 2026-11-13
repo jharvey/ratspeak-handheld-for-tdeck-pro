@@ -12,4 +12,6 @@ When locked, any key shows the password prompt. Messages still arrive. 3 wrong t
 
 With a password set, the radio also locks at every power-on.
 
+The locked screen is the idle screen you picked (M, S, 3, 2, row 8). Pick "If found" and type your name, address or phone in row 9 (SYM J = new line): whoever finds the radio sees it, even with a flat battery. Map and Library page show the plain splash while locked.
+
 Write the password down: the radio cannot be unlocked without it.

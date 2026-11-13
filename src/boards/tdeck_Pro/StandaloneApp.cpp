@@ -119,6 +119,10 @@ LoRaInterface* g_loraIf = nullptr;
 
 constexpr const char* kDefaultSelfName = "MyRatSpeakPro";
 
+// Idle screens (S.3.2 "Idle screen"); add new ones at the end.
+enum IdleScreen : uint8_t { IDLE_SPLASH, IDLE_MAP, IDLE_LIBRARY, IDLE_FOUND, IDLE_COUNT };
+const char* const kIdleScreenName[IDLE_COUNT] = {"Splash", "Map", "Library page", "If found"};
+
 struct Config {
     bool     dark        = false;   // false = white paper, true = black ink
     int      tz          = 0;       // index into kTz
@@ -127,7 +131,12 @@ struct Config {
     bool     beep        = true;
     bool     vibe        = true;
     uint8_t  volume      = 80;      // 0..100 %, steps of 20; 80 spares the small speaker
-    bool     idleMap     = false;   // idle screen = map around your position
+    uint8_t  idleScreen  = 0;       // IdleScreen: splash, map, library page, if-found
+    char     foundText[121] = "";   // if-found screen: owner text, ';' = new line (SYM J)
+    bool     foundAddr   = true;    // if-found screen shows this radio's LXMF address
+    char     libLast[40] = "";      // library file last read (idle screen "Library")
+    uint32_t libLastOff  = 0;       // and the page it was on
+    bool     libLastWrap = true;
     bool     trackOn     = false;   // breadcrumb track recording (S.1.10)
     uint8_t  coordFmt    = 0;       // 0 decimal degrees, 1 deg-min-sec, 2 MGRS (S.1.12)
     bool     kbLight     = false;
@@ -208,7 +217,15 @@ void loadConfig() {
     g_cfg.beep        = p.getBool("beep", true);
     g_cfg.vibe        = p.getBool("vibe", true);
     g_cfg.volume      = p.getUChar("vol", 80);
-    g_cfg.idleMap     = p.getBool("idleMap", false);
+    // "idleScr" replaces the old idleMap bool (true -> Map).
+    if (p.isKey("idleScr")) g_cfg.idleScreen = p.getUChar("idleScr", IDLE_SPLASH);
+    else g_cfg.idleScreen = p.getBool("idleMap", false) ? IDLE_MAP : IDLE_SPLASH;
+    if (g_cfg.idleScreen >= IDLE_COUNT) g_cfg.idleScreen = IDLE_SPLASH;
+    p.getString("foundTxt", g_cfg.foundText, sizeof(g_cfg.foundText));
+    g_cfg.foundAddr   = p.getBool("foundAddr", true);
+    p.getString("libLast", g_cfg.libLast, sizeof(g_cfg.libLast));
+    g_cfg.libLastOff  = p.getUInt("libOff", 0);
+    g_cfg.libLastWrap = p.getBool("libWrap", true);
     g_cfg.trackOn     = p.getBool("trackOn", false);
     g_cfg.coordFmt    = p.getUChar("coordFmt", 0);
     if (g_cfg.coordFmt > 2) g_cfg.coordFmt = 0;
@@ -245,7 +262,13 @@ void saveConfig() {
     p.putBool("beep", g_cfg.beep);
     p.putBool("vibe", g_cfg.vibe);
     p.putUChar("vol", g_cfg.volume);
-    p.putBool("idleMap", g_cfg.idleMap);
+    p.putUChar("idleScr", g_cfg.idleScreen);
+    if (p.isKey("idleMap")) p.remove("idleMap");
+    p.putString("foundTxt", g_cfg.foundText);
+    p.putBool("foundAddr", g_cfg.foundAddr);
+    p.putString("libLast", g_cfg.libLast);
+    p.putUInt("libOff", g_cfg.libLastOff);
+    p.putBool("libWrap", g_cfg.libLastWrap);
     p.putBool("trackOn", g_cfg.trackOn);
     p.putUChar("coordFmt", g_cfg.coordFmt);
     p.putBool("kbl", g_cfg.kbLight);
@@ -1981,7 +2004,8 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              MapNum,                            // contact page: map number
                              WptName,                           // map P: waypoint name
                              LibFind,                           // library: find text
-                             PlaceFind };                       // map F: place name
+                             PlaceFind,                         // map R: place name
+                             FoundText };                       // idle "If found": owner text
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -3278,7 +3302,11 @@ void buildSettingsRows(Page p) {
         }
         srow(RK_ACTION, "Remove password", "%s", pw ? "Enter = remove" : "-");
         srow(RK_ACTION, "Lock now", "%s", pw ? "Enter = lock" : "set a password first");
-        srow(RK_TOGGLE, "Idle screen", "%s", g_cfg.idleMap ? "MAP around you" : "splash (logo)");
+        srow(RK_PICK, "Idle screen", "%s", kIdleScreenName[g_cfg.idleScreen]);
+        e = editingSub(Entry::FoundText);
+        if (e) srow(RK_ENTRY, "If-found text ( ; = new line)", "%s", e);
+        else   srow(RK_ENTRY, "If-found text", "%s", g_cfg.foundText[0] ? g_cfg.foundText : "none: Enter to type");
+        srow(RK_TOGGLE, "If found: my address", "%s", g_cfg.foundAddr ? "shown" : "hidden");
         break;
     }
 
@@ -3710,9 +3738,17 @@ void activateSetting(int idx) {
         } else if (idx == 6) {
             if (lockHasPassword()) lockNow(); else toast("Set a password first");
         } else if (idx == 7) {
-            g_cfg.idleMap = !g_cfg.idleMap;
+            g_cfg.idleScreen = (uint8_t)((g_cfg.idleScreen + 1) % IDLE_COUNT);
             saveConfig();
-            toast(g_cfg.idleMap ? "Idle: map (needs SD tiles)" : "Idle: splash");
+            Serial.printf("[IDLE] screen %s\n", kIdleScreenName[g_cfg.idleScreen]);
+            if (g_cfg.idleScreen == IDLE_FOUND && !g_cfg.foundText[0]) toast("Type your text: row 9");
+            requestRedraw();
+        } else if (idx == 8) {
+            startEntry(Entry::FoundText, g_cfg.foundText);
+            g_entryReplace = true;            // typing starts over, Backspace edits the old text
+        } else if (idx == 9) {
+            g_cfg.foundAddr = !g_cfg.foundAddr;
+            saveConfig();
             requestRedraw();
         }
         break;
@@ -5853,7 +5889,18 @@ void libOpen() {
     requestRedraw();
 }
 
+// The page being read, for the idle screen "Library page".
+void libRemember() {
+    if (!g_libReading || g_libPages.empty()) return;
+    const char* nm = strrchr(g_libPath, '/');
+    strlcpy(g_cfg.libLast, nm ? nm + 1 : g_libPath, sizeof(g_cfg.libLast));
+    g_cfg.libLastOff = g_libPages.back();
+    g_cfg.libLastWrap = g_libWrap;
+    saveConfig();
+}
+
 void libClose() {
+    libRemember();
     g_libOpen = false; g_libReading = false; g_navKeysOpen = false;
     g_libPages.clear(); g_libPages.shrink_to_fit();
     requestRedraw();
@@ -6376,53 +6423,161 @@ void spaced(const char* in, char* out, size_t n) {
 
 bool paintIdleMap();
 
-void paintIdle() {
-    if (g_cfg.idleMap && paintIdleMap()) return;
-    clearRoot();
-    const int y0 = 76, step = 20;
-    label(0, y0, W, 20, "RatSpeak", true);
-    char d[12], t[8], tmp[24], line[40];
-    fmtDate(d, sizeof(d));
+bool paintIdleLibrary();
+void paintIdleFound();
+constexpr int kIdleMapTop = 38, kIdleMapBottom = 300;
+
+// Every idle screen: time, battery and unread across the top, the date and the radio's name
+// under them, and the wake / LOCKED line at the bottom.
+void drawIdleTop() {
+    char t[8], d[12], line[48];
     fmtTime(t, sizeof(t));
-    spaced(d, line, sizeof(line));
-    label(0, y0 + step, W, 20, line, true);
-    snprintf(tmp, sizeof(tmp), "%s %s", t, tzCur().name);
-    spaced(tmp, line, sizeof(line));
-    label(0, y0 + 2 * step, W, 20, line, true);
-
+    fmtDate(d, sizeof(d));
     const int pct = g_bat.valid ? g_bat.pct : -1;
-    const int bx = W / 2 - 23, by = y0 + 3 * step + 2;
-    drawBatteryIcon(bx, by, 18, 28, pct);
-    snprintf(tmp, sizeof(tmp), pct >= 0 ? "%d%%" : "--%%", pct);
-    label(bx + 20, by + 6, 40, 16, tmp);
-    label(0, y0 + 5 * step, W, 18,
-          g_bat.charging ? (g_bat.usb ? "charging | plugged in" : "charging")
-                         : (g_bat.usb ? "plugged in" : "unplugged"));
-
     const int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
-    if (unread > 0) snprintf(line, sizeof(line), "NEW messages: %d unread", unread);
-    else            snprintf(line, sizeof(line), "No new messages");
-    label(0, y0 + 6 * step, W, 18, line, unread > 0);
-
-    uint32_t s = millis() / 1000UL;
-    label(0, y0 + 7 * step, W, 16, "uptime");
-    snprintf(line, sizeof(line), "%05luD : %02luH : %02luM", (unsigned long)(s / 86400UL),
-             (unsigned long)((s / 3600UL) % 24UL), (unsigned long)((s / 60UL) % 60UL));
-    label(0, y0 + 8 * step, W, 16, line);
-    label(0, y0 + 9 * step, W, 18, g_selfName, true);
-    label(0, 292, W, 22, g_locked ? "LOCKED | press a key" : "press a KEY to wake", true);
-
-    lv_refr_now(nullptr);
-    drawLogo(W / 2, 36);     // stamped after LVGL so the clear does not wipe it
+    box(0, 0, W, kIdleMapTop, 1);
+    if (unread > 0) snprintf(line, sizeof(line), "%s  %d%%%s  %d NEW", t, pct, g_bat.charging ? "+" : "", unread);
+    else snprintf(line, sizeof(line), "%s  %d%%%s  no new", t, pct, g_bat.charging ? "+" : "");
+    label(0, 0, W, 20, line, true);
+    snprintf(line, sizeof(line), "%s  %s", d, g_selfName);
+    label(0, 18, W, 18, line);
     g_idleShownUnread = unread;
     g_idleShownPct = pct;
     g_idleShownMin = millis() / 60000UL;
 }
 
-// Idle screen "map around you" (S.3.2 row 8): the map centred on the GPS fix, else the
+void drawIdleFoot(const char* unlockedText) {
+    box(0, kIdleMapBottom, W, H - kIdleMapBottom, 1);
+    label(0, kIdleMapBottom, W, H - kIdleMapBottom, g_locked ? "LOCKED | press a key" : unlockedText, g_locked);
+}
+
+void paintIdle() {
+    // Locked: the map (your position) and a library page are not shown; If found is.
+    uint8_t sc = g_cfg.idleScreen;
+    if (g_locked && (sc == IDLE_MAP || sc == IDLE_LIBRARY)) sc = IDLE_SPLASH;
+    if (sc == IDLE_MAP && paintIdleMap()) return;
+    if (sc == IDLE_LIBRARY && paintIdleLibrary()) return;
+    if (sc == IDLE_FOUND) { paintIdleFound(); return; }
+    clearRoot();
+    drawIdleTop();
+    const int y0 = 140, step = 20;
+    label(0, y0, W, 20, "RatSpeak", true);
+    char line[40];
+    label(0, y0 + step, W, 18,
+          g_bat.charging ? (g_bat.usb ? "charging | plugged in" : "charging")
+                         : (g_bat.usb ? "plugged in" : "unplugged"));
+    uint32_t s = millis() / 1000UL;
+    label(0, y0 + 2 * step + 6, W, 16, "uptime");
+    snprintf(line, sizeof(line), "%05luD : %02luH : %02luM", (unsigned long)(s / 86400UL),
+             (unsigned long)((s / 3600UL) % 24UL), (unsigned long)((s / 60UL) % 60UL));
+    label(0, y0 + 3 * step + 6, W, 16, line);
+    label(0, y0 + 4 * step + 14, W, 18, tzCur().name);
+    drawIdleFoot("press a KEY to wake");
+    lv_refr_now(nullptr);
+    drawLogo(W / 2, kIdleMapTop + 50);       // stamped after LVGL so the clear does not wipe it
+}
+
+// Idle screen "Library page": the page last read in the Library (else the first page of the
+// first file), with the reader's wrap setting. false = no card / no files: the splash.
+bool paintIdleLibrary() {
+    if (!sdMount()) {
+        clearRoot();
+        drawIdleTop();
+        label(0, 140, W, 20, "No library page", true);
+        label(0, 162, W, 18, "(no SD card)");
+        drawIdleFoot("press a KEY to wake");
+        lv_refr_now(nullptr);
+        return true;
+    }
+    char path[96];
+    uint32_t off = 0;
+    bool wrap = true;
+    if (g_cfg.libLast[0]) {
+        snprintf(path, sizeof(path), "%s/%s", kLibDir, g_cfg.libLast);
+        off = g_cfg.libLastOff;
+        wrap = g_cfg.libLastWrap;
+    }
+    if (!g_cfg.libLast[0] || !g_sdStore.exists(path)) {
+        libScan();
+        if (!g_libCount) {
+            clearRoot();
+            drawIdleTop();
+            label(0, 140, W, 20, "No library page", true);
+            label(0, 162, W, 18, "(ratdeckpro/library on the SD card)");
+            drawIdleFoot("press a KEY to wake");
+            lv_refr_now(nullptr);
+            return true;
+        }
+        snprintf(path, sizeof(path), "%s/%s", kLibDir, g_libFiles[0].name);
+        off = 0;
+        const char* dot = strrchr(g_libFiles[0].name, '.');
+        wrap = !(dot && !strcasecmp(dot, ".csv"));
+    }
+    char keepPath[96];
+    strlcpy(keepPath, g_libPath, sizeof(keepPath));
+    const bool keepWrap = g_libWrap;
+    strlcpy(g_libPath, path, sizeof(g_libPath));
+    g_libWrap = wrap;
+    static char lines[kLibLines][kLibLineMax];
+    uint32_t next;
+    const int n = libLayout(off, kLibLines, lines, nullptr, &next);
+    strlcpy(g_libPath, keepPath, sizeof(g_libPath));
+    g_libWrap = keepWrap;
+    clearRoot();
+    drawIdleTop();
+    const char* nm = strrchr(path, '/');
+    label(0, kIdleMapTop + 1, W, 18, nm ? nm + 1 : path, true);
+    for (int l = 0; l < n; l++) text(6, kIdleMapTop + 22 + l * kLibLineH, lines[l], false, W - 10);
+    drawIdleFoot("press a KEY to wake");
+    lv_refr_now(nullptr);
+    return true;
+}
+
+// Idle screen "If found": who to return the radio to, as the owner typed it (';' = new
+// line), and this radio's name + LXMF address so a finder with RatSpeak can message it.
+// Also the locked screen; e-ink keeps it readable when the battery is flat.
+void paintIdleFound() {
+    clearRoot();
+    drawIdleTop();
+    int y = kIdleMapTop + 6;
+    label(0, y, W, 20, "IF FOUND, PLEASE", true);
+    label(0, y + 20, W, 20, "RETURN TO:", true);
+    y += 48;
+    if (g_cfg.foundText[0]) {
+        char t[sizeof(g_cfg.foundText)];
+        strlcpy(t, g_cfg.foundText, sizeof(t));
+        int lines = 0;
+        for (char* tok = strtok(t, ";|"); tok && lines < 7; tok = strtok(nullptr, ";|"), lines++) {
+            while (*tok == ' ') tok++;
+            label(0, y, W, 20, tok, lines == 0);
+            y += 22;
+        }
+    } else {
+        label(0, y, W, 20, "(owner text not set:");
+        label(0, y + 22, W, 20, "Settings S.3.2)");
+        y += 44;
+    }
+    if (g_cfg.foundAddr) {
+        y = y < 226 ? 226 : y + 4;
+        label(0, y, W, 18, g_selfName, true);
+        char hex[33];
+        strlcpy(hex, g_destHex[0] ? g_destHex : "--", sizeof(hex));
+        lv_obj_t* o = lv_label_create(g_root);       // 32 hex digits fit in the 12 px font
+        lv_label_set_text(o, hex);
+        lv_obj_set_style_text_font(o, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(o, fg(), 0);
+        const int w = lv_txt_get_width(hex, strlen(hex), &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
+        lv_obj_set_pos(o, (W - w) / 2, y + 20);
+        label(0, y + 34, W, 16, "message me on RatSpeak");
+    }
+    drawIdleFoot("press a KEY to wake");
+    lv_refr_now(nullptr);
+}
+
+// Idle screen "Map" (S.3.2 "Idle screen"): the map centred on the GPS fix, else the
 // saved position, else the card's home.txt, at zoom 13 (or the deepest level with tiles),
 // with time / battery / unread across the top. false = no position: the splash is shown.
-constexpr int kIdleMapTop = 38, kIdleMapBottom = 300, kIdleMapZoom = 13;
+constexpr int kIdleMapZoom = 13;
 
 bool paintIdleMap() {
     double lat = 0, lon = 0;
@@ -6448,33 +6603,15 @@ bool paintIdleMap() {
     }
 
     clearRoot();
-    char t[8], d[12], line[48];
-    fmtTime(t, sizeof(t));
-    fmtDate(d, sizeof(d));
-    const int pct = g_bat.valid ? g_bat.pct : -1;
-    const int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
-    box(0, 0, W, kIdleMapTop, 1);
-    if (unread > 0) snprintf(line, sizeof(line), "%s  %d%%%s  %d NEW", t, pct, g_bat.charging ? "+" : "", unread);
-    else snprintf(line, sizeof(line), "%s  %d%%%s  no new", t, pct, g_bat.charging ? "+" : "");
-    label(0, 0, W, 20, line, true);
-    snprintf(line, sizeof(line), "%s  %s", d, g_selfName);
-    label(0, 18, W, 18, line);
-    box(0, kIdleMapBottom, W, H - kIdleMapBottom, 1);
-    if (g_locked) {
-        label(0, kIdleMapBottom, W, H - kIdleMapBottom, "LOCKED | press a key", true);
-    } else {
-        char pos[56];
-        gpsPosText(pos, sizeof(pos));
-        label(0, kIdleMapBottom, W, H - kIdleMapBottom, pos);
-    }
+    drawIdleTop();
+    char pos[56];
+    gpsPosText(pos, sizeof(pos));
+    drawIdleFoot(pos);
     lv_refr_now(nullptr);
     mapContactsFeed();                       // contacts' last positions on the idle map too
     mapview::draw(mapPixel, 0, kIdleMapTop, W, kIdleMapBottom - kIdleMapTop, g_cfg.dark);
     g_display.markDirty();
     if (!wasOpen) { mapview::close(); mapReadDone(); }
-    g_idleShownUnread = unread;
-    g_idleShownPct = pct;
-    g_idleShownMin = millis() / 60000UL;
     return true;
 }
 
@@ -6670,7 +6807,7 @@ void goBack() {
     if (g_shareActive && !entryActive()) { g_shareActive = false; toast("Share cancelled"); return; }
     if (g_placeOpen && !entryActive()) { g_placeOpen = false; g_fullRefreshReq = true; requestRedraw(); return; }
     if (g_libOpen && !entryActive()) {
-        if (g_libReading) { g_libReading = false; requestRedraw(); } else libClose();
+        if (g_libReading) { libRemember(); g_libReading = false; requestRedraw(); } else libClose();
         return;
     }
     if (g_gameOpen && !entryActive()) { gameClose(); libOpen(); return; }   // back to the Library list
@@ -6792,6 +6929,12 @@ void commitEntry() {
         requestRedraw();
         return;
     }
+    case Entry::FoundText:
+        strlcpy(g_cfg.foundText, g_buf, sizeof(g_cfg.foundText));
+        saveConfig();
+        endEntry();
+        toast(g_cfg.foundText[0] ? "If-found text saved" : "If-found text cleared");
+        return;
     case Entry::IdleSecs: {
         long v;
         if (!parseLong(g_buf, v) || v < 10 || v > 99999) { toast("Out of range 10-99999"); return; }
@@ -6927,6 +7070,7 @@ void searchChanged() {
 void entryKey(const KeyEvent& ev) {
     if (ev.enter) { commitEntry(); return; }
     if (ev.del) {
+        if (g_entry == Entry::FoundText) g_entryReplace = false;   // editing the old text
         if (g_bufLen) g_buf[--g_bufLen] = 0;
         if (g_entry == Entry::Search) searchChanged();
         requestRedraw();
@@ -6937,7 +7081,7 @@ void entryKey(const KeyEvent& ev) {
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) c = '.';
         else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass || passEntry(g_entry) ||
                  g_entry == Entry::Search || g_entry == Entry::WptName || g_entry == Entry::LibFind ||
-                 g_entry == Entry::PlaceFind) c = ' ';
+                 g_entry == Entry::PlaceFind || g_entry == Entry::FoundText) c = ' ';
     } else if (ev.fn) {
         if (passEntry(g_entry)) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
         if (g_entry == Entry::Message && g_threadOpen) { g_tmenuOpen = true; g_tmenuSel = 0; requestRedraw(); return; }
@@ -6959,9 +7103,12 @@ void entryKey(const KeyEvent& ev) {
     if (g_entry == Entry::WifiPass && g_bufLen >= WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
     if (passEntry(g_entry) && g_bufLen >= kLockPassMax) { toast("Max 32 chars"); return; }
     if (g_entry == Entry::Search && g_bufLen >= sizeof(g_filter) - 1) return;
-    if (g_entry == Entry::WptName && g_entryReplace) { bufClear(); g_entryReplace = false; }   // typing replaces "WP3"
+    if ((g_entry == Entry::WptName || g_entry == Entry::FoundText) && g_entryReplace) {   // typing replaces the default
+        bufClear(); g_entryReplace = false;
+    }
     if (g_entry == Entry::WptName && g_bufLen >= 15) { toast("Max 15 chars"); return; }
     if (g_entry == Entry::TcpHost && g_bufLen >= sizeof(g_tcpCfg.host) - 1) { toast("Max 63 chars"); return; }
+    if (g_entry == Entry::FoundText && g_bufLen >= sizeof(g_cfg.foundText) - 1) { toast("Max 120 chars"); return; }
     bufAppend(c);
     if (g_entry == Entry::Search) searchChanged();
     // Show it on the next frame. Keys typed while that frame is on the panel are
@@ -7736,6 +7883,13 @@ void handleSerialLine(char* p) {
         for (const char* k : kOk) ok |= !strcmp(p, k);
         if (!ok) { Serial.println("[CMD] locked: unlock on the device first"); return; }
     }
+    if (!strncmp(p, "idlescr", 7)) {                   // idlescr [0-3]: idle screen; "idle now"
+        const int v = p[7] ? atoi(p + 8) : -1;
+        if (v >= 0 && v < IDLE_COUNT) { g_cfg.idleScreen = (uint8_t)v; saveConfig(); }
+        Serial.printf("[IDLE] screen %s\n", kIdleScreenName[g_cfg.idleScreen]);
+        return;
+    }
+    if (!strcmp(p, "idle now")) { enterIdle(); return; }
     if (!strncmp(p, "lock", 4) && (p[4] == 0 || p[4] == ' ')) {
         if (!strcmp(p, "lock now")) lockNow();
         Serial.printf("[LOCK] locked=%d password=%d idleMode=%u fails=%u wait=%us vault=%s\n", g_locked,

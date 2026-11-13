@@ -30,6 +30,10 @@ START HERE (handoff 2026-11-11)
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
+- Idle screens (2026-11-13): g_cfg.idleScreen (NVS idleScr; old idleMap true -> Map) Splash/Map/Library/IfFound,
+  drawIdleTop()/drawIdleFoot() on all; Library page = g_cfg.libLast/libLastOff (libRemember()); If found = foundText
+  (';' new line) + name + g_destHex; locked: Map/Library fall back to Splash. Console idlescr <n>, idle now.
+  sim/scripts/idle_screens.txt (libsim).
 - Library reader (2026-11-13): libLayout() lays out a page (wrap on: W-12 px; off: one file line, 255 chars kept);
   W wrap (off for .csv), S/F pan g_libCol, D left, E/X libHalf() via the offset stack, R find, K card (kReaderKeys /
   kLibListKeys). sim library.txt + wide_table.csv in libsim's library.

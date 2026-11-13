@@ -217,8 +217,25 @@ Row text is `n : Kind : Name` with the value underneath. Kinds: **Menu** (opens 
 ### 4.1 Idle splash
 ![Idle splash](images/screen-idle.png)
 
-Logo, date/time, battery %, plug status, unread line, uptime, device name. Updates at
-most once a minute. **Press a key to wake** (touch does not wake).
+Pick the idle screen in **S.3.2 row 8 "Idle screen"** (Enter steps through them). Every one
+has the same top strip: time, battery %, unread count, date (MM/DD/YYYY) and the radio's
+name, and the wake / LOCKED line at the bottom. Updates at most once a minute. **Press a key
+to wake** (touch does not wake).
+
+- **Splash:** logo, plug status, uptime, time zone.
+- **Map:** the map around you (GPS fix, else the saved position, else the card's home view,
+  zoom 13), contacts' last positions; the bottom line is the GPS status.
+- **Library page:** the page last read in the Library (else the first page of the first
+  file), with the reader's wrap setting; "No library page" without a card or files.
+- **If found:** "IF FOUND, PLEASE RETURN TO:", the owner text (row 9 "If-found text", up to
+  120 characters; **;** (SYM J) starts a new line: name, address, phone / email, a reward
+  line), then this radio's name and its LXMF address so a finder with RatSpeak can message
+  it (row 10 hides the address). E-ink keeps the picture without power, so it stays
+  readable when the battery is flat.
+
+With the password lock on, the locked screen is the chosen idle screen too, except that Map
+and Library page show the Splash instead (no position or file text while locked); If found
+stays, with only what the owner typed and the radio's name / address.
 
 ### 4.2 Home
 ![Home screen](images/screen-home.png)
@@ -288,8 +305,8 @@ S     Settings                      ← M then S
 │   ├── S.3.1  Theme                White paper / Black ink
 │   ├── S.3.2  Idle splash          Off / On (no password) / On + password / timeout /
 │   │                               set-change password / remove / lock now (§1.2c) /
-│   │                               idle screen: splash or MAP around you (time, battery %,
-│   │                               unread on top; GPS / saved / card home position, zoom 13)
+│   │                               idle screen Splash / Map / Library page / If found (§4.1) /
+│   │                               if-found text / if found: my address shown / hidden
 │   └── S.3.3  Key backlight        (a power mode may hold it off)
 ├── S.4   Power                     energy modes (§6)
 │   ├── S.4.1  Full power
