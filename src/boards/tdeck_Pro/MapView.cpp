@@ -627,8 +627,10 @@ void status(char* out, size_t n) {
         snprintf(out, n, "z%d %s %s%s", g_zoom, pos, scale, g_follow && g_posValid ? "" : " *");
 }
 
+// Atlas keys: E S X F move (a diamond around D), D or Enter back to the own position,
+// Z zoom in, W zoom out (wider).
 bool key(char c, bool enter) {
-    if (enter || c == 'c' || c == 'C') {
+    if (enter || c == 'd' || c == 'D') {
         if (!g_posValid) return false;
         g_follow = true;
         project(g_posLat, g_posLon, g_zoom, g_cx, g_cy);
@@ -637,14 +639,14 @@ bool key(char c, bool enter) {
     }
     const double stepX = g_viewW / 2.0, stepY = g_viewH / 2.0;
     switch (c) {
-        case 'w': case 'W': g_cy -= stepY; break;
-        case 's': case 'S': g_cy += stepY; break;
-        case 'a': case 'A': g_cx -= stepX; break;
-        case 'd': case 'D': g_cx += stepX; break;
+        case 'e': case 'E': g_cy -= stepY; break;
+        case 'x': case 'X': g_cy += stepY; break;
+        case 's': case 'S': g_cx -= stepX; break;
+        case 'f': case 'F': g_cx += stepX; break;
         case 'z': case 'Z': case '+':
             if (g_zoom >= kMaxZoom) return false;
             g_zoom++; g_cx *= 2; g_cy *= 2; wrapCentre(); return true;
-        case 'x': case 'X': case '-':
+        case 'w': case 'W': case '-':
             if (g_zoom <= kMinZoom) return false;
             g_zoom--; g_cx /= 2; g_cy /= 2; wrapCentre(); return true;
         default: return false;

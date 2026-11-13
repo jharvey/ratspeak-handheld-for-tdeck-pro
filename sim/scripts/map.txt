@@ -11,12 +11,12 @@ devshot map_z14.png
 key Z
 wait 1200
 devshot map_z15.png
-key D
+key F
 wait 1200
 serial map
 expect 3000 m *
 devshot map_panned.png
-key C
+key D
 wait 1200
 devshot map_centred.png
 serial map 0 0 3

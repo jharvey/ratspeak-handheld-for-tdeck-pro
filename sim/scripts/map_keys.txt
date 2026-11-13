@@ -1,7 +1,6 @@
-# Map + GPS per power mode, and the map keys menu (M on the Atlas).
+# Map + GPS per power mode, and the Nav keys card (K, or the middle tab, on the Atlas).
 # Balanced: opening the map asks for a GPS visit. Saver: it does not (last fix + age shown).
-# Custom: only with "Map wakes GPS" on (pset mapgps 1). M on the map: the keys as a
-# pull-down (G/V + Enter, or the key itself). Tiles: build\simdata\cmap\sd.
+# Custom: only with "Map wakes GPS" on (pset mapgps 1). Tiles: build\simdata\cmap\sd.
 # Run: run-script.bat scripts\map_keys.txt cmap
 gps off
 usb off
@@ -38,34 +37,37 @@ wait 1500
 key L
 expect 3000 [GPS] visit requested (map)
 wait 1500
-# The keys menu: M, then V V Enter = Zoom out
-key M
-expect 3000 [MAP] keys menu
+# K shows the Nav keys card (the map stays usable above it); map keys work with it showing
+key K
+expect 3000 [NAV] keys shown
 wait 1500
-shot keys-02-menu.png
-key V
-wait 300
-key V
-wait 300
-key ENTER
-expect 3000 [MAP] menu: Zoom out
-wait 1500
-# M then ^ closes the menu only (the map stays)
-key M
-expect 3000 [MAP] keys menu
+shot keys-02-navkeys.png
+key Z
+wait 1200
+key E
+wait 1200
+serial map
+expect 3000 m *
+key D
+wait 1200
+# K again hides it; ^ hides it too (the map stays open)
+key K
+expect 3000 [NAV] keys hidden
+key K
+expect 3000 [NAV] keys shown
 key BACK
-wait 1500
+expect 3000 [NAV] keys hidden
 serial map
 expect 3000 [MAP] open z
-# M then M = main menu
+# M on the Atlas = the normal MENU; I leaves the map for the Inbox
 key M
-expect 3000 [MAP] keys menu
-key M
-expect 3000 [MAP] menu: Main menu
 wait 1500
-shot keys-03-mainmenu.png
+shot keys-03-menu.png
 key BACK
 wait 800
+key I
+expect 3000 [MAP] closed
+wait 1000
 # back to Balanced for later scripts
 serial pm1
 expect 3000 [POWER] Balanced

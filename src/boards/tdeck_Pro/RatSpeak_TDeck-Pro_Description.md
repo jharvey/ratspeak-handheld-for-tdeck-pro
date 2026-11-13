@@ -702,7 +702,7 @@ position arrives. On the map:
 
 - **T** steps through them, newest first, centring each; the bottom line reads
   `#1 Alice 12.4km NE 8m ago` (distance / direction from you, age of the position).
-  **T** after the last one, **C** or **Enter**: back to your own position.
+  **T** after the last one, **D** or **Enter**: back to your own position.
 - On screen: for 6 s after the map opens the bottom line shows the keys
   (`T: 3 contacts  Z/X zoom`); while a contact is selected the top line reads
   `T next  #+Enter chat  C me`.
@@ -712,15 +712,15 @@ From a list (Inbox / Contacts / Peers) **L** on a row shows that contact on the 
 a chat, **MIC → 5 Show them on the map**, or **Enter** on the empty draft under a received
 location. Markers also show on the map idle screen. Console `cpos` (`cpos clear`).
 
-**Waypoints:** on the map **P** marks one at the map centre: type a name (the default
+**Waypoints:** on the map **Q** marks one at the map centre: type a name (the default
 `WP3` goes on the first key; Enter alone keeps it), Enter. **N** steps through them: the map
 centres on it, the diamond is selected, a dashed line runs from your position to it and the
 bottom line reads `W2 BALLFIELD 2.1km SW`. **Del** twice removes the selected one. Up to 32
 (NVS rs_wpt); **S.1.9 Waypoints** lists them with distance (Enter = show on the map).
 
-**Find a place:** on the map **F**, type the start of a name (add a state to narrow it:
+**Find a place:** on the map **R**, type the start of a name (add a state to narrow it:
 `knoxville tn`), Enter: the 6 nearest matches with kind and distance (`2 Knoxville, PA /
-town 246km SE`); a digit jumps there; **P** right after saves it as a waypoint with that
+town 246km SE`); a digit jumps there; **Q** right after saves it as a waypoint with that
 name; **^** closes the list. Index on the card: `<SD>/ratdeckpro/places/<letter>.txt`
 from USGS GNIS (public domain): every US town plus summits, lakes, islands, bays, falls,
 gaps, capes and beaches for the route states (252k places, 9.2 MB):
@@ -743,12 +743,16 @@ and names, big cities) is drawn from Natural Earth (public domain) by
 Cards are best formatted with 8 KB clusters (console `sdformat 8192 ERASE-ALL`, erases
 the card): a header-less 8 KB tile then takes exactly 8 KB instead of 32 KB.
 Tiles can go onto the card over USB with the card left in the unit:
-`tools/maptiles/push_tiles.py` (console `sdput`, about 7 tiles/s; `sdls` lists a folder). **W A S D** pan half a screen, **Z / X**
-zoom, **C** or **Enter** returns to your position, **Shift (^)** closes. **M** on the map
-opens the map keys menu: Move (W A S D), Zoom in Z, Zoom out X, Back to me Enter, Next
-contact T, Mark waypoint P, Next waypoint N, Find place F, Main menu M, Close map ^. Pick a
-row with G/V + Enter or a tap, or press the key itself; the key hint when the map opens says
-"M = map keys". The header shows
+`tools/maptiles/push_tiles.py` (console `sdput`, about 7 tiles/s; `sdls` lists a folder). Atlas keys (2026-11-13):
+**E S X F** move up / left / down / right half a screen (a diamond around D), **D** or
+**Enter** back to your position (following again), **Z** zoom in, **W** zoom out (wider),
+**T** next contact, **R** find a place, **Q** add a waypoint, **N** next waypoint, **Del**
+twice removes it, a number + **Enter** opens that contact's chat, **M** the MENU, **Shift
+(^)** closes. **C I P H** leave the map for Contacts / Inbox / Peers / Home (L does nothing
+there). **K** (or the middle bottom tab, which reads "Nav / keys" on the Atlas) shows a card
+with these keys under the map; the map stays usable above it; K, the tab or ^ hide it. The
+hint when the map opens says "K = nav keys". Bottom bar elsewhere: Contact | Atlas | Inbox
+with maps on the card, Contact | Peers | Inbox without. The header shows
 zoom, centre and the scale-bar length; `*` means the view is not following you. Missing
 tiles show a dotted grid and "no tiles".
 
