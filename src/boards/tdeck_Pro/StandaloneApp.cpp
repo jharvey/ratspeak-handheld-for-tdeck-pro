@@ -119,6 +119,10 @@ LoRaInterface* g_loraIf = nullptr;
 
 constexpr const char* kDefaultSelfName = "MyRatSpeakPro";
 
+// Idle screens (S.3.2 "Idle screen"); add new ones at the end.
+enum IdleScreen : uint8_t { IDLE_SPLASH, IDLE_MAP, IDLE_LIBRARY, IDLE_FOUND, IDLE_COUNT };
+const char* const kIdleScreenName[IDLE_COUNT] = {"Splash", "Map", "Library page", "If found"};
+
 struct Config {
     bool     dark        = false;   // false = white paper, true = black ink
     int      tz          = 0;       // index into kTz
@@ -127,7 +131,15 @@ struct Config {
     bool     beep        = true;
     bool     vibe        = true;
     uint8_t  volume      = 80;      // 0..100 %, steps of 20; 80 spares the small speaker
-    bool     idleMap     = false;   // idle screen = map around your position
+    uint8_t  idleScreen  = 0;       // IdleScreen: splash, map, library page, if-found
+    char     foundText[121] = "";   // if-found screen: owner text, ';' = new line (SYM J)
+    bool     foundAddr   = true;    // if-found screen shows this radio's LXMF address
+    char     libLast[40] = "";      // library file last read (idle screen "Library")
+    uint32_t libLastOff  = 0;       // and the page it was on
+    bool     libLastWrap = true;
+    bool     clock12     = false;   // 12 h clock (1:45 PM) instead of 24 h
+    bool     simple      = false;   // Simple mode (wizard step 7; the mode itself comes later)
+    bool     wizDone     = true;    // setup wizard finished or skipped
     bool     trackOn     = false;   // breadcrumb track recording (S.1.10)
     uint8_t  coordFmt    = 0;       // 0 decimal degrees, 1 deg-min-sec, 2 MGRS (S.1.12)
     bool     kbLight     = false;
@@ -198,9 +210,33 @@ const LoraPreset kLoraPresets[] = {
 constexpr int kLoraPresetCount = sizeof(kLoraPresets) / sizeof(kLoraPresets[0]);
 int g_loraPreset = 0;
 
+bool g_wizNeeded = false;          // boot: a wizard was started and not finished
+bool g_cfgFresh = false;           // no UI settings saved yet
+bool g_hadIdentity = false;        // an identity existed before this boot (not a new device)
+bool g_wizOpen = false;            // setup wizard on screen
+int  g_wizStep = 0, g_wizGot = 0;    // step; contacts added (radio + SD)
+bool g_wizListen = false;          // import step: incoming contact cards are saved
+void wizStart();
+void wizListen(bool on);
+void wizFinish(bool announce);
+void wizKey(const KeyEvent& ev);
+void wizCardIn(const char* text);
+void renderWizard();
+void shareAllStart();
+int contactsExport();
+int contactsImport();
+
 void loadConfig() {
     Preferences p;
-    if (!p.begin("rs_ui", true)) return;
+    // No settings at all (no namespace, or nothing saved in it yet): a fresh device.
+    // The wizard runs only if there is no identity from an earlier boot either (decided at
+    // the end of boot, see g_hadIdentity): a used unit whose owner never changed a setting
+    // does not see it.
+    if (!p.begin("rs_ui", true) || !p.isKey("idleMode")) {
+        p.end();
+        g_cfgFresh = true;
+        return;
+    }
     g_cfg.dark        = p.getBool("dark", false);
     g_cfg.tz          = p.getInt("tz", 0);
     g_cfg.idleMode    = p.getUChar("idleMode", 1);
@@ -208,7 +244,20 @@ void loadConfig() {
     g_cfg.beep        = p.getBool("beep", true);
     g_cfg.vibe        = p.getBool("vibe", true);
     g_cfg.volume      = p.getUChar("vol", 80);
-    g_cfg.idleMap     = p.getBool("idleMap", false);
+    // "idleScr" replaces the old idleMap bool (true -> Map).
+    if (p.isKey("idleScr")) g_cfg.idleScreen = p.getUChar("idleScr", IDLE_SPLASH);
+    else g_cfg.idleScreen = p.getBool("idleMap", false) ? IDLE_MAP : IDLE_SPLASH;
+    if (g_cfg.idleScreen >= IDLE_COUNT) g_cfg.idleScreen = IDLE_SPLASH;
+    p.getString("foundTxt", g_cfg.foundText, sizeof(g_cfg.foundText));
+    g_cfg.foundAddr   = p.getBool("foundAddr", true);
+    p.getString("libLast", g_cfg.libLast, sizeof(g_cfg.libLast));
+    g_cfg.libLastOff  = p.getUInt("libOff", 0);
+    g_cfg.libLastWrap = p.getBool("libWrap", true);
+    g_cfg.clock12     = p.getBool("clk12", false);
+    g_cfg.simple      = p.getBool("simple", false);
+    // Units that had settings before the wizard existed never see it (flag absent = done).
+    g_cfg.wizDone     = p.isKey("wizDone") ? p.getBool("wizDone", true) : true;
+    g_wizNeeded       = !g_cfg.wizDone;
     g_cfg.trackOn     = p.getBool("trackOn", false);
     g_cfg.coordFmt    = p.getUChar("coordFmt", 0);
     if (g_cfg.coordFmt > 2) g_cfg.coordFmt = 0;
@@ -245,7 +294,16 @@ void saveConfig() {
     p.putBool("beep", g_cfg.beep);
     p.putBool("vibe", g_cfg.vibe);
     p.putUChar("vol", g_cfg.volume);
-    p.putBool("idleMap", g_cfg.idleMap);
+    p.putUChar("idleScr", g_cfg.idleScreen);
+    if (p.isKey("idleMap")) p.remove("idleMap");
+    p.putString("foundTxt", g_cfg.foundText);
+    p.putBool("foundAddr", g_cfg.foundAddr);
+    p.putString("libLast", g_cfg.libLast);
+    p.putUInt("libOff", g_cfg.libLastOff);
+    p.putBool("libWrap", g_cfg.libLastWrap);
+    p.putBool("clk12", g_cfg.clock12);
+    p.putBool("simple", g_cfg.simple);
+    p.putBool("wizDone", g_cfg.wizDone);
     p.putBool("trackOn", g_cfg.trackOn);
     p.putUChar("coordFmt", g_cfg.coordFmt);
     p.putBool("kbl", g_cfg.kbLight);
@@ -530,6 +588,8 @@ void sdStatusRefresh() {
              (unsigned)(g_sdStore.usedBytes() >> 20), (unsigned)(g_sdStore.totalBytes() >> 20));
 }
 
+bool g_haveMaps = false;          // the card has a maps folder: the middle tab is Atlas, else Peers
+
 bool sdMount() {
     if (g_sdMounted && g_sdStore.isReady()) return true;
     spiBusIdle();
@@ -541,6 +601,7 @@ bool sdMount() {
     }
     g_sdMounted = true;
     if (!g_sdStore.formatForRsDeck()) Serial.println("[SD] folder setup failed");
+    g_haveMaps = g_sdStore.exists(SD_PATH_ROOT "/maps");
     sdStatusRefresh();
     if (!g_sdStore.exists(kBatLogPath)) {
         File f = g_sdStore.openFile(kBatLogPath, FILE_WRITE);
@@ -559,9 +620,13 @@ BatLogSample g_batLog[kBatLogCap];
 uint16_t g_batLogHead = 0, g_batLogCount = 0;
 bool g_batLogInternal = false, g_batLogSd = false;
 
+void mapReadDone();
+
 void sdUnmount() {
     g_batLogSd = false;
+    mapReadDone();
     if (g_sdMounted) { g_sdStore.end(); g_sdMounted = false; }
+    g_haveMaps = false;
     snprintf(g_sdStatus, sizeof(g_sdStatus), "not mounted");
     Serial.println("[SD] unmounted");
 }
@@ -644,14 +709,16 @@ bool localNow(struct tm& t) {
 
 void fmtTime(char* out, size_t n) {
     struct tm t;
-    if (localNow(t)) snprintf(out, n, "%02d:%02d", t.tm_hour, t.tm_min);
-    else snprintf(out, n, "--:--");
+    if (!localNow(t)) snprintf(out, n, "--:--");
+    else if (g_cfg.clock12) snprintf(out, n, "%d:%02d %s", t.tm_hour % 12 ? t.tm_hour % 12 : 12, t.tm_min,
+                                     t.tm_hour < 12 ? "AM" : "PM");
+    else snprintf(out, n, "%02d:%02d", t.tm_hour, t.tm_min);
 }
 
 void fmtDate(char* out, size_t n) {
     struct tm t;
-    if (localNow(t)) snprintf(out, n, "%02d/%02d/%02d", t.tm_mon + 1, t.tm_mday, (t.tm_year + 1900) % 100);
-    else snprintf(out, n, "--/--/--");
+    if (localNow(t)) snprintf(out, n, "%02d/%02d/%04d", t.tm_mon + 1, t.tm_mday, t.tm_year + 1900);
+    else snprintf(out, n, "--/--/----");
 }
 
 // Set UTC clock from broken-down UTC fields.
@@ -727,6 +794,7 @@ uint8_t  g_gpsStep = 0;
 // then until it starts navigating.
 bool     g_gpsBbrFault = false;
 uint32_t g_gpsBbrFaultCount = 0, g_gpsPowerOffAt = 0, g_gpsNextCycleAt = 0;
+uint32_t g_gpsVisitStart = 0, g_gpsNextVisit = 0;   // periodic GPS schedule (powerGpsTick)
 
 GpsSky* gpsSkyFor(const char* talker) {
     GpsSky* freeSlot = nullptr;
@@ -1185,6 +1253,7 @@ void initStorageAndProto() {
         if (!recoverCorruptLittleFS()) { Serial.println("[FLASH] recovery failed"); return; }
     }
     g_idMgr.begin(&g_flash, nullptr);
+    g_hadIdentity = g_idMgr.count() > 0;     // before the protocol makes one for a new device
     const bool archive = sdArchiveEnabled() && sdMount();
     if (!g_msgStore.begin(&g_flash, archive ? &g_sdStore : nullptr, archive)) {
         Serial.println("[MSG] store failed"); return;
@@ -1494,6 +1563,7 @@ bool    g_cardOpen = false;        // contact page (Message / Rename / Share) ov
 uint8_t g_cardPeer[16];
 int     g_cardSel = 0;
 bool    g_shareActive = false;     // the Contacts list is picking who gets g_sharePeer
+bool    g_shareAll = false;        // ... and gets every contact's card (Settings S.6)
 uint8_t g_sharePeer[16];
 
 int hexNib(char c) {
@@ -1951,7 +2021,7 @@ ScreenId g_screen = SCR_HOME;
 // "Library" opens the reference texts on the SD card; hotkey R.
 constexpr int  kMenuCount = 7, kMenuMap = 5, kMenuLib = 6;
 const ScreenId kMenuScreens[kMenuCount] = {SCR_HOME, SCR_SETTINGS, SCR_CONTACTS, SCR_PEERS, SCR_INBOX, SCR_HOME, SCR_HOME};
-const char*    kMenuLabels[kMenuCount]  = {"Home", "Settings", "Contacts", "Peers", "Inbox", "Map", "Library"};
+const char*    kMenuLabels[kMenuCount]  = {"Home", "Settings", "Contacts", "Peers", "Inbox", "Atlas", "Library"};
 const char     kMenuKeys[kMenuCount]    = {'H', 'S', 'C', 'P', 'I', 'A', 'R'};
 bool g_menuOpen = false;
 int  g_menuSel = 0;
@@ -1973,7 +2043,8 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              MapNum,                            // contact page: map number
                              WptName,                           // map P: waypoint name
                              LibFind,                           // library: find text
-                             PlaceFind };                       // map F: place name
+                             PlaceFind,                         // map R: place name
+                             FoundText };                       // idle "If found": owner text
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -2407,9 +2478,9 @@ constexpr int CLOCK_X     = REF_W + BAT_W;
 constexpr int MENU_X      = CLOCK_X + TAB_W;
 constexpr int BOT_H       = 40;
 constexpr int BOT_TOP     = H - BOT_H;               // 280
-constexpr int BOT_C_W     = 80;                      // Contact | Peers | Inbox
-constexpr int BOT_P_W     = 64;
-constexpr int BOT_I_W     = W - BOT_C_W - BOT_P_W;   // 96
+constexpr int BOT_C_W     = 80;                      // Contact | Atlas | Inbox
+constexpr int BOT_A_W     = 64;
+constexpr int BOT_I_W     = W - BOT_C_W - BOT_A_W;   // 96
 constexpr int MENU_ROW_H  = 32;                        // 7 rows end at 260 (bottom bar 280)
 constexpr int HEADER_Y    = TOP_H + 1;               // path / title line
 constexpr int LIST_TOP    = TOP_H + 20;              // 56
@@ -2495,7 +2566,7 @@ void label(int x, int y, int w, int h, const char* s, bool bold = false, char ho
 // ---- Touch hit registry (filled while drawing) ------------------------------------
 enum HitAct : uint8_t {
     H_REFRESH, H_MENU, H_MENU_GO, H_TAB, H_ROW, H_BACK, H_ANNOUNCE,
-    H_TILE_AUDIO, H_UP, H_DOWN, H_CARD, H_TMENU
+    H_TILE_AUDIO, H_UP, H_DOWN, H_CARD, H_TMENU, H_NAVKEYS
 };
 struct Hit { int16_t x, y, w, h; uint8_t act; int8_t arg; };
 constexpr int MAX_HITS = 32;
@@ -3006,7 +3077,7 @@ void buildSettingsRows(Page p) {
             srow(RK_INFO, "GPS position", "%s", pos);
             if (ashareActive()) srow(RK_ACTION, "Location auto-share", "%d on; Enter = stop all", ashareActive());
             else srow(RK_INFO, "Location auto-share", "off (set in a chat: MIC)");
-            srow(RK_MENU, "Waypoints", "%d saved (map: P mark, N next)", g_wptCount);
+            srow(RK_MENU, "Waypoints", "%d saved (map: Alt+P add, P next)", g_wptCount);
             srow(RK_TOGGLE, "Track (breadcrumbs)", "%s%s", g_cfg.trackOn ? "ON" : "OFF",
                  g_cfg.trackOn ? ", GPS wakes ~2 min" : "");
             srow(RK_ACTION, "Clear track", "%d points%s", g_trackN, g_trackLoaded ? "" : " (on SD)");
@@ -3018,7 +3089,7 @@ void buildSettingsRows(Page p) {
     case PG_WPTS: {
         double la = 0, lo = 0;
         const bool own = ownPosition(la, lo);
-        if (!g_wptCount) srow(RK_INFO, "No waypoints yet", "map: P marks one at the centre");
+        if (!g_wptCount) srow(RK_INFO, "No waypoints yet", "map: Alt+P marks one at the centre");
         for (int i = 0; i < g_wptCount && i < MAX_SET_ROWS; i++) {
             char nm[24], d[24];
             snprintf(nm, sizeof(nm), "W%d %s", i + 1, g_wpt[i].name);
@@ -3241,6 +3312,7 @@ void buildSettingsRows(Page p) {
         srow(RK_TOGGLE, "WiFi", "%s", c.wifi ? "allowed" : "OFF");
         srow(RK_TOGGLE, "Key backlight", "%s", c.keyLight ? "allowed" : "OFF");
         srow(RK_TOGGLE, "Touch", "%s", c.touchOnKey ? "1 min after a key" : "always on");
+        srow(RK_TOGGLE, "Map wakes GPS", "%s", c.mapGps ? "ON (fix when the map opens)" : "OFF (last fix)");
         srow(RK_ACTION, "Reset to Balanced", "Enter = reset");
         break;
     }
@@ -3269,7 +3341,11 @@ void buildSettingsRows(Page p) {
         }
         srow(RK_ACTION, "Remove password", "%s", pw ? "Enter = remove" : "-");
         srow(RK_ACTION, "Lock now", "%s", pw ? "Enter = lock" : "set a password first");
-        srow(RK_TOGGLE, "Idle screen", "%s", g_cfg.idleMap ? "MAP around you" : "splash (logo)");
+        srow(RK_PICK, "Idle screen", "%s", kIdleScreenName[g_cfg.idleScreen]);
+        e = editingSub(Entry::FoundText);
+        if (e) srow(RK_ENTRY, "If-found text ( ; = new line)", "%s", e);
+        else   srow(RK_ENTRY, "If-found text", "%s", g_cfg.foundText[0] ? g_cfg.foundText : "none: Enter to type");
+        srow(RK_TOGGLE, "If found: my address", "%s", g_cfg.foundAddr ? "shown" : "hidden");
         break;
     }
 
@@ -3306,6 +3382,10 @@ void buildSettingsRows(Page p) {
         srow(RK_INFO, "LXMF address", "..%.16s", g_destHex[0] ? g_destHex + 16 : "");
         srow(RK_ACTION, "Announce ID", "last: %s", g_announceStr);
         srow(RK_MENU, "Identities", "%d saved (new / switch / erase)", g_idMgr.count());
+        srow(RK_ACTION, "Run setup wizard", "name, clock, energy, idle ...");
+        srow(RK_ACTION, "Share all contacts", "a card per contact to one radio");
+        srow(RK_ACTION, "Export contacts to SD", "ratdeckpro/contacts.txt");
+        srow(RK_ACTION, "Import contacts from SD", "ratdeckpro/contacts.txt");
         break;
 
     case PG_IDS: {
@@ -3649,7 +3729,8 @@ void activateSetting(int idx) {
             case 5: c.wifi = !c.wifi; break;
             case 6: c.keyLight = !c.keyLight; break;
             case 7: c.touchOnKey = !c.touchOnKey; break;
-            case 8: c = power::preset(power::MODE_BALANCED); toast("Custom = Balanced"); break;
+            case 8: c.mapGps = !c.mapGps; break;
+            case 9: c = power::preset(power::MODE_BALANCED); toast("Custom = Balanced"); break;
             default: return;
         }
         g_pw.mode = power::MODE_CUSTOM;
@@ -3700,9 +3781,17 @@ void activateSetting(int idx) {
         } else if (idx == 6) {
             if (lockHasPassword()) lockNow(); else toast("Set a password first");
         } else if (idx == 7) {
-            g_cfg.idleMap = !g_cfg.idleMap;
+            g_cfg.idleScreen = (uint8_t)((g_cfg.idleScreen + 1) % IDLE_COUNT);
             saveConfig();
-            toast(g_cfg.idleMap ? "Idle: map (needs SD tiles)" : "Idle: splash");
+            Serial.printf("[IDLE] screen %s\n", kIdleScreenName[g_cfg.idleScreen]);
+            if (g_cfg.idleScreen == IDLE_FOUND && !g_cfg.foundText[0]) toast("Type your text: row 9");
+            requestRedraw();
+        } else if (idx == 8) {
+            startEntry(Entry::FoundText, g_cfg.foundText);
+            g_entryReplace = true;            // typing starts over, Backspace edits the old text
+        } else if (idx == 9) {
+            g_cfg.foundAddr = !g_cfg.foundAddr;
+            saveConfig();
             requestRedraw();
         }
         break;
@@ -3738,6 +3827,10 @@ void activateSetting(int idx) {
         else if (idx == 1) toast("Identity not loaded");
         else if (idx == 3) { doAnnounce(); if (g_cfg.beep) g_audio.playAnnounce(); toast("Announce: %s", g_announceStr); }
         else if (idx == 4) pushPage(PG_IDS, g_idMgr.activeIndex() > 0 ? g_idMgr.activeIndex() : 0);
+        else if (idx == 5) wizStart();
+        else if (idx == 6) shareAllStart();
+        else if (idx == 7) { const int n = contactsExport(); if (n >= 0) toast("%d contacts -> contacts.txt", n); }
+        else if (idx == 8) { const int n = contactsImport(); if (n >= 0) toast("%d contacts imported", n); }
         break;
 
     case PG_IDS:
@@ -3858,13 +3951,13 @@ void drawFooter() {
     box(0, FOOT_Y, BOT_C_W, FOOT_H, 1);
     label(0, FOOT_Y - 1, BOT_C_W, FOOT_H, "V=Down", false, 'V');
     addHit(0, FOOT_Y, BOT_C_W, FOOT_H, H_DOWN);
-    box(BOT_C_W, FOOT_Y, BOT_P_W, FOOT_H, 1);
-    label(BOT_C_W, FOOT_Y - 1, BOT_P_W, FOOT_H, "G=up", false, 'G');
-    addHit(BOT_C_W, FOOT_Y, BOT_P_W, FOOT_H, H_UP);
-    box(BOT_C_W + BOT_P_W, FOOT_Y, BOT_I_W, FOOT_H, 1);
+    box(BOT_C_W, FOOT_Y, BOT_A_W, FOOT_H, 1);
+    label(BOT_C_W, FOOT_Y - 1, BOT_A_W, FOOT_H, "G=up", false, 'G');
+    addHit(BOT_C_W, FOOT_Y, BOT_A_W, FOOT_H, H_UP);
+    box(BOT_C_W + BOT_A_W, FOOT_Y, BOT_I_W, FOOT_H, 1);
     if (moreDn) {
-        label(BOT_C_W + BOT_P_W, FOOT_Y - 1, BOT_I_W, FOOT_H, "v more");
-        addHit(BOT_C_W + BOT_P_W, FOOT_Y, BOT_I_W, FOOT_H, H_DOWN);
+        label(BOT_C_W + BOT_A_W, FOOT_Y - 1, BOT_I_W, FOOT_H, "v more");
+        addHit(BOT_C_W + BOT_A_W, FOOT_Y, BOT_I_W, FOOT_H, H_DOWN);
     }
 }
 
@@ -4096,7 +4189,7 @@ void renderHome() {
     text(4, sy + 16, ann);
     const int ay = sy + 34;
     box(0, ay, W, ANN_H, 2);
-    label(0, ay, W, ANN_H, "Announce ID", true, browseMode() ? 'A' : 0);
+    label(0, ay, W, ANN_H, "Announce ID", true, browseMode() ? 'N' : 0);
     addHit(0, ay, W, ANN_H, H_ANNOUNCE);
     int ny = ay + ANN_H + 4;
     if (ny > BOT_TOP - 18) ny = BOT_TOP - 18;
@@ -4205,11 +4298,19 @@ void drawTopBar() {
     drawBatteryIcon(REF_W + 5, 3, BAT_W - 10, TOP_H - 6, g_bat.valid ? g_bat.pct : -1);
 
     box(CLOCK_X, 0, TAB_W, TOP_H, 1);
-    char d[12], t[8], md[8];
-    fmtDate(d, sizeof(d));
+    char d[12], t[12];                       // "11:30 PM" with the 12 h clock
+    fmtDate(d, sizeof(d));                   // MM/DD/YYYY
     fmtTime(t, sizeof(t));
-    snprintf(md, sizeof(md), "%.5s", d);
-    label(CLOCK_X, 1, TAB_W, 16, md);
+    if (textW(d) <= TAB_W - 4) {
+        label(CLOCK_X, 1, TAB_W, 16, d);
+    } else {                                 // wide digits (08/08/2028): the 12 px font
+        lv_obj_t* o = lv_label_create(g_root);
+        lv_label_set_text(o, d);
+        lv_obj_set_style_text_font(o, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(o, fg(), 0);
+        const int w = lv_txt_get_width(d, strlen(d), &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
+        lv_obj_set_pos(o, CLOCK_X + (TAB_W - w) / 2, 3);
+    }
     label(CLOCK_X, 17, TAB_W, 16, t);
     if (ashareActive()) {                    // location auto-share on: small pin, top left
         fillRect(CLOCK_X + 4, 4, 7, 7);
@@ -4220,7 +4321,89 @@ void drawTopBar() {
     if (browseMode()) addHit(MENU_X, 0, TAB_W, TOP_H, H_MENU);
 }
 
+// ---- Nav keys (K, or the middle bottom tab, on the Atlas) -------------------------------
+// A reference card of the Atlas keys over the lower part of the map; the map stays usable
+// above it, so the keys can be tried with the card showing. K / the tab / ^ hide it.
+// Atlas letters (also used by mapKey and wptMapKey).
+// Alt+P adds a waypoint (and marks a trap in the game); Alt+SYM deletes the selected waypoint.
+constexpr char kKeyNav = 'K', kKeyFind = 'L', kKeyWpt = 'P', kKeyContact = 'N';
+bool isAltSym(const KeyEvent& ev) {
+    return ev.alt && ev.opt && !ev.character && !ev.enter && !ev.del && !ev.space && !ev.fn;
+}
+struct NavKeyRow { const char* keys; const char* what; };
+const NavKeyRow kAtlasKeys[] = {                 // two columns of 7, the 12 px font
+    {"E" LV_SYMBOL_UP " S" LV_SYMBOL_LEFT " X" LV_SYMBOL_DOWN " F" LV_SYMBOL_RIGHT, ""},
+    {"D", "centre on me"},   {"Z", "zoom in"},       {"W", "zoom out"},
+    {"L", "locate a place"}, {"K", "hide keys"},     {"M ^", "menu, close"},
+    {"N", "next contact"},   {"P", "next waypoint"}, {"Alt+P", "add waypoint"},
+    {"Alt+SYM", "delete waypt"}, {"12 Enter", "chat #12"}, {"M P", "Peers"},
+    {"C I H", "leave the map"},
+};
+// Library reader and list (K there too).
+const NavKeyRow kReaderKeys[] = {
+    {"Space N", "next page"}, {"B", "previous page"}, {"E X", "half page"},
+    {"W", "wrap on / off"},   {"S F", "pan left/right"}, {"D", "left edge"}, {"", ""},
+    {"L", "locate (find)"},   {"K", "hide keys"},      {"M", "menu"},
+    {"^", "back to the list"}, {"", ""},              {"", ""}, {"", ""},
+};
+const NavKeyRow kLibListKeys[] = {
+    {"1-4", "open that row"}, {"Enter", "open selected"}, {"G V", "up / down"},
+    {"K", "hide keys"},       {"", ""},                {"", ""}, {"", ""},
+    {"M", "menu"},            {"^", "close"},          {"", ""},
+    {"", ""},                 {"", ""},                {"", ""}, {"", ""},
+};
+const NavKeyRow kGameKeys[] = {
+    {"E" LV_SYMBOL_UP " S" LV_SYMBOL_LEFT " X" LV_SYMBOL_DOWN " F" LV_SYMBOL_RIGHT, ""},
+    {"D Enter", "open the square"}, {"Alt+P", "mark a trap"}, {"Q", "new game"},
+    {"K", "hide keys"},       {"", ""},                {"", ""},
+    {"M", "menu"},            {"^", "back to Library"}, {"", ""},
+    {"", ""},                 {"", ""},                {"", ""}, {"", ""},
+};
+constexpr int kNavRowH = 14, kNavRows = 7;
+constexpr int kNavH = kNavRows * kNavRowH + 6;   // 90 px: the map keeps the rest
+bool g_navKeysOpen = false;
+extern bool g_libOpen, g_gameOpen;
+void mapKey(const KeyEvent& ev);
+
+void navKeysToggle() {
+    g_navKeysOpen = !g_navKeysOpen;
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.printf("[NAV] keys %s\n", g_navKeysOpen ? "shown" : "hidden");
+}
+
+void smallText(int x, int y, const char* s, bool bold) {
+    for (int k = 0; k < (bold ? 2 : 1); k++) {
+        lv_obj_t* o = lv_label_create(g_root);
+        lv_label_set_text(o, s);
+        lv_obj_set_style_text_font(o, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(o, fg(), 0);
+        lv_obj_set_pos(o, x + k, y);
+    }
+}
+
+// Drawn at the bottom of the map area (y0 .. y0 + kNavH).
+void drawNavKeys(int y0, const NavKeyRow* rows = kAtlasKeys) {
+    fillRect(0, y0, W, kNavH, false);
+    box(0, y0, W, kNavH, 1);
+    const int colW = W / 2;
+    for (int i = 0; i < 2 * kNavRows; i++) {
+        const int x = 4 + (i / kNavRows) * colW, y = y0 + 3 + (i % kNavRows) * kNavRowH;
+        if (!rows[i].keys[0]) continue;
+        smallText(x, y, rows[i].keys, true);
+        const int kw = lv_txt_get_width(rows[i].keys, strlen(rows[i].keys), &lv_font_montserrat_12, 0,
+                                        LV_TEXT_FLAG_NONE);
+        if (rows[i].what[0]) smallText(x + (kw + 6 > 22 ? kw + 6 : 22), y, rows[i].what, false);
+    }
+}
+
 void drawBottomBar() {
+    if (g_wizOpen && g_entry != Entry::Name) {
+        box(0, BOT_TOP, W, BOT_H, 1);
+        label(0, BOT_TOP + 2, W, 18, "Enter next   ^ back");
+        label(0, BOT_TOP + 20, W, 18, "0 = skip setup (defaults)");
+        return;
+    }
     if (g_threadOpen || g_entry == Entry::Name) {
         char back[32];
         ScreenId to = g_threadOpen ? SCR_INBOX : g_screen;
@@ -4232,12 +4415,24 @@ void drawBottomBar() {
     }
     const bool hk = browseMode();
     navBox(0, BOT_TOP, BOT_C_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, hk ? 'C' : 0);
-    navBox(BOT_C_W, BOT_TOP, BOT_P_W, BOT_H, "Peers", g_screen == SCR_PEERS, hk ? 'P' : 0);
-    navBox(BOT_C_W + BOT_P_W, BOT_TOP, BOT_I_W, BOT_H, "Inbox", g_screen == SCR_INBOX, hk ? 'I' : 0);
+    // Middle tab: "Nav / keys" (K) on the Atlas, where it shows the key card; else Atlas (L,
+    // the offline map) when the card has maps, else Peers (P). L and P work either way.
+    if (mapview::isOpen() || g_libOpen || g_gameOpen) {
+        box(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, g_navKeysOpen ? 3 : 1);
+        label(BOT_C_W, BOT_TOP + 2, BOT_A_W, 16, "Nav", g_navKeysOpen);
+        label(BOT_C_W, BOT_TOP + 19, BOT_A_W, 16, "keys", g_navKeysOpen, kKeyNav);
+        addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_NAVKEYS);
+    } else if (g_haveMaps) {
+        navBox(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, "Atlas", false, hk ? 'A' : 0);
+        if (hk) addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_MENU_GO, kMenuMap);
+    } else {
+        navBox(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, "Peers", g_screen == SCR_PEERS, hk ? 'P' : 0);
+        if (hk) addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_TAB, SCR_PEERS);
+    }
+    navBox(BOT_C_W + BOT_A_W, BOT_TOP, BOT_I_W, BOT_H, "Inbox", g_screen == SCR_INBOX, hk ? 'I' : 0);
     if (hk) {
         addHit(0, BOT_TOP, BOT_C_W, BOT_H, H_TAB, SCR_CONTACTS);
-        addHit(BOT_C_W, BOT_TOP, BOT_P_W, BOT_H, H_TAB, SCR_PEERS);
-        addHit(BOT_C_W + BOT_P_W, BOT_TOP, BOT_I_W, BOT_H, H_TAB, SCR_INBOX);
+        addHit(BOT_C_W + BOT_A_W, BOT_TOP, BOT_I_W, BOT_H, H_TAB, SCR_INBOX);
     }
 }
 
@@ -4251,7 +4446,13 @@ void drawMenuOverlay() {
 }
 
 // ---- Offline map (MapView.cpp; tiles from the SD card) ----------------------------------
+void gpsRequestVisit(const char* why = "location share");
+void mapGpsAsk(bool opening);
+bool gpsFresh();
 bool g_mapSdTried = false;
+File g_mapFile;                  // pack file kept open between reads
+char g_mapFilePath[80] = "";
+uint32_t g_looseChecked = 0, g_looseHave = 0, g_looseAt = 0;   // per zoom: /maps/<z> looked up / exists
 
 size_t mapReadTile(const char* rel, uint32_t offset, uint8_t* buf, size_t len) {
     if (!g_sdMounted) {
@@ -4261,21 +4462,61 @@ size_t mapReadTile(const char* rel, uint32_t offset, uint8_t* buf, size_t len) {
     }
     char path[80];
     snprintf(path, sizeof(path), "%s%s", SD_PATH_ROOT, rel);
-    if (!g_sdStore.exists(path)) return 0;
-    File f = g_sdStore.openFile(path, FILE_READ);
-    if (!f) return 0;
-    size_t n = 0;
-    if (offset < f.size() && (offset == 0 || f.seek(offset))) n = f.read(buf, len);
-    f.close();
-    return n;
+    // Pack files are read many times in a row (header, index, then one piece per tile):
+    // keep the last one open, since a fresh exists() + open costs ~45 ms on the card.
+    const bool pack = strncmp(rel, "/maps/packs/", 12) == 0;
+    if (!pack) {
+        // Loose tile /maps/<z>/<x>/<y>.rmt: a card with packs only has no /maps/<z> folder,
+        // so remember per zoom whether it exists (checked again after 60 s) instead of an
+        // exists() per missing tile (~80 ms each).
+        int z = -1;
+        if (sscanf(rel, "/maps/%d/", &z) == 1 && z >= 0 && z < 32) {
+            uint32_t& checked = g_looseChecked; uint32_t& have = g_looseHave;
+            if (millis() - g_looseAt > 60000) { checked = 0; g_looseAt = millis(); }
+            if (!(checked & 1u << z)) {
+                char dir[48];
+                snprintf(dir, sizeof(dir), "%s/maps/%d", SD_PATH_ROOT, z);
+                checked |= 1u << z;
+                if (g_sdStore.exists(dir)) have |= 1u << z; else have &= ~(1u << z);
+            }
+            if (!(have & 1u << z)) return 0;
+        }
+        if (!g_sdStore.exists(path)) return 0;
+        File f = g_sdStore.openFile(path, FILE_READ);
+        if (!f) return 0;
+        size_t n = 0;
+        if (offset < f.size() && (offset == 0 || f.seek(offset))) n = f.read(buf, len);
+        f.close();
+        return n;
+    }
+    if (!g_mapFile || strcmp(path, g_mapFilePath) != 0) {
+        mapReadDone();
+        if (!g_sdStore.exists(path)) return 0;
+        File f = g_sdStore.openFile(path, FILE_READ);
+        if (!f) return 0;
+        g_mapFile = f;
+        snprintf(g_mapFilePath, sizeof(g_mapFilePath), "%s", path);
+    }
+    if (offset >= g_mapFile.size() || !g_mapFile.seek(offset)) return 0;
+    return g_mapFile.read(buf, len);
+}
+
+// Closes the pack file mapReadTile keeps open (map closed, card unmounted, file rewritten).
+void mapReadDone() {
+    if (g_mapFile) g_mapFile.close();
+    g_mapFile = File();
+    g_mapFilePath[0] = 0;
+    g_looseChecked = 0;                     // files may have changed: look again
 }
 
 void mapPixel(int x, int y, bool black) {
     if (x >= 0 && y >= 0 && x < W && y < H) g_display.setPixel(x, y, black);
 }
 
+// Own marker: the GPS fix (fresh, else the last one: the newest real position), else the
+// saved position S.2.
 void mapFeedPosition() {
-    if (g_gpsPosValid && g_gpsFix) mapview::setPosition(true, g_gpsLat, g_gpsLon);
+    if (g_gpsPosValid) mapview::setPosition(true, g_gpsLat, g_gpsLon);
     else if (g_cfg.hasPos) mapview::setPosition(true, g_cfg.lat, g_cfg.lon);
     else mapview::setPosition(false, 0, 0);
 }
@@ -4291,6 +4532,7 @@ void openMapAt(double lat, double lon) {
     mapview::setReader(mapReadTile);
     g_mapSdTried = false;
     mapFeedPosition();
+    mapGpsAsk(true);                        // the own marker too
     mapview::open(lat, lon, true, false);   // explicit place: no follow
     mapview::fitZoom();                     // deepest zoom with a tile there
     g_fullRefreshReq = true;                // a map is mostly new pixels: avoid ghosting
@@ -4304,8 +4546,8 @@ int cposWithPos();
 // Key hints on the map's bottom line for 6 s after it opens (keys are not written anywhere).
 void mapKeyHint() {
     const int n = cposWithPos();
-    if (n) toast("T %d contact%s  N/P waypts", n, n == 1 ? "" : "s");   // fits 240 px
-    else toast("Z/X zoom  N/P waypoints");
+    if (n) toast("K = nav keys  N %d contact%s", n, n == 1 ? "" : "s");   // fits 240 px
+    else toast("K = nav keys");
     g_toastUntil = millis() + 6000;
 }
 
@@ -4315,13 +4557,15 @@ void openMap() {
     mapview::setReader(mapReadTile);
     g_mapSdTried = false;
     mapFeedPosition();
+    mapGpsAsk(true);
+    // Centre on the newest position: a fresh fix, the last fix, the saved position (S.2).
     double lat = 0, lon = 0; bool have = false;
-    if (g_gpsPosValid && g_gpsFix) { lat = g_gpsLat; lon = g_gpsLon; have = true; }
-    else if (g_cfg.hasPos) { lat = g_cfg.lat; lon = g_cfg.lon; have = true; }
+    const char* how = "no position";
+    if (g_gpsPosValid) { lat = g_gpsLat; lon = g_gpsLon; have = true; how = gpsFresh() ? "GPS" : "last fix"; }
+    else if (g_cfg.hasPos) { lat = g_cfg.lat; lon = g_cfg.lon; have = true; how = "saved position"; }
     if (g_menuOpen) g_menuOpen = false;
     // No position: the card's own start view, maps/home.txt = "lat lon zoom"
     // (written by tools/maptiles/make_tiles.py), so the first view is not empty sea.
-    const char* how = have ? (g_gpsPosValid && g_gpsFix ? "GPS" : "saved position") : "no position";
     bool cardHome = false;
     int homeZoom = 0;
     if (!have) {
@@ -4330,7 +4574,7 @@ void openMap() {
         txt[n < sizeof(txt) ? n : sizeof(txt) - 1] = 0;
         if (n && sscanf(txt, "%lf %lf %d", &lat, &lon, &homeZoom) >= 2) { cardHome = true; how = "card home"; }
     }
-    mapview::open(lat, lon, have || cardHome, have);
+    mapview::open(lat, lon, have || cardHome, true);
     if (homeZoom > 0) mapview::setZoom(homeZoom);
     if (mapview::fitZoom()) Serial.printf("[MAP] zoom %d (deepest tiles here)\n", mapview::zoom());
     g_fullRefreshReq = true;
@@ -4340,7 +4584,9 @@ void openMap() {
 }
 
 void closeMap() {
+    g_navKeysOpen = false;
     mapview::close();
+    mapReadDone();
     g_fullRefreshReq = true;
     requestRedraw();
     Serial.println("[MAP] closed");
@@ -4401,8 +4647,27 @@ void heartbeatTick() {
 
 bool gpsFresh();
 
+// The map wants the own position: without a fresh fix ask for a GPS visit when it opens and
+// again each minute while it stays open and in use (keys in the last 5 min), so Balanced does
+// not leave it on a 15-min-old (or no) fix. Only in profiles with mapGps (Full, Balanced,
+// Custom if chosen): the saving modes keep their GPS schedule. A visit indoors ends after 60 s.
+void mapGpsAsk(bool opening) {
+    static uint32_t asked = 0;
+    if (!g_cfg.gpsOn || g_pwEff.gps == power::GPS_OFF || gpsFresh()) return;
+    if (!g_pwEff.mapGps) {                        // saving modes (Custom: "Map wakes GPS")
+        if (opening) Serial.println("[GPS] map: no visit in this power mode (last fix shown)");
+        return;
+    }
+    if (!power::gpsIntervalMs(g_pwEff.gps) && g_pwEff.gps != power::GPS_ON_USE) return;   // always on
+    if (!opening && (!g_lastInputMs || millis() - g_lastInputMs > 300000)) return;
+    if (asked && millis() - asked < 60000) return;
+    asked = millis();
+    gpsRequestVisit("map");
+}
+
 void mapTick() {
     if (!mapview::isOpen()) return;
+    mapGpsAsk(false);
     mapFeedPosition();
     static bool lastFresh = false;
     const bool fresh = gpsFresh();
@@ -4428,8 +4693,8 @@ constexpr int kPlaceShowFwd = 6;
 void renderMapHeader() {
     char st[64];
     if (g_placeOpen) snprintf(st, sizeof(st), "Places: 1-%d go  ^ back", g_placeN < kPlaceShowFwd ? g_placeN : kPlaceShowFwd);
-    else if (g_mapSel >= 0) snprintf(st, sizeof(st), "T next  #+Enter chat  C me");   // what to press
-    else if (g_wptSel >= 0) snprintf(st, sizeof(st), "N next  Del remove  C me");
+    else if (g_mapSel >= 0) snprintf(st, sizeof(st), "N next  #+Enter chat  D me");   // what to press
+    else if (g_wptSel >= 0) snprintf(st, sizeof(st), "P next  Alt+SYM del  D me");
     else mapview::status(st, sizeof(st));
     drawHeader(st, false);
     char pos[56];
@@ -4442,11 +4707,13 @@ void renderMapHeader() {
     else if (!mapContactInfo(pos, sizeof(pos))) gpsPosText(pos, sizeof(pos));
     box(0, BOT_TOP - MAP_FOOT_H, W, MAP_FOOT_H, 1);
     text(4, BOT_TOP - MAP_FOOT_H + 1, pos, false, W - 8);
+    if (g_navKeysOpen) drawNavKeys(BOT_TOP - MAP_FOOT_H - kNavH);
 }
 
 void stampMap() {
     mapContactsFeed();
-    mapview::draw(mapPixel, 0, LIST_TOP, W, BOT_TOP - MAP_FOOT_H - LIST_TOP, g_cfg.dark);
+    const int h = BOT_TOP - MAP_FOOT_H - LIST_TOP - (g_navKeysOpen ? kNavH : 0);
+    mapview::draw(mapPixel, 0, LIST_TOP, W, h, g_cfg.dark);
     mapContactsStamp();                      // name tags over the markers
     g_display.markDirty();
 }
@@ -4482,7 +4749,6 @@ int g_ashareCount = 0;
 uint8_t g_autoForSel = 1;    // duration picked in the thread menu (4 h)
 
 bool gpsFresh() { return g_gpsFix && g_gpsPosValid && millis() - g_gpsPosAt < kFreshFixMs; }
-void gpsRequestVisit();
 
 void fmtAge(uint32_t s, char* out, size_t n) {
     if (s < 90) snprintf(out, n, "%u s", (unsigned)s);
@@ -4543,24 +4809,47 @@ void fmtCoord(double lat, double lon, char* out, size_t n) {
 }
 
 // One short line (fits the 240 px map footer): position, fix, age.
+// What the GPS receiver is doing now: "GPS off", "GPS backup fault", "GPS on 45s 3/9 sats"
+// (seconds into this visit, satellites heard / in view) or "GPS next 12m" between visits.
+void gpsStateText(char* out, size_t n) {
+    if (!g_cfg.gpsOn) { snprintf(out, n, "GPS off"); return; }
+    if (g_pwEff.gps == power::GPS_OFF) { snprintf(out, n, "GPS off (power)"); return; }
+    if (g_gpsBbrFault) { snprintf(out, n, "GPS backup fault"); return; }
+    int inView = 0, heard = 0, best = 0;
+    gpsSkySummary(inView, heard, best);
+    if (g_gpsAllowed) {
+        if (g_gpsVisitStart) snprintf(out, n, "GPS on %lus %d/%d sats",
+                                      (unsigned long)((millis() - g_gpsVisitStart) / 1000), heard, inView);
+        else snprintf(out, n, "GPS on %d/%d sats", heard, inView);
+        return;
+    }
+    const int32_t left = (int32_t)(g_gpsNextVisit - millis());
+    if (g_gpsNextVisit && left > 0) snprintf(out, n, "GPS next %lum", (unsigned long)((left + 59999) / 60000));
+    else snprintf(out, n, "GPS idle");
+}
+
 void gpsPosText(char* out, size_t n) {
     if (gpsFresh()) {
         char c[40];
         fmtCoord(g_gpsLat, g_gpsLon, c, sizeof(c));
         snprintf(out, n, "%s %usat", c, (unsigned)g_gpsSats);
-    } else if (g_gpsPosValid) {
+        return;
+    }
+    // No fresh fix: what the receiver is doing, after the age of the last fix (or "set" =
+    // the saved position S.2 is what the map shows). Fits the 240 px footer.
+    char st[28];
+    gpsStateText(st, sizeof(st));
+    if (g_gpsPosValid) {
         const uint32_t a = (millis() - g_gpsPosAt) / 1000;
         char age[8];
         if (a < 90) snprintf(age, sizeof(age), "%us", (unsigned)a);
         else if (a < 5400) snprintf(age, sizeof(age), "%um", (unsigned)((a + 30) / 60));
         else snprintf(age, sizeof(age), "%uh", (unsigned)((a + 1800) / 3600));
-        char c[40];
-        fmtCoord(g_gpsLat, g_gpsLon, c, sizeof(c));
-        snprintf(out, n, "old %s %s", c, age);
+        snprintf(out, n, "fix %s old, %s", age, st);
     } else if (g_cfg.hasPos) {
-        snprintf(out, n, "set %.4f,%.4f no fix", g_cfg.lat, g_cfg.lon);
+        snprintf(out, n, "saved pos, %s", st);
     } else {
-        snprintf(out, n, "%s", g_cfg.gpsOn ? "GPS: no fix yet" : "GPS off");
+        snprintf(out, n, "no fix, %s", st);
     }
 }
 
@@ -4909,6 +5198,7 @@ void inboundTick() {
     } else {
         double la, lo;
         if (locParse(text, strlen(text), la, lo)) cposNote(key.peer, la, lo, msgEpoch(ts));
+        wizCardIn(text);
     }
     for (int k = 1; k < g_inQn; k++) g_inQ[k - 1] = g_inQ[k];
     g_inQn--;
@@ -4987,7 +5277,7 @@ void mapCycleContact() {
         mapContactInfo(info, sizeof(info));
         Serial.printf("[MAP] contact %s\n", info);
     } else {
-        mapview::key('C', false);            // back to own position (follow)
+        mapview::key(0, true);               // back to own position (follow)
         Serial.println("[MAP] contact: none");
     }
     g_fullRefreshReq = true;
@@ -5111,11 +5401,11 @@ void wptSelect(int i) {
 }
 
 void wptCycle() {
-    if (!g_wptCount) { toast("No waypoints: P marks one"); return; }
+    if (!g_wptCount) { toast("No waypoints: Alt+P marks one"); return; }
     const int next = g_wptSel + 1;
     if (next >= g_wptCount) {                // after the last: own position
         g_wptSel = -1;
-        mapview::key('C', false);
+        mapview::key(0, true);
         Serial.println("[MAP] waypoint: none");
         g_fullRefreshReq = true;
         requestRedraw();
@@ -5214,12 +5504,12 @@ int wptFeed(mapview::Marker* m, int n) {
     return n;
 }
 
-// ---- Place search (map key F) ----------------------------------------------------------
+// ---- Place search (map key R) ----------------------------------------------------------
 // Index on the SD card: <SD>/ratdeckpro/places/<first letter>.txt, lines
 // "Name|lat|lon|K|ST" sorted by name (tools/places/make_places.py, USGS GNIS: every US
-// town + summits, lakes, islands ... for the route states). F on the map: type the start
+// town + summits, lakes, islands ... for the route states). R on the map: type the start
 // of a name, Enter: the 8 nearest matches (to you, else the map centre) as a list; a digit
-// jumps there; P right after saves it as a waypoint with that name. ^ closes the list.
+// jumps there; Q right after saves it as a waypoint with that name. ^ closes the list.
 struct Place { char name[28]; float lat, lon; char kind, st[3]; };
 constexpr int kPlaceShow = 6, kPlaceKeep = 48;
 Place g_placeRes[kPlaceKeep];
@@ -5366,15 +5656,16 @@ void renderPlaces() {
 // Map keys for waypoints. Returns true if used.
 bool wptMapKey(const KeyEvent& ev) {
     const char c = (char)toupper((unsigned char)ev.character);
-    if (c == 'P') { wptStartMark(); return true; }
-    if (c == 'N') { wptCycle(); return true; }
-    if (c == 'T') g_wptSel = -1;             // contacts take over
-    if (ev.del && g_wptSel >= 0) {
+    if (c == kKeyWpt && ev.alt) { wptStartMark(); return true; }   // Alt+P: add one here
+    if (c == kKeyWpt) { wptCycle(); return true; }                 // P: next waypoint
+    if (c == kKeyContact) g_wptSel = -1;     // contacts take over
+    if (isAltSym(ev)) {                      // Alt+SYM twice within 3 s: delete the selected one
+        if (g_wptSel < 0) { toast("P selects a waypoint first"); return true; }
         if (g_wptDelAt && millis() - g_wptDelAt < 3000) { g_wptDelAt = 0; wptRemove(g_wptSel); toast("Waypoint removed"); }
-        else { g_wptDelAt = millis(); toast("Del again: remove W%d", g_wptSel + 1); }
+        else { g_wptDelAt = millis(); toast("Alt+SYM again: remove W%d", g_wptSel + 1); }
         return true;
     }
-    if (c == 'C' || ev.enter) g_wptSel = -1;
+    if (c == 'D' || ev.enter) g_wptSel = -1;
     return false;
 }
 
@@ -5511,9 +5802,11 @@ void openMenu();
 
 // ---- Library (reference texts on the SD card) -----------------------------------------
 // MENU -> Library: the files in <SD>/ratdeckpro/library/ (plain text: frequency card,
-// GhostNet / JS8Call notes, weather radio list ...). Enter / digit opens one; pages with
-// word wrap: N or V = next page, B or G = previous, F = find (case-insensitive, from the
-// next page on), ^ = back to the list / close. Copy files with tools/sdcard/push_files.py.
+// GhostNet / JS8Call notes, weather radio list ...). Enter / digit opens one. Reader keys:
+// Space / N / V next page, B / G previous, E / X up / down half a page, W wrap on/off (off
+// for .csv: each file line whole, cut at the screen edge), S / F pan left / right when wrap
+// is off, D back to the left edge, R find (case-insensitive, from the next page on), K the
+// keys card, ^ back to the list / close. Copy files with tools/sdcard/push_files.py.
 constexpr const char* kLibDir = SD_PATH_ROOT "/library";
 constexpr int kLibMaxFiles = 24, kLibLines = 12, kLibLineH = 17;
 struct LibFile { char name[40]; uint32_t size; };
@@ -5523,9 +5816,14 @@ bool g_libOpen = false, g_libReading = false;
 char g_libPath[96] = "";
 uint32_t g_libSize = 0;
 std::vector<uint32_t> g_libPages;            // start offset of every page read so far
-char g_libText[kLibLines][40];               // the current page, wrapped
+constexpr int kLibLineMax = 256;             // chars kept per line (wrap off: room to pan)
+char g_libText[kLibLines][kLibLineMax];      // the current page
+uint32_t g_libLineOff[kLibLines];            // file offset where each shown line starts
 int g_libTextN = 0;
 uint32_t g_libNext = 0;                      // offset after the current page
+bool g_libWrap = true;                       // false: one file line per screen line, panned
+int g_libCol = 0;                            // wrap off: first character shown
+constexpr int kLibPanCols = 12;              // S / F: about half a screen
 
 void libScan() {
     g_libCount = 0;
@@ -5566,47 +5864,50 @@ int libAscii(const uint8_t* p, int n, char& out) {
     return len;
 }
 
-// Wrap text from `off` into kLibLines lines of at most W-12 px; sets g_libNext.
-void libLoadPage(uint32_t off) {
-    g_libTextN = 0;
-    g_libNext = off;
+// Lay out text from `off`: up to maxLines lines (wrap on: at most W-12 px, broken at the last
+// space; wrap off: one file line each, the first kLibLineMax-1 chars kept). Line i's text
+// goes to text[i] (if text) and its file offset to starts[i]; returns the line count and
+// sets *next to the offset after the last line.
+int libLayout(uint32_t off, int maxLines, char (*text)[kLibLineMax], uint32_t* starts, uint32_t* next) {
+    *next = off;
     File f = g_sdStore.openFile(g_libPath, FILE_READ);
-    if (!f) return;
+    if (!f) return 0;
     f.seek(off);
     static uint8_t buf[2048];
     const int n = f.read(buf, sizeof(buf));
     f.close();
-    if (n <= 0) return;
+    if (n <= 0) return 0;
     const int maxW = W - 12;
-    int i = 0;
-    char line[40];
-    int ll = 0;
-    int lastSpace = -1, lastSpaceIn = 0;     // break point in `line` / in buf
-    int lineStartIn = 0;
-    while (i < n && g_libTextN < kLibLines) {
+    int count = 0, i = 0, ll = 0, lastSpace = -1, lastSpaceIn = 0, lineStartIn = 0;
+    char line[kLibLineMax];
+    auto emit = [&](int len) {
+        line[len] = 0;
+        if (text) strlcpy(text[count], line, kLibLineMax);
+        if (starts) starts[count] = off + (uint32_t)lineStartIn;
+        count++;
+    };
+    while (i < n && count < maxLines) {
         char c;
         const int used = libAscii(buf + i, n - i, c);
         if (c == '\r') { i += used; continue; }
         if (c == '\t') c = ' ';
-        if (c == '\n' || ll >= (int)sizeof(line) - 1) {
-            line[ll] = 0;
-            strlcpy(g_libText[g_libTextN++], line, sizeof(line));
+        if (c == '\n') {
+            emit(ll);
+            i += used;
             ll = 0; lastSpace = -1;
-            i += (c == '\n') ? used : 0;
             lineStartIn = i;
+            continue;
+        }
+        if (!g_libWrap) {                         // keep the start of a long line, skip the rest
+            if (ll < kLibLineMax - 1) line[ll++] = c;
+            i += used;
             continue;
         }
         line[ll] = c;
         line[ll + 1] = 0;
-        if (textW(line) > maxW) {            // wrap at the last space, else hard
-            if (lastSpace > 0) {
-                line[lastSpace] = 0;
-                strlcpy(g_libText[g_libTextN++], line, sizeof(line));
-                i = lastSpaceIn + 1;
-            } else {
-                line[ll] = 0;
-                strlcpy(g_libText[g_libTextN++], line, sizeof(line));
-            }
+        if (ll >= 39 || textW(line) > maxW) {     // wrap at the last space, else hard
+            if (lastSpace > 0) { emit(lastSpace); i = lastSpaceIn + 1; }
+            else emit(ll);
             ll = 0; lastSpace = -1;
             lineStartIn = i;
             continue;
@@ -5615,18 +5916,25 @@ void libLoadPage(uint32_t off) {
         ll++;
         i += used;
     }
-    if (g_libTextN < kLibLines && ll > 0 && i >= n) {   // end of the chunk (= end of file if short)
-        line[ll] = 0;
-        strlcpy(g_libText[g_libTextN++], line, sizeof(line));
-        lineStartIn = i;
+    if (count < maxLines && ll > 0 && i >= n) {   // end of the chunk (= end of file if short)
+        if (n < (int)sizeof(buf) || count == 0) { emit(ll); lineStartIn = i; }
     }
-    g_libNext = off + (uint32_t)lineStartIn;
+    *next = off + (uint32_t)lineStartIn;
+    if (count == 0 && n == (int)sizeof(buf)) *next = off + (uint32_t)n;   // one line longer than the chunk
+    return count;
+}
+
+void libLoadPage(uint32_t off) {
+    g_libTextN = libLayout(off, kLibLines, g_libText, g_libLineOff, &g_libNext);
 }
 
 void libOpenFile(int k) {
     if (k < 0 || k >= g_libCount) return;
     snprintf(g_libPath, sizeof(g_libPath), "%s/%s", kLibDir, g_libFiles[k].name);
     g_libSize = g_libFiles[k].size;
+    const char* dot = strrchr(g_libFiles[k].name, '.');
+    g_libWrap = !(dot && !strcasecmp(dot, ".csv"));   // tables: no wrap, pan instead
+    g_libCol = 0;
     g_libPages.clear();
     g_libPages.push_back(0);
     libLoadPage(0);
@@ -5648,7 +5956,54 @@ void libOpen() {
     requestRedraw();
 }
 
-void libClose() { g_libOpen = false; g_libReading = false; g_libPages.clear(); g_libPages.shrink_to_fit(); requestRedraw(); }
+// The page being read, for the idle screen "Library page".
+void libRemember() {
+    if (!g_libReading || g_libPages.empty()) return;
+    const char* nm = strrchr(g_libPath, '/');
+    strlcpy(g_cfg.libLast, nm ? nm + 1 : g_libPath, sizeof(g_cfg.libLast));
+    g_cfg.libLastOff = g_libPages.back();
+    g_cfg.libLastWrap = g_libWrap;
+    saveConfig();
+}
+
+void libClose() {
+    libRemember();
+    g_libOpen = false; g_libReading = false; g_navKeysOpen = false;
+    g_libPages.clear(); g_libPages.shrink_to_fit();
+    requestRedraw();
+}
+
+// E / X: half a page (6 lines) up / down. Down pushes the 7th line's offset; up lays out
+// again from the previous stop and goes back 6 lines from the top one.
+void libHalf(int dir) {
+    const int half = kLibLines / 2;
+    if (dir > 0) {
+        if (g_libTextN <= half || g_libNext >= g_libSize) { toast("End of file"); return; }
+        g_libPages.push_back(g_libLineOff[half]);
+    } else {
+        if (g_libPages.size() <= 1) { toast("Start of file"); return; }
+        const uint32_t top = g_libPages.back();
+        const uint32_t prev = g_libPages[g_libPages.size() - 2];
+        static uint32_t st[64];
+        uint32_t at = prev;
+        int n = 0;
+        while (at < top && n < 64) {              // line starts from prev up to top
+            uint32_t nx;
+            const int got = libLayout(at, 64 - n, nullptr, st + n, &nx);
+            if (!got || nx <= at) break;
+            int keep = got;
+            while (keep > 0 && st[n + keep - 1] >= top) keep--;
+            n += keep;
+            if (keep < got) break;
+            at = nx;
+        }
+        g_libPages.pop_back();
+        const uint32_t to = n > half ? st[n - half] : prev;
+        if (to > prev) g_libPages.push_back(to);
+    }
+    libLoadPage(g_libPages.back());
+    requestRedraw();
+}
 
 void libPage(int dir) {
     if (dir > 0) {
@@ -5699,10 +6054,27 @@ void libFind(const char* what) {
 bool gameOpen();
 void libKey(const KeyEvent& ev) {
     const char c = (char)toupper((unsigned char)ev.character);
+    if (c == kKeyNav) { navKeysToggle(); return; }
     if (g_libReading) {
         if (c == 'N' || c == 'V' || ev.space) libPage(+1);
         else if (c == 'B' || c == 'G') libPage(-1);
-        else if (c == 'F') startEntry(Entry::LibFind);
+        else if (c == 'X') libHalf(+1);
+        else if (c == 'E') libHalf(-1);
+        else if (c == 'L') startEntry(Entry::LibFind);
+        else if (c == 'W') {
+            g_libWrap = !g_libWrap;
+            g_libCol = 0;
+            libLoadPage(g_libPages.back());
+            toast(g_libWrap ? "Wrap on" : "Wrap off: S / F pan");
+            Serial.printf("[LIB] wrap %s\n", g_libWrap ? "on" : "off");
+            requestRedraw();
+        } else if ((c == 'S' || c == 'F') && !g_libWrap) {
+            g_libCol += c == 'F' ? kLibPanCols : -kLibPanCols;
+            if (g_libCol < 0) g_libCol = 0;
+            if (g_libCol > kLibLineMax - 2) g_libCol = kLibLineMax - 2;
+            Serial.printf("[LIB] column %d\n", g_libCol);
+            requestRedraw();
+        } else if (c == 'D') { g_libCol = 0; requestRedraw(); }
         else if (c == 'M') { libClose(); openMenu(); }
         return;
     }
@@ -5743,29 +6115,37 @@ void renderLibrary() {
             listRow(LIST_TOP + r * ROW_H, t, sub, k == g_libSel);
         }
         box(0, FOOT_Y, W, FOOT_H, 1);
-        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4 / Enter  G/V  ^ close");
+        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4 / Enter  G/V  K keys");
+        if (g_navKeysOpen) drawNavKeys(FOOT_Y - kNavH, kLibListKeys);
         return;
     }
     const char* nm = strrchr(g_libPath, '/');
     nm = nm ? nm + 1 : g_libPath;
     const unsigned pct = g_libSize ? (unsigned)((uint64_t)g_libPages.back() * 100 / g_libSize) : 0;
-    snprintf(hdr, sizeof(hdr), "p%u %u%% %s", (unsigned)g_libPages.size(), pct, nm);
+    if (g_libCol) snprintf(hdr, sizeof(hdr), "p%u %u%% >%d %s", (unsigned)g_libPages.size(), pct, g_libCol, nm);
+    else snprintf(hdr, sizeof(hdr), "p%u %u%% %s", (unsigned)g_libPages.size(), pct, nm);
     drawHeader(hdr, false);
-    for (int l = 0; l < g_libTextN; l++) text(6, LIST_TOP + l * kLibLineH, g_libText[l], false, W - 10);
+    for (int l = 0; l < g_libTextN; l++) {
+        const char* t = g_libText[l];
+        const int len = (int)strlen(t);
+        text(6, LIST_TOP + l * kLibLineH, g_libWrap ? t : (g_libCol < len ? t + g_libCol : ""), false, W - 10);
+    }
     box(0, FOOT_Y, W, FOOT_H, 1);
     if (g_entry == Entry::LibFind) {
         char t[48];
         snprintf(t, sizeof(t), "Find: %s_", g_buf);
         label(0, FOOT_Y - 1, W, FOOT_H, t);
     } else {
-        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "N/B page  F find  ^ list");
+        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "K keys  L find  ^ list");
     }
+    if (g_navKeysOpen) drawNavKeys(FOOT_Y - kNavH, kReaderKeys);
 }
 
 // ---- Rat Trap (a small puzzle game, MENU -> Library, last row) -----------------------
 // A 10 x 9 field hides 12 traps. Open every safe square; a number tells how many traps
-// touch that square (8 neighbours). W A S D move, Enter / Space opens, F marks a trap,
-// N new game, ^ back. The first square opened is never a trap. Turn-based, so the e-ink
+// touch that square (8 neighbours). The Atlas keys: E S X F move, D (Enter / Space) opens,
+// Alt+P marks a trap, Q new game, K the keys card,
+// ^ back. The first square opened is never a trap. Turn-based, so the e-ink
 // only refreshes on a key. Not offered on battery below 25 % (messages come first).
 constexpr int kGameCols = 10, kGameRows = 9, kGameTraps = 12, kGameCell = 22;
 constexpr int kGameX = (W - kGameCols * kGameCell) / 2;
@@ -5859,7 +6239,7 @@ bool gameOpen() {
     return true;
 }
 
-void gameClose() { g_gameOpen = false; g_fullRefreshReq = true; requestRedraw(); }
+void gameClose() { g_gameOpen = false; g_navKeysOpen = false; g_fullRefreshReq = true; requestRedraw(); }
 
 void gameDig() {
     if (g_gameOver) return;
@@ -5885,16 +6265,18 @@ void gameDig() {
     }
 }
 
+// The Atlas keys: E S X F move, D (or Enter / Space) opens, Alt+P marks, Q new game, K keys.
 void gameKey(const KeyEvent& ev) {
     const char c = (char)toupper((unsigned char)ev.character);
     if (c == 'M') { gameClose(); openMenu(); return; }
-    if (c == 'N') { gameNew(); return; }
-    if (c == 'W' && g_gameCy > 0) g_gameCy--;
-    else if (c == 'S' && g_gameCy < kGameRows - 1) g_gameCy++;
-    else if (c == 'A' && g_gameCx > 0) g_gameCx--;
-    else if (c == 'D' && g_gameCx < kGameCols - 1) g_gameCx++;
-    else if (ev.enter || ev.space) gameDig();
-    else if (c == 'F' && !g_gameOver) {
+    if (c == kKeyNav) { navKeysToggle(); return; }
+    if (c == 'Q') { gameNew(); return; }
+    if (c == 'E' && g_gameCy > 0) g_gameCy--;
+    else if (c == 'X' && g_gameCy < kGameRows - 1) g_gameCy++;
+    else if (c == 'S' && g_gameCx > 0) g_gameCx--;
+    else if (c == 'F' && g_gameCx < kGameCols - 1) g_gameCx++;
+    else if (c == 'D' || ev.enter || ev.space) gameDig();
+    else if (c == kKeyWpt && ev.alt && !g_gameOver) {
         uint8_t& cell = g_gameCell[g_gameCy][g_gameCx];
         if (!(cell & GC_OPEN)) { cell ^= GC_FLAG; g_gameFlags += (cell & GC_FLAG) ? 1 : -1; }
     } else return;
@@ -5928,10 +6310,11 @@ void renderGame() {
     box(0, FOOT_Y, W, FOOT_H, 1);
     char foot[48];
     if (g_toast[0]) snprintf(foot, sizeof(foot), "%s", g_toast);
-    else if (g_gameWon) snprintf(foot, sizeof(foot), "Cleared! best %lus  N new", (unsigned long)g_gameBest);
-    else if (g_gameOver) snprintf(foot, sizeof(foot), "Trapped!  N new game  ^ back");
-    else snprintf(foot, sizeof(foot), "WASD  Enter open  F mark");
+    else if (g_gameWon) snprintf(foot, sizeof(foot), "Cleared! best %lus  Q new", (unsigned long)g_gameBest);
+    else if (g_gameOver) snprintf(foot, sizeof(foot), "Trapped!  Q new game  ^ back");
+    else snprintf(foot, sizeof(foot), "K keys  D open  Alt+P mark");
     label(0, FOOT_Y - 1, W, FOOT_H, foot);
+    if (g_navKeysOpen) drawNavKeys(FOOT_Y - kNavH, kGameKeys);
 }
 
 // ---- Contact page + share picker ----------------------------------------------------
@@ -6024,7 +6407,16 @@ void cardKey(const KeyEvent& ev) {
     }
 }
 
+void shareAllTo(const uint8_t to[16]);
+
 void shareSendTo(int idx) {
+    if (g_shareAll) {
+        uint8_t to[16];
+        memcpy(to, g_rows[idx].peer, 16);
+        if (isSelf(to)) { toast("Pick someone else"); return; }
+        shareAllTo(to);
+        return;
+    }
     const uint8_t* to = g_rows[idx].peer;
     if (isSelf(to) || !memcmp(to, g_sharePeer, 16)) { toast("Pick someone else"); return; }
     char nm[24], toName[24], body[96];
@@ -6054,6 +6446,325 @@ void saveThreadCard() {
     toast("Saved %.18s", g_threadCard.name);
 }
 
+// ---- Contacts: share all, export / import (Settings S.6, setup wizard) -----------------
+constexpr const char* kContactsFile = SD_PATH_ROOT "/contacts.txt";   // "name<TAB>32 hex" per line
+
+// Every saved contact as a contact card to one radio (it saves them while its setup wizard
+// listens, or one by one from the chat). Check-in mode: they wait for the window.
+void shareAllTo(const uint8_t to[16]) {
+    g_shareActive = false;
+    g_shareAll = false;
+    loadRows(SCR_CONTACTS);
+    static uint8_t peers[MAX_ROWS][16];
+    static char names[MAX_ROWS][24];
+    int n = 0;
+    for (int i = 0; i < g_rowCount && n < MAX_ROWS; i++) {
+        const uint8_t* h = g_rows[i].peer;
+        if (isSelf(h) || !memcmp(h, to, 16)) continue;
+        memcpy(peers[n], h, 16);
+        peerName(h, names[n], sizeof(names[n]));
+        n++;
+    }
+    // The first goes now; the rest wait in the outbox (one send at a time, 3 s apart).
+    // Check-in mode: all of them wait for the window.
+    int sent = 0, queued = 0;
+    const power::CheckinPhase ph = checkinNow();
+    const bool queue = g_pwEff.checkin && !(ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS);
+    for (int i = 0; i < n; i++) {
+        char body[96];
+        cardFormat(peers[i], names[i], body, sizeof(body));
+        if (queue) { if (outboxAdd(to, body)) queued++; continue; }
+        const SendResult r = sendOrQueue(to, body);
+        if (r == SendResult::Sent) sent++;
+        else if (r == SendResult::Queued) queued++;
+    }
+    char toName[24];
+    peerName(to, toName, sizeof(toName));
+    Serial.printf("[CARD] shareall %d of %d to %s (%d now, %d queued)\n", sent + queued, n, toName, sent, queued);
+    if (sent + queued < n) toast("%d of %d cards: outbox full", sent + queued, n);
+    else toast("%d cards to %.12s", n, toName);
+    loadRows(g_screen);
+    requestRedraw();
+}
+
+void shareAllStart() {
+    goScreen(SCR_CONTACTS);
+    memset(g_sharePeer, 0, sizeof(g_sharePeer));
+    g_shareActive = true;
+    g_shareAll = true;
+    toast("Pick who gets all contacts");
+    Serial.println("[CARD] pick recipient (all contacts)");
+}
+
+int contactsExport() {
+    if (!sdMount()) { toast("No SD card"); return -1; }
+    File f = g_sdStore.openFile(kContactsFile, FILE_WRITE);
+    if (!f) { toast("Cannot write contacts.txt"); return -1; }
+    loadRows(SCR_CONTACTS);
+    int n = 0;
+    for (int i = 0; i < g_rowCount; i++) {
+        if (isSelf(g_rows[i].peer)) continue;
+        char nm[24], hex[33];
+        peerName(g_rows[i].peer, nm, sizeof(nm));
+        hashToHex(g_rows[i].peer, hex);
+        f.printf("%s\t%s\n", nm, hex);
+        n++;
+    }
+    f.close();
+    loadRows(g_screen);
+    Serial.printf("[CONTACTS] %d -> contacts.txt\n", n);
+    return n;
+}
+
+int contactsImport() {
+    if (!sdMount()) { toast("No SD card"); return -1; }
+    File f = g_sdStore.openFile(kContactsFile, FILE_READ);
+    if (!f) { toast("No ratdeckpro/contacts.txt"); return -1; }
+    char line[96];
+    int len = 0, n = 0;
+    auto take = [&]() {
+        line[len] = 0;
+        len = 0;
+        char* tab = strchr(line, '\t');
+        if (!tab) return;
+        *tab = 0;
+        const char* hex = tab + 1;
+        uint8_t h[16];
+        if (strlen(hex) < 32 || !hexToHash(hex, h) || isSelf(h) || !line[0]) return;
+        saveContactName(h, line);
+        n++;
+    };
+    while (f.available()) {
+        const int c = f.read();
+        if (c < 0) break;
+        if (c == '\n') take();
+        else if (c != '\r' && len < (int)sizeof(line) - 1) line[len++] = (char)c;
+    }
+    if (len) take();
+    f.close();
+    if (g_screen == SCR_CONTACTS || g_screen == SCR_PEERS) loadRows(g_screen);
+    Serial.printf("[CONTACTS] imported %d from contacts.txt\n", n);
+    return n;
+}
+
+// ---- Setup wizard (fresh device, or Settings S.6 "Run setup wizard") --------------------
+// One screen per step, "Step 3/10" in the header. Enter keeps what is shown and goes on, ^
+// goes back a step, 0 finishes with the rest left as it is. A digit picks a row: on a
+// choice step it also goes on.
+enum WizStep : uint8_t { WZ_WELCOME, WZ_NAME, WZ_TIME, WZ_CLOCK, WZ_POWER, WZ_IDLE, WZ_MODE, WZ_LOCK,
+                         WZ_IMPORT, WZ_DONE, WZ_COUNT };
+const char* const kWizTitle[WZ_COUNT] = {"Welcome", "Device name", "Time zone", "Clock", "Energy mode",
+                                         "Idle screen", "Simple / Advanced", "Password lock",
+                                         "Import contacts", "Done"};
+const uint8_t kWizModes[4] = {power::MODE_FULL, power::MODE_BALANCED, power::MODE_SAVER, power::MODE_CHECKIN};
+
+void wizStart() {
+    g_menuOpen = false;
+    g_wizOpen = true;
+    g_wizStep = WZ_WELCOME;
+    g_wizListen = false;
+    g_wizGot = 0;
+    g_cfg.wizDone = false;                   // a setting saved meanwhile keeps it pending (reboot: again)
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.println("[WIZ] start");
+}
+
+void wizListen(bool on) {
+    g_wizListen = on;
+    if (on) g_wizGot = 0;
+    Serial.printf("[WIZ] listen %s\n", on ? "on" : "off");
+    requestRedraw();
+}
+
+// A contact card that arrived while the wizard listens: saved at once.
+void wizCardIn(const char* text) {
+    if (!g_wizOpen || !g_wizListen) return;
+    uint8_t h[16];
+    char nm[24];
+    if (!cardParse(text, strlen(text), h, nm, sizeof(nm)) || isSelf(h)) return;
+    saveContactName(h, nm);
+    g_wizGot++;
+    Serial.printf("[WIZ] contact saved \"%s\" (%d)\n", nm, g_wizGot);
+    requestRedraw();
+}
+
+void wizFinish(bool announce) {
+    if (!g_wizOpen && g_cfg.wizDone) return;
+    g_wizOpen = false;
+    g_wizListen = false;
+    g_cfg.wizDone = true;
+    saveConfig();
+    Serial.printf("[WIZ] %s\n", announce ? "done" : "skipped");
+    goScreen(SCR_HOME);
+    if (announce) { doAnnounce(); toast("Announced: others can see you"); }
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void wizNext() {
+    if (g_wizStep == WZ_IMPORT && g_wizListen) wizListen(false);
+    if (g_wizStep >= WZ_DONE) { wizFinish(true); return; }
+    g_wizStep++;
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.printf("[WIZ] step %d %s\n", g_wizStep + 1, kWizTitle[g_wizStep]);
+}
+
+// Digit k (1-based) on the current step. true = a choice was made: go on.
+bool wizPick(int k) {
+    switch (g_wizStep) {
+        case WZ_NAME:
+            if (k == 1 && g_haveSelf) startNameEntry(g_selfHash);
+            return false;
+        case WZ_TIME:
+            if (k == 1) { g_cfg.tz = (g_cfg.tz + 1) % kTzCount; saveConfig(); applyTz(); requestRedraw(); }
+            return false;
+        case WZ_CLOCK:
+            if (k < 1 || k > 2) return false;
+            g_cfg.clock12 = k == 2; saveConfig();
+            return true;
+        case WZ_POWER:
+            if (k < 1 || k > 4) return false;
+            g_pw.mode = kWizModes[k - 1]; power::save(g_pw); powerApply(true);
+            return true;
+        case WZ_IDLE:
+            if (k < 1 || k > IDLE_COUNT) return false;
+            g_cfg.idleScreen = (uint8_t)(k - 1); saveConfig();
+            if (g_cfg.idleScreen == IDLE_FOUND) {      // the text right away
+                startEntry(Entry::FoundText, g_cfg.foundText);
+                g_entryReplace = true;
+                return false;
+            }
+            return true;
+        case WZ_MODE:
+            if (k < 1 || k > 2) return false;
+            g_cfg.simple = k == 1; saveConfig();
+            return true;
+        case WZ_LOCK:
+            if (k == 1) return true;
+            if (k == 2) { startEntry(Entry::PassNew, nullptr, 2); toast("Choose a password"); }
+            return false;
+        case WZ_IMPORT:
+            if (k == 1) wizListen(!g_wizListen);
+            else if (k == 2) { const int n = contactsImport(); if (n >= 0) { g_wizGot += n; toast("%d contacts imported", n); } }
+            requestRedraw();
+            return false;
+        default:
+            return false;
+    }
+}
+
+void wizKey(const KeyEvent& ev) {
+    if (ev.up) {
+        if (g_wizStep > WZ_WELCOME) {
+            if (g_wizStep == WZ_IMPORT && g_wizListen) wizListen(false);
+            g_wizStep--;
+            g_fullRefreshReq = true;
+            requestRedraw();
+        }
+        return;
+    }
+    if (ev.enter) { wizNext(); return; }
+    const char c = ev.character;
+    if (c == '0') { wizFinish(false); return; }
+    if (c >= '1' && c <= '9' && wizPick(c - '0')) wizNext();
+}
+
+void renderWizard() {
+    char hdr[40], a[48], b[48];
+    snprintf(hdr, sizeof(hdr), "Setup %d/%d  %s", g_wizStep + 1, WZ_COUNT, kWizTitle[g_wizStep]);
+    drawHeader(hdr, false);
+    int y = LIST_TOP;
+    auto row = [&](const char* t, const char* sub, bool sel) { listRow(y, t, sub, sel); y += ROW_H; };
+    auto line = [&](const char* t, bool bold) { label(0, y, W, 18, t, bold); y += 20; };
+    switch (g_wizStep) {
+        case WZ_WELCOME:
+            y += 6;
+            line("Welcome to RatSpeak", true);
+            line("Text messages over LoRa", false);
+            line("radio: no phone network,", false);
+            line("no internet needed.", false);
+            y += 8;
+            line("A few questions follow.", false);
+            line("Enter = next, ^ = back", true);
+            line("a digit picks a row", false);
+            line("0 = skip setup", false);
+            break;
+        case WZ_NAME:
+            snprintf(a, sizeof(a), "1 Name: %s", g_selfName);
+            row(a, "1 = change it, Enter = keep", false);
+            y += 6;
+            line("Others see this name", false);
+            line("when you announce.", false);
+            break;
+        case WZ_TIME: {
+            snprintf(a, sizeof(a), "1 %s %s", tzCur().name, tzCur().label);
+            row(a, "1 = next time zone", false);
+            char d[12], t[12];
+            fmtDate(d, sizeof(d)); fmtTime(t, sizeof(t));
+            snprintf(a, sizeof(a), "Clock: %s %s", d, t);
+            row(a, "sets itself from GPS / radios", false);
+            y += 6;
+            line("By hand later: Settings", false);
+            line("S.1 Time > Set RTC", false);
+            break;
+        }
+        case WZ_CLOCK:
+            row("1 24 h", "13:45", !g_cfg.clock12);
+            row("2 12 h", "1:45 PM", g_cfg.clock12);
+            break;
+        case WZ_POWER:
+            for (int i = 0; i < 4; i++) {
+                snprintf(a, sizeof(a), "%d %s", i + 1, power::modeName(kWizModes[i]));
+                row(a, power::modeBlurb(kWizModes[i]), g_pw.mode == kWizModes[i]);
+            }
+            break;
+        case WZ_IDLE:
+            for (int i = 0; i < IDLE_COUNT; i++) {
+                snprintf(a, sizeof(a), "%d %s", i + 1, kIdleScreenName[i]);
+                static const char* kSub[IDLE_COUNT] = {"logo, battery, time", "the map around you",
+                                                       "the page you last read", "who to return it to"};
+                row(a, kSub[i], g_cfg.idleScreen == i);
+            }
+            if (g_entry == Entry::FoundText) { snprintf(b, sizeof(b), "%s_", g_buf); line(b, false); }
+            break;
+        case WZ_MODE:
+            row("1 Simple", "fewer options (coming later)", g_cfg.simple);
+            row("2 Advanced", "everything (today's screens)", !g_cfg.simple);
+            y += 6;
+            line("Simple mode: coming later", false);
+            break;
+        case WZ_LOCK:
+            row(lockHasPassword() ? "1 Keep the password" : "1 No password", "anyone can use it", false);
+            row("2 Set a password", "asked after idle and at boot", lockOnIdle());
+            if (passEntry(g_entry)) {
+                snprintf(b, sizeof(b), "%s: %s", g_entry == Entry::PassConfirm ? "Again" : "Password",
+                         editingSub(g_entry));
+                line(b, false);
+            }
+            break;
+        case WZ_IMPORT:
+            snprintf(b, sizeof(b), g_wizListen ? "listening: %d received" : "the other: S.6 Share all", g_wizGot);
+            row(g_wizListen ? "1 Stop listening" : "1 Listen over the radio", b, g_wizListen);
+            row("2 Read contacts.txt (SD)", "ratdeckpro/contacts.txt", false);
+            y += 6;
+            snprintf(a, sizeof(a), "%d contact%s added", g_wizGot, g_wizGot == 1 ? "" : "s");
+            line(a, g_wizGot > 0);
+            break;
+        case WZ_DONE:
+            snprintf(a, sizeof(a), "Name: %s", g_selfName); line(a, false);
+            snprintf(a, sizeof(a), "Time: %s, %s", tzCur().name, g_cfg.clock12 ? "12 h" : "24 h"); line(a, false);
+            snprintf(a, sizeof(a), "Energy: %s", power::modeName(g_pw.mode)); line(a, false);
+            snprintf(a, sizeof(a), "Idle: %s", kIdleScreenName[g_cfg.idleScreen]); line(a, false);
+            snprintf(a, sizeof(a), "Lock: %s", lockHasPassword() ? "password" : "none"); line(a, false);
+            y += 8;
+            line("Enter = announce + finish", true);
+            line("so others see this radio", false);
+            break;
+    }
+}
+
 void render() {
     const uint32_t t0 = millis();
     clearRoot();
@@ -6070,6 +6781,7 @@ void render() {
     }
     if (g_threadOpen)                  renderThread();
     else if (g_entry == Entry::Name)   renderRename();
+    else if (g_wizOpen)                renderWizard();
     else if (g_cardOpen)               renderCard();
     else if (g_libOpen)                renderLibrary();
     else if (g_gameOpen)               renderGame();
@@ -6083,7 +6795,8 @@ void render() {
     drawBottomBar();
     drawMenuOverlay();
     lv_refr_now(nullptr);
-    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_placeOpen) stampMap();   // after LVGL's clear
+    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_placeOpen)
+        stampMap();   // after LVGL's clear
     const uint32_t t1 = millis();
     // Clear the request first: keys queued during the panel refresh may ask again.
     g_redraw = false;
@@ -6110,53 +6823,161 @@ void spaced(const char* in, char* out, size_t n) {
 
 bool paintIdleMap();
 
-void paintIdle() {
-    if (g_cfg.idleMap && paintIdleMap()) return;
-    clearRoot();
-    const int y0 = 76, step = 20;
-    label(0, y0, W, 20, "RatSpeak", true);
-    char d[12], t[8], tmp[24], line[40];
-    fmtDate(d, sizeof(d));
+bool paintIdleLibrary();
+void paintIdleFound();
+constexpr int kIdleMapTop = 38, kIdleMapBottom = 300;
+
+// Every idle screen: time, battery and unread across the top, the date and the radio's name
+// under them, and the wake / LOCKED line at the bottom.
+void drawIdleTop() {
+    char t[12], d[12], line[48];
     fmtTime(t, sizeof(t));
-    spaced(d, line, sizeof(line));
-    label(0, y0 + step, W, 20, line, true);
-    snprintf(tmp, sizeof(tmp), "%s %s", t, tzCur().name);
-    spaced(tmp, line, sizeof(line));
-    label(0, y0 + 2 * step, W, 20, line, true);
-
+    fmtDate(d, sizeof(d));
     const int pct = g_bat.valid ? g_bat.pct : -1;
-    const int bx = W / 2 - 23, by = y0 + 3 * step + 2;
-    drawBatteryIcon(bx, by, 18, 28, pct);
-    snprintf(tmp, sizeof(tmp), pct >= 0 ? "%d%%" : "--%%", pct);
-    label(bx + 20, by + 6, 40, 16, tmp);
-    label(0, y0 + 5 * step, W, 18,
-          g_bat.charging ? (g_bat.usb ? "charging | plugged in" : "charging")
-                         : (g_bat.usb ? "plugged in" : "unplugged"));
-
     const int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
-    if (unread > 0) snprintf(line, sizeof(line), "NEW messages: %d unread", unread);
-    else            snprintf(line, sizeof(line), "No new messages");
-    label(0, y0 + 6 * step, W, 18, line, unread > 0);
-
-    uint32_t s = millis() / 1000UL;
-    label(0, y0 + 7 * step, W, 16, "uptime");
-    snprintf(line, sizeof(line), "%05luD : %02luH : %02luM", (unsigned long)(s / 86400UL),
-             (unsigned long)((s / 3600UL) % 24UL), (unsigned long)((s / 60UL) % 60UL));
-    label(0, y0 + 8 * step, W, 16, line);
-    label(0, y0 + 9 * step, W, 18, g_selfName, true);
-    label(0, 292, W, 22, g_locked ? "LOCKED | press a key" : "press a KEY to wake", true);
-
-    lv_refr_now(nullptr);
-    drawLogo(W / 2, 36);     // stamped after LVGL so the clear does not wipe it
+    box(0, 0, W, kIdleMapTop, 1);
+    if (unread > 0) snprintf(line, sizeof(line), "%s  %d%%%s  %d NEW", t, pct, g_bat.charging ? "+" : "", unread);
+    else snprintf(line, sizeof(line), "%s  %d%%%s  no new", t, pct, g_bat.charging ? "+" : "");
+    label(0, 0, W, 20, line, true);
+    snprintf(line, sizeof(line), "%s  %s", d, g_selfName);
+    label(0, 18, W, 18, line);
     g_idleShownUnread = unread;
     g_idleShownPct = pct;
     g_idleShownMin = millis() / 60000UL;
 }
 
-// Idle screen "map around you" (S.3.2 row 8): the map centred on the GPS fix, else the
+void drawIdleFoot(const char* unlockedText) {
+    box(0, kIdleMapBottom, W, H - kIdleMapBottom, 1);
+    label(0, kIdleMapBottom, W, H - kIdleMapBottom, g_locked ? "LOCKED | press a key" : unlockedText, g_locked);
+}
+
+void paintIdle() {
+    // Locked: the map (your position) and a library page are not shown; If found is.
+    uint8_t sc = g_cfg.idleScreen;
+    if (g_locked && (sc == IDLE_MAP || sc == IDLE_LIBRARY)) sc = IDLE_SPLASH;
+    if (sc == IDLE_MAP && paintIdleMap()) return;
+    if (sc == IDLE_LIBRARY && paintIdleLibrary()) return;
+    if (sc == IDLE_FOUND) { paintIdleFound(); return; }
+    clearRoot();
+    drawIdleTop();
+    const int y0 = 140, step = 20;
+    label(0, y0, W, 20, "RatSpeak", true);
+    char line[40];
+    label(0, y0 + step, W, 18,
+          g_bat.charging ? (g_bat.usb ? "charging | plugged in" : "charging")
+                         : (g_bat.usb ? "plugged in" : "unplugged"));
+    uint32_t s = millis() / 1000UL;
+    label(0, y0 + 2 * step + 6, W, 16, "uptime");
+    snprintf(line, sizeof(line), "%05luD : %02luH : %02luM", (unsigned long)(s / 86400UL),
+             (unsigned long)((s / 3600UL) % 24UL), (unsigned long)((s / 60UL) % 60UL));
+    label(0, y0 + 3 * step + 6, W, 16, line);
+    label(0, y0 + 4 * step + 14, W, 18, tzCur().name);
+    drawIdleFoot("press a KEY to wake");
+    lv_refr_now(nullptr);
+    drawLogo(W / 2, kIdleMapTop + 50);       // stamped after LVGL so the clear does not wipe it
+}
+
+// Idle screen "Library page": the page last read in the Library (else the first page of the
+// first file), with the reader's wrap setting. false = no card / no files: the splash.
+bool paintIdleLibrary() {
+    if (!sdMount()) {
+        clearRoot();
+        drawIdleTop();
+        label(0, 140, W, 20, "No library page", true);
+        label(0, 162, W, 18, "(no SD card)");
+        drawIdleFoot("press a KEY to wake");
+        lv_refr_now(nullptr);
+        return true;
+    }
+    char path[96];
+    uint32_t off = 0;
+    bool wrap = true;
+    if (g_cfg.libLast[0]) {
+        snprintf(path, sizeof(path), "%s/%s", kLibDir, g_cfg.libLast);
+        off = g_cfg.libLastOff;
+        wrap = g_cfg.libLastWrap;
+    }
+    if (!g_cfg.libLast[0] || !g_sdStore.exists(path)) {
+        libScan();
+        if (!g_libCount) {
+            clearRoot();
+            drawIdleTop();
+            label(0, 140, W, 20, "No library page", true);
+            label(0, 162, W, 18, "(ratdeckpro/library on the SD card)");
+            drawIdleFoot("press a KEY to wake");
+            lv_refr_now(nullptr);
+            return true;
+        }
+        snprintf(path, sizeof(path), "%s/%s", kLibDir, g_libFiles[0].name);
+        off = 0;
+        const char* dot = strrchr(g_libFiles[0].name, '.');
+        wrap = !(dot && !strcasecmp(dot, ".csv"));
+    }
+    char keepPath[96];
+    strlcpy(keepPath, g_libPath, sizeof(keepPath));
+    const bool keepWrap = g_libWrap;
+    strlcpy(g_libPath, path, sizeof(g_libPath));
+    g_libWrap = wrap;
+    static char lines[kLibLines][kLibLineMax];
+    uint32_t next;
+    const int n = libLayout(off, kLibLines, lines, nullptr, &next);
+    strlcpy(g_libPath, keepPath, sizeof(g_libPath));
+    g_libWrap = keepWrap;
+    clearRoot();
+    drawIdleTop();
+    const char* nm = strrchr(path, '/');
+    label(0, kIdleMapTop + 1, W, 18, nm ? nm + 1 : path, true);
+    for (int l = 0; l < n; l++) text(6, kIdleMapTop + 22 + l * kLibLineH, lines[l], false, W - 10);
+    drawIdleFoot("press a KEY to wake");
+    lv_refr_now(nullptr);
+    return true;
+}
+
+// Idle screen "If found": who to return the radio to, as the owner typed it (';' = new
+// line), and this radio's name + LXMF address so a finder with RatSpeak can message it.
+// Also the locked screen; e-ink keeps it readable when the battery is flat.
+void paintIdleFound() {
+    clearRoot();
+    drawIdleTop();
+    int y = kIdleMapTop + 6;
+    label(0, y, W, 20, "IF FOUND, PLEASE", true);
+    label(0, y + 20, W, 20, "RETURN TO:", true);
+    y += 48;
+    if (g_cfg.foundText[0]) {
+        char t[sizeof(g_cfg.foundText)];
+        strlcpy(t, g_cfg.foundText, sizeof(t));
+        int lines = 0;
+        for (char* tok = strtok(t, ";|"); tok && lines < 7; tok = strtok(nullptr, ";|"), lines++) {
+            while (*tok == ' ') tok++;
+            label(0, y, W, 20, tok, lines == 0);
+            y += 22;
+        }
+    } else {
+        label(0, y, W, 20, "(owner text not set:");
+        label(0, y + 22, W, 20, "Settings S.3.2)");
+        y += 44;
+    }
+    if (g_cfg.foundAddr) {
+        y = y < 226 ? 226 : y + 4;
+        label(0, y, W, 18, g_selfName, true);
+        char hex[33];
+        strlcpy(hex, g_destHex[0] ? g_destHex : "--", sizeof(hex));
+        lv_obj_t* o = lv_label_create(g_root);       // 32 hex digits fit in the 12 px font
+        lv_label_set_text(o, hex);
+        lv_obj_set_style_text_font(o, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(o, fg(), 0);
+        const int w = lv_txt_get_width(hex, strlen(hex), &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
+        lv_obj_set_pos(o, (W - w) / 2, y + 20);
+        label(0, y + 34, W, 16, "message me on RatSpeak");
+    }
+    drawIdleFoot("press a KEY to wake");
+    lv_refr_now(nullptr);
+}
+
+// Idle screen "Map" (S.3.2 "Idle screen"): the map centred on the GPS fix, else the
 // saved position, else the card's home.txt, at zoom 13 (or the deepest level with tiles),
 // with time / battery / unread across the top. false = no position: the splash is shown.
-constexpr int kIdleMapTop = 38, kIdleMapBottom = 300, kIdleMapZoom = 13;
+constexpr int kIdleMapZoom = 13;
 
 bool paintIdleMap() {
     double lat = 0, lon = 0;
@@ -6182,33 +7003,15 @@ bool paintIdleMap() {
     }
 
     clearRoot();
-    char t[8], d[12], line[48];
-    fmtTime(t, sizeof(t));
-    fmtDate(d, sizeof(d));
-    const int pct = g_bat.valid ? g_bat.pct : -1;
-    const int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
-    box(0, 0, W, kIdleMapTop, 1);
-    if (unread > 0) snprintf(line, sizeof(line), "%s  %d%%%s  %d NEW", t, pct, g_bat.charging ? "+" : "", unread);
-    else snprintf(line, sizeof(line), "%s  %d%%%s  no new", t, pct, g_bat.charging ? "+" : "");
-    label(0, 0, W, 20, line, true);
-    snprintf(line, sizeof(line), "%.5s  %s", d, g_selfName);
-    label(0, 18, W, 18, line);
-    box(0, kIdleMapBottom, W, H - kIdleMapBottom, 1);
-    if (g_locked) {
-        label(0, kIdleMapBottom, W, H - kIdleMapBottom, "LOCKED | press a key", true);
-    } else {
-        char pos[56];
-        gpsPosText(pos, sizeof(pos));
-        label(0, kIdleMapBottom, W, H - kIdleMapBottom, pos);
-    }
+    drawIdleTop();
+    char pos[56];
+    gpsPosText(pos, sizeof(pos));
+    drawIdleFoot(pos);
     lv_refr_now(nullptr);
     mapContactsFeed();                       // contacts' last positions on the idle map too
     mapview::draw(mapPixel, 0, kIdleMapTop, W, kIdleMapBottom - kIdleMapTop, g_cfg.dark);
     g_display.markDirty();
-    if (!wasOpen) mapview::close();
-    g_idleShownUnread = unread;
-    g_idleShownPct = pct;
-    g_idleShownMin = millis() / 60000UL;
+    if (!wasOpen) { mapview::close(); mapReadDone(); }
     return true;
 }
 
@@ -6281,7 +7084,7 @@ void goScreen(ScreenId s) {
     g_gameOpen = false;
     g_cardOpen = false;
     g_shareActive = false;
-    if (mapview::isOpen()) mapview::close();
+    if (mapview::isOpen()) { mapview::close(); mapReadDone(); }
     if (g_threadOpen) { g_threadOpen = false; }
     if (entryActive()) endEntry();
     if (s == SCR_SETTINGS) {          // doc: M -> S always lands on the Settings root
@@ -6305,6 +7108,7 @@ void wptOpenFromSettings(int i) {
 }
 
 void openMenu() {
+    if (g_wizOpen) return;                   // finish or skip the wizard first
     g_menuOpen = true;
     g_menuSel = 0;
     for (int i = 0; i < kMenuMap; i++) if (kMenuScreens[i] == g_screen) g_menuSel = i;   // not Map / Library
@@ -6399,11 +7203,12 @@ void cancelEntry() {
 
 void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
+    if (g_navKeysOpen && (mapview::isOpen() || g_libOpen || g_gameOpen) && !entryActive()) { navKeysToggle(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
-    if (g_shareActive && !entryActive()) { g_shareActive = false; toast("Share cancelled"); return; }
+    if (g_shareActive && !entryActive()) { g_shareActive = false; g_shareAll = false; toast("Share cancelled"); return; }
     if (g_placeOpen && !entryActive()) { g_placeOpen = false; g_fullRefreshReq = true; requestRedraw(); return; }
     if (g_libOpen && !entryActive()) {
-        if (g_libReading) { g_libReading = false; requestRedraw(); } else libClose();
+        if (g_libReading) { libRemember(); g_libReading = false; requestRedraw(); } else libClose();
         return;
     }
     if (g_gameOpen && !entryActive()) { gameClose(); libOpen(); return; }   // back to the Library list
@@ -6525,6 +7330,12 @@ void commitEntry() {
         requestRedraw();
         return;
     }
+    case Entry::FoundText:
+        strlcpy(g_cfg.foundText, g_buf, sizeof(g_cfg.foundText));
+        saveConfig();
+        endEntry();
+        toast(g_cfg.foundText[0] ? "If-found text saved" : "If-found text cleared");
+        return;
     case Entry::IdleSecs: {
         long v;
         if (!parseLong(g_buf, v) || v < 10 || v > 99999) { toast("Out of range 10-99999"); return; }
@@ -6660,6 +7471,7 @@ void searchChanged() {
 void entryKey(const KeyEvent& ev) {
     if (ev.enter) { commitEntry(); return; }
     if (ev.del) {
+        if (g_entry == Entry::FoundText) g_entryReplace = false;   // editing the old text
         if (g_bufLen) g_buf[--g_bufLen] = 0;
         if (g_entry == Entry::Search) searchChanged();
         requestRedraw();
@@ -6670,7 +7482,7 @@ void entryKey(const KeyEvent& ev) {
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) c = '.';
         else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass || passEntry(g_entry) ||
                  g_entry == Entry::Search || g_entry == Entry::WptName || g_entry == Entry::LibFind ||
-                 g_entry == Entry::PlaceFind) c = ' ';
+                 g_entry == Entry::PlaceFind || g_entry == Entry::FoundText) c = ' ';
     } else if (ev.fn) {
         if (passEntry(g_entry)) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
         if (g_entry == Entry::Message && g_threadOpen) { g_tmenuOpen = true; g_tmenuSel = 0; requestRedraw(); return; }
@@ -6692,9 +7504,12 @@ void entryKey(const KeyEvent& ev) {
     if (g_entry == Entry::WifiPass && g_bufLen >= WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
     if (passEntry(g_entry) && g_bufLen >= kLockPassMax) { toast("Max 32 chars"); return; }
     if (g_entry == Entry::Search && g_bufLen >= sizeof(g_filter) - 1) return;
-    if (g_entry == Entry::WptName && g_entryReplace) { bufClear(); g_entryReplace = false; }   // typing replaces "WP3"
+    if ((g_entry == Entry::WptName || g_entry == Entry::FoundText) && g_entryReplace) {   // typing replaces the default
+        bufClear(); g_entryReplace = false;
+    }
     if (g_entry == Entry::WptName && g_bufLen >= 15) { toast("Max 15 chars"); return; }
     if (g_entry == Entry::TcpHost && g_bufLen >= sizeof(g_tcpCfg.host) - 1) { toast("Max 63 chars"); return; }
+    if (g_entry == Entry::FoundText && g_bufLen >= sizeof(g_cfg.foundText) - 1) { toast("Max 120 chars"); return; }
     bufAppend(c);
     if (g_entry == Entry::Search) searchChanged();
     // Show it on the next frame. Keys typed while that frame is on the panel are
@@ -6716,7 +7531,6 @@ void menuKey(const KeyEvent& ev) {
     if (c == 'M') { closeMenu(); return; }
     if (c == 'G') { if (g_menuSel > 0) g_menuSel--; requestRedraw(); return; }
     if (c == 'V') { if (g_menuSel < kMenuCount - 1) g_menuSel++; requestRedraw(); return; }
-    if (c == 'L') { menuGo(kMenuMap); return; }
     for (int i = 0; i < kMenuCount; i++)
         if (c == kMenuKeys[i]) { menuGo(i); return; }
 }
@@ -6736,19 +7550,19 @@ void browseKey(const KeyEvent& ev) {
         case 'C': goScreen(SCR_CONTACTS); break;
         case 'P': goScreen(SCR_PEERS); break;
         case 'I': goScreen(SCR_INBOX); break;
-        case 'A':
-            if (g_screen == SCR_HOME) activateCurrent();
-            break;
-        case 'L':                                   // map; on a list row with a known position: there
+        case 'A':                                   // Atlas; on a list row with a known position: there
             if (isListScreen(g_screen) && g_listSel < g_rowCount && cposFind(g_rows[g_listSel].peer) >= 0 &&
                 g_cpos[cposFind(g_rows[g_listSel].peer)].hasPos)
                 mapShowContact(g_rows[g_listSel].peer);
             else openMap();
             break;
-        case 'F':                                   // find: type to filter the list
+        case 'L':                                   // locate: type to filter the list
             if (isListScreen(g_screen)) { startEntry(Entry::Search, g_filter); }
             break;
-        case 'N': pageJump(+1); break;
+        case 'N':                                   // Home: Announce ID; lists: next page
+            if (g_screen == SCR_HOME) activateCurrent();
+            else pageJump(+1);
+            break;
         case 'B': pageJump(-1); break;
         default: break;
     }
@@ -6766,24 +7580,37 @@ void handleKey(const KeyEvent& ev) {
     noteInput();
     if (g_locked) { lockKey(ev); return; }
     if (g_threadOpen && g_tmenuOpen) { tmenuKey(ev); return; }
+    if (g_wizOpen && !entryActive()) { wizKey(ev); return; }   // setup wizard (^ = step back)
     if (ev.up) { goBack(); return; }                          // lone Shift = ^
     if (g_menuOpen) { menuKey(ev); return; }
     if (entryActive()) { entryKey(ev); return; }
     if (g_libOpen) { libKey(ev); return; }
     if (g_gameOpen) { gameKey(ev); return; }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
-    if (mapview::isOpen()) {
-        const char mc = (char)toupper((unsigned char)ev.character);
-        if (g_placeOpen) { placeKey(ev); return; }            // place results list (digits = go)
-        if (mapNumberKey(ev)) return;                         // "12" Enter: open chat #12
-        if (mc == 'F') { startEntry(Entry::PlaceFind); return; }   // find a place
-        if (wptMapKey(ev)) return;                            // P mark, N next waypoint, Del
-        if (mc == 'T') { mapCycleContact(); return; }        // next contact's last position
-        if (mc == 'C' || ev.enter) g_mapSel = -1;             // back to own position
-        if (mapview::key(ev.character, ev.enter)) requestRedraw();
+    if (mapview::isOpen()) { mapKey(ev); return; }
+    browseKey(ev);
+}
+
+// A key on the Atlas. M C I H leave the map like everywhere else (M menu, C contacts,
+// I inbox, H home); P is next waypoint here (Peers: M then P). A does nothing (it is next to
+// S, so a slip while panning is harmless).
+void mapKey(const KeyEvent& ev) {
+    const char mc = (char)toupper((unsigned char)ev.character);
+    if (g_placeOpen) { placeKey(ev); return; }            // place results list (digits = go)
+    if (mapNumberKey(ev)) return;                         // "12" Enter: open chat #12
+    if (mc == kKeyNav) { navKeysToggle(); return; }
+    if (mc == 'M') { openMenu(); return; }
+    if (mc == 'C' || mc == 'I' || mc == 'H') {
+        closeMap();
+        goScreen(mc == 'C' ? SCR_CONTACTS : mc == 'I' ? SCR_INBOX : SCR_HOME);
         return;
     }
-    browseKey(ev);
+    if (mc == 'A') return;
+    if (mc == kKeyFind) { startEntry(Entry::PlaceFind); return; }   // locate a place
+    if (wptMapKey(ev)) return;                            // P next / Alt+P add / Alt+SYM delete
+    if (mc == kKeyContact) { mapCycleContact(); return; } // next contact's last position
+    if (mc == 'D' || ev.enter) g_mapSel = -1;             // back to own position
+    if (mapview::key(ev.character, ev.enter)) requestRedraw();
 }
 
 // ---- Key queue --------------------------------------------------------------------
@@ -6863,6 +7690,7 @@ void handleTouch(int16_t x, int16_t y) {
         case H_DOWN:       moveSelection(+1); break;
         case H_CARD:       if (g_cardOpen) { g_cardSel = hit->arg; cardAct(hit->arg); } break;
         case H_TMENU:      if (g_tmenuOpen) { g_tmenuSel = hit->arg; tmenuAct(hit->arg); } break;
+        case H_NAVKEYS:    navKeysToggle(); break;
         case H_TILE_AUDIO:
             g_cfg.beep = !g_cfg.beep;
             g_audio.setEnabled(g_cfg.beep);
@@ -6922,8 +7750,6 @@ bool chargerSetHiz(bool on) {
     chargerUpdateReg(0x07, 0x30, on ? 0x00 : 0x10);
     return chargerUpdateReg(0x00, 0x80, on ? 0x80 : 0x00);
 }
-
-uint32_t g_gpsVisitStart = 0, g_gpsNextVisit = 0;   // periodic GPS schedule (powerGpsTick)
 
 bool powerUsbPowered() { return g_bat.usb && !g_benchUntil; }
 
@@ -6986,11 +7812,11 @@ void powerApply(bool force) {
 bool g_gpsVisitAsked = false;     // a feature (location auto-share) needs a fix now
 
 // Start a GPS visit at the next tick even between scheduled ones (any mode but GPS off).
-void gpsRequestVisit() {
+void gpsRequestVisit(const char* why) {
     if (g_gpsVisitStart) return;
     g_gpsVisitAsked = true;
     g_gpsNextVisit = millis();
-    Serial.println("[GPS] visit requested (location share)");
+    Serial.printf("[GPS] visit requested (%s)\n", why);
 }
 
 void powerGpsTick() {
@@ -7401,6 +8227,7 @@ void sdputStart(const char* args) {
         if (!g_putBuf) { Serial.println("[SDPUT] err no memory"); return; }
     }
     if (!sdMount()) { Serial.println("[SDPUT] err no SD card"); return; }
+    mapReadDone();                              // the file may be one the map holds open
     g_putLen = len; g_putGot = 0; g_putCrc = (uint32_t)crc; g_putAt = millis();
     snprintf(g_putPath, sizeof(g_putPath), "%s%s", SD_PATH_ROOT, rel);
     g_putActive = true;
@@ -7459,6 +8286,30 @@ void handleSerialLine(char* p) {
         for (const char* k : kOk) ok |= !strcmp(p, k);
         if (!ok) { Serial.println("[CMD] locked: unlock on the device first"); return; }
     }
+    if (!strncmp(p, "wiz", 3) && (p[3] == 0 || p[3] == ' ')) {   // wiz [start|skip|listen|step <n>]
+        if (!strcmp(p, "wiz start")) wizStart();
+        else if (!strcmp(p, "wiz skip")) wizFinish(false);
+        else if (!strcmp(p, "wiz listen")) { if (g_wizOpen) { g_wizStep = WZ_IMPORT; wizListen(true); } }
+        else if (!strncmp(p, "wiz step ", 9) && g_wizOpen) { g_wizStep = constrain(atoi(p + 9), 0, WZ_COUNT - 1); requestRedraw(); }
+        Serial.printf("[WIZ] open=%d step=%d listen=%d got=%d done=%d\n", g_wizOpen, g_wizStep, g_wizListen, g_wizGot,
+                      g_cfg.wizDone);
+        return;
+    }
+    if (!strncmp(p, "shareall ", 9)) {                     // shareall <32 hex dest>: every contact's card
+        uint8_t to[16];
+        if (strlen(p + 9) < 32 || !hexToHash(p + 9, to)) { Serial.println("[CARD] shareall <32 hex>"); return; }
+        shareAllTo(to);
+        return;
+    }
+    if (!strcmp(p, "contacts export")) { Serial.printf("[CONTACTS] exported %d\n", contactsExport()); return; }
+    if (!strcmp(p, "contacts import")) { Serial.printf("[CONTACTS] imported %d\n", contactsImport()); return; }
+    if (!strncmp(p, "idlescr", 7)) {                   // idlescr [0-3]: idle screen; "idle now"
+        const int v = p[7] ? atoi(p + 8) : -1;
+        if (v >= 0 && v < IDLE_COUNT) { g_cfg.idleScreen = (uint8_t)v; saveConfig(); }
+        Serial.printf("[IDLE] screen %s\n", kIdleScreenName[g_cfg.idleScreen]);
+        return;
+    }
+    if (!strcmp(p, "idle now")) { enterIdle(); return; }
     if (!strncmp(p, "lock", 4) && (p[4] == 0 || p[4] == ' ')) {
         if (!strcmp(p, "lock now")) lockNow();
         Serial.printf("[LOCK] locked=%d password=%d idleMode=%u fails=%u wait=%us vault=%s\n", g_locked,
@@ -7520,7 +8371,7 @@ void handleSerialLine(char* p) {
             powerApply(true);
         }
     } else if (!strncmp(p, "pset ", 5)) {
-        // Custom-mode knob from the console: pset cpu|wake|awake|lora|gps|wifi|kbl <value>
+        // Custom-mode knob from the console: pset cpu|wake|awake|lora|gps|wifi|kbl|touch|mapgps <value>
         char k[8] = "";
         int v = -1;
         if (sscanf(p + 5, "%7s %d", k, &v) == 2 && v >= 0) {
@@ -7534,12 +8385,13 @@ void handleSerialLine(char* p) {
             else if (!strcmp(k, "wifi")) c.wifi = v != 0;
             else if (!strcmp(k, "kbl")) c.keyLight = v != 0;
             else if (!strcmp(k, "touch")) c.touchOnKey = v != 0;
+            else if (!strcmp(k, "mapgps")) c.mapGps = v != 0;
             else { Serial.println("[POWER] pset: bad knob/value"); return; }
             g_pw.mode = power::MODE_CUSTOM;
             power::save(g_pw);
             powerApply(true);
         } else {
-            Serial.println("[POWER] pset cpu 80|160|240, wake <s>, awake <s>, lora 0|1|2(on use), gps 0-4 (on,15m,1h,off,on use), wifi 0|1, kbl 0|1");
+            Serial.println("[POWER] pset cpu 80|160|240, wake <s>, awake <s>, lora 0|1|2(on use), gps 0-4 (on,15m,1h,off,on use), wifi 0|1, kbl 0|1, touch 0|1, mapgps 0|1");
         }
     } else if (!strncmp(p, "bench", 5)) {
         const int secs = p[5] ? atoi(p + 5) : 120;
@@ -8400,6 +9252,7 @@ bool begin() {
     goScreen(SCR_HOME);
     render();
     Serial.println("[BOOT] ready");
+    if (g_wizNeeded || (g_cfgFresh && !g_hadIdentity)) wizStart();   // a new device (or unfinished)
     return true;
 }
 

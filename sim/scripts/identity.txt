@@ -3,6 +3,7 @@
 # Settings > WiFi > TCP hub: on, port, status (the sim has no TCP stack: settings only).
 # Settings > Identity > Identities > New identity (Enter twice): makes one, switches, restarts.
 expect 60000 [BOOT] ready
+serial wiz skip
 wait 1000
 serial id
 expect 3000 [ID] dest=

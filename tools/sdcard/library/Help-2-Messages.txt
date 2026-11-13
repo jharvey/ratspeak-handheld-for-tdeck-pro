@@ -10,6 +10,6 @@ Short: I, pick, type, Enter.
 
 If the other radio is out of range, the message waits in a queue and goes out by itself when that radio is heard again.
 
-Long list? F, type part of the name, Enter. ^ clears the filter.
+Long list? L, type part of the name, Enter. ^ clears the filter.
 
 The idle screen shows how many messages are unread.

@@ -1,0 +1,9 @@
+# Fresh device, 0 on the first step: setup skipped, defaults kept, not asked again.
+#   run-script.bat scripts\wizard_skip.txt wizskip fresh
+expect 60000 [WIZ] start
+wait 1500
+key 0
+expect 3000 [WIZ] skipped
+serial wiz
+expect 3000 open=0 step=0 listen=0 got=0 done=1
+quit

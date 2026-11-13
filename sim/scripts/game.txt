@@ -1,5 +1,6 @@
 # Rat Trap: MENU -> Library, last row. Runs with or without an SD card (the game row is
-# always there). Opens the middle square (never a trap), marks one, moves, then a new game.
+# always there). Atlas keys: D / Enter opens the middle square (never a trap), E S X F move,
+# Alt+P marks one, Q new game.
 expect 60000 [BOOT] ready
 wait 1500
 key M
@@ -28,13 +29,13 @@ shot game-01-new.png
 key ENTER
 wait 800
 shot game-02-opened.png
-key D
-key D
-key S
 key F
+key F
+key X
+key ALT+P
 wait 800
 shot game-03-marked.png
-key N
+key Q
 wait 800
 key BACK
 expect 5000 [LIB]

@@ -79,6 +79,8 @@ def main():
                     pass
             raise RuntimeError(s.name + ": no id")
         bh, ah = ident(b), ident(a)
+        for s in (a, b):                            # fresh devices open the setup wizard
+            s.send("wiz skip")
         print("A", ah, "B", bh)
         # The boot announces may have passed before we connected: announce again, give the
         # (shared) virtual radio time, then share.
@@ -94,7 +96,7 @@ def main():
         m = b.expect(r"\[LOC\] (\S+) at (-?\d+\.\d+),(-?\d+\.\d+)", 30)
         print("B stored", m.group(1), m.group(2), m.group(3))
         b.send("cpos")
-        b.expect(r"\[LOC\] cpos " + ah, 10)
+        b.expect(r"\[LOC\] cpos #\d+ " + ah, 10)
         b.expect(r"\[LOC\] cpos 1 contacts", 10)
         print("PASS")
         return 0

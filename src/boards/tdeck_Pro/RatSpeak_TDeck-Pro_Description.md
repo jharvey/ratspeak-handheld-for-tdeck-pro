@@ -121,16 +121,30 @@ On a RatSpeak unit a received location shows as **[loc]** (consecutive auto upda
 into the newest); **Enter** on the empty draft opens it on the map. The LXMF telemetry
 field (Sideband) is not sent yet: the protocol library has no field API on the send path.
 
-### 1.3 First-boot setup
+### 1.3 First-boot setup: the setup wizard
 
-| Step | What | How |
-|------|------|-----|
-| 1 | **Time** | **M → S → 1** (Time & Location) → Set RTC (**S.1.1**), Time zone (**S.1.2**) |
-| 2 | **Theme** | **M → S → 3** (Screen & I/O) → **1** Theme: **White paper** / **Black ink** |
-| 3 | **Power mode** | **M → S → 4** (Power) → Full / Balanced / Saver / Custom (§6) |
-| 4 | **Name this device** | **C** → row **0 MyID** → type name → **Enter** |
-| 5 | **WiFi** (optional) | **M → S → 2** — scan, join, saved networks, auto-connect |
-| 6 | **Meet the other radio** | Announce ID on both → **P** → name contact (§1.2) → test send (§1.1) |
+A new device (no settings saved and no identity from an earlier boot) opens the **setup
+wizard** at its first boot; a unit that was used before never sees it by itself (a wizard
+left unfinished comes back at the next boot). **M → S → 6** (Identity) row 6 **Run
+setup wizard** runs it again. One screen per step, `Setup 3/10` in the header: **Enter**
+keeps what is shown and goes on, **^** goes back a step, a digit picks a row (on a choice
+step it also goes on), **0** skips the rest (left as it is).
+
+| Step | What |
+|------|------|
+| 1 | Welcome (what RatSpeak is, the keys) |
+| 2 | Device name (**1** = change; default TDP-xxxx) |
+| 3 | Time zone (**1** = next zone); the clock sets itself from GPS or radios heard (by hand: S.1.1) |
+| 4 | Clock: **1** 24 h (13:45) / **2** 12 h (1:45 PM): top bar, idle screens, Settings |
+| 5 | Energy mode: Full / Balanced (default) / Saver / Check-in (§6) |
+| 6 | Idle screen: Splash / Map / Library page / If found (asks for the text, §4.1) |
+| 7 | Simple / Advanced (stored; Simple mode itself comes later, today both are the same) |
+| 8 | Password lock: none / set one (§1.2c) |
+| 9 | Import contacts: **1** listen over the radio (every contact card that arrives is saved; the other radio uses S.6 **Share all contacts**), **2** read `ratdeckpro/contacts.txt` from the SD card |
+| 10 | Done: a summary; **Enter** announces this radio and finishes |
+
+Then, if you like: theme (**M → S → 3 → 1**), WiFi (**M → S → 2**), and meet the other
+radio (Announce ID on both → **P** → name the contact, §1.2 → test send, §1.1).
 
 A **second LoRa RatSpeak device** in range is needed to check messaging.
 
@@ -176,11 +190,13 @@ changes. While USB power is plugged in the device runs **Full** anyway (row 5).
 | **I** | Inbox | types letter |
 | **C** | Contacts | types letter |
 | **P** | Peers | types letter |
-| **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox · M**a**p · Lib**r**ary) | does **not** open the menu |
+| **A** | Atlas (offline map; on a list row with a position: that contact). Nothing on the Atlas itself | types letter |
+| **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox · **A**tlas · Lib**r**ary) | does **not** open the menu |
 | **H** | Home | — |
 | **G** / **V** | Up / down | — |
-| **N** / **B** | Lists: next / previous page | — |
-| **F** | Lists: find (type to filter) | — |
+| **N** / **B** | Lists: next / previous page. Home: **N** = Announce ID | — |
+| **L** | Locate (find): lists (type to filter), Atlas (a place), Library reader (text) | — |
+| **K** | Atlas, Library, Rat Trap: the keys card (also the middle tab "Nav / keys") | — |
 | **1**–**9**, **0** | Lists: select row on the page. Settings: select **and** activate row 1–9, **0** = row 10 | digits (numeric fields) |
 | **Enter** | Activate / open | Send / save |
 | **Alt** | — | Case shift while typing |
@@ -216,13 +232,30 @@ Row text is `n : Kind : Name` with the value underneath. Kinds: **Menu** (opens 
 ### 4.1 Idle splash
 ![Idle splash](images/screen-idle.png)
 
-Logo, date/time, battery %, plug status, unread line, uptime, device name. Updates at
-most once a minute. **Press a key to wake** (touch does not wake).
+Pick the idle screen in **S.3.2 row 8 "Idle screen"** (Enter steps through them). Every one
+has the same top strip: time, battery %, unread count, date (MM/DD/YYYY) and the radio's
+name, and the wake / LOCKED line at the bottom. Updates at most once a minute. **Press a key
+to wake** (touch does not wake).
+
+- **Splash:** logo, plug status, uptime, time zone.
+- **Map:** the map around you (GPS fix, else the saved position, else the card's home view,
+  zoom 13), contacts' last positions; the bottom line is the GPS status.
+- **Library page:** the page last read in the Library (else the first page of the first
+  file), with the reader's wrap setting; "No library page" without a card or files.
+- **If found:** "IF FOUND, PLEASE RETURN TO:", the owner text (row 9 "If-found text", up to
+  120 characters; **;** (SYM J) starts a new line: name, address, phone / email, a reward
+  line), then this radio's name and its LXMF address so a finder with RatSpeak can message
+  it (row 10 hides the address). E-ink keeps the picture without power, so it stays
+  readable when the battery is flat.
+
+With the password lock on, the locked screen is the chosen idle screen too, except that Map
+and Library page show the Splash instead (no position or file text while locked); If found
+stays, with only what the owner typed and the radio's name / address.
 
 ### 4.2 Home
 ![Home screen](images/screen-home.png)
 
-Status tiles, **Announce ID**, device name. Bottom **Contact | Peers | Inbox**.
+Status tiles, **Announce ID**, device name. Bottom **Contact | Atlas | Inbox** (Atlas = the offline map, **A**; Peers is **P** or **M → P**). **N** announces (Announce ID).
 
 ### 4.3 Home with MENU overlay
 ![Home with MENU overlay](images/screen-home-menu.png)
@@ -231,7 +264,7 @@ Status tiles, **Announce ID**, device name. Bottom **Contact | Peers | Inbox**.
 ![Contacts](images/screen-contacts.png)
 
 **0: MyID** = this radio. **Enter** on a row opens the contact page (Message / Rename /
-Share, §1.2a). Long lists: pages and **F** find (§1.2b).
+Share, §1.2a). Long lists: pages and **L** find (§1.2b).
 
 ### 4.5 Inbox (list)
 ![Inbox list](images/screen-inbox.png)
@@ -287,8 +320,8 @@ S     Settings                      ← M then S
 │   ├── S.3.1  Theme                White paper / Black ink
 │   ├── S.3.2  Idle splash          Off / On (no password) / On + password / timeout /
 │   │                               set-change password / remove / lock now (§1.2c) /
-│   │                               idle screen: splash or MAP around you (time, battery %,
-│   │                               unread on top; GPS / saved / card home position, zoom 13)
+│   │                               idle screen Splash / Map / Library page / If found (§4.1) /
+│   │                               if-found text / if found: my address shown / hidden
 │   └── S.3.3  Key backlight        (a power mode may hold it off)
 ├── S.4   Power                     energy modes (§6)
 │   ├── S.4.1  Full power
@@ -306,7 +339,10 @@ S     Settings                      ← M then S
 ├── S.5   Battery                   volts, %, current, charger status, capacity
 │   ├── S.5.8  Battery log          internal RAM ring / SD CSV, dump to USB
 │   └── S.5.10 Reset calibration
-├── S.6   Identity                  destination, display name, LXMF address, Announce
+├── S.6   Identity                  destination, display name, LXMF address, Announce,
+│   │                               Run setup wizard (§1.3), Share all contacts (a card per
+│   │                               contact to one radio), Export / Import contacts
+│   │                               (<SD>/ratdeckpro/contacts.txt, "name<TAB>32 hex" per line)
 │   └── S.6.5  Identities           slots; New identity (make + switch + restart); per slot:
 │                                   Switch (restart) / Erase (key deleted; the active one is
 │                                   replaced by a new identity first). Enter twice to confirm.
@@ -337,6 +373,7 @@ messages are immediate in every mode**, because they wake the processor directly
 | GPS | always on | every 15 min | every hour | off | one fix on a key (≤ every 15 min) | same |
 | WiFi / key backlight | allowed | allowed | off | off | off | off |
 | Touch | on | on | 1 min after a key | 1 min after a key | 1 min after a key | 1 min after a key |
+| Map wakes GPS (§8.1) | yes | yes | no | no | no | no |
 | Battery draw | ~48 mA, ~67 with GPS | ~9–10 mA | ~7 mA | ~7 mA (est.) | ~6 mA (est.) | ~6 mA (est.) |
 | Runtime (~1450 mAh) | ~21–30 h | ~5–6 days | ~6–8 days | ~8 days | ~10 days | ~10 days |
 | Messages in | immediate | immediate | immediate | immediate | only while LoRa is on | only in a window |
@@ -366,7 +403,8 @@ one knob (Enter steps to the next value):
 | 6 | WiFi | allowed / OFF |
 | 7 | Key backlight | allowed / OFF |
 | 8 | Touch | always on / 1 min after a key |
-| 9 | Reset to Balanced | |
+| 9 | Map wakes GPS | ON = opening the map starts a GPS visit (§8.1) / OFF = the map shows the last fix (default) |
+| 10 | Reset to Balanced | |
 
 Example: GPS off but snappy UI → Custom, CPU 240, sleep "never", GPS Off.
 
@@ -663,12 +701,24 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
 
 ### 8.1 Offline map — Works (simulator; COM9 with test tiles on its card, 2026-11-11)
 
-**M → Map** (MENU row 6, hotkey **A**), or **L** on any list screen. The map is centred
-on the GPS fix, or on the saved position (S.2) without one, and follows it. With
-neither, it opens on the card's start view `maps/home.txt` (`lat lon zoom`, written by
+The **Atlas** tab in the bottom bar, **A** on any screen, or **M → Atlas** (MENU row 6, hotkey **A**). The map is centred
+on the newest position: a fresh GPS fix, else the last fix (however old), else the saved
+position (S.2), and follows the own position until you pan (a fix that arrives while the
+map is open moves it there). With none of these, it opens on the card's start view `maps/home.txt` (`lat lon zoom`, written by
 the tile tool). If the card has no tile under the centre at that zoom, it zooms out to
 the deepest level that has one (a card often holds a wide area coarse and a small one
 in detail).
+
+**GPS while the map is open:** in Full and Balanced (and Custom with "Map wakes GPS" on),
+without a fresh fix, opening the map starts a GPS visit at once (Balanced otherwise powers the
+receiver only every 15 min), and asks again each minute while the map stays open and in use.
+Saver, Ultra-low, On demand and Check-in keep their own GPS schedule: the map shows the last
+fix (or the saved position) and its age. A visit indoors ends after
+60 s with no satellite heard. The footer line says what the receiver is doing:
+`17T PJ 3037 3462 7sat` (fresh fix) · `fix 28m old, GPS on 45s 3/9 sats` (last fix's age;
+searching, 45 s into the visit, 3 satellites heard of 9 in view) · `fix 28m old, GPS next
+12m` (receiver off until the next visit) · `saved pos, ...` / `no fix, ...` (no fix since
+boot) · `GPS off` (S.2) · `GPS off (power)` (power mode without GPS) · `GPS backup fault`.
 
 Ready-made set (2026-11-12): USGS National Map topo (public domain, credit U.S.
 Geological Survey) as 1-bit tiles at `--threshold 150`: the lower 48 states at zoom
@@ -685,27 +735,27 @@ number**, type 1–99, Enter) - e.g. your partner = 1, so they win at a shared s
 had that number takes the old one. Unset: the lowest free number when their first
 position arrives. On the map:
 
-- **T** steps through them, newest first, centring each; the bottom line reads
+- **N** steps through them, newest first, centring each; the bottom line reads
   `#1 Alice 12.4km NE 8m ago` (distance / direction from you, age of the position).
-  **T** after the last one, **C** or **Enter**: back to your own position.
-- On screen: for 6 s after the map opens the bottom line shows the keys
-  (`T: 3 contacts  Z/X zoom`); while a contact is selected the top line reads
-  `T next  #+Enter chat  C me`.
+  **N** after the last one, **D** or **Enter**: back to your own position.
+- On screen: for 6 s after the map opens the bottom line shows
+  `K = nav keys  N 3 contacts`; while a contact is selected the top line reads
+  `N next  #+Enter chat  D me`.
 - **Type the number, Enter** (e.g. `2` Enter): opens that contact's chat.
 
-From a list (Inbox / Contacts / Peers) **L** on a row shows that contact on the map; in
+From a list (Inbox / Contacts / Peers) **A** on a row shows that contact on the map; in
 a chat, **MIC → 5 Show them on the map**, or **Enter** on the empty draft under a received
 location. Markers also show on the map idle screen. Console `cpos` (`cpos clear`).
 
-**Waypoints:** on the map **P** marks one at the map centre: type a name (the default
-`WP3` goes on the first key; Enter alone keeps it), Enter. **N** steps through them: the map
+**Waypoints:** on the map **Alt+P** marks one at the map centre: type a name (the default
+`WP3` goes on the first key; Enter alone keeps it), Enter. **P** steps through them: the map
 centres on it, the diamond is selected, a dashed line runs from your position to it and the
-bottom line reads `W2 BALLFIELD 2.1km SW`. **Del** twice removes the selected one. Up to 32
+bottom line reads `W2 BALLFIELD 2.1km SW`. **Alt+SYM** twice (within 3 s) removes the selected one. Up to 32
 (NVS rs_wpt); **S.1.9 Waypoints** lists them with distance (Enter = show on the map).
 
-**Find a place:** on the map **F**, type the start of a name (add a state to narrow it:
+**Find a place:** on the map **L** (locate), type the start of a name (add a state to narrow it:
 `knoxville tn`), Enter: the 6 nearest matches with kind and distance (`2 Knoxville, PA /
-town 246km SE`); a digit jumps there; **P** right after saves it as a waypoint with that
+town 246km SE`); a digit jumps there; **Alt+P** right after saves it as a waypoint with that
 name; **^** closes the list. Index on the card: `<SD>/ratdeckpro/places/<letter>.txt`
 from USGS GNIS (public domain): every US town plus summits, lakes, islands, bays, falls,
 gaps, capes and beaches for the route states (252k places, 9.2 MB):
@@ -728,8 +778,17 @@ and names, big cities) is drawn from Natural Earth (public domain) by
 Cards are best formatted with 8 KB clusters (console `sdformat 8192 ERASE-ALL`, erases
 the card): a header-less 8 KB tile then takes exactly 8 KB instead of 32 KB.
 Tiles can go onto the card over USB with the card left in the unit:
-`tools/maptiles/push_tiles.py` (console `sdput`, about 7 tiles/s; `sdls` lists a folder). **W A S D** pan half a screen, **Z / X**
-zoom, **C** or **Enter** returns to your position, **Shift (^)** closes. The header shows
+`tools/maptiles/push_tiles.py` (console `sdput`, about 7 tiles/s; `sdls` lists a folder). Atlas keys (2026-11-13):
+**E S X F** move up / left / down / right half a screen (a diamond around D), **D** or
+**Enter** back to your position (following again), **Z** zoom in, **W** zoom out (wider),
+**N** next contact, **P** next waypoint, **Alt+P** add a waypoint, **Alt+SYM** (twice) delete
+the selected waypoint, **L** locate a place, a number + **Enter** opens that contact's chat,
+**M** the MENU, **Shift (^)** closes. **C I H** leave the map for Contacts / Inbox / Home;
+Peers is **M → P** from the Atlas (P is next waypoint there). **A** does nothing on the Atlas
+(next to S: a slip while panning is harmless). **K** (or the middle bottom tab, which reads "Nav / keys" on the Atlas) shows a card
+with these keys under the map; the map stays usable above it; K, the tab or ^ hide it. The
+hint when the map opens says "K = nav keys". Bottom bar elsewhere: Contact | Atlas | Inbox
+with maps on the card, Contact | Peers | Inbox without. The header shows
 zoom, centre and the scale-bar length; `*` means the view is not following you. Missing
 tiles show a dotted grid and "no tiles".
 
@@ -751,9 +810,13 @@ tiles (z14–15) to the card (2.1 s).
 
 **M → Library** (hotkey **R**): the text files in `<SD>/ratdeckpro/library/` (frequency card,
 GhostNet / JS8Call notes, NOAA weather radio list ...), sorted by name. A digit or **Enter**
-opens one: word-wrapped pages, header `p3 12% name`; **N** / **V** / **Space** next page,
-**B** / **G** previous, **F** find (any case; jumps to the next match after this page), **^**
-back to the list, again to close. Plain text only (.txt / .md / .csv); a PDF needs a text
+opens one: pages, header `p3 12% name` (`p3 12% >24 name` when panned); **N** / **V** /
+**Space** next page, **B** / **G** previous, **E** / **X** half a page (6 lines) up / down,
+**W** wrap on / off, **L** find (any case; jumps to the next match after this page), **^**
+back to the list, again to close. Wrap is on for text and off for `.csv`: with wrap off each
+file line stays whole on one screen line (the first 255 characters), cut at the screen edge;
+**S** / **F** pan left / right half a screen and **D** goes back to the left edge. **K**, or
+the middle bottom tab ("Nav / keys"), shows a card with these keys (also in the file list). Plain text only (.txt / .md / .csv); a PDF needs a text
 version first. Copy files over USB without removing the card:
 
 ```
@@ -913,7 +976,7 @@ the device does not light-sleep.
 | `pm0` … `pm3` | set mode: Full, Balanced, Saver, Custom |
 | `bench <s>` | run from battery with USB attached (charger input + its watchdog off) for up to 4 h; `bench 0` stops |
 | `usbsleep <s>` | allow light sleep with a USB host for `<s>` s (the console drops while asleep); `usbsleep 0` blocks it |
-| `pset <knob> <v>` | set a Custom knob and switch to Custom: `cpu 80\|160\|240`, `wake <s>`, `awake <s>`, `lora 0\|1`, `gps 0-3`, `wifi 0\|1`, `kbl 0\|1` |
+| `pset <knob> <v>` | set a Custom knob and switch to Custom: `cpu 80\|160\|240`, `wake <s>`, `awake <s>`, `lora 0\|1`, `gps 0-4`, `wifi 0\|1`, `kbl 0\|1`, `touch 0\|1`, `mapgps 0\|1` |
 | `blog 0\|1` | internal battery log off / on (RAM ring, 120 samples) |
 | `rl` / `rl 0` | dump / clear the RTC power log (survives resets: time, uptime, mV, mA, USB, sleeps; a BOOT line with the reset reason at every boot) |
 | `sleeptest <ms> [guard] [stop]` | diagnostic: one timer-only light sleep; stop bits 1 audio, 2 GPS, 4 LoRa |

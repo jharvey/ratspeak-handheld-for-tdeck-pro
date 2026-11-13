@@ -1,0 +1,21 @@
+# A device that already has settings does not see the wizard at boot (run after wizard.txt on
+# the same device, or on any older device: the flag absent = done). Settings S.6 row 6 runs
+# it again; 0 skips it.
+expect 60000 [BOOT] ready
+wait 3000
+serial wiz
+expect 3000 open=0
+key M
+wait 800
+key S
+wait 800
+key 6
+wait 800
+key 6
+expect 3000 [WIZ] start
+wait 1000
+key 0
+expect 3000 [WIZ] skipped
+serial wiz
+expect 3000 open=0
+quit

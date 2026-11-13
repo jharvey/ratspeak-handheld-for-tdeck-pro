@@ -5,6 +5,7 @@
 # Needs a quiet virtual radio: with other simulators running, "Peers row 1" may be one of
 # them - use loc_pair.py then (finds B by its hash).
 expect 60000 [BOOT] ready
+serial wiz skip
 wait 25000
 key P
 wait 1500

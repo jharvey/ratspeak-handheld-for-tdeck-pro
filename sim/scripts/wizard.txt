@@ -1,0 +1,59 @@
+# Setup wizard on a fresh device (no settings in NVS): run with "fresh".
+#   run-script.bat scripts\wizard.txt wiz fresh
+# Steps through all 10: name kept, next time zone, 12 h clock, Balanced, If found (text),
+# Advanced, no password, import (nothing here), Done = announce. Then wizard_existing.txt on
+# the same device: it does not come back.
+expect 60000 [WIZ] start
+wait 2000
+shot wiz-01-welcome.png
+key ENTER
+expect 3000 [WIZ] step 2 Device name
+wait 1000
+shot wiz-02-name.png
+key ENTER
+expect 3000 [WIZ] step 3 Time zone
+key 1
+wait 1000
+shot wiz-03-time.png
+key ENTER
+expect 3000 [WIZ] step 4 Clock
+wait 800
+shot wiz-04-clock.png
+key 2
+expect 3000 [WIZ] step 5 Energy mode
+wait 800
+shot wiz-05-energy.png
+key 2
+expect 3000 [WIZ] step 6 Idle screen
+key 4
+wait 600
+type Sam Lee;207-555-0199
+key ENTER
+wait 800
+shot wiz-06-idle.png
+key ENTER
+expect 3000 [WIZ] step 7 Simple / Advanced
+key 2
+expect 3000 [WIZ] step 8 Password lock
+wait 800
+shot wiz-08-lock.png
+key 1
+expect 3000 [WIZ] step 9 Import contacts
+wait 800
+shot wiz-09-import.png
+key ENTER
+expect 3000 [WIZ] step 10 Done
+wait 800
+shot wiz-10-done.png
+# ^ goes back a step, Enter on again
+key BACK
+wait 600
+key ENTER
+expect 3000 [WIZ] step 10 Done
+key ENTER
+expect 3000 [WIZ] done
+wait 2000
+shot wiz-11-home-12h.png
+serial wiz
+expect 3000 open=0 step=9 listen=0 got=0 done=1
+quit

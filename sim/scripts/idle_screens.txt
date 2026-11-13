@@ -1,0 +1,101 @@
+# Idle screens (S.3.2 "Idle screen"): Splash, Map, Library page, If found, all with time /
+# battery / unread / date on top. Library page = the page last read in the Library. If found
+# also shows on the locked screen (Map / Library do not: no position or text while locked).
+# Run on the device with library files (see library.txt):
+#   run-script.bat scripts\idle_screens.txt libsim
+# The Map idle screen is in idle_map.txt (device cmap, tiles).
+expect 60000 [BOOT] ready
+wait 1500
+serial idlescr 0
+expect 3000 [IDLE] screen Splash
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+shot idle-1-splash.png
+key G
+expect 3000 [IDLE] wake
+wait 800
+# Read page 2 of the GhostNet notes, back to the list: that page is the Library idle screen
+key M
+wait 800
+key R
+expect 5000 [LIB]
+wait 800
+key 2
+expect 5000 [LIB] open GhostNet
+key N
+wait 800
+key BACK
+wait 800
+key BACK
+wait 800
+serial idlescr 2
+expect 3000 [IDLE] screen Library page
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+shot idle-2-library.png
+key G
+expect 3000 [IDLE] wake
+wait 800
+# If found: Settings S.3.2 row 9 = the owner text (';' = new line, SYM J)
+key M
+wait 800
+key S
+wait 800
+key 3
+wait 800
+key 2
+wait 800
+key 9
+wait 600
+type Jane Doe;12 Main St;Gray, ME 04039;207-555-0100;Reward offered
+key ENTER
+wait 800
+shot idle-3a-setting.png
+serial idlescr 3
+expect 3000 [IDLE] screen If found
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+shot idle-3-found.png
+key G
+expect 3000 [IDLE] wake
+wait 800
+# Locked: If found is the locked screen too
+key 3
+wait 600
+type Found12
+key ENTER
+wait 600
+type Found12
+key ENTER
+expect 5000 [LOCK] password set
+serial lock now
+expect 3000 [LOCK] locked
+wait 1500
+shot idle-4-found-locked.png
+key G
+expect 3000 [IDLE] wake (locked)
+wait 800
+type Found12
+key ENTER
+expect 5000 [LOCK] unlocked
+wait 800
+# Remove the password again (row 6: current password) and go back to the splash
+key M
+wait 800
+key S
+wait 800
+key 3
+wait 800
+key 2
+wait 800
+key 6
+wait 600
+type Found12
+key ENTER
+expect 5000 [LOCK] password removed
+serial idlescr 0
+expect 3000 [IDLE] screen Splash
+quit

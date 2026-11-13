@@ -3,6 +3,7 @@
 # A hears B's boot announce, saves B as "BOB" (Peers > row 1 > contact page > Rename),
 # then shares its own ID with BOB (Contacts > MyID > 3 Share > pick BOB).
 expect 60000 [BOOT] ready
+serial wiz skip
 wait 25000
 key P
 wait 1500

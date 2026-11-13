@@ -1,6 +1,8 @@
 # Library viewer: MENU -> Library (R) lists <SD>/ratdeckpro/library (sorted by name),
-# a digit opens one, N/B page, F find, ^ back to the list / close. Run after copying
-# files to device "libsim" (tools\sdcard\push_files.py over --serial-tcp, see README).
+# a digit opens one, N/B page, R find, ^ back to the list / close. A wide .csv opens with
+# wrap off: F / S pan, D back to the left edge, W wrap on, X / E half a page, K the keys
+# card. Run after copying files to device "libsim" (tools\sdcard\push_files.py over
+# --serial-tcp, see README); wide_table.csv is 41 lines of ~110 chars (see sim/README.md).
 expect 60000 [BOOT] ready
 wait 1500
 key M
@@ -22,7 +24,7 @@ wait 1000
 key 2
 expect 5000 [LIB] open GhostNet
 wait 1000
-key F
+key L
 type THURSDAY
 key ENTER
 expect 8000 [LIB] found "THURSDAY"
@@ -30,6 +32,38 @@ wait 1500
 shot lib-04-found.png
 key B
 wait 1000
+key BACK
+wait 800
+# a wide table: wrap off, pan right twice, back to the left edge, wrap on, half pages
+key 4
+expect 5000 [LIB] open wide_table.csv
+wait 1500
+shot lib-05-csv-nowrap.png
+key F
+expect 3000 [LIB] column 12
+key F
+expect 3000 [LIB] column 24
+wait 1500
+shot lib-06-csv-panned.png
+key D
+wait 800
+key W
+expect 3000 [LIB] wrap on
+wait 1500
+shot lib-07-csv-wrap.png
+key X
+wait 1000
+key X
+wait 1000
+key E
+wait 1000
+shot lib-08-half.png
+key K
+expect 3000 [NAV] keys shown
+wait 1500
+shot lib-09-keys.png
+key K
+expect 3000 [NAV] keys hidden
 key BACK
 wait 800
 key BACK

@@ -2,6 +2,7 @@
 # uses 16 in the sim too). Sends to 20 made-up hashes (3 s apart, the send limit), then
 # Inbox: N N = page 3 of 3.  run-script.bat scripts\inbox_pages.txt inboxp fresh
 expect 60000 [BOOT] ready
+serial wiz skip
 serial msg 00000000000000000000000000000101 hello 1
 wait 4200
 serial msg 00000000000000000000000000000102 hello 2

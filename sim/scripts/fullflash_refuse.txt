@@ -2,6 +2,7 @@
 # 10 per conversation are kept), so saves are refused at 92% and the toast shows.
 # Run: set SIM_ARGS=--flashkb 1024 & run-script.bat scriptsullflash_refuse.txt fullrefuse fresh
 expect 60000 [BOOT] ready
+serial wiz skip
 wait 1000
 serial msgfill 600 60 200
 expect 240000 [FILL] saved

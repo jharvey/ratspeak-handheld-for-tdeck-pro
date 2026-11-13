@@ -30,6 +30,30 @@ START HERE (handoff 2026-11-11)
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
+- Keys (2026-11-13, user): always-navigate M C I A P H (A = Atlas, was L; P on the Atlas = next waypoint). L = locate
+  (find) in lists / Atlas / reader. Home N = Announce. Atlas: E S X F, D centre, Z/W, N next contact, P next waypoint,
+  Alt+P add, Alt+SYM (Keyboard.cpp emits alt+opt with no char; isAltSym) delete twice, A nothing, K card (7 rows/col).
+  Rat Trap: E S X F, D/Enter open, Alt+P mark, Q new, K card.
+- Setup wizard (2026-11-13): g_wizNeeded at loadConfig (rs_ui without idleMode = fresh; wizDone key absent = done);
+  wizStart/renderWizard/wizKey/wizPick (WZ_* steps), digits pick, Enter next, ^ back, 0 skip. g_cfg.clock12 (fmtTime),
+  g_cfg.simple. shareAllTo() (cards via sendOrQueue), contactsExport/Import (contacts.txt), wizCardIn in
+  inboundTick. Console: wiz [start|skip|listen|step n], shareall <hex>, contacts export|import. Fresh-device sim
+  scripts start with "serial wiz skip". sim: wizard.txt, wizard_existing.txt, wizard_skip.txt, wiz_pair.py.
+- Idle screens (2026-11-13): g_cfg.idleScreen (NVS idleScr; old idleMap true -> Map) Splash/Map/Library/IfFound,
+  drawIdleTop()/drawIdleFoot() on all; Library page = g_cfg.libLast/libLastOff (libRemember()); If found = foundText
+  (';' new line) + name + g_destHex; locked: Map/Library fall back to Splash. Console idlescr <n>, idle now.
+  sim/scripts/idle_screens.txt (libsim).
+- Library reader (2026-11-13): libLayout() lays out a page (wrap on: W-12 px; off: one file line, 255 chars kept);
+  W wrap (off for .csv), S/F pan g_libCol, D left, E/X libHalf() via the offset stack, R find, K card (kReaderKeys /
+  kLibListKeys). sim library.txt + wide_table.csv in libsim's library.
+- Atlas keys (2026-11-13): E S X F pan, D/Enter me, Z/W zoom (MapView::key); Q add / N next waypoint, T contact,
+  R find, K = Nav keys card (kAtlasKeys, g_navKeysOpen, map drawn shorter above it), M menu, C I P H navigate.
+  Letters: kKeyNav/kKeyFind/kKeyWptAdd/kKeyWptNext/kKeyContact. Middle tab: Nav keys on the map, Atlas if g_haveMaps
+  (card has /maps), else Peers. Map GPS per mode: Profile.mapGps: Full/Balanced yes, saving modes no, Custom
+  knob S.4.7.9 "Map wakes GPS" (NVS cMapGps, default off; console pset mapgps). sim/scripts/map_keys.txt.
+- GPS + map (2026-11-13): openMap() centres on fresh fix > last fix (g_gpsPosValid) > saved pos > card home, follow on;
+  mapGpsAsk() requests a GPS visit on open and each minute while open + in use (no fresh fix); gpsPosText()
+  footer = fix age + gpsStateText() (GPS on Ns heard/inView, next Nm, off, backup fault). sim/scripts/gps_map.txt.
 - Map packs (2026-11-12): MapView reads /ratdeckpro/maps/packs/<z>/<x>>6>_<y>>6>.rmp first
   (make_packs.py). RMP2 (default) = context-model range coder, tools/maptiles/rmcodec.py
   and ctxDecode() in MapView.cpp MUST stay identical (10-px context, 12-bit probs, shift 5,
@@ -91,8 +115,8 @@ START HERE (handoff 2026-11-11)
   Console: ids, contact <hex> <name>. Sim scripts: lock(+_boot), share_a/_b, lists,
   inbox_pages, identity(+_after), id, more_box, map_menu.
   2026-11-12: no default lock password any more: mode 3 with none asks new + repeat (^ cancels, lock stays off). MIC
-  shows/hides a password while typing (settings fields + lock prompt). MENU row 6 "Map"
-  (hotkey A, L still works); with no position the map opens on SD maps/home.txt
+  shows/hides a password while typing (settings fields + lock prompt). MENU row 6 "Atlas"
+  (hotkey L; 2026-11-13 the bottom bar's Peers tab became "Atlas" = map, P still opens Peers); with no position the map opens on SD maps/home.txt
   ("lat lon zoom", make_tiles.py --home) and mapview::fitZoom() zooms out to the deepest
   level with a tile. Ready-made tiles: USGS topo (public domain) US z3-8 + Maine z9-12,
   threshold 150 (tools/maptiles/README.md). COM5 smoke-tested through live mode (lock, lists,
