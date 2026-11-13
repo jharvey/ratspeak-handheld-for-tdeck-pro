@@ -278,6 +278,8 @@ bool SDFS::begin(uint8_t, SPIClass&, uint32_t, const char*, uint8_t, bool) {
 }
 void SDFS::end() { mounted_ = false; }
 sdcard_type_t SDFS::cardType() { return mounted_ ? CARD_SDHC : CARD_NONE; }
+uint64_t SDFS::cardSize() { std::lock_guard<std::mutex> l(sim::hw().mu); return sim::hw().sdBytes; }
+uint64_t SDFS::totalBytes() { return cardSize(); }
 uint64_t SDFS::usedBytes() {
     std::error_code ec;
     uint64_t n = 0;

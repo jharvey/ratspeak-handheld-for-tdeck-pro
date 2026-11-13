@@ -1,0 +1,15 @@
+HELP: SHARE YOUR LOCATION
+
+In a chat, MIC opens the location menu (MIC or ^ closes it):
+
+1 Share my location: sends your position once. Without a fresh GPS fix it sends the last fix and its age.
+2 Auto-share location: Enter steps off, every 5, 15, 30, 60 min.
+3 Auto-share for: 1 h, 4 h or until off.
+4 Stop all auto-sharing.
+5 Show them on the map.
+
+While auto-share is on, the chat header shows [loc 15m] and the top bar a small pin.
+
+A position you receive shows as [loc]. Enter on the empty message line opens it on the map.
+
+GPS needs open sky. Indoors it often gets no fix.

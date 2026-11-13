@@ -1,0 +1,7 @@
+# Menu Device > Reset (the bottom side button): the simulator restarts itself without the
+# script, like a power cut. Run WITHOUT --quit (not with run-script.bat):
+#   sim\build\ratspeak-sim.exe --name hwreset --fast --script sim\scripts\hwreset.txt
+# The restarted window prints "[SIM] hardware: ..." again and boots from flash.
+expect 60000 [BOOT] ready
+wait 1000
+menu Device > Reset

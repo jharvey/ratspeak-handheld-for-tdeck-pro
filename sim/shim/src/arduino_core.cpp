@@ -53,6 +53,10 @@ void digitalWrite(int pin, int v) {
     }
 }
 int digitalRead(int pin) {
+    if (pin == 0) {                            // BOOT side button (active low)
+        std::lock_guard<std::mutex> l(sim::hw().mu);
+        return sim::hw().bootHeld ? LOW : HIGH;
+    }
     if (pin == 12) {                           // TOUCH_INT (active low)
         std::lock_guard<std::mutex> l(sim::hw().mu);
         return sim::hw().touchDown ? LOW : HIGH;

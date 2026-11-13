@@ -10,8 +10,8 @@ public:
                const char* mount = "/sd", uint8_t maxFiles = 5, bool formatIfEmpty = false);
     void end();
     sdcard_type_t cardType();
-    uint64_t cardSize() { return 16ull << 30; }
-    uint64_t totalBytes() { return 16ull << 30; }
+    uint64_t cardSize();                  // the simulated card's size (--sd 32G)
+    uint64_t totalBytes();
     uint64_t usedBytes();
 private:
     bool mounted_ = false;

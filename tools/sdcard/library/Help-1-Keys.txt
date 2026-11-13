@@ -1,0 +1,24 @@
+HELP: KEYS
+
+Shift tapped alone = ^ = back.
+Underlined letters jump there.
+
+M = Menu
+I = Inbox
+C = Contacts
+P = Peers (also M then P)
+L = Atlas, the offline map
+H = Home
+R = Library (in the Menu)
+G / V = up / down
+N / B = next / previous page
+F = find in a list
+0-9 = pick a row by its number
+Enter = open, send, save
+MIC = full screen refresh
+
+While typing: Alt + key changes case, SYM gives digits and symbols. Hotkeys do not work while typing: press ^ first.
+
+Settings is M then S. There is no S hotkey on its own.
+
+On the idle screen any key wakes the radio.

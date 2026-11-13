@@ -53,6 +53,10 @@ struct Hw {
 
     // ---- SD card slot (--nosd, script "sd in|out"); a removed card fails every SD call
     bool sdPresent = true;
+    uint64_t sdBytes = 16ull << 30;           // card size (--sd 32G)
+
+    // ---- side buttons: top = BOOT (GPIO0, low while held); bottom = RESET (restarts the sim)
+    bool bootHeld = false;
 
     // ---- flash (LittleFS) size: 4 KB blocks, a directory costs 2 blocks, writes fail when
     // full like the real partition (0x7E0000 on the 16 MB layout). --flashkb changes it.

@@ -56,6 +56,49 @@ Each name has its own identity, settings, messages and SD card in `build\simdata
 Delete that folder to factory-reset a simulated device. Devices with different names hear
 each other over the simulated LoRa air (also across PCs on the same LAN).
 
+### Hardware setup (SD card, battery, USB, GPS)
+
+Pick how the simulated unit is equipped when it starts:
+
+| Option | Setting in a file | Meaning |
+|---|---|---|
+| `--sd 32G` / `--sd none` | `sd = 32G` | SD card size (`512M`, `32G`, `1T`), or an empty slot. Default 16G. `--nosd` = `--sd none` |
+| `--battery 61` | `battery = 61` | charge in percent. Default 72 |
+| `--usb` | `usb = on` | plugged into USB (charging) |
+| `--charged` | `charged = on` | with USB: charging finished |
+| `--gps nofix` / `--gps 43.556,-70.711` | `gps = fix` | no fix, or a fix at that position. Default: fix in Toronto |
+| `--sats 9` | `sats = 9` | satellites in the fix. Default 7 |
+| `--flashkb 2048` | `flashkb = 2048` | internal flash size (see below) |
+| `--fast` | `fast = on` | instant e-ink refresh |
+
+Settings are read from `build\simdata\<name>\sim.ini` (that device's own setup, if the file
+exists), then `--config <file>`, then the options, each overriding the one before. Example file:
+`configs\field.ini`. The first log line shows the result, e.g.
+`[SIM] hardware: SD 32 GB, battery 61%, USB (charging), GPS no fix ...`. The side panel starts
+from the same values and changes them while running (`SD card inserted`, `GPS fix`, the
+battery slider, USB); scripts use `sd in|out`, `battery`, `usb`, `full`, `gps`.
+
+**Menu bar** (above the device, same controls as the side panel, kept in step with it):
+
+| Menu | Items |
+|---|---|
+| Device | **Reset** (bottom side button, Ctrl+R: the simulator restarts itself with the same options, like a power cut; a script is not run again) · **Hold BOOT** (top side button, GPIO0 low; the firmware does not use it yet) · screenshots (Ctrl+P = screen) · open the data folder · **Save this setup as the device's default** (writes `sim.ini`) · Quit |
+| Power | battery level 0–100 % · USB connected · charge done |
+| SD card | inserted · card size 1 GB – 1 TB (seen at the next mount or Reset) · open the card folder |
+| GPS | fix · set position (lat, lon) · satellites |
+| View | side panel on / off · real e-ink timing |
+| Help | keys · start-up options |
+
+Scripts can run any menu item: `menu SD card > Card size > 64 GB` (each part matches the start
+of the item's text, any case). `scripts/hwmenu.txt` changes the hardware from the menus and saves
+`sim.ini`; `scripts/hwreset.txt` presses Reset (run it without `--quit`).
+
+```bat
+sim\build\ratspeak-sim.exe --name field --sd 32G --battery 61 --gps nofix
+set SIM_ARGS=--sd 32G --battery 61 --usb --gps nofix
+sim\run-script.bat sim\scripts\hwconfig.txt hwcfg fresh
+```
+
 ### Keys
 
 | PC | Device |
@@ -138,6 +181,7 @@ to `build\simdata\<name>\shots\`. One command per line, `#` for comments:
 | `winshot <file.png>` | save the whole window (device + side panel, incl. the power line) |
 | `battery <0-100>` / `usb on\|off` / `full on\|off` / `gps on\|off` | change the hardware |
 | `sd in\|out` | insert / remove the SD card (seen at the firmware's next mount); `--nosd` (or `set SIM_ARGS=--nosd` for run-script) starts with the slot empty |
+| `menu <A > B > C>` | run a menu-bar item, e.g. `menu Power > Battery level > 25 %` (prefix match, any case) |
 
 Radio channel: the simulated air is UDP multicast port 47999; `set RS_SIM_AIR_PORT=<port>`
 gives a group of simulators its own channel (the stress runner `tools/stress/pingpong.py`
