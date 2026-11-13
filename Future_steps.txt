@@ -145,7 +145,15 @@ UI / UX
   Needs: a "Share maps" / "Receive maps" screen, region/zoom pick, progress, resume, and
   pack files (loose tiles make the receiving card's FAT writes the bottleneck either way).
   WiFi radio is shared with the client mode: pause it while sharing.
-- NEXT (user asked again 2026-11-12) - USB mass-storage mode: show the SD card as a USB drive on the PC
+- DONE (COM6, 2026-11-13) - USB drive mode: S.9.5 row 6 "USB drive" (console "usbdrive", on USB
+  power only) unmounts the card and moves the USB port from USB-Serial/JTAG to OTG (TinyUSB
+  MSC, hal/UsbDrive). Windows sees "RatSpeak T-Deck SD card" (FAT32, 32 GB card): 10 MB write
+  232 KB/s, read 570 KB/s (SPI 16 MHz, 8-sector transfers), data verified. Eject on the PC ->
+  the unit restarts and the COM port is back; Enter on the unit stops it too (asks again if
+  the PC wrote and did not eject). Refused while the SD message archive is on. Costs ~12 KB
+  static RAM (TinyUSB MSC + DFU buffers). Next: try SPI 20 MHz for speed; a sim script is
+  sim/scripts/usbdrive.txt.
+- (original request) USB mass-storage mode: show the SD card as a USB drive on the PC
   (ESP32-S3 TinyUSB MSC) so maps can be dragged on without a card reader. Needs the
   TinyUSB USB stack (ARDUINO_USB_MODE=0) instead of USB Serial/JTAG while in that mode, so
   the console and esptool auto-reset need care; a Settings > Storage "USB drive" toggle

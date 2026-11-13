@@ -50,6 +50,7 @@
 #include "MapView.h"
 #include "audio/AudioNotify.h"
 #include "hal/Keyboard.h"
+#include "hal/UsbDrive.h"
 #include "radio/SX1262.h"
 #include "storage/FlashStore.h"
 #include "storage/SDStore.h"
@@ -573,6 +574,8 @@ bool readBattery() {
 
 // ---- SD card + battery log --------------------------------------------------
 bool g_sdMounted = false;
+bool g_usbDrive = false;          // the card is a USB drive on the PC: no file access until restart
+void usbDriveStart();
 char g_sdStatus[28] = "not mounted";
 constexpr const char* kBatLogPath = "/batlog2.csv";
 constexpr const char* kBatLogHeader =
@@ -604,6 +607,7 @@ void sdStatusRefresh() {
 bool g_haveMaps = false;          // the card has a maps folder: the middle tab is Atlas, else Peers
 
 bool sdMount() {
+    if (g_usbDrive) { snprintf(g_sdStatus, sizeof(g_sdStatus), "USB drive (on PC)"); return false; }
     if (g_sdMounted && g_sdStore.isReady()) return true;
     spiBusIdle();
     if (!g_sdStore.begin(&SPI, SD_CS)) {
@@ -3602,6 +3606,7 @@ void buildSettingsRows(Page p) {
         srow(RK_INFO, "Log file", "%s", kBatLogPath);
         srow(RK_ACTION, "Message archive", "%s%s", sdArchiveEnabled() ? "On" : "Off",
              (sdArchiveEnabled() != g_sdArchiveActive) ? " (after reboot)" : "");
+        srow(RK_ACTION, "USB drive", "%s", g_usbDrive ? "on the PC" : "card on PC");
         break;
     }
 }
@@ -4096,6 +4101,8 @@ void activateSetting(int idx) {
             File f = g_sdStore.openFile(kBatLogPath, FILE_WRITE);
             if (f) { f.println(kBatLogHeader); f.close(); }
             toast("Log file reset");
+        } else if (idx == 6) {
+            usbDriveStart();
         } else if (idx == 5) {
             sdArchiveSet(!sdArchiveEnabled());
             toast(sdArchiveEnabled() ? "Archive on: reboot to apply" : "Archive off: reboot to apply");
@@ -4596,6 +4603,93 @@ void renderEnergyGraph() {
         y += 18;
     }
     drawFooter();
+}
+
+// ---- USB drive mode (S.9.5 row 6) -------------------------------------------------------
+// The SD card becomes a USB drive on the PC (hal/UsbDrive). The firmware unmounts the card
+// and keeps its hands off it (sdMount() refuses) until the restart that ends the mode:
+// Eject on the PC (restarts by itself), or Enter / ^ on the unit. Messages still arrive and
+// are kept in flash; the COM port is away until the restart.
+uint32_t g_usbEjectAt = 0;
+
+void usbDriveStart() {
+    if (g_usbDrive) return;
+    if (g_sdArchiveActive) { toast("Archive on: turn off, reboot"); return; }
+    if (g_bat.valid && !g_bat.usb) { toast("Plug into a PC first"); return; }
+    sdUnmount();
+    g_usbDrive = true;                  // sdMount() now refuses
+    if (!usbdrive::start(SD_CS)) {
+        g_usbDrive = false;
+        toast("USB drive: %s", usbdrive::message());
+        return;
+    }
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+[[noreturn]] void usbDriveStop() {
+    Serial.println("[USB] drive mode off: restarting");
+    clearRoot();
+    drawHeader("USB drive", false);
+    text(8, LIST_TOP + 8, "Restarting...", true, W - 16);
+    lv_refr_now(nullptr);
+    g_display.refreshIfDirty();
+    usbdrive::restartToNormal();
+}
+
+void usbDriveTick() {
+    if (!g_usbDrive) return;
+    static usbdrive::State shown = usbdrive::OFF;
+    const usbdrive::State st = usbdrive::state();
+    if (st != shown) { shown = st; requestRedraw(); }
+    if (st == usbdrive::EJECTED) {
+        if (!g_usbEjectAt) g_usbEjectAt = millis() ? millis() : 1;
+        else if (millis() - g_usbEjectAt > 2000) usbDriveStop();   // PC ejected: back to normal
+    } else {
+        g_usbEjectAt = 0;
+    }
+    static uint32_t lastKb = 0, lastDraw = 0;     // live counters, at most every 5 s (e-ink)
+    const uint32_t kb = usbdrive::readKb() + usbdrive::writtenKb();
+    if (kb != lastKb && millis() - lastDraw > 5000) { lastKb = kb; lastDraw = millis(); requestRedraw(); }
+}
+
+void renderUsbDrive() {
+    drawHeader("USB drive", false);
+    int y = LIST_TOP + 4;
+    char t[48];
+    const usbdrive::State st = usbdrive::state();
+    snprintf(t, sizeof(t), "SD card %lu MB", (unsigned long)(usbdrive::sectors() / 2048));
+    text(8, y, t, true, W - 16); y += 24;
+    if (st == usbdrive::EJECTED) {
+        text(8, y, "Ejected. Restarting...", false, W - 16); y += 28;
+    } else {
+        text(8, y, "It is a drive on the PC now.", false, W - 16); y += 20;
+        text(8, y, "Copy files, then Eject it", false, W - 16); y += 20;
+        text(8, y, "on the PC: the unit restarts.", false, W - 16); y += 28;
+    }
+    const uint32_t r = usbdrive::readKb(), w = usbdrive::writtenKb();
+    if (r >= 10240 || w >= 10240) snprintf(t, sizeof(t), "read %lu MB, written %lu MB", (unsigned long)(r >> 10), (unsigned long)(w >> 10));
+    else snprintf(t, sizeof(t), "read %lu KB, written %lu KB", (unsigned long)r, (unsigned long)w);
+    text(8, y, t, false, W - 16); y += 28;
+    text(8, y, "Messages still arrive.", false, W - 16); y += 20;
+    text(8, y, "No COM port until restart.", false, W - 16);
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    const bool recent = usbdrive::lastWriteMs() && millis() - usbdrive::lastWriteMs() < 3000;
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : recent ? "Writing... wait" : "Enter = stop (eject first)");
+}
+
+void usbDriveKey(const KeyEvent& ev) {
+    if (!(ev.enter || ev.up)) return;
+    static uint32_t warnedAt = 0;
+    // Not ejected and written recently: the PC may still hold data; ask once more.
+    if (usbdrive::state() != usbdrive::EJECTED && usbdrive::writtenKb() &&
+        (!warnedAt || millis() - warnedAt > 10000)) {
+        warnedAt = millis();
+        toast("Eject on PC first; again=stop");
+        requestRedraw();
+        return;
+    }
+    usbDriveStop();
 }
 
 // ---- Chrome: top bar, bottom bar, menu overlay -----------------------------------
@@ -7720,7 +7814,8 @@ void render() {
         Serial.printf("[UI] lock frame %ums\n", (unsigned)(millis() - t0));
         return;
     }
-    if (g_threadOpen)                  renderThread();
+    if (g_usbDrive)                    renderUsbDrive();
+    else if (g_threadOpen)             renderThread();
     else if (g_entry == Entry::Name)   renderRename();
     else if (g_wizOpen)                renderWizard();
     else if (g_navOpen)                renderNav();
@@ -8552,6 +8647,7 @@ void handleKey(const KeyEvent& ev) {
     }
     noteInput();
     if (g_locked) { lockKey(ev); return; }
+    if (g_usbDrive) { usbDriveKey(ev); return; }
     if (g_threadOpen && g_tmenuOpen) { tmenuKey(ev); return; }
     if (g_wizOpen && !entryActive()) { wizKey(ev); return; }   // setup wizard (^ = step back)
     if (ev.up) { goBack(); return; }                          // lone Shift = ^
@@ -8926,6 +9022,7 @@ void powerTick() {
     }
 #endif
     checkinTick();
+    usbDriveTick();
     peerClockTick();
     mapTick();
     flashSpaceTick();
@@ -9012,6 +9109,7 @@ const char* powerSleepBlocker() {
 #endif
     if (now < 15000) return "boot";
     if (now - g_lastInputMs < (uint32_t)g_pwEff.awakeSecs * 1000UL) return "recent input";
+    if (g_usbDrive) return "USB drive";
     // While the idle splash shows, loop() does not render, so a pending redraw waits for the wake
     // key anyway and must not keep the CPU awake.
     if (!g_idleActive && (g_redraw || g_redrawAt)) return "redraw";
@@ -9836,6 +9934,14 @@ void handleSerialLine(char* p) {
                           done && r.outcome == Outcome::Committed ? "deleted" : "failed");
         }
         requestRedraw();
+    } else if (!strcmp(p, "usbdrive")) {
+        // The SD card becomes a USB drive on the PC (as S.9.5 row 6); this COM port goes away.
+        usbDriveStart();
+        if (!g_usbDrive) Serial.printf("[USB] drive mode not started: %s\n", usbdrive::message());
+#if defined(SIMULATOR)
+    } else if (!strcmp(p, "usbeject")) {
+        usbdrive::simEject();
+#endif
     } else if (!strcmp(p, "hb") || !strncmp(p, "hb ", 3)) {
         // Stress-test heartbeat: "hb" prints one line, "hb <s>" every s seconds, "hb 0" off.
         if (p[2]) g_hbEveryMs = (uint32_t)atol(p + 3) * 1000;

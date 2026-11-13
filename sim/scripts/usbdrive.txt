@@ -1,0 +1,27 @@
+# USB drive mode (S.9.5 row 6, console "usbdrive"): the SD card becomes a drive on the PC.
+# Refused on battery; on USB the drive screen shows, the firmware keeps off the card
+# (sdget fails), and the PC's Eject (sim: "usbeject") restarts the unit back to normal.
+#   run-script.bat scripts\usbdrive.txt usbdrive
+expect 60000 [BOOT] ready
+wait 1500
+serial wiz skip
+wait 500
+usb off
+wait 2500
+serial usbdrive
+expect 3000 [USB] drive mode not started
+usb on
+wait 2500
+serial usbdrive
+expect 3000 [USB] drive mode:
+wait 1500
+shot usb-01-drive.png
+serial sdget /batlog2.csv
+expect 3000 [SDGET] err no SD card
+key Q
+wait 800
+shot usb-02-key-ignored.png
+serial usbeject
+wait 1000
+shot usb-03-ejected.png
+expect 5000 [USB] drive mode off: restarting
