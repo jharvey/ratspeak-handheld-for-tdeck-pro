@@ -9,13 +9,15 @@ namespace {
 
 // mapGps: only Full and Balanced let the map wake the GPS; the saving modes keep their
 // schedule (the map shows the last fix and its age).
-//                         cpu  wake awake  lora   gps         wifi   keyLight touchOnKey loraOnUse checkin mapGps
-const Profile kFull     = {240,   0,   0,  true,  GPS_ON,     true,  true,    false,     false,    false,  true};
-const Profile kBalanced = {240,   1,  15,  true,  GPS_15MIN,  true,  true,    false,     false,    false,  true};
-const Profile kSaver    = {240,  60,   5,  true,  GPS_HOURLY, false, false,   true,      false,    false,  false};
-const Profile kUltra    = {240, 300,   5,  true,  GPS_OFF,    false, false,   true,      false,    false,  false};
-const Profile kOnDemand = {240, 300,  10,  false, GPS_ON_USE, false, false,   true,      true,     false,  false};
-const Profile kCheckin  = {240, 300,  10,  false, GPS_ON_USE, false, false,   true,      false,    true,   false};
+// trackGps: no preset wakes the GPS for the track; it logs when the GPS is on anyway (Full:
+// always). Custom has the knob.
+//                         cpu  wake awake  lora   gps         wifi   keyLight touchOnKey loraOnUse checkin mapGps trackGps
+const Profile kFull     = {240,   0,   0,  true,  GPS_ON,     true,  true,    false,     false,    false,  true,  false};
+const Profile kBalanced = {240,   1,  15,  true,  GPS_15MIN,  true,  true,    false,     false,    false,  true,  false};
+const Profile kSaver    = {240,  60,   5,  true,  GPS_HOURLY, false, false,   true,      false,    false,  false, false};
+const Profile kUltra    = {240, 300,   5,  true,  GPS_OFF,    false, false,   true,      false,    false,  false, false};
+const Profile kOnDemand = {240, 300,  10,  false, GPS_ON_USE, false, false,   true,      true,     false,  false, false};
+const Profile kCheckin  = {240, 300,  10,  false, GPS_ON_USE, false, false,   true,      false,    true,   false, false};
 
 const uint16_t kEverySteps[] = {15, 30, 60, 120, 180, 360, 720, 1440};
 
@@ -118,7 +120,7 @@ bool sameProfile(const Profile& a, const Profile& b) {
     return a.cpuMhz == b.cpuMhz && a.wakeSecs == b.wakeSecs && a.awakeSecs == b.awakeSecs &&
            a.lora == b.lora && a.gps == b.gps && a.wifi == b.wifi && a.keyLight == b.keyLight &&
            a.touchOnKey == b.touchOnKey && a.loraOnUse == b.loraOnUse && a.checkin == b.checkin &&
-           a.mapGps == b.mapGps;
+           a.mapGps == b.mapGps && a.trackGps == b.trackGps;
 }
 
 CheckinPhase checkinPhase(const Settings& s, uint32_t secOfDay) {
@@ -195,6 +197,7 @@ void load(Settings& s) {
     c.loraOnUse = p.getBool("cLoraUse", kBalanced.loraOnUse);
     c.checkin   = false;                       // check-in is a mode of its own, not a knob
     c.mapGps    = p.getBool("cMapGps", false); // off unless the user turns it on
+    c.trackGps  = p.getBool("cTrkGps", false);
     s.checkinMin   = p.getUChar("ciMin", 30);
     s.checkinEvery = p.getUShort("ciEvery", 60);
     s.rxDc         = p.getUChar("rxdc", 4);
@@ -226,6 +229,7 @@ void save(const Settings& s) {
     p.putBool("cTouch", c.touchOnKey);
     p.putBool("cLoraUse", c.loraOnUse);
     p.putBool("cMapGps", c.mapGps);
+    p.putBool("cTrkGps", c.trackGps);
     p.putUChar("ciMin", s.checkinMin);
     p.putUShort("ciEvery", s.checkinEvery);
     p.putUChar("rxdc", s.rxDc);

@@ -138,6 +138,7 @@ struct Config {
     uint32_t libLastOff  = 0;       // and the page it was on
     bool     libLastWrap = true;
     bool     clock12     = false;   // 12 h clock (1:45 PM) instead of 24 h
+    bool     imperial    = false;   // distances in ft / mi instead of m / km
     bool     simple      = false;   // Simple mode (wizard step 7; the mode itself comes later)
     bool     wizDone     = true;    // setup wizard finished or skipped
     bool     trackOn     = false;   // breadcrumb track recording (S.1.10)
@@ -254,6 +255,7 @@ void loadConfig() {
     g_cfg.libLastOff  = p.getUInt("libOff", 0);
     g_cfg.libLastWrap = p.getBool("libWrap", true);
     g_cfg.clock12     = p.getBool("clk12", false);
+    g_cfg.imperial    = p.getBool("imperial", false);
     g_cfg.simple      = p.getBool("simple", false);
     // Units that had settings before the wizard existed never see it (flag absent = done).
     g_cfg.wizDone     = p.isKey("wizDone") ? p.getBool("wizDone", true) : true;
@@ -302,6 +304,7 @@ void saveConfig() {
     p.putUInt("libOff", g_cfg.libLastOff);
     p.putBool("libWrap", g_cfg.libLastWrap);
     p.putBool("clk12", g_cfg.clock12);
+    p.putBool("imperial", g_cfg.imperial);
     p.putBool("simple", g_cfg.simple);
     p.putBool("wizDone", g_cfg.wizDone);
     p.putBool("trackOn", g_cfg.trackOn);
@@ -750,6 +753,9 @@ bool setClockLocal(int y, int mo, int d, int hh, int mm) {
 HardwareSerial* g_gpsSerial = nullptr;
 bool    g_gpsFix = false;
 uint8_t g_gpsSats = 0;
+float    g_gpsSpeedKn = 0, g_gpsCourse = 0;   // RMC: speed over ground (knots), course (deg true)
+bool     g_gpsCourseOk = false;
+uint32_t g_gpsCourseAt = 0;
 bool    g_gpsPosValid = false;   // last GGA/RMC with a fix carried a position
 double  g_gpsLat = 0, g_gpsLon = 0;
 uint32_t g_gpsPosAt = 0;
@@ -1056,6 +1062,12 @@ void gpsHandleSentence(char* line) {
             g_gpsUtcValid = true;
         }
         if (valid && n > 6) gpsNotePosition(fld[3], fld[4], fld[5], fld[6]);
+        if (valid && n > 8) {                    // speed + course over ground (no compass on board)
+            g_gpsSpeedKn = fld[7][0] ? (float)atof(fld[7]) : 0.0f;
+            g_gpsCourseOk = fld[8][0] != 0;
+            if (g_gpsCourseOk) g_gpsCourse = (float)atof(fld[8]);
+            g_gpsCourseAt = millis();
+        }
         g_gpsFix = valid;
     } else if (gga && n > 7) {
         if (fld[7][0]) g_gpsSats = (uint8_t)atoi(fld[7]);
@@ -1633,6 +1645,18 @@ bool ownPosition(double& lat, double& lon);
 void distText(double la, double lo, double tla, double tlo, char* out, size_t n);
 void trackLoad();
 void trackClear();
+bool g_tbOn = false;                 // track back: guide to earlier track points, newest first
+int  g_tbIdx = 0;                    // the track point being walked to
+bool tbStart();
+void tbStop(const char* why);
+int  trackExportGpx();
+bool g_navOpen = false;              // bearing + distance screen (G on the Atlas)
+void navOpen();
+void navClose();
+void fmtDist(double m, char* out, size_t n);
+float metersBetween(double la1, double lo1, double la2, double lo2);
+bool ownPosition(double& lat, double& lon);
+extern char g_trackGpx[40];
 void wptSelect(int i);
 void openMap();
 void wptOpenFromSettings(int i);
@@ -2066,7 +2090,7 @@ enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
-    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS
+    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -3006,6 +3030,7 @@ const char* pageTitle(Page p) {
         case PG_IDS:          return "Identities";
         case PG_ID_ONE:       return "Identity slot";
         case PG_WPTS:         return "Waypoints";
+        case PG_TRACK:        return "Track";
     }
     return "";
 }
@@ -3078,12 +3103,21 @@ void buildSettingsRows(Page p) {
             if (ashareActive()) srow(RK_ACTION, "Location auto-share", "%d on; Enter = stop all", ashareActive());
             else srow(RK_INFO, "Location auto-share", "off (set in a chat: MIC)");
             srow(RK_MENU, "Waypoints", "%d saved (map: Alt+P add, P next)", g_wptCount);
-            srow(RK_TOGGLE, "Track (breadcrumbs)", "%s%s", g_cfg.trackOn ? "ON" : "OFF",
-                 g_cfg.trackOn ? ", GPS wakes ~2 min" : "");
-            srow(RK_ACTION, "Clear track", "%d points%s", g_trackN, g_trackLoaded ? "" : " (on SD)");
+            srow(RK_MENU, "Track (breadcrumbs)", "%s, %d points%s", g_cfg.trackOn ? "ON" : "OFF", g_trackN,
+                 g_tbOn ? ", track back" : "");
+            srow(RK_PICK, "Units", "%s", g_cfg.imperial ? "ft / mi" : "m / km");
             static const char* const kFmt[3] = {"Decimal 43.64012,-70.92011", "Deg min sec 43 38'24\"N", "MGRS 19T CJ 4513 3368"};
             srow(RK_PICK, "Coordinates", "%s", kFmt[g_cfg.coordFmt % 3]);
         }
+        break;
+
+    case PG_TRACK:
+        srow(RK_TOGGLE, "Record track", "%s, %d points", g_cfg.trackOn ? "ON" : "OFF", g_trackN);
+        if (g_tbOn) srow(RK_ACTION, "Track back", "ON: to point %d; Enter = stop", g_tbIdx + 1);
+        else srow(RK_ACTION, "Track back", "guide me back along it");
+        srow(RK_ACTION, "Export as GPX", "%s", g_trackGpx[0] ? g_trackGpx : "<SD>/ratdeckpro/tracks/");
+        srow(RK_ACTION, "Clear track", "Enter twice");
+        srow(RK_INFO, "GPS for the track", "%s", g_pwEff.trackGps ? "wakes it every ~2 min" : "logs when it is on anyway");
         break;
 
     case PG_WPTS: {
@@ -3313,6 +3347,7 @@ void buildSettingsRows(Page p) {
         srow(RK_TOGGLE, "Key backlight", "%s", c.keyLight ? "allowed" : "OFF");
         srow(RK_TOGGLE, "Touch", "%s", c.touchOnKey ? "1 min after a key" : "always on");
         srow(RK_TOGGLE, "Map wakes GPS", "%s", c.mapGps ? "ON (fix when the map opens)" : "OFF (last fix)");
+        srow(RK_TOGGLE, "Track wakes GPS", "%s", c.trackGps ? "ON (every ~2 min)" : "OFF (when GPS is on)");
         srow(RK_ACTION, "Reset to Balanced", "Enter = reset");
         break;
     }
@@ -3526,19 +3561,31 @@ void activateSetting(int idx) {
         else if (idx == 5) { g_cfg.gpsAutoSync = !g_cfg.gpsAutoSync; saveConfig(); requestRedraw(); }
         else if (idx == 7 && ashareActive()) { ashareStopAll(); toast("All auto-sharing stopped"); }
         else if (idx == 8) pushPage(PG_WPTS);
-        else if (idx == 9) {
+        else if (idx == 9) { trackLoad(); pushPage(PG_TRACK); }
+        else if (idx == 10) { g_cfg.imperial = !g_cfg.imperial; saveConfig(); requestRedraw(); }
+        else if (idx == 11) {
+            g_cfg.coordFmt = (uint8_t)((g_cfg.coordFmt + 1) % 3);
+            saveConfig();
+            Serial.printf("[CFG] coordinates %s\n", g_cfg.coordFmt == 2 ? "MGRS" : g_cfg.coordFmt == 1 ? "DMS" : "decimal");
+            requestRedraw();
+        }
+        break;
+
+    case PG_TRACK:
+        if (idx == 0) {
             g_cfg.trackOn = !g_cfg.trackOn;
             saveConfig();
             if (g_cfg.trackOn) trackLoad();
             toast(g_cfg.trackOn ? "Track on" : "Track off (kept)");
             requestRedraw();
-        } else if (idx == 10) {
-            if (confirmTwice(1010, "clear the track")) { trackClear(); toast("Track cleared"); }
-        } else if (idx == 11) {
-            g_cfg.coordFmt = (uint8_t)((g_cfg.coordFmt + 1) % 3);
-            saveConfig();
-            Serial.printf("[CFG] coordinates %s\n", g_cfg.coordFmt == 2 ? "MGRS" : g_cfg.coordFmt == 1 ? "DMS" : "decimal");
+        } else if (idx == 1) {
+            if (g_tbOn) tbStop("stopped"); else if (tbStart()) openMap();
+        } else if (idx == 2) {
+            const int n = trackExportGpx();
+            if (n >= 0) toast("%d points -> GPX", n);
             requestRedraw();
+        } else if (idx == 3) {
+            if (confirmTwice(1010, "clear the track")) { trackClear(); toast("Track cleared"); }
         }
         break;
 
@@ -3730,7 +3777,8 @@ void activateSetting(int idx) {
             case 6: c.keyLight = !c.keyLight; break;
             case 7: c.touchOnKey = !c.touchOnKey; break;
             case 8: c.mapGps = !c.mapGps; break;
-            case 9: c = power::preset(power::MODE_BALANCED); toast("Custom = Balanced"); break;
+            case 9: c.trackGps = !c.trackGps; break;
+            case 10: c = power::preset(power::MODE_BALANCED); toast("Custom = Balanced"); break;
             default: return;
         }
         g_pw.mode = power::MODE_CUSTOM;
@@ -4327,6 +4375,7 @@ void drawTopBar() {
 // Atlas letters (also used by mapKey and wptMapKey).
 // Alt+P adds a waypoint (and marks a trap in the game); Alt+SYM deletes the selected waypoint.
 constexpr char kKeyNav = 'K', kKeyFind = 'L', kKeyWpt = 'P', kKeyContact = 'N';
+constexpr char kKeyGo = 'G', kKeyBack = 'B';   // bearing + distance screen, track back
 bool isAltSym(const KeyEvent& ev) {
     return ev.alt && ev.opt && !ev.character && !ev.enter && !ev.del && !ev.space && !ev.fn;
 }
@@ -4336,8 +4385,8 @@ const NavKeyRow kAtlasKeys[] = {                 // two columns of 7, the 12 px 
     {"D", "centre on me"},   {"Z", "zoom in"},       {"W", "zoom out"},
     {"L", "locate a place"}, {"K", "hide keys"},     {"M ^", "menu, close"},
     {"N", "next contact"},   {"P", "next waypoint"}, {"Alt+P", "add waypoint"},
-    {"Alt+SYM", "delete waypt"}, {"12 Enter", "chat #12"}, {"M P", "Peers"},
-    {"C I H", "leave the map"},
+    {"Alt+SYM", "delete waypt"}, {"G", "arrow + distance"}, {"B", "track back"},
+    {"12 Enter", "chat #12"},
 };
 // Library reader and list (K there too).
 const NavKeyRow kReaderKeys[] = {
@@ -4585,6 +4634,7 @@ void openMap() {
 
 void closeMap() {
     g_navKeysOpen = false;
+    g_navOpen = false;
     mapview::close();
     mapReadDone();
     g_fullRefreshReq = true;
@@ -4693,6 +4743,11 @@ constexpr int kPlaceShowFwd = 6;
 void renderMapHeader() {
     char st[64];
     if (g_placeOpen) snprintf(st, sizeof(st), "Places: 1-%d go  ^ back", g_placeN < kPlaceShowFwd ? g_placeN : kPlaceShowFwd);
+    else if (g_tbOn) {
+        double la, lo; char d[20] = "?";
+        if (ownPosition(la, lo) && g_tbIdx < g_trackN) fmtDist(metersBetween(la, lo, g_track[2 * g_tbIdx], g_track[2 * g_tbIdx + 1]), d, sizeof(d));
+        snprintf(st, sizeof(st), "Back: %s  G arrow  B stop", d);
+    }
     else if (g_mapSel >= 0) snprintf(st, sizeof(st), "N next  #+Enter chat  D me");   // what to press
     else if (g_wptSel >= 0) snprintf(st, sizeof(st), "P next  Alt+SYM del  D me");
     else mapview::status(st, sizeof(st));
@@ -5416,6 +5471,8 @@ void wptCycle() {
 
 // ---- Track ---------------------------------------------------------------------------
 constexpr const char* kTrackFile = SD_PATH_ROOT "/tracks/track.bin";
+uint32_t g_trackLastAt = 0;                  // millis of the last point (every-10-min rule)
+char g_trackGpx[40] = "";                    // last GPX export (forward-declared above) (shown on the Track page)
 
 void trackPushRam(float la, float lo) {
     if (g_trackN >= kTrackRam) {             // drop the oldest
@@ -5459,6 +5516,7 @@ void trackClear() {
 
 void trackAdd(double la, double lo) {
     trackPushRam((float)la, (float)lo);
+    g_trackLastAt = millis() ? millis() : 1;
     if (sdMount()) {
         g_sdStore.ensureDir(SD_PATH_ROOT "/tracks");
         File f = g_sdStore.openFile(kTrackFile, FILE_APPEND);
@@ -5482,14 +5540,16 @@ void trackTick() {
     if (millis() - last < 5000) return;
     last = millis();
     if (!g_trackLoaded) trackLoad();
-    if (!gpsFresh()) {                       // keep fixes coming without a GPS always on
-        if (g_cfg.gpsOn && (!asked || millis() - asked > 120000)) { asked = millis(); gpsRequestVisit(); }
+    if (!gpsFresh()) {                       // only modes that allow it wake the GPS for the track
+        if (g_cfg.gpsOn && g_pwEff.trackGps && power::gpsIntervalMs(g_pwEff.gps) &&
+            (!asked || millis() - asked > 120000)) { asked = millis(); gpsRequestVisit("track"); }
         return;
     }
-    if (g_trackN) {
-        const double m = metersBetween(g_track[2 * g_trackN - 2], g_track[2 * g_trackN - 1], g_gpsLat, g_gpsLon);
-        if (m < 25.0) return;
-    }
+    // A point when moved >= 20 m, or every 10 min while standing (shows where you waited).
+    const bool moved = !g_trackN ||
+        metersBetween(g_track[2 * g_trackN - 2], g_track[2 * g_trackN - 1], g_gpsLat, g_gpsLon) >= 20.0;
+    const bool due = g_trackLastAt && millis() - g_trackLastAt >= 600000UL;
+    if (!moved && !due) return;
     trackAdd(g_gpsLat, g_gpsLon);
 }
 
@@ -5499,7 +5559,8 @@ int wptFeed(mapview::Marker* m, int n) {
         m[n++] = {g_wpt[i].lat, g_wpt[i].lon, i == g_wptSel, (uint8_t)(i + 1), true, false, 1};
     if (g_cfg.trackOn && !g_trackLoaded) trackLoad();
     mapview::setTrack(g_track, g_trackN);
-    if (g_wptSel >= 0 && g_wptSel < g_wptCount) mapview::setGuide(true, g_wpt[g_wptSel].lat, g_wpt[g_wptSel].lon);
+    if (g_tbOn && g_tbIdx >= 0 && g_tbIdx < g_trackN) mapview::setGuide(true, g_track[2 * g_tbIdx], g_track[2 * g_tbIdx + 1]);
+    else if (g_wptSel >= 0 && g_wptSel < g_wptCount) mapview::setGuide(true, g_wpt[g_wptSel].lat, g_wpt[g_wptSel].lon);
     else mapview::setGuide(false);
     return n;
 }
@@ -6765,6 +6826,313 @@ void renderWizard() {
     }
 }
 
+// ---- Track back, GPX export -------------------------------------------------------------
+// Track back (Atlas B, Settings S.1.10): from the track point nearest to you, walk the
+// recorded points backwards; the guide line (and G's arrow) points at the next one, which
+// moves on when you are within 25 m; at the first point: "Back at the start".
+constexpr float kTbReach = 25.0f, kTbStep = 30.0f;
+
+int tbStepBack(int from) {                  // the first earlier point at least kTbStep away
+    for (int j = from - 1; j >= 0; j--)
+        if (metersBetween(g_track[2 * j], g_track[2 * j + 1], g_track[2 * from], g_track[2 * from + 1]) >= kTbStep)
+            return j;
+    return 0;
+}
+
+bool tbStart() {
+    trackLoad();
+    double la, lo;
+    if (g_trackN < 2) { toast("No track yet (S.1.10)"); return false; }
+    if (!ownPosition(la, lo)) { toast("No position yet"); return false; }
+    int best = 0;
+    float bd = 1e30f;
+    for (int i = 0; i < g_trackN; i++) {
+        const float d = metersBetween(la, lo, g_track[2 * i], g_track[2 * i + 1]);
+        if (d < bd) { bd = d; best = i; }
+    }
+    if (best == 0 && bd < kTbReach) { toast("You are at the start"); return false; }
+    g_tbIdx = bd < kTbReach ? tbStepBack(best) : best;
+    g_tbOn = true;
+    Serial.printf("[TRACK] back on: point %d of %d (%.0f m off the track)\n", g_tbIdx + 1, g_trackN, bd);
+    toast("Track back: follow the line");
+    requestRedraw();
+    return true;
+}
+
+void tbStop(const char* why) {
+    if (!g_tbOn) return;
+    g_tbOn = false;
+    Serial.printf("[TRACK] back %s\n", why);
+    toast("Track back %s", why);
+    requestRedraw();
+}
+
+void tbTick() {
+    if (!g_tbOn) return;
+    double la, lo;
+    if (!ownPosition(la, lo) || g_tbIdx >= g_trackN) return;
+    if (metersBetween(la, lo, g_track[2 * g_tbIdx], g_track[2 * g_tbIdx + 1]) > kTbReach) return;
+    if (g_tbIdx == 0) {
+        if (g_cfg.beep) g_audio.playAnnounce();
+        tbStop("done: at the start");
+        return;
+    }
+    g_tbIdx = tbStepBack(g_tbIdx);
+    Serial.printf("[TRACK] back: next point %d\n", g_tbIdx + 1);
+    requestRedraw();
+}
+
+// The whole SD track as GPX 1.1 in <SD>/ratdeckpro/tracks/track-YYYYMMDD-HHMM.gpx.
+int trackExportGpx() {
+    if (!sdMount()) { toast("No SD card"); return -1; }
+    File in = g_sdStore.openFile(kTrackFile, FILE_READ);
+    if (!in) { toast("No track on the card"); return -1; }
+    struct tm t;
+    char name[40] = "track.gpx";
+    if (localNow(t)) snprintf(name, sizeof(name), "track-%04d%02d%02d-%02d%02d.gpx", t.tm_year + 1900, t.tm_mon + 1,
+                              t.tm_mday, t.tm_hour, t.tm_min);
+    char path[96];
+    snprintf(path, sizeof(path), "%s/tracks/%s", SD_PATH_ROOT, name);
+    File out = g_sdStore.openFile(path, FILE_WRITE);
+    if (!out) { in.close(); toast("Cannot write the GPX"); return -1; }
+    out.print("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+              "<gpx version=\"1.1\" creator=\"RatSpeak T-Deck Pro\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n"
+              "<trk><name>RatSpeak track</name><trkseg>\n");
+    uint8_t rec[12];
+    int n = 0;
+    while (in.read(rec, 12) == 12) {
+        uint32_t e; float la, lo;
+        memcpy(&e, rec, 4); memcpy(&la, rec + 4, 4); memcpy(&lo, rec + 8, 4);
+        if (e) {
+            const time_t tt = (time_t)e;
+            struct tm u;
+            gmtime_r(&tt, &u);
+            out.printf("<trkpt lat=\"%.6f\" lon=\"%.6f\"><time>%04d-%02d-%02dT%02d:%02d:%02dZ</time></trkpt>\n", la, lo,
+                       u.tm_year + 1900, u.tm_mon + 1, u.tm_mday, u.tm_hour, u.tm_min, u.tm_sec);
+        } else {
+            out.printf("<trkpt lat=\"%.6f\" lon=\"%.6f\"></trkpt>\n", la, lo);
+        }
+        n++;
+    }
+    out.print("</trkseg></trk>\n</gpx>\n");
+    out.close();
+    in.close();
+    snprintf(g_trackGpx, sizeof(g_trackGpx), "tracks/%s", name);
+    Serial.printf("[TRACK] %d points -> %s\n", n, path);
+    return n;
+}
+
+// ---- Bearing + distance (G on the Atlas) ------------------------------------------------
+// For when the map is too much: a big arrow to the selected contact, waypoint or track-back
+// point, the distance and the age of a contact's fix. No compass on board: while you move
+// (GPS speed over 1 knot) the arrow is relative to your course over ground ("ahead" = up),
+// standing still it is north-up.
+enum NavKind : uint8_t { NAV_CONTACT, NAV_WPT, NAV_TRACK };
+NavKind g_navKind = NAV_CONTACT;
+int     g_navIdx = 0;
+bool    g_navArrowOk = false;
+constexpr int kNavCy = 116, kNavR = 54, kNavNumY = 184;   // ring centre / radius, distance digits
+char    g_navNum[12] = "";                  // the distance number, drawn big by stampNav
+int     g_navNumX = 0;
+// 5x7 digits (and '.') at scale 5 for the distance.
+const uint8_t kBig5x7[11][7] = {
+    {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}, {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
+    {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}, {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E},
+    {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}, {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E},
+    {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}, {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
+    {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}, {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C}};                       // [10] = '.'
+constexpr int kBigScale = 4;
+int navBigWidth(const char* s) {
+    int w = 0;
+    for (; *s; s++) w += (*s == '.' ? 3 : 6) * kBigScale;
+    return w;
+}
+void navBigStamp(int x, int y, const char* s) {
+    const bool ink = !g_cfg.dark;
+    for (; *s; s++) {
+        const int g = *s == '.' ? 10 : (*s >= '0' && *s <= '9') ? *s - '0' : -1;
+        const int cols = *s == '.' ? 3 : 6;
+        if (g >= 0)
+            for (int r = 0; r < 7; r++)
+                for (int c = 0; c < 5; c++)
+                    if (kBig5x7[g][r] & (0x10 >> c))
+                        for (int dy = 0; dy < kBigScale; dy++)
+                            for (int dx = 0; dx < kBigScale; dx++) {
+                                const int px = x + (c - (g == 10 ? 2 : 0)) * kBigScale + dx, py = y + r * kBigScale + dy;
+                                if (px >= 0 && py >= 0 && px < W && py < H) g_display.setPixel(px, py, ink);
+                            }
+        x += cols * kBigScale;
+    }
+}
+float   g_navArrowDeg = 0;                 // screen angle: 0 = up, clockwise
+float   g_navShownM = -1, g_navShownBrg = -1000;
+uint32_t g_navShownMin = 0;
+
+void fmtDist(double m, char* out, size_t n) {
+    if (g_cfg.imperial) {
+        const double ft = m * 3.28084;
+        if (ft < 1000) snprintf(out, n, "%d ft", (int)(ft + 0.5));
+        else if (m < 160934) snprintf(out, n, "%.2f mi", m / 1609.344);
+        else snprintf(out, n, "%d mi", (int)(m / 1609.344));
+    } else {
+        if (m < 1000) snprintf(out, n, "%d m", (int)(m + 0.5));
+        else if (m < 100000) snprintf(out, n, "%.2f km", m / 1000.0);
+        else snprintf(out, n, "%d km", (int)(m / 1000.0));
+    }
+}
+
+bool navTarget(double& la, double& lo, char* name, size_t n) {
+    switch (g_navKind) {
+        case NAV_TRACK:
+            if (!g_tbOn || g_navIdx >= g_trackN) return false;
+            g_navIdx = g_tbIdx;
+            la = g_track[2 * g_navIdx]; lo = g_track[2 * g_navIdx + 1];
+            snprintf(name, n, "Track back, point %d", g_navIdx + 1);
+            return true;
+        case NAV_WPT:
+            if (g_navIdx < 0 || g_navIdx >= g_wptCount) return false;
+            la = g_wpt[g_navIdx].lat; lo = g_wpt[g_navIdx].lon;
+            snprintf(name, n, "W%d %s", g_navIdx + 1, g_wpt[g_navIdx].name);
+            return true;
+        default:
+            if (g_navIdx < 0 || g_navIdx >= g_cposCount || !g_cpos[g_navIdx].hasPos) return false;
+            la = g_cpos[g_navIdx].lat; lo = g_cpos[g_navIdx].lon;
+            char nm[24];
+            peerName(g_cpos[g_navIdx].dest, nm, sizeof(nm));
+            snprintf(name, n, "#%u %s", (unsigned)g_cpos[g_navIdx].num, nm);
+            return true;
+    }
+}
+
+void navOpen() {
+    if (g_tbOn) { g_navKind = NAV_TRACK; g_navIdx = g_tbIdx; }
+    else if (g_mapSel >= 0) { g_navKind = NAV_CONTACT; g_navIdx = g_mapSel; }
+    else if (g_wptSel >= 0) { g_navKind = NAV_WPT; g_navIdx = g_wptSel; }
+    else { toast("Pick a contact (N) or waypoint (P) first"); requestRedraw(); return; }
+    g_navOpen = true;
+    g_navKeysOpen = false;
+    g_navShownM = -1;
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.printf("[NAV] open kind=%d idx=%d\n", (int)g_navKind, g_navIdx);
+}
+
+void navClose() {
+    g_navOpen = false;
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.println("[NAV] closed");
+}
+
+void navKey(const KeyEvent& ev) {
+    const char c = (char)toupper((unsigned char)ev.character);
+    if (c == kKeyGo || ev.enter) { navClose(); return; }
+    if (c == 'M') { navClose(); openMenu(); return; }
+    if (c == kKeyBack) { if (g_tbOn) tbStop("stopped"); navClose(); return; }
+}
+
+bool navMoving() { return gpsFresh() && g_gpsCourseOk && g_gpsSpeedKn >= 1.0f && millis() - g_gpsCourseAt < 10000; }
+
+void renderNav() {
+    double tla, tlo, la, lo;
+    char name[40], line[64];
+    g_navArrowOk = false;
+    if (!navTarget(tla, tlo, name, sizeof(name))) { navClose(); return; }
+    drawHeader(name, false);
+    const bool own = ownPosition(la, lo);
+    if (!own) {
+        label(0, 120, W, 20, "No own position yet", true);
+        label(0, 142, W, 18, "(GPS or saved position S.1)");
+    } else {
+        const double m = metersBetween(la, lo, tla, tlo);
+        const double brg = bearingDeg(la, lo, tla, tlo);
+        const bool moving = navMoving();
+        g_navArrowDeg = (float)(moving ? fmod(brg - g_gpsCourse + 720.0, 360.0) : brg);
+        g_navArrowOk = true;
+        label(0, kNavCy - kNavR - 18, W, 16, moving ? "ahead" : "N", true);
+        char d[24];                                       // "1.24 km": big digits, then the unit
+        fmtDist(m, d, sizeof(d));
+        const char* sp = strchr(d, ' ');
+        const int nl0 = sp ? (int)(sp - d) : (int)strlen(d);
+        snprintf(g_navNum, sizeof(g_navNum), "%.*s", nl0, d);
+        const int unitX = (W - navBigWidth(g_navNum) - 34) / 2 + navBigWidth(g_navNum) + 6;
+        g_navNumX = (W - navBigWidth(g_navNum) - 34) / 2;
+        text(unitX, kNavNumY + 14, sp ? sp + 1 : "", true);
+        snprintf(line, sizeof(line), "%s %d deg%s", compass8(brg), (int)(brg + 0.5), moving ? "" : "  (north up)");
+        label(0, kNavNumY + 40, W, 16, line);
+        if (g_navKind == NAV_CONTACT) {
+            const uint32_t now = (uint32_t)time(nullptr), at = g_cpos[g_navIdx].at;
+            const uint32_t age = (at && now > at) ? (now - at) / 60 : 0;
+            if (age < 120) snprintf(line, sizeof(line), "their fix %lu min old", (unsigned long)age);
+            else snprintf(line, sizeof(line), "their fix %lu h old", (unsigned long)(age / 60));
+        } else if (moving) {
+            const float kmh = g_gpsSpeedKn * 1.852f;
+            if (g_cfg.imperial) snprintf(line, sizeof(line), "you: %.0f mph, course %d deg", kmh / 1.609f, (int)g_gpsCourse);
+            else snprintf(line, sizeof(line), "you: %.0f km/h, course %d deg", kmh, (int)g_gpsCourse);
+        } else {
+            snprintf(line, sizeof(line), "you: standing (no course)");
+        }
+        label(0, kNavNumY + 58, W, 16, line);
+        g_navShownM = (float)m;
+        g_navShownBrg = (float)brg;
+        g_navShownMin = millis() / 60000UL;
+    }
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : (g_tbOn ? "G map  B stop track back" : "G or ^ back to the map"));
+}
+
+// Thick line straight into the frame buffer (after LVGL's frame, like the map).
+void navLine(float x0, float y0, float x1, float y1, int thick) {
+    const bool ink = !g_cfg.dark;
+    const float len = sqrtf((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
+    const int steps = (int)len + 1;
+    for (int i = 0; i <= steps; i++) {
+        const float x = x0 + (x1 - x0) * i / steps, y = y0 + (y1 - y0) * i / steps;
+        for (int dy = -thick / 2; dy <= thick / 2; dy++)
+            for (int dx = -thick / 2; dx <= thick / 2; dx++) {
+                const int px = (int)lroundf(x) + dx, py = (int)lroundf(y) + dy;
+                if (px >= 0 && py >= 0 && px < W && py < H) g_display.setPixel(px, py, ink);
+            }
+    }
+}
+
+void stampNav() {
+    if (!g_navArrowOk) return;
+    navBigStamp(g_navNumX, kNavNumY, g_navNum);
+    const float cx = W / 2.0f, cy = kNavCy, r = kNavR;
+    for (int a = 0; a < 360; a += 2) {                      // the ring
+        const float t = a * 3.14159265f / 180.0f;
+        navLine(cx + r * sinf(t), cy - r * cosf(t), cx + r * sinf(t), cy - r * cosf(t), 2);
+    }
+    const float t = g_navArrowDeg * 3.14159265f / 180.0f;
+    const float tipX = cx + (r - 6) * sinf(t), tipY = cy - (r - 6) * cosf(t);
+    const float tailX = cx - (r - 18) * sinf(t), tailY = cy + (r - 18) * cosf(t);
+    navLine(tailX, tailY, tipX, tipY, 5);
+    for (int side = -1; side <= 1; side += 2) {             // the head
+        const float h = t + side * 2.6f;
+        navLine(tipX, tipY, tipX + 26 * sinf(h), tipY - 26 * cosf(h), 5);
+    }
+    g_display.markDirty();
+}
+
+// Redraw when the numbers change (position, their fix, course) or each minute (ages).
+void navTick() {
+    tbTick();
+    if (!g_navOpen) return;
+    static uint32_t last = 0;
+    if (millis() - last < 2000) return;
+    last = millis();
+    double tla, tlo, la, lo;
+    char name[40];
+    if (!navTarget(tla, tlo, name, sizeof(name)) || !ownPosition(la, lo)) return;
+    const float m = metersBetween(la, lo, tla, tlo);
+    const float brg = (float)bearingDeg(la, lo, tla, tlo);
+    const bool far = g_navShownM < 0 || fabsf(m - g_navShownM) > (g_navShownM * 0.02f + 3.0f);
+    const bool turned = fabsf(brg - g_navShownBrg) > 5.0f;
+    if (far || turned || millis() / 60000UL != g_navShownMin || navMoving()) requestRedraw();
+}
+
 void render() {
     const uint32_t t0 = millis();
     clearRoot();
@@ -6782,6 +7150,7 @@ void render() {
     if (g_threadOpen)                  renderThread();
     else if (g_entry == Entry::Name)   renderRename();
     else if (g_wizOpen)                renderWizard();
+    else if (g_navOpen)                renderNav();
     else if (g_cardOpen)               renderCard();
     else if (g_libOpen)                renderLibrary();
     else if (g_gameOpen)               renderGame();
@@ -6795,8 +7164,9 @@ void render() {
     drawBottomBar();
     drawMenuOverlay();
     lv_refr_now(nullptr);
-    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_placeOpen)
+    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_placeOpen && !g_navOpen)
         stampMap();   // after LVGL's clear
+    if (g_navOpen && !g_menuOpen) stampNav();
     const uint32_t t1 = millis();
     // Clear the request first: keys queued during the panel refresh may ask again.
     g_redraw = false;
@@ -7203,6 +7573,7 @@ void cancelEntry() {
 
 void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
+    if (g_navOpen && !entryActive()) { navClose(); return; }
     if (g_navKeysOpen && (mapview::isOpen() || g_libOpen || g_gameOpen) && !entryActive()) { navKeysToggle(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
     if (g_shareActive && !entryActive()) { g_shareActive = false; g_shareAll = false; toast("Share cancelled"); return; }
@@ -7587,6 +7958,7 @@ void handleKey(const KeyEvent& ev) {
     if (g_libOpen) { libKey(ev); return; }
     if (g_gameOpen) { gameKey(ev); return; }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
+    if (g_navOpen) { navKey(ev); return; }
     if (mapview::isOpen()) { mapKey(ev); return; }
     browseKey(ev);
 }
@@ -7606,6 +7978,8 @@ void mapKey(const KeyEvent& ev) {
         return;
     }
     if (mc == 'A') return;
+    if (mc == kKeyBack) { if (g_tbOn) tbStop("stopped"); else tbStart(); requestRedraw(); return; }
+    if (mc == kKeyGo) { navOpen(); return; }
     if (mc == kKeyFind) { startEntry(Entry::PlaceFind); return; }   // locate a place
     if (wptMapKey(ev)) return;                            // P next / Alt+P add / Alt+SYM delete
     if (mc == kKeyContact) { mapCycleContact(); return; } // next contact's last position
@@ -8386,6 +8760,7 @@ void handleSerialLine(char* p) {
             else if (!strcmp(k, "kbl")) c.keyLight = v != 0;
             else if (!strcmp(k, "touch")) c.touchOnKey = v != 0;
             else if (!strcmp(k, "mapgps")) c.mapGps = v != 0;
+            else if (!strcmp(k, "trackgps")) c.trackGps = v != 0;
             else { Serial.println("[POWER] pset: bad knob/value"); return; }
             g_pw.mode = power::MODE_CUSTOM;
             power::save(g_pw);
@@ -8515,6 +8890,9 @@ void handleSerialLine(char* p) {
         // track = status; bench: track add <lat> <lon> | track clear
         double la = 0, lo = 0;
         if (!strcmp(p, "track clear")) { trackClear(); return; }
+        if (!strcmp(p, "track gpx")) { Serial.printf("[TRACK] gpx %d points %s\n", trackExportGpx(), g_trackGpx); return; }
+        if (!strcmp(p, "track back")) { if (tbStart()) openMap(); return; }
+        if (!strcmp(p, "track back stop")) { tbStop("stopped"); return; }
         if (!strncmp(p, "track add ", 10) && sscanf(p + 10, "%lf %lf", &la, &lo) == 2) {
             if (!g_trackLoaded) trackLoad();
             trackAdd(la, lo);
@@ -9282,6 +9660,7 @@ void loop() {
     autoShareTick();
     inboundTick();
     trackTick();
+    navTick();
 
     processKeys();         // again, in case a watcher above took a while
     pollTouch();

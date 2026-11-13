@@ -39,6 +39,7 @@ struct Profile {
     bool     loraOnUse;   // lora off: power it for kLoraOnUseMs after each key press
     bool     checkin;     // lora off: power it only in the scheduled check-in windows
     bool     mapGps;      // opening the map (no fresh fix) starts a GPS visit at once
+    bool     trackGps;    // track recording asks the GPS for a visit every ~2 min
 };
 
 // Check-in schedule: windows at checkinMin past midnight local time + k * checkinEvery.
