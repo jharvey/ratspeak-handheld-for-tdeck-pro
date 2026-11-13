@@ -1,0 +1,14 @@
+# Range test screen on one device (the partner never answers: pings are counted as lost).
+# The two-device test is rt_pair.py. Run: run-script.bat scripts\rangetest_screen.txt cmap
+expect 60000 [BOOT] ready
+wait 2000
+serial rt start 0000000000000000000000000000a11c 5
+expect 3000 [RT] start
+expect 15000 [RT] ping 2 sent
+expect 15000 [RT] ping 2 lost
+key 3
+wait 1500
+shot rt-01-screen.png
+key BACK
+expect 3000 [RT] stop
+quit

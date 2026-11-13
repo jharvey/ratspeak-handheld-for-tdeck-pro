@@ -116,6 +116,7 @@ bool g_protoReady = false;
 
 SX1262*        g_radio  = nullptr;
 LoRaInterface* g_loraIf = nullptr;
+bool rtRxTap(const uint8_t* d, size_t n, int rssi, float snr);
 
 constexpr const char* kDefaultSelfName = "MyRatSpeakPro";
 
@@ -1183,6 +1184,7 @@ bool initRadio() {
     g_radio->setPreambleLength(LORA_DEFAULT_PREAMBLE);
     g_radio->receive();
     g_loraIf = new LoRaInterface(g_radio, "LoRa");
+    g_loraIf->setRxTap(rtRxTap);
     if (!g_loraIf || !g_loraIf->start()) return false;
     Serial.printf("[LORA] online %lu Hz SF%d\n", (unsigned long)LORA_DEFAULT_FREQ, LORA_DEFAULT_SF);
     return true;
@@ -1576,6 +1578,7 @@ uint8_t g_cardPeer[16];
 int     g_cardSel = 0;
 bool    g_shareActive = false;     // the Contacts list is picking who gets g_sharePeer
 bool    g_shareAll = false;        // ... and gets every contact's card (Settings S.6)
+bool    g_pickRt = false;          // ... or is the range-test partner (Settings S.7)
 uint8_t g_sharePeer[16];
 
 int hexNib(char c) {
@@ -1651,6 +1654,9 @@ bool tbStart();
 void tbStop(const char* why);
 int  trackExportGpx();
 bool g_navOpen = false;              // bearing + distance screen (G on the Atlas)
+bool g_rtOn = false, g_rtOpen = false; // range test running / its screen shown
+void rtStart(const uint8_t peer[16], int everySecs);
+void rtStop();
 // Arrival alerts (functions under "Arrival alerts" below)
 constexpr int kGeofMax = 8;
 struct Geof { uint8_t dest[16]; float lat, lon; uint16_t radius; uint8_t place, repeat, armed, pad; char wname[16]; };
@@ -3468,6 +3474,7 @@ void buildSettingsRows(Page p) {
              g_loraPreset ? " (peers need same)" : "");
         srow(RK_INFO, "Last RSSI", "%d dBm", loraRssi());
         srow(RK_INFO, "Last SNR", "%.1f dB", loraSnr());
+        srow(RK_ACTION, "Range test", g_rtOn ? "running; Enter = show" : "ping another radio, log to SD");
         break;
 
     case PG_ALERTS:
@@ -3586,6 +3593,8 @@ void loadRtcStaging() {
 }
 
 void startNameEntry(const uint8_t peer[16]);
+
+void goScreen(ScreenId s);
 
 void activateSetting(int idx) {
     switch (g_page) {
@@ -3937,6 +3946,13 @@ void activateSetting(int idx) {
 
     case PG_LORA:
         if (idx == 2) { applyLoraPreset(g_loraPreset + 1); requestRedraw(); }
+        else if (idx == 5) {
+            if (g_rtOn) { g_rtOpen = true; g_fullRefreshReq = true; requestRedraw(); break; }
+            goScreen(SCR_CONTACTS);
+            g_shareActive = true;
+            g_pickRt = true;
+            toast("Pick the other radio");
+        }
         break;
 
     case PG_ALERTS:
@@ -4103,6 +4119,10 @@ void renderList() {
         int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
         if (pages > 1) snprintf(hdr, sizeof(hdr), "Inbox%s new %d", pg, unread > 99 ? 99 : unread);
         else           snprintf(hdr, sizeof(hdr), "Inbox  unread %02d", unread > 99 ? 99 : unread);
+    } else if (g_shareActive && g_pickRt) {
+        snprintf(hdr, sizeof(hdr), "Range test with:");
+    } else if (g_shareActive && g_shareAll) {
+        snprintf(hdr, sizeof(hdr), "All contacts to:");
     } else if (g_shareActive) {
         char nm[24];
         peerName(g_sharePeer, nm, sizeof(nm));
@@ -6640,6 +6660,15 @@ void cardKey(const KeyEvent& ev) {
 void shareAllTo(const uint8_t to[16]);
 
 void shareSendTo(int idx) {
+    if (g_pickRt) {
+        uint8_t to[16];
+        memcpy(to, g_rows[idx].peer, 16);
+        if (isSelf(to)) { toast("Pick another radio"); return; }
+        g_shareActive = false;
+        g_pickRt = false;
+        rtStart(to, 0);
+        return;
+    }
     if (g_shareAll) {
         uint8_t to[16];
         memcpy(to, g_rows[idx].peer, 16);
@@ -7302,6 +7331,179 @@ void navTick() {
     if (far || turned || millis() / 60000UL != g_navShownMin || navMoving()) requestRedraw();
 }
 
+// ---- Range test (Settings S.7 LoRa > Range test) -----------------------------------------
+// Two units in range-test mode ping each other: every N s this one sends a ping to the chosen
+// partner; a unit in range-test mode answers a ping meant for it with a pong carrying the
+// RSSI / SNR it heard. Both log every event to <SD>/ratdeckpro/rangetest/rt-<date>-<time>.csv
+// (time, event, seq, peer, rssi, snr, peer_rssi, peer_snr, lat, lon, fix). Frames are raw LoRa
+// (first byte 0xFF = an "access code" frame other Reticulum nodes drop), so nothing reaches
+// the inbox. PC: tools/rangetest/rangetest_map.py makes a map / plot from the CSV.
+constexpr uint8_t kRtMagic[4] = {0xFF, 'R', 'T', '1'};
+uint8_t  g_rtPeer[16];
+uint16_t g_rtEvery = 15, g_rtSeq = 0;
+uint32_t g_rtSent = 0, g_rtGot = 0, g_rtLost = 0, g_rtHeard = 0, g_rtNextAt = 0;
+bool     g_rtWaiting = false;                // the last ping has no pong yet
+int      g_rtRssi = 0, g_rtPeerRssi = 0, g_rtHeardRssi = 0;
+float    g_rtSnr = 0, g_rtPeerSnr = 0, g_rtHeardSnr = 0;
+char     g_rtFile[40] = "";
+uint32_t g_rtShownAt = 0;
+
+void rtLog(const char* ev, uint16_t seq, int rssi, float snr, int prssi, float psnr) {
+    if (!g_rtFile[0] || !sdMount()) return;
+    char path[96];
+    snprintf(path, sizeof(path), "%s/rangetest/%s", SD_PATH_ROOT, g_rtFile);
+    File f = g_sdStore.openFile(path, FILE_APPEND);
+    if (!f) return;
+    char peer[33], ts[24] = "";
+    hashToHex(g_rtPeer, peer);
+    const time_t now = time(nullptr);
+    if (now > 1600000000) { struct tm u; gmtime_r(&now, &u); strftime(ts, sizeof(ts), "%Y-%m-%dT%H:%M:%SZ", &u); }
+    const bool fix = gpsFresh();
+    double la = 0, lo = 0;
+    ownPosition(la, lo);
+    f.printf("%s,%s,%u,%.8s,%d,%.1f,%d,%.1f,%.6f,%.6f,%d\n", ts, ev, (unsigned)seq, peer, rssi, snr, prssi, psnr,
+             la, lo, fix ? 1 : 0);
+    f.close();
+}
+
+void rtSend(char type, uint16_t seq, const uint8_t to[16], int rssi, float snr) {
+    uint8_t b[18];
+    memcpy(b, kRtMagic, 4);
+    b[4] = (uint8_t)type;
+    b[5] = (uint8_t)(seq >> 8); b[6] = (uint8_t)seq;
+    memcpy(b + 7, g_selfHash, 4);
+    memcpy(b + 11, to, 4);
+    b[15] = (uint8_t)(int8_t)constrain(rssi, -127, 0);
+    b[16] = (uint8_t)(int8_t)constrain((int)lroundf(snr * 4), -127, 127);
+    b[17] = 0;
+    if (g_loraIf) g_loraIf->sendRaw(b, sizeof(b));
+}
+
+bool rtRxTap(const uint8_t* d, size_t n, int rssi, float snr) {
+    if (n != 18 || memcmp(d, kRtMagic, 4) != 0) return false;
+    if (!g_rtOn || memcmp(d + 11, g_selfHash, 4) != 0) return true;   // ours, but not for us: drop
+    const uint16_t seq = (uint16_t)(d[5] << 8 | d[6]);
+    if (d[4] == 'P') {                        // a ping: answer with what we heard
+        g_rtHeard++;
+        g_rtHeardRssi = rssi; g_rtHeardSnr = snr;
+        rtLog("ping-heard", seq, rssi, snr, 0, 0);
+        uint8_t from[16] = {0};
+        memcpy(from, d + 7, 4);
+        // The reply goes to the sender's prefix (it only checks the first 4 bytes).
+        rtSend('O', seq, from, rssi, snr);
+        Serial.printf("[RT] ping %u heard %d dBm %.1f dB\n", (unsigned)seq, rssi, snr);
+    } else if (d[4] == 'O' && memcmp(d + 7, g_rtPeer, 4) == 0) {
+        if (seq == g_rtSeq && g_rtWaiting) { g_rtWaiting = false; g_rtGot++; }
+        g_rtRssi = rssi; g_rtSnr = snr;
+        g_rtPeerRssi = (int8_t)d[15]; g_rtPeerSnr = (int8_t)d[16] / 4.0f;
+        rtLog("pong", seq, rssi, snr, g_rtPeerRssi, g_rtPeerSnr);
+        Serial.printf("[RT] pong %u: here %d dBm %.1f dB, there %d dBm %.1f dB\n", (unsigned)seq, rssi, snr,
+                      g_rtPeerRssi, g_rtPeerSnr);
+    }
+    if (g_rtOpen) requestRedraw();
+    return true;
+}
+
+void rtStart(const uint8_t peer[16], int everySecs) {
+    memcpy(g_rtPeer, peer, 16);
+    if (everySecs >= 5 && everySecs <= 600) g_rtEvery = (uint16_t)everySecs;
+    g_rtOn = true;
+    g_rtOpen = true;
+    g_rtSeq = 0;
+    g_rtSent = g_rtGot = g_rtLost = g_rtHeard = 0;
+    g_rtWaiting = false;
+    g_rtRssi = g_rtPeerRssi = g_rtHeardRssi = 0;
+    g_rtNextAt = millis() + 2000;
+    struct tm t;
+    if (localNow(t)) snprintf(g_rtFile, sizeof(g_rtFile), "rt-%04d%02d%02d-%02d%02d.csv", t.tm_year + 1900, t.tm_mon + 1,
+                              t.tm_mday, t.tm_hour, t.tm_min);
+    else snprintf(g_rtFile, sizeof(g_rtFile), "rt-%lu.csv", (unsigned long)(millis() / 1000));
+    if (sdMount()) {
+        g_sdStore.ensureDir(SD_PATH_ROOT "/rangetest");
+        char path[96];
+        snprintf(path, sizeof(path), "%s/rangetest/%s", SD_PATH_ROOT, g_rtFile);
+        File f = g_sdStore.openFile(path, FILE_WRITE);
+        if (f) { f.print("time_utc,event,seq,peer,rssi,snr,peer_rssi,peer_snr,lat,lon,fix\n"); f.close(); }
+    } else {
+        g_rtFile[0] = 0;
+        toast("No SD card: stats only");
+    }
+    char nm[24];
+    peerName(peer, nm, sizeof(nm));
+    Serial.printf("[RT] start with %s every %u s, file %s\n", nm, (unsigned)g_rtEvery, g_rtFile[0] ? g_rtFile : "-");
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void rtStop() {
+    if (!g_rtOn && !g_rtOpen) return;
+    if (g_rtOn) rtLog("stop", g_rtSeq, 0, 0, 0, 0);
+    g_rtOn = false;
+    g_rtOpen = false;
+    Serial.printf("[RT] stop: sent %lu replies %lu lost %lu heard %lu\n", (unsigned long)g_rtSent,
+                  (unsigned long)g_rtGot, (unsigned long)g_rtLost, (unsigned long)g_rtHeard);
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void rtTick() {
+    if (!g_rtOn) return;
+    if ((int32_t)(millis() - g_rtNextAt) < 0) return;
+    g_rtNextAt = millis() + g_rtEvery * 1000UL;
+    if (g_rtWaiting) {                        // no pong for the last one
+        g_rtLost++;
+        rtLog("lost", g_rtSeq, 0, 0, 0, 0);
+        Serial.printf("[RT] ping %u lost\n", (unsigned)g_rtSeq);
+    }
+    g_rtSeq++;
+    g_rtSent++;
+    g_rtWaiting = true;
+    rtSend('P', g_rtSeq, g_rtPeer, 0, 0);
+    rtLog("ping", g_rtSeq, 0, 0, 0, 0);
+    Serial.printf("[RT] ping %u sent\n", (unsigned)g_rtSeq);
+    if (g_rtOpen && millis() - g_rtShownAt > 5000) requestRedraw();
+}
+
+void rtKey(const KeyEvent& ev) {
+    const char c = ev.character;
+    static const uint16_t kEvery[4] = {10, 15, 30, 60};
+    if (c >= '1' && c <= '4') {
+        g_rtEvery = kEvery[c - '1'];
+        g_rtNextAt = millis() + g_rtEvery * 1000UL;
+        toast("Every %u s", (unsigned)g_rtEvery);
+        requestRedraw();
+        return;
+    }
+    if (toupper((unsigned char)c) == 'M') { g_rtOpen = false; openMenu(); return; }   // keeps running
+}
+
+void renderRangeTest() {
+    char nm[24], a[56];
+    peerName(g_rtPeer, nm, sizeof(nm));
+    snprintf(a, sizeof(a), "Range test: %.14s", nm);
+    drawHeader(a, false);
+    int y = LIST_TOP;
+    auto line = [&](const char* t, bool bold) { label(0, y, W, 18, t, bold); y += 20; };
+    const unsigned pct = g_rtSent ? (unsigned)((g_rtLost * 100 + g_rtSent / 2) / g_rtSent) : 0;
+    snprintf(a, sizeof(a), "pings %lu  replies %lu", (unsigned long)g_rtSent, (unsigned long)g_rtGot); line(a, true);
+    snprintf(a, sizeof(a), "lost %lu (%u%%)  every %u s", (unsigned long)g_rtLost, pct, (unsigned)g_rtEvery); line(a, false);
+    y += 4;
+    line("Last reply heard here:", false);
+    if (g_rtGot) { snprintf(a, sizeof(a), "%d dBm  SNR %.1f dB", g_rtRssi, g_rtSnr); line(a, true); }
+    else line("-", false);
+    line("They heard our ping:", false);
+    if (g_rtGot) { snprintf(a, sizeof(a), "%d dBm  SNR %.1f dB", g_rtPeerRssi, g_rtPeerSnr); line(a, true); }
+    else line("-", false);
+    snprintf(a, sizeof(a), "their pings heard: %lu", (unsigned long)g_rtHeard); line(a, false);
+    double la, lo;
+    if (gpsFresh() && ownPosition(la, lo)) snprintf(a, sizeof(a), "me %.5f,%.5f", la, lo);
+    else snprintf(a, sizeof(a), "me: no GPS fix (logged as such)");
+    line(a, false);
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "^ stop  1-4: 10/15/30/60 s");
+    g_rtShownAt = millis();
+}
+
 void render() {
     const uint32_t t0 = millis();
     clearRoot();
@@ -7320,6 +7522,7 @@ void render() {
     else if (g_entry == Entry::Name)   renderRename();
     else if (g_wizOpen)                renderWizard();
     else if (g_navOpen)                renderNav();
+    else if (g_rtOpen)                 renderRangeTest();
     else if (g_cardOpen)               renderCard();
     else if (g_libOpen)                renderLibrary();
     else if (g_gameOpen)               renderGame();
@@ -7745,7 +7948,12 @@ void goBack() {
     if (g_navOpen && !entryActive()) { navClose(); return; }
     if (g_navKeysOpen && (mapview::isOpen() || g_libOpen || g_gameOpen) && !entryActive()) { navKeysToggle(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
-    if (g_shareActive && !entryActive()) { g_shareActive = false; g_shareAll = false; toast("Share cancelled"); return; }
+    if (g_rtOpen && !entryActive()) { rtStop(); return; }
+    if (g_shareActive && !entryActive()) {
+        g_shareActive = false; g_shareAll = false; g_pickRt = false;
+        toast("Cancelled");
+        return;
+    }
     if (g_placeOpen && !entryActive()) { g_placeOpen = false; g_fullRefreshReq = true; requestRedraw(); return; }
     if (g_libOpen && !entryActive()) {
         if (g_libReading) { libRemember(); g_libReading = false; requestRedraw(); } else libClose();
@@ -8127,6 +8335,7 @@ void handleKey(const KeyEvent& ev) {
     if (g_libOpen) { libKey(ev); return; }
     if (g_gameOpen) { gameKey(ev); return; }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
+    if (g_rtOpen) { rtKey(ev); return; }
     if (g_navOpen) { navKey(ev); return; }
     if (mapview::isOpen()) { mapKey(ev); return; }
     browseKey(ev);
@@ -8842,6 +9051,16 @@ void handleSerialLine(char* p) {
         uint8_t to[16];
         if (strlen(p + 9) < 32 || !hexToHash(p + 9, to)) { Serial.println("[CARD] shareall <32 hex>"); return; }
         shareAllTo(to);
+        return;
+    }
+    if (!strncmp(p, "rt", 2) && (p[2] == 0 || p[2] == ' ')) {   // rt | rt start <hex> [secs] | rt stop
+        char hx[40] = "";
+        int secs = 0;
+        uint8_t h[16];
+        if (!strcmp(p, "rt stop")) rtStop();
+        else if (!strncmp(p, "rt start ", 9) && sscanf(p + 9, "%39s %d", hx, &secs) >= 1 && hexToHash(hx, h)) rtStart(h, secs);
+        Serial.printf("[RT] on=%d sent=%lu replies=%lu lost=%lu heard=%lu file=%s\n", g_rtOn, (unsigned long)g_rtSent,
+                      (unsigned long)g_rtGot, (unsigned long)g_rtLost, (unsigned long)g_rtHeard, g_rtFile);
         return;
     }
     if (!strncmp(p, "geof", 4) && (p[4] == 0 || p[4] == ' ')) {   // geof | geof add <hex> me|w<n> <m> [rep] | geof clear
@@ -9861,6 +10080,7 @@ void loop() {
     inboundTick();
     trackTick();
     navTick();
+    rtTick();
 
     processKeys();         // again, in case a watcher above took a while
     pollTouch();
