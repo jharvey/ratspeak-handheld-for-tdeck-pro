@@ -17,7 +17,7 @@ key ENTER
 expect 5000 [LOC] show
 wait 2500
 shot loc-b-02-map.png
-key T
+key N
 expect 5000 [MAP] contact
 wait 2500
 shot loc-b-03-contact.png

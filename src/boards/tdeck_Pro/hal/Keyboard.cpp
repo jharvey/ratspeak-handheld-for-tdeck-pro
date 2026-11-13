@@ -355,6 +355,12 @@ void Keyboard::mapKey(uint8_t row, uint8_t col, bool pressed)
 
   if (key == K_ALT) {
     _altHeld = pressed;
+    if (pressed && _symHeld) {          // Alt + SYM together: one event (alt + opt, no key)
+      _event = {};
+      _event.alt = true;
+      _event.opt = true;
+      _hasEvent = true;
+    }
     return;
   }
 
@@ -364,6 +370,12 @@ void Keyboard::mapKey(uint8_t row, uint8_t col, bool pressed)
 
   if (key == K_SYM) {
     _symHeld = pressed;
+    if (pressed && _altHeld) {          // Alt + SYM together: one event (alt + opt, no key)
+      _event = {};
+      _event.alt = true;
+      _event.opt = true;
+      _hasEvent = true;
+    }
     if (pressed)
       Serial.println("[KEY] SYM down");
     else

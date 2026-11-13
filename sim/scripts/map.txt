@@ -2,7 +2,7 @@
 #   python tools/maptiles/make_tiles.py --test --center 43.6532,-79.3832 --radius-km 1.5 --zoom 12-16 --out sim/build/simdata/map/sd
 # Run: run-script.bat scripts\map.txt map
 wait 9000
-key L
+key A
 expect 4000 [MAP] open (GPS)
 wait 1500
 serial map

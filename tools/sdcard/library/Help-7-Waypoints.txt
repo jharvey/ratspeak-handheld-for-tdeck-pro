@@ -1,14 +1,14 @@
 HELP: WAYPOINTS AND PLACES
 
-All on the map (L).
+All on the map (A).
 
-Mark a waypoint: move the map so the spot is in the centre (E S X F), press Q, type a name (or Enter keeps WP1, WP2 ...), Enter.
+Mark a waypoint: move the map so the spot is in the centre (E S X F), press Alt+P, type a name (or Enter keeps WP1, WP2 ...), Enter.
 
-Go to one: N steps through them. A dashed line runs from you to it: "W2 BALLFIELD 2.1km SW". Del twice removes the selected one. List of all: M, S, 1, 9.
+Go to one: P steps through them. A dashed line runs from you to it: "W2 BALLFIELD 2.1km SW". Alt+SYM (Alt and SYM together) twice removes the selected one. List of all: M, S, 1, 9.
 
 Find a place (town, lake, summit):
-1. R, type the start of the name. Add a state to narrow it: "conway nh".
+1. L, type the start of the name. Add a state to narrow it: "conway nh".
 2. Enter shows the 6 nearest matches.
-3. A digit jumps there. Q right after saves it as a waypoint. ^ closes the list.
+3. A digit jumps there. Alt+P right after saves it as a waypoint. ^ closes the list.
 
 Track (breadcrumbs): M, S, 1, 0 (row 10) turns it on; a dotted line shows where you walked. To clear it: M, S, 1, V down to row 11 (Clear track), Enter twice.

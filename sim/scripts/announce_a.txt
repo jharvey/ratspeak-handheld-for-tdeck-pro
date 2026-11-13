@@ -1,5 +1,5 @@
 wait 9000
-key A
+key N
 wait 6000
 devshot device-a.png
 wait 8000

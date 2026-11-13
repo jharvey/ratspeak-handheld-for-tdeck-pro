@@ -11,7 +11,7 @@ expect 3000 [POWER] Balanced
 expect 70000 (no fix), next in 15 min
 key G
 wait 1500
-key L
+key A
 expect 3000 [GPS] visit requested (map)
 wait 1500
 serial map close
@@ -22,7 +22,7 @@ expect 3000 [POWER] Saver
 expect 70000 (no fix), next in 60 min
 key G
 wait 1500
-key L
+key A
 expect 3000 [GPS] map: no visit in this power mode
 wait 7000
 shot keys-01-saver.png
@@ -34,7 +34,7 @@ expect 3000 [POWER] Custom
 expect 70000 (no fix), next in 60 min
 key G
 wait 1500
-key L
+key A
 expect 3000 [GPS] visit requested (map)
 wait 1500
 # K shows the Nav keys card (the map stays usable above it); map keys work with it showing

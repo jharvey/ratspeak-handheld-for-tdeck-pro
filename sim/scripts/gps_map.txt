@@ -13,7 +13,7 @@ expect 70000 (no fix), next in 15 min
 # A key first: after 15 s without input the device sleeps and the waking key is used up.
 key G
 wait 1500
-key L
+key A
 expect 3000 [GPS] visit requested (map)
 expect 3000 [GPS] scheduled visit: receiver on
 wait 7000
@@ -34,7 +34,7 @@ expect 3000 [MAP] closed
 wait 100000
 key G
 wait 1500
-key L
+key A
 expect 3000 [GPS] visit requested (map)
 expect 3000 [MAP] open (last fix)
 wait 7000

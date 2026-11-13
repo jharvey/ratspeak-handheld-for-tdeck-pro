@@ -1,7 +1,7 @@
 # Contacts on the map (tiles near 04095 in build\simdata\cmap\sd, copied from the NAS copy).
 # Alice #1 (5 min old = black disc) and Carol #3 (10 min) at the same spot -> "1" with a "+";
-# Bob #2 2 h old = hollow. T cycles (selected one is drawn on top, footer "#n Name dist dir
-# age"); "2" Enter opens Bob's chat; Contacts > find Alice > L shows her on the map;
+# Bob #2 2 h old = hollow. N cycles (selected one is drawn on top, footer "#n Name dist dir
+# age"); "2" Enter opens Bob's chat; Contacts > L find Alice > A shows her on the map;
 # contact page 4 Map number: Carol -> #1 (Alice takes #3), then "1" Enter opens Carol's chat.
 expect 60000 [BOOT] ready
 serial cpos clear
@@ -18,17 +18,17 @@ expect 3000 [LOC] Carol at
 serial map 43.66 -70.90 10
 wait 3000
 shot cmap-01-all.png
-key T
+key N
 expect 5000 [MAP] contact #1 Alice
 wait 2500
 shot cmap-02-alice.png
-key T
+key N
 expect 5000 [MAP] contact #3 Carol
 wait 2500
 shot cmap-03-carol-on-top.png
-key T
+key N
 expect 5000 [MAP] contact #2 Bob
-key T
+key N
 expect 5000 [MAP] contact: none
 key 2
 wait 800
@@ -40,12 +40,12 @@ key BACK
 wait 1500
 key C
 wait 1500
-key F
+key L
 type Alice
 key ENTER
 wait 1000
 key 0
-key L
+key A
 expect 5000 [MAP] contact #1 Alice
 wait 2000
 shot cmap-05-from-list.png
@@ -55,7 +55,7 @@ key BACK
 wait 800
 key C
 wait 1500
-key F
+key L
 type Carol
 key ENTER
 wait 1000

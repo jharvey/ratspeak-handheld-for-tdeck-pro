@@ -2,7 +2,7 @@ HELP: ADD A CONTACT
 
 New radios are not added to Contacts by themselves. You save one by giving it a name.
 
-1. Both radios announce: H (Home), pick Announce ID, Enter. Do it on both units.
+1. Both radios announce: H (Home), then N (Announce ID). Do it on both units.
 2. P opens Peers: every radio heard, with signal (dBm) and minutes since it was heard.
 3. Pick the new radio, Enter. The contact page opens: 1 Message, 2 Rename, 3 Share, 4 Map number.
 4. Press 2, type a name, Enter. Now it is in Contacts (C). Peers marks saved radios with *.

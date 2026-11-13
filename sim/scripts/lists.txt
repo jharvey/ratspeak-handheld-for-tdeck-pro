@@ -51,7 +51,7 @@ key B
 key B
 wait 1000
 # Find: type "ar" -> Charlie, Oscar (names or hashes; hex has no "r").
-key F
+key L
 wait 500
 type ar
 wait 1000
@@ -69,7 +69,7 @@ wait 800
 key BACK
 wait 1000
 shot lists-07-cleared.png
-key F
+key L
 type zzz
 wait 800
 shot lists-08-nomatch.png

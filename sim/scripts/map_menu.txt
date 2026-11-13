@@ -7,7 +7,7 @@ wait 1500
 key M
 wait 1000
 shot map-01-menu.png
-key L
+key A
 expect 5000 [MAP] open (card home)
 wait 2000
 shot map-02-home.png
@@ -25,6 +25,6 @@ shot map-04-zoom12.png
 key Z
 wait 2000
 shot map-05-zoom13-none.png
-key L
+key A
 wait 500
 quit

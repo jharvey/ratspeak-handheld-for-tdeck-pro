@@ -1,12 +1,12 @@
-# Place search: map R, type the start of a name, Enter -> nearest 6 matches; a digit
-# jumps there; Q right after saves it as a waypoint with that name. Index (USGS GNIS)
+# Place search: map L, type the start of a name, Enter -> nearest 6 matches; a digit
+# jumps there; Alt+P right after saves it as a waypoint with that name. Index (USGS GNIS)
 # in build\simdata\cmap\sd\ratdeckpro\places (tools\places\make_places.py).
 expect 60000 [BOOT] ready
 serial wpt clear
 wait 300
 serial map 43.64 -70.92 11
 wait 3000
-key R
+key L
 type SEBAGO
 wait 300
 shot place-01-typing.png
@@ -18,12 +18,12 @@ key 1
 expect 3000 [PLACE] go Sebago
 wait 2500
 shot place-03-there.png
-key Q
+key ALT+P
 wait 500
 key ENTER
 expect 3000 [WPT] W1 Sebago
 wait 1000
-key R
+key L
 type KNOXVILLE TN
 key ENTER
 expect 10000 [PLACE] "KNOXVILLE" in TN:

@@ -7,18 +7,21 @@ M = Menu
 I = Inbox
 C = Contacts
 P = Peers (also M then P)
-L = Atlas, the offline map (its own keys: K on the map)
+A = Atlas, the offline map (its own keys: K on the map)
 H = Home
 R = Library (in the Menu)
 G / V = up / down
 N / B = next / previous page
-F = find in a list
+L = locate: find in a list, a place on the map, text in a Library file
+N on Home = Announce ID
 K = the keys card on the Atlas and in the Library (also the Nav keys tab)
 0-9 = pick a row by its number
 Enter = open, send, save
 MIC = full screen refresh
 
-Reading a Library file: Space or N next page, B back a page, E / X half a page up / down, W wrap on/off (tables open with wrap off), S / F move left / right when wrap is off, D back to the left edge, R find, ^ back to the list.
+Reading a Library file: Space or N next page, B back a page, E / X half a page up / down, W wrap on/off (tables open with wrap off), S / F move left / right when wrap is off, D back to the left edge, L find, ^ back to the list.
+
+Rat Trap (Library, last row) uses the map keys: E S X F move, D or Enter opens, Alt+P marks a trap, Q new game, K the keys.
 
 While typing: Alt + key changes case, SYM gives digits and symbols. Hotkeys do not work while typing: press ^ first.
 

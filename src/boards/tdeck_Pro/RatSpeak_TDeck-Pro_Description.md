@@ -190,12 +190,13 @@ changes. While USB power is plugged in the device runs **Full** anyway (row 5).
 | **I** | Inbox | types letter |
 | **C** | Contacts | types letter |
 | **P** | Peers | types letter |
-| **L** | Atlas (offline map; on a list row with a position: that contact) | types letter |
-| **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox · At**l**as · Lib**r**ary) | does **not** open the menu |
+| **A** | Atlas (offline map; on a list row with a position: that contact). Nothing on the Atlas itself | types letter |
+| **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox · **A**tlas · Lib**r**ary) | does **not** open the menu |
 | **H** | Home | — |
 | **G** / **V** | Up / down | — |
-| **N** / **B** | Lists: next / previous page | — |
-| **F** | Lists: find (type to filter) | — |
+| **N** / **B** | Lists: next / previous page. Home: **N** = Announce ID | — |
+| **L** | Locate (find): lists (type to filter), Atlas (a place), Library reader (text) | — |
+| **K** | Atlas, Library, Rat Trap: the keys card (also the middle tab "Nav / keys") | — |
 | **1**–**9**, **0** | Lists: select row on the page. Settings: select **and** activate row 1–9, **0** = row 10 | digits (numeric fields) |
 | **Enter** | Activate / open | Send / save |
 | **Alt** | — | Case shift while typing |
@@ -254,7 +255,7 @@ stays, with only what the owner typed and the radio's name / address.
 ### 4.2 Home
 ![Home screen](images/screen-home.png)
 
-Status tiles, **Announce ID**, device name. Bottom **Contact | Atlas | Inbox** (Atlas = the offline map, **L**; Peers is **P** or **M → P**).
+Status tiles, **Announce ID**, device name. Bottom **Contact | Atlas | Inbox** (Atlas = the offline map, **A**; Peers is **P** or **M → P**). **N** announces (Announce ID).
 
 ### 4.3 Home with MENU overlay
 ![Home with MENU overlay](images/screen-home-menu.png)
@@ -263,7 +264,7 @@ Status tiles, **Announce ID**, device name. Bottom **Contact | Atlas | Inbox** (
 ![Contacts](images/screen-contacts.png)
 
 **0: MyID** = this radio. **Enter** on a row opens the contact page (Message / Rename /
-Share, §1.2a). Long lists: pages and **F** find (§1.2b).
+Share, §1.2a). Long lists: pages and **L** find (§1.2b).
 
 ### 4.5 Inbox (list)
 ![Inbox list](images/screen-inbox.png)
@@ -700,7 +701,7 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
 
 ### 8.1 Offline map — Works (simulator; COM9 with test tiles on its card, 2026-11-11)
 
-The **Atlas** tab in the bottom bar, **L** on any screen, or **M → Atlas** (MENU row 6, hotkey **L**). The map is centred
+The **Atlas** tab in the bottom bar, **A** on any screen, or **M → Atlas** (MENU row 6, hotkey **A**). The map is centred
 on the newest position: a fresh GPS fix, else the last fix (however old), else the saved
 position (S.2), and follows the own position until you pan (a fix that arrives while the
 map is open moves it there). With none of these, it opens on the card's start view `maps/home.txt` (`lat lon zoom`, written by
@@ -734,27 +735,27 @@ number**, type 1–99, Enter) - e.g. your partner = 1, so they win at a shared s
 had that number takes the old one. Unset: the lowest free number when their first
 position arrives. On the map:
 
-- **T** steps through them, newest first, centring each; the bottom line reads
+- **N** steps through them, newest first, centring each; the bottom line reads
   `#1 Alice 12.4km NE 8m ago` (distance / direction from you, age of the position).
-  **T** after the last one, **D** or **Enter**: back to your own position.
-- On screen: for 6 s after the map opens the bottom line shows the keys
-  (`T: 3 contacts  Z/X zoom`); while a contact is selected the top line reads
-  `T next  #+Enter chat  C me`.
+  **N** after the last one, **D** or **Enter**: back to your own position.
+- On screen: for 6 s after the map opens the bottom line shows
+  `K = nav keys  N 3 contacts`; while a contact is selected the top line reads
+  `N next  #+Enter chat  D me`.
 - **Type the number, Enter** (e.g. `2` Enter): opens that contact's chat.
 
-From a list (Inbox / Contacts / Peers) **L** on a row shows that contact on the map; in
+From a list (Inbox / Contacts / Peers) **A** on a row shows that contact on the map; in
 a chat, **MIC → 5 Show them on the map**, or **Enter** on the empty draft under a received
 location. Markers also show on the map idle screen. Console `cpos` (`cpos clear`).
 
-**Waypoints:** on the map **Q** marks one at the map centre: type a name (the default
-`WP3` goes on the first key; Enter alone keeps it), Enter. **N** steps through them: the map
+**Waypoints:** on the map **Alt+P** marks one at the map centre: type a name (the default
+`WP3` goes on the first key; Enter alone keeps it), Enter. **P** steps through them: the map
 centres on it, the diamond is selected, a dashed line runs from your position to it and the
-bottom line reads `W2 BALLFIELD 2.1km SW`. **Del** twice removes the selected one. Up to 32
+bottom line reads `W2 BALLFIELD 2.1km SW`. **Alt+SYM** twice (within 3 s) removes the selected one. Up to 32
 (NVS rs_wpt); **S.1.9 Waypoints** lists them with distance (Enter = show on the map).
 
-**Find a place:** on the map **R**, type the start of a name (add a state to narrow it:
+**Find a place:** on the map **L** (locate), type the start of a name (add a state to narrow it:
 `knoxville tn`), Enter: the 6 nearest matches with kind and distance (`2 Knoxville, PA /
-town 246km SE`); a digit jumps there; **Q** right after saves it as a waypoint with that
+town 246km SE`); a digit jumps there; **Alt+P** right after saves it as a waypoint with that
 name; **^** closes the list. Index on the card: `<SD>/ratdeckpro/places/<letter>.txt`
 from USGS GNIS (public domain): every US town plus summits, lakes, islands, bays, falls,
 gaps, capes and beaches for the route states (252k places, 9.2 MB):
@@ -780,10 +781,11 @@ Tiles can go onto the card over USB with the card left in the unit:
 `tools/maptiles/push_tiles.py` (console `sdput`, about 7 tiles/s; `sdls` lists a folder). Atlas keys (2026-11-13):
 **E S X F** move up / left / down / right half a screen (a diamond around D), **D** or
 **Enter** back to your position (following again), **Z** zoom in, **W** zoom out (wider),
-**T** next contact, **R** find a place, **Q** add a waypoint, **N** next waypoint, **Del**
-twice removes it, a number + **Enter** opens that contact's chat, **M** the MENU, **Shift
-(^)** closes. **C I P H** leave the map for Contacts / Inbox / Peers / Home (L does nothing
-there). **K** (or the middle bottom tab, which reads "Nav / keys" on the Atlas) shows a card
+**N** next contact, **P** next waypoint, **Alt+P** add a waypoint, **Alt+SYM** (twice) delete
+the selected waypoint, **L** locate a place, a number + **Enter** opens that contact's chat,
+**M** the MENU, **Shift (^)** closes. **C I H** leave the map for Contacts / Inbox / Home;
+Peers is **M → P** from the Atlas (P is next waypoint there). **A** does nothing on the Atlas
+(next to S: a slip while panning is harmless). **K** (or the middle bottom tab, which reads "Nav / keys" on the Atlas) shows a card
 with these keys under the map; the map stays usable above it; K, the tab or ^ hide it. The
 hint when the map opens says "K = nav keys". Bottom bar elsewhere: Contact | Atlas | Inbox
 with maps on the card, Contact | Peers | Inbox without. The header shows
@@ -810,7 +812,7 @@ tiles (z14–15) to the card (2.1 s).
 GhostNet / JS8Call notes, NOAA weather radio list ...), sorted by name. A digit or **Enter**
 opens one: pages, header `p3 12% name` (`p3 12% >24 name` when panned); **N** / **V** /
 **Space** next page, **B** / **G** previous, **E** / **X** half a page (6 lines) up / down,
-**W** wrap on / off, **R** find (any case; jumps to the next match after this page), **^**
+**W** wrap on / off, **L** find (any case; jumps to the next match after this page), **^**
 back to the list, again to close. Wrap is on for text and off for `.csv`: with wrap off each
 file line stays whole on one screen line (the first 255 characters), cut at the screen edge;
 **S** / **F** pan left / right half a screen and **D** goes back to the left edge. **K**, or

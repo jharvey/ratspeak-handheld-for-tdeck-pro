@@ -2022,7 +2022,7 @@ ScreenId g_screen = SCR_HOME;
 constexpr int  kMenuCount = 7, kMenuMap = 5, kMenuLib = 6;
 const ScreenId kMenuScreens[kMenuCount] = {SCR_HOME, SCR_SETTINGS, SCR_CONTACTS, SCR_PEERS, SCR_INBOX, SCR_HOME, SCR_HOME};
 const char*    kMenuLabels[kMenuCount]  = {"Home", "Settings", "Contacts", "Peers", "Inbox", "Atlas", "Library"};
-const char     kMenuKeys[kMenuCount]    = {'H', 'S', 'C', 'P', 'I', 'L', 'R'};
+const char     kMenuKeys[kMenuCount]    = {'H', 'S', 'C', 'P', 'I', 'A', 'R'};
 bool g_menuOpen = false;
 int  g_menuSel = 0;
 
@@ -3077,7 +3077,7 @@ void buildSettingsRows(Page p) {
             srow(RK_INFO, "GPS position", "%s", pos);
             if (ashareActive()) srow(RK_ACTION, "Location auto-share", "%d on; Enter = stop all", ashareActive());
             else srow(RK_INFO, "Location auto-share", "off (set in a chat: MIC)");
-            srow(RK_MENU, "Waypoints", "%d saved (map: Q add, N next)", g_wptCount);
+            srow(RK_MENU, "Waypoints", "%d saved (map: Alt+P add, P next)", g_wptCount);
             srow(RK_TOGGLE, "Track (breadcrumbs)", "%s%s", g_cfg.trackOn ? "ON" : "OFF",
                  g_cfg.trackOn ? ", GPS wakes ~2 min" : "");
             srow(RK_ACTION, "Clear track", "%d points%s", g_trackN, g_trackLoaded ? "" : " (on SD)");
@@ -3089,7 +3089,7 @@ void buildSettingsRows(Page p) {
     case PG_WPTS: {
         double la = 0, lo = 0;
         const bool own = ownPosition(la, lo);
-        if (!g_wptCount) srow(RK_INFO, "No waypoints yet", "map: Q marks one at the centre");
+        if (!g_wptCount) srow(RK_INFO, "No waypoints yet", "map: Alt+P marks one at the centre");
         for (int i = 0; i < g_wptCount && i < MAX_SET_ROWS; i++) {
             char nm[24], d[24];
             snprintf(nm, sizeof(nm), "W%d %s", i + 1, g_wpt[i].name);
@@ -4189,7 +4189,7 @@ void renderHome() {
     text(4, sy + 16, ann);
     const int ay = sy + 34;
     box(0, ay, W, ANN_H, 2);
-    label(0, ay, W, ANN_H, "Announce ID", true, browseMode() ? 'A' : 0);
+    label(0, ay, W, ANN_H, "Announce ID", true, browseMode() ? 'N' : 0);
     addHit(0, ay, W, ANN_H, H_ANNOUNCE);
     int ny = ay + ANN_H + 4;
     if (ny > BOT_TOP - 18) ny = BOT_TOP - 18;
@@ -4325,32 +4325,44 @@ void drawTopBar() {
 // A reference card of the Atlas keys over the lower part of the map; the map stays usable
 // above it, so the keys can be tried with the card showing. K / the tab / ^ hide it.
 // Atlas letters (also used by mapKey and wptMapKey).
-constexpr char kKeyNav = 'K', kKeyFind = 'R', kKeyWptAdd = 'Q', kKeyWptNext = 'N', kKeyContact = 'T';
+// Alt+P adds a waypoint (and marks a trap in the game); Alt+SYM deletes the selected waypoint.
+constexpr char kKeyNav = 'K', kKeyFind = 'L', kKeyWpt = 'P', kKeyContact = 'N';
+bool isAltSym(const KeyEvent& ev) {
+    return ev.alt && ev.opt && !ev.character && !ev.enter && !ev.del && !ev.space && !ev.fn;
+}
 struct NavKeyRow { const char* keys; const char* what; };
-const NavKeyRow kAtlasKeys[] = {                 // two columns of 6, the 12 px font
+const NavKeyRow kAtlasKeys[] = {                 // two columns of 7, the 12 px font
     {"E" LV_SYMBOL_UP " S" LV_SYMBOL_LEFT " X" LV_SYMBOL_DOWN " F" LV_SYMBOL_RIGHT, ""},
-    {"D", "back to me"},     {"Z", "zoom in"},       {"W", "zoom out"},
-    {"K", "hide keys"},      {"M ^", "menu, close"},
-    {"Q", "add waypoint"},   {"N", "next waypoint"}, {"T", "next contact"},
-    {"R", "find place"},     {"Del Del", "remove"},  {"12 Enter", "chat #12"},
+    {"D", "centre on me"},   {"Z", "zoom in"},       {"W", "zoom out"},
+    {"L", "locate a place"}, {"K", "hide keys"},     {"M ^", "menu, close"},
+    {"N", "next contact"},   {"P", "next waypoint"}, {"Alt+P", "add waypoint"},
+    {"Alt+SYM", "delete waypt"}, {"12 Enter", "chat #12"}, {"M P", "Peers"},
+    {"C I H", "leave the map"},
 };
 // Library reader and list (K there too).
 const NavKeyRow kReaderKeys[] = {
     {"Space N", "next page"}, {"B", "previous page"}, {"E X", "half page"},
-    {"W", "wrap on / off"},   {"S F", "pan left/right"}, {"D", "left edge"},
-    {"R", "find"},            {"K", "hide keys"},      {"M", "menu"},
-    {"^", "back to the list"}, {"", ""},              {"", ""},
+    {"W", "wrap on / off"},   {"S F", "pan left/right"}, {"D", "left edge"}, {"", ""},
+    {"L", "locate (find)"},   {"K", "hide keys"},      {"M", "menu"},
+    {"^", "back to the list"}, {"", ""},              {"", ""}, {"", ""},
 };
 const NavKeyRow kLibListKeys[] = {
     {"1-4", "open that row"}, {"Enter", "open selected"}, {"G V", "up / down"},
-    {"K", "hide keys"},       {"", ""},                {"", ""},
+    {"K", "hide keys"},       {"", ""},                {"", ""}, {"", ""},
     {"M", "menu"},            {"^", "close"},          {"", ""},
-    {"", ""},                 {"", ""},                {"", ""},
+    {"", ""},                 {"", ""},                {"", ""}, {"", ""},
 };
-constexpr int kNavRowH = 14, kNavRows = 6;
+const NavKeyRow kGameKeys[] = {
+    {"E" LV_SYMBOL_UP " S" LV_SYMBOL_LEFT " X" LV_SYMBOL_DOWN " F" LV_SYMBOL_RIGHT, ""},
+    {"D Enter", "open the square"}, {"Alt+P", "mark a trap"}, {"Q", "new game"},
+    {"K", "hide keys"},       {"", ""},                {"", ""},
+    {"M", "menu"},            {"^", "back to Library"}, {"", ""},
+    {"", ""},                 {"", ""},                {"", ""}, {"", ""},
+};
+constexpr int kNavRowH = 14, kNavRows = 7;
 constexpr int kNavH = kNavRows * kNavRowH + 6;   // 90 px: the map keeps the rest
 bool g_navKeysOpen = false;
-extern bool g_libOpen;
+extern bool g_libOpen, g_gameOpen;
 void mapKey(const KeyEvent& ev);
 
 void navKeysToggle() {
@@ -4405,13 +4417,13 @@ void drawBottomBar() {
     navBox(0, BOT_TOP, BOT_C_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, hk ? 'C' : 0);
     // Middle tab: "Nav / keys" (K) on the Atlas, where it shows the key card; else Atlas (L,
     // the offline map) when the card has maps, else Peers (P). L and P work either way.
-    if (mapview::isOpen() || g_libOpen) {
+    if (mapview::isOpen() || g_libOpen || g_gameOpen) {
         box(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, g_navKeysOpen ? 3 : 1);
         label(BOT_C_W, BOT_TOP + 2, BOT_A_W, 16, "Nav", g_navKeysOpen);
         label(BOT_C_W, BOT_TOP + 19, BOT_A_W, 16, "keys", g_navKeysOpen, kKeyNav);
         addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_NAVKEYS);
     } else if (g_haveMaps) {
-        navBox(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, "Atlas", false, hk ? 'L' : 0);
+        navBox(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, "Atlas", false, hk ? 'A' : 0);
         if (hk) addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_MENU_GO, kMenuMap);
     } else {
         navBox(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, "Peers", g_screen == SCR_PEERS, hk ? 'P' : 0);
@@ -4534,7 +4546,7 @@ int cposWithPos();
 // Key hints on the map's bottom line for 6 s after it opens (keys are not written anywhere).
 void mapKeyHint() {
     const int n = cposWithPos();
-    if (n) toast("K = nav keys  T %d contact%s", n, n == 1 ? "" : "s");   // fits 240 px
+    if (n) toast("K = nav keys  N %d contact%s", n, n == 1 ? "" : "s");   // fits 240 px
     else toast("K = nav keys");
     g_toastUntil = millis() + 6000;
 }
@@ -4681,8 +4693,8 @@ constexpr int kPlaceShowFwd = 6;
 void renderMapHeader() {
     char st[64];
     if (g_placeOpen) snprintf(st, sizeof(st), "Places: 1-%d go  ^ back", g_placeN < kPlaceShowFwd ? g_placeN : kPlaceShowFwd);
-    else if (g_mapSel >= 0) snprintf(st, sizeof(st), "T next  #+Enter chat  D me");   // what to press
-    else if (g_wptSel >= 0) snprintf(st, sizeof(st), "N next  Del remove  D me");
+    else if (g_mapSel >= 0) snprintf(st, sizeof(st), "N next  #+Enter chat  D me");   // what to press
+    else if (g_wptSel >= 0) snprintf(st, sizeof(st), "P next  Alt+SYM del  D me");
     else mapview::status(st, sizeof(st));
     drawHeader(st, false);
     char pos[56];
@@ -5389,7 +5401,7 @@ void wptSelect(int i) {
 }
 
 void wptCycle() {
-    if (!g_wptCount) { toast("No waypoints: Q marks one"); return; }
+    if (!g_wptCount) { toast("No waypoints: Alt+P marks one"); return; }
     const int next = g_wptSel + 1;
     if (next >= g_wptCount) {                // after the last: own position
         g_wptSel = -1;
@@ -5644,12 +5656,13 @@ void renderPlaces() {
 // Map keys for waypoints. Returns true if used.
 bool wptMapKey(const KeyEvent& ev) {
     const char c = (char)toupper((unsigned char)ev.character);
-    if (c == kKeyWptAdd) { wptStartMark(); return true; }
-    if (c == kKeyWptNext) { wptCycle(); return true; }
-    if (c == 'T') g_wptSel = -1;             // contacts take over
-    if (ev.del && g_wptSel >= 0) {
+    if (c == kKeyWpt && ev.alt) { wptStartMark(); return true; }   // Alt+P: add one here
+    if (c == kKeyWpt) { wptCycle(); return true; }                 // P: next waypoint
+    if (c == kKeyContact) g_wptSel = -1;     // contacts take over
+    if (isAltSym(ev)) {                      // Alt+SYM twice within 3 s: delete the selected one
+        if (g_wptSel < 0) { toast("P selects a waypoint first"); return true; }
         if (g_wptDelAt && millis() - g_wptDelAt < 3000) { g_wptDelAt = 0; wptRemove(g_wptSel); toast("Waypoint removed"); }
-        else { g_wptDelAt = millis(); toast("Del again: remove W%d", g_wptSel + 1); }
+        else { g_wptDelAt = millis(); toast("Alt+SYM again: remove W%d", g_wptSel + 1); }
         return true;
     }
     if (c == 'D' || ev.enter) g_wptSel = -1;
@@ -6047,7 +6060,7 @@ void libKey(const KeyEvent& ev) {
         else if (c == 'B' || c == 'G') libPage(-1);
         else if (c == 'X') libHalf(+1);
         else if (c == 'E') libHalf(-1);
-        else if (c == 'R') startEntry(Entry::LibFind);
+        else if (c == 'L') startEntry(Entry::LibFind);
         else if (c == 'W') {
             g_libWrap = !g_libWrap;
             g_libCol = 0;
@@ -6123,15 +6136,16 @@ void renderLibrary() {
         snprintf(t, sizeof(t), "Find: %s_", g_buf);
         label(0, FOOT_Y - 1, W, FOOT_H, t);
     } else {
-        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "K keys  R find  ^ list");
+        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "K keys  L find  ^ list");
     }
     if (g_navKeysOpen) drawNavKeys(FOOT_Y - kNavH, kReaderKeys);
 }
 
 // ---- Rat Trap (a small puzzle game, MENU -> Library, last row) -----------------------
 // A 10 x 9 field hides 12 traps. Open every safe square; a number tells how many traps
-// touch that square (8 neighbours). W A S D move, Enter / Space opens, F marks a trap,
-// N new game, ^ back. The first square opened is never a trap. Turn-based, so the e-ink
+// touch that square (8 neighbours). The Atlas keys: E S X F move, D (Enter / Space) opens,
+// Alt+P marks a trap, Q new game, K the keys card,
+// ^ back. The first square opened is never a trap. Turn-based, so the e-ink
 // only refreshes on a key. Not offered on battery below 25 % (messages come first).
 constexpr int kGameCols = 10, kGameRows = 9, kGameTraps = 12, kGameCell = 22;
 constexpr int kGameX = (W - kGameCols * kGameCell) / 2;
@@ -6225,7 +6239,7 @@ bool gameOpen() {
     return true;
 }
 
-void gameClose() { g_gameOpen = false; g_fullRefreshReq = true; requestRedraw(); }
+void gameClose() { g_gameOpen = false; g_navKeysOpen = false; g_fullRefreshReq = true; requestRedraw(); }
 
 void gameDig() {
     if (g_gameOver) return;
@@ -6251,16 +6265,18 @@ void gameDig() {
     }
 }
 
+// The Atlas keys: E S X F move, D (or Enter / Space) opens, Alt+P marks, Q new game, K keys.
 void gameKey(const KeyEvent& ev) {
     const char c = (char)toupper((unsigned char)ev.character);
     if (c == 'M') { gameClose(); openMenu(); return; }
-    if (c == 'N') { gameNew(); return; }
-    if (c == 'W' && g_gameCy > 0) g_gameCy--;
-    else if (c == 'S' && g_gameCy < kGameRows - 1) g_gameCy++;
-    else if (c == 'A' && g_gameCx > 0) g_gameCx--;
-    else if (c == 'D' && g_gameCx < kGameCols - 1) g_gameCx++;
-    else if (ev.enter || ev.space) gameDig();
-    else if (c == 'F' && !g_gameOver) {
+    if (c == kKeyNav) { navKeysToggle(); return; }
+    if (c == 'Q') { gameNew(); return; }
+    if (c == 'E' && g_gameCy > 0) g_gameCy--;
+    else if (c == 'X' && g_gameCy < kGameRows - 1) g_gameCy++;
+    else if (c == 'S' && g_gameCx > 0) g_gameCx--;
+    else if (c == 'F' && g_gameCx < kGameCols - 1) g_gameCx++;
+    else if (c == 'D' || ev.enter || ev.space) gameDig();
+    else if (c == kKeyWpt && ev.alt && !g_gameOver) {
         uint8_t& cell = g_gameCell[g_gameCy][g_gameCx];
         if (!(cell & GC_OPEN)) { cell ^= GC_FLAG; g_gameFlags += (cell & GC_FLAG) ? 1 : -1; }
     } else return;
@@ -6294,10 +6310,11 @@ void renderGame() {
     box(0, FOOT_Y, W, FOOT_H, 1);
     char foot[48];
     if (g_toast[0]) snprintf(foot, sizeof(foot), "%s", g_toast);
-    else if (g_gameWon) snprintf(foot, sizeof(foot), "Cleared! best %lus  N new", (unsigned long)g_gameBest);
-    else if (g_gameOver) snprintf(foot, sizeof(foot), "Trapped!  N new game  ^ back");
-    else snprintf(foot, sizeof(foot), "WASD  Enter open  F mark");
+    else if (g_gameWon) snprintf(foot, sizeof(foot), "Cleared! best %lus  Q new", (unsigned long)g_gameBest);
+    else if (g_gameOver) snprintf(foot, sizeof(foot), "Trapped!  Q new game  ^ back");
+    else snprintf(foot, sizeof(foot), "K keys  D open  Alt+P mark");
     label(0, FOOT_Y - 1, W, FOOT_H, foot);
+    if (g_navKeysOpen) drawNavKeys(FOOT_Y - kNavH, kGameKeys);
 }
 
 // ---- Contact page + share picker ----------------------------------------------------
@@ -7186,7 +7203,7 @@ void cancelEntry() {
 
 void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
-    if (g_navKeysOpen && (mapview::isOpen() || g_libOpen) && !entryActive()) { navKeysToggle(); return; }
+    if (g_navKeysOpen && (mapview::isOpen() || g_libOpen || g_gameOpen) && !entryActive()) { navKeysToggle(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
     if (g_shareActive && !entryActive()) { g_shareActive = false; g_shareAll = false; toast("Share cancelled"); return; }
     if (g_placeOpen && !entryActive()) { g_placeOpen = false; g_fullRefreshReq = true; requestRedraw(); return; }
@@ -7533,19 +7550,19 @@ void browseKey(const KeyEvent& ev) {
         case 'C': goScreen(SCR_CONTACTS); break;
         case 'P': goScreen(SCR_PEERS); break;
         case 'I': goScreen(SCR_INBOX); break;
-        case 'A':
-            if (g_screen == SCR_HOME) activateCurrent();
-            break;
-        case 'L':                                   // map; on a list row with a known position: there
+        case 'A':                                   // Atlas; on a list row with a known position: there
             if (isListScreen(g_screen) && g_listSel < g_rowCount && cposFind(g_rows[g_listSel].peer) >= 0 &&
                 g_cpos[cposFind(g_rows[g_listSel].peer)].hasPos)
                 mapShowContact(g_rows[g_listSel].peer);
             else openMap();
             break;
-        case 'F':                                   // find: type to filter the list
+        case 'L':                                   // locate: type to filter the list
             if (isListScreen(g_screen)) { startEntry(Entry::Search, g_filter); }
             break;
-        case 'N': pageJump(+1); break;
+        case 'N':                                   // Home: Announce ID; lists: next page
+            if (g_screen == SCR_HOME) activateCurrent();
+            else pageJump(+1);
+            break;
         case 'B': pageJump(-1); break;
         default: break;
     }
@@ -7574,22 +7591,23 @@ void handleKey(const KeyEvent& ev) {
     browseKey(ev);
 }
 
-// A key on the Atlas. Navigation letters leave the map like everywhere else (M menu,
-// C contacts, I inbox, P peers, H home); L does nothing here (already on the Atlas).
+// A key on the Atlas. M C I H leave the map like everywhere else (M menu, C contacts,
+// I inbox, H home); P is next waypoint here (Peers: M then P). A does nothing (it is next to
+// S, so a slip while panning is harmless).
 void mapKey(const KeyEvent& ev) {
     const char mc = (char)toupper((unsigned char)ev.character);
     if (g_placeOpen) { placeKey(ev); return; }            // place results list (digits = go)
     if (mapNumberKey(ev)) return;                         // "12" Enter: open chat #12
     if (mc == kKeyNav) { navKeysToggle(); return; }
     if (mc == 'M') { openMenu(); return; }
-    if (mc == 'C' || mc == 'I' || mc == 'P' || mc == 'H') {
+    if (mc == 'C' || mc == 'I' || mc == 'H') {
         closeMap();
-        goScreen(mc == 'C' ? SCR_CONTACTS : mc == 'I' ? SCR_INBOX : mc == 'P' ? SCR_PEERS : SCR_HOME);
+        goScreen(mc == 'C' ? SCR_CONTACTS : mc == 'I' ? SCR_INBOX : SCR_HOME);
         return;
     }
-    if (mc == 'L') return;
-    if (mc == kKeyFind) { startEntry(Entry::PlaceFind); return; }   // find a place
-    if (wptMapKey(ev)) return;                            // Q add, N next waypoint, Del
+    if (mc == 'A') return;
+    if (mc == kKeyFind) { startEntry(Entry::PlaceFind); return; }   // locate a place
+    if (wptMapKey(ev)) return;                            // P next / Alt+P add / Alt+SYM delete
     if (mc == kKeyContact) { mapCycleContact(); return; } // next contact's last position
     if (mc == 'D' || ev.enter) g_mapSel = -1;             // back to own position
     if (mapview::key(ev.character, ev.enter)) requestRedraw();

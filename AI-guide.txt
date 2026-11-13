@@ -30,6 +30,10 @@ START HERE (handoff 2026-11-11)
   battery or charge-only cable: check its screen, try a known data cable, then "pw".
 - Serial probes: set DTR=1/RTS=0 BEFORE opening the port; toggling them after open resets
   the unit (COM3/COM5 then need ~4 min to boot).
+- Keys (2026-11-13, user): always-navigate M C I A P H (A = Atlas, was L; P on the Atlas = next waypoint). L = locate
+  (find) in lists / Atlas / reader. Home N = Announce. Atlas: E S X F, D centre, Z/W, N next contact, P next waypoint,
+  Alt+P add, Alt+SYM (Keyboard.cpp emits alt+opt with no char; isAltSym) delete twice, A nothing, K card (7 rows/col).
+  Rat Trap: E S X F, D/Enter open, Alt+P mark, Q new, K card.
 - Setup wizard (2026-11-13): g_wizNeeded at loadConfig (rs_ui without idleMode = fresh; wizDone key absent = done);
   wizStart/renderWizard/wizKey/wizPick (WZ_* steps), digits pick, Enter next, ^ back, 0 skip. g_cfg.clock12 (fmtTime),
   g_cfg.simple. shareAllTo() (cards via sendOrQueue), contactsExport/Import (contacts.txt), wizCardIn in
