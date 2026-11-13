@@ -559,8 +559,11 @@ BatLogSample g_batLog[kBatLogCap];
 uint16_t g_batLogHead = 0, g_batLogCount = 0;
 bool g_batLogInternal = false, g_batLogSd = false;
 
+void mapReadDone();
+
 void sdUnmount() {
     g_batLogSd = false;
+    mapReadDone();
     if (g_sdMounted) { g_sdStore.end(); g_sdMounted = false; }
     snprintf(g_sdStatus, sizeof(g_sdStatus), "not mounted");
     Serial.println("[SD] unmounted");
@@ -4252,6 +4255,9 @@ void drawMenuOverlay() {
 
 // ---- Offline map (MapView.cpp; tiles from the SD card) ----------------------------------
 bool g_mapSdTried = false;
+File g_mapFile;                  // pack file kept open between reads
+char g_mapFilePath[80] = "";
+uint32_t g_looseChecked = 0, g_looseHave = 0, g_looseAt = 0;   // per zoom: /maps/<z> looked up / exists
 
 size_t mapReadTile(const char* rel, uint32_t offset, uint8_t* buf, size_t len) {
     if (!g_sdMounted) {
@@ -4261,13 +4267,51 @@ size_t mapReadTile(const char* rel, uint32_t offset, uint8_t* buf, size_t len) {
     }
     char path[80];
     snprintf(path, sizeof(path), "%s%s", SD_PATH_ROOT, rel);
-    if (!g_sdStore.exists(path)) return 0;
-    File f = g_sdStore.openFile(path, FILE_READ);
-    if (!f) return 0;
-    size_t n = 0;
-    if (offset < f.size() && (offset == 0 || f.seek(offset))) n = f.read(buf, len);
-    f.close();
-    return n;
+    // Pack files are read many times in a row (header, index, then one piece per tile):
+    // keep the last one open, since a fresh exists() + open costs ~45 ms on the card.
+    const bool pack = strncmp(rel, "/maps/packs/", 12) == 0;
+    if (!pack) {
+        // Loose tile /maps/<z>/<x>/<y>.rmt: a card with packs only has no /maps/<z> folder,
+        // so remember per zoom whether it exists (checked again after 60 s) instead of an
+        // exists() per missing tile (~80 ms each).
+        int z = -1;
+        if (sscanf(rel, "/maps/%d/", &z) == 1 && z >= 0 && z < 32) {
+            uint32_t& checked = g_looseChecked; uint32_t& have = g_looseHave;
+            if (millis() - g_looseAt > 60000) { checked = 0; g_looseAt = millis(); }
+            if (!(checked & 1u << z)) {
+                char dir[48];
+                snprintf(dir, sizeof(dir), "%s/maps/%d", SD_PATH_ROOT, z);
+                checked |= 1u << z;
+                if (g_sdStore.exists(dir)) have |= 1u << z; else have &= ~(1u << z);
+            }
+            if (!(have & 1u << z)) return 0;
+        }
+        if (!g_sdStore.exists(path)) return 0;
+        File f = g_sdStore.openFile(path, FILE_READ);
+        if (!f) return 0;
+        size_t n = 0;
+        if (offset < f.size() && (offset == 0 || f.seek(offset))) n = f.read(buf, len);
+        f.close();
+        return n;
+    }
+    if (!g_mapFile || strcmp(path, g_mapFilePath) != 0) {
+        mapReadDone();
+        if (!g_sdStore.exists(path)) return 0;
+        File f = g_sdStore.openFile(path, FILE_READ);
+        if (!f) return 0;
+        g_mapFile = f;
+        snprintf(g_mapFilePath, sizeof(g_mapFilePath), "%s", path);
+    }
+    if (offset >= g_mapFile.size() || !g_mapFile.seek(offset)) return 0;
+    return g_mapFile.read(buf, len);
+}
+
+// Closes the pack file mapReadTile keeps open (map closed, card unmounted, file rewritten).
+void mapReadDone() {
+    if (g_mapFile) g_mapFile.close();
+    g_mapFile = File();
+    g_mapFilePath[0] = 0;
+    g_looseChecked = 0;                     // files may have changed: look again
 }
 
 void mapPixel(int x, int y, bool black) {
@@ -4341,6 +4385,7 @@ void openMap() {
 
 void closeMap() {
     mapview::close();
+    mapReadDone();
     g_fullRefreshReq = true;
     requestRedraw();
     Serial.println("[MAP] closed");
@@ -6022,7 +6067,7 @@ bool paintIdleMap() {
     mapContactsFeed();                       // contacts' last positions on the idle map too
     mapview::draw(mapPixel, 0, kIdleMapTop, W, kIdleMapBottom - kIdleMapTop, g_cfg.dark);
     g_display.markDirty();
-    if (!wasOpen) mapview::close();
+    if (!wasOpen) { mapview::close(); mapReadDone(); }
     g_idleShownUnread = unread;
     g_idleShownPct = pct;
     g_idleShownMin = millis() / 60000UL;
@@ -6097,7 +6142,7 @@ void goScreen(ScreenId s) {
     g_libOpen = false;
     g_cardOpen = false;
     g_shareActive = false;
-    if (mapview::isOpen()) mapview::close();
+    if (mapview::isOpen()) { mapview::close(); mapReadDone(); }
     if (g_threadOpen) { g_threadOpen = false; }
     if (entryActive()) endEntry();
     if (s == SCR_SETTINGS) {          // doc: M -> S always lands on the Settings root
@@ -7215,6 +7260,7 @@ void sdputStart(const char* args) {
         if (!g_putBuf) { Serial.println("[SDPUT] err no memory"); return; }
     }
     if (!sdMount()) { Serial.println("[SDPUT] err no SD card"); return; }
+    mapReadDone();                              // the file may be one the map holds open
     g_putLen = len; g_putGot = 0; g_putCrc = (uint32_t)crc; g_putAt = millis();
     snprintf(g_putPath, sizeof(g_putPath), "%s%s", SD_PATH_ROOT, rel);
     g_putActive = true;

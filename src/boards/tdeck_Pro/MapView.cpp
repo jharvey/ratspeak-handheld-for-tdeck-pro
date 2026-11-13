@@ -20,8 +20,9 @@ constexpr double kPi = 3.14159265358979323846;
 // Inflated tiles kept in PSRAM (8 KB each, ~1.3 MB): a view touches at most 4, the rest make
 // panning back and forth and zooming in and out again free (no card read, no inflate).
 constexpr int kCacheSlots = 160;
-// Pack files (tools/maptiles/make_packs.py): one per 64x64 tiles of a zoom; their 32 KB
-// index (and RMP2's coder table) is kept for the last few packs used.
+// Pack files (tools/maptiles/make_packs.py): one per 64x64 tiles of a zoom. RMP2's coder
+// table is read when a pack is first used; its 32 KB index one 512-byte row at a time, as
+// tiles of that row are needed. Kept for the last few packs used.
 constexpr int kPackShift = 6, kPackSide = 1 << kPackShift;
 constexpr size_t kPackHeader = 16, kPackIndex = kPackSide * kPackSide * 8;
 constexpr int kCtxCount = 1024;                       // RMP2 context coder (tools/maptiles/rmcodec.py)
@@ -41,6 +42,7 @@ struct Pack {
     bool present = false;        // false = no pack file for this block (loose tiles only)
     bool ctx = false;            // RMP2: context-coded tiles; RMP1: raw deflate
     uint32_t used = 0;
+    uint64_t rows = 0;           // index rows read so far (bit = tile row in the pack)
     uint8_t* head = nullptr;     // kPackHeader + kPackPrior + kPackIndex, allocated once
     const uint8_t* prior() const { return head + kPackHeader; }
     const uint8_t* index() const { return head + kPackHeader + (ctx ? kPackPrior : 0); }
@@ -103,6 +105,7 @@ Pack* pack(int z, uint32_t bx, uint32_t by) {
     if (!victim->head) return nullptr;
     victim->z = z; victim->bx = bx; victim->by = by; victim->used = ++g_clock;
     victim->present = false;
+    victim->rows = 0;
     char path[48];
     packPath(path, sizeof(path), z, bx, by);
     uint8_t* h = victim->head;
@@ -111,8 +114,7 @@ Pack* pack(int z, uint32_t bx, uint32_t by) {
     if ((!v1 && !v2) || h[4] != z || h[5] != kPackShift || rd32(h + 8) != bx || rd32(h + 12) != by)
         return victim;
     victim->ctx = v2;
-    const size_t rest = (v2 ? kPackPrior : 0) + kPackIndex;
-    victim->present = g_reader(path, kPackHeader, h + kPackHeader, rest) == rest;
+    victim->present = !v2 || g_reader(path, kPackHeader, h + kPackHeader, kPackPrior) == kPackPrior;
     return victim;
 }
 
@@ -183,11 +185,19 @@ bool ctxDecode(const uint8_t* src, size_t len, const uint8_t* prior, uint8_t* ou
 bool readPacked(int z, int x, int y, uint8_t* out) {
     Pack* p = pack(z, (uint32_t)x >> kPackShift, (uint32_t)y >> kPackShift);
     if (!p || !p->present) return false;
-    const uint8_t* e = p->index() + ((y & (kPackSide - 1)) * kPackSide + (x & (kPackSide - 1))) * 8;
-    const uint32_t off = rd32(e), len = rd32(e + 4);
-    if (!len || len > kTileBytes) return false;
     char path[48];
     packPath(path, sizeof(path), z, p->bx, p->by);
+    const int row = y & (kPackSide - 1);
+    uint8_t* rowAt = (uint8_t*)p->index() + row * kPackSide * 8;
+    if (!(p->rows >> row & 1)) {
+        const size_t n = kPackSide * 8;
+        const uint32_t at = (uint32_t)(rowAt - p->head);
+        if (g_reader(path, at, rowAt, n) != n) return false;
+        p->rows |= 1ull << row;
+    }
+    const uint8_t* e = rowAt + (x & (kPackSide - 1)) * 8;
+    const uint32_t off = rd32(e), len = rd32(e + 4);
+    if (!len || len > kTileBytes) return false;
     if (g_reader(path, off, g_io, len) != len) return false;
     const int64_t t0 = esp_timer_get_time();
     const bool ok = p->ctx && len != kTileBytes ? ctxDecode(g_io, len, p->prior(), out)
