@@ -392,6 +392,7 @@ void Keyboard::mapKey(uint8_t row, uint8_t col, bool pressed)
   // ---------------------------------------------------------------------------
 
   if (key == K_MIC) {
+    _micHeld = pressed;
     if (!pressed) return;
     if (_symHeld) {
       // MIC+SYM still produces 0

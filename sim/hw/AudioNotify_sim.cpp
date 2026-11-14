@@ -20,3 +20,7 @@ void AudioNotify::writeTone(uint16_t, uint16_t) {}
 void AudioNotify::writeSilence(uint16_t) {}
 void AudioNotify::pause() {}
 void AudioNotify::resume() {}
+void AudioNotify::writePcm(const int16_t*, size_t) {}
+bool AudioNotify::micStart() { return false; }
+void AudioNotify::micStop() {}
+size_t AudioNotify::micRead(int16_t*, size_t, uint8_t) { return 0; }

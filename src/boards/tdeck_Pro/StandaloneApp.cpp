@@ -50,6 +50,7 @@
 #include "MapView.h"
 #include "Chess.h"
 #include "audio/AudioNotify.h"
+#include "voice/HaVoice.h"
 #include "hal/Keyboard.h"
 #include "hal/UsbDrive.h"
 #include "hal/SysImage.h"
@@ -139,6 +140,8 @@ struct Config {
     char     found[10][41] = {};    // if-found screen: name, phone, address 1-2, town, state, zip,
                                     // country, misc 1-2 (S.4.2.9); NVS fnd0..fnd9
     bool     touchOff    = false;   // S.1.4: touch screen off, keys only
+    bool     haVoice     = false;   // S.3: Home Assistant voice satellite (WiFi)
+    uint8_t  micGain     = 4;       // microphone gain for HA voice (console micgain)
     bool     foundAddr   = true;    // if-found screen shows this radio's LXMF address
     char     libLast[40] = "";      // library file last read (idle screen "Library")
     uint32_t libLastOff  = 0;       // and the page it was on
@@ -282,6 +285,8 @@ void loadConfig() {
         }
     }
     g_cfg.touchOff    = p.getBool("touchOff", false);
+    g_cfg.haVoice     = p.getBool("haVoice", false);
+    g_cfg.micGain     = p.getUChar("micGain", 4);
     g_cfg.foundAddr   = p.getBool("foundAddr", true);
     p.getString("libLast", g_cfg.libLast, sizeof(g_cfg.libLast));
     g_cfg.libLastOff  = p.getUInt("libOff", 0);
@@ -340,6 +345,8 @@ void saveConfig() {
     }
     if (p.isKey("foundTxt")) p.remove("foundTxt");   // moved to fnd0..9
     p.putBool("touchOff", g_cfg.touchOff);
+    p.putBool("haVoice", g_cfg.haVoice);
+    p.putUChar("micGain", g_cfg.micGain);
     p.putBool("foundAddr", g_cfg.foundAddr);
     p.putString("libLast", g_cfg.libLast);
     p.putUInt("libOff", g_cfg.libLastOff);
@@ -3497,6 +3504,7 @@ void buildSettingsRows(Page p) {
              wifiHasAutoCreds() ? ", auto" : "");
         srow(RK_ACTION, "Disconnect", g_wifiSt == WifiSt::Off ? "-" : "Enter = off (pause auto)");
         srow(RK_MENU, "TCP hub", "%s", tcpStatus());
+        srow(RK_TOGGLE, "Home Assistant voice", "%s", g_cfg.haVoice ? havoice::status() : "OFF");
         break;
 
     case PG_TCP:
@@ -4078,6 +4086,14 @@ void activateSetting(int idx) {
         else if (idx == 3) pushPage(PG_WIFI_SAVED);
         else if (idx == 4 && g_wifiSt != WifiSt::Off) { wifiDisconnect(); toast("WiFi off"); }
         else if (idx == 5) pushPage(PG_TCP);
+        else if (idx == 6) {
+            g_cfg.haVoice = !g_cfg.haVoice;
+            saveConfig();
+            Serial.printf("[HAV] voice %s\n", g_cfg.haVoice ? "on" : "off");
+            toast(g_cfg.haVoice ? (wifiConnected() ? "HA voice on: add it in HA" : "HA voice on when WiFi is up")
+                                : "HA voice off");
+            requestRedraw();
+        }
         break;
 
     case PG_TCP:
@@ -10082,6 +10098,8 @@ void minimalToInbox() {
     if (g_screen != SCR_INBOX) goScreen(SCR_INBOX);
 }
 
+bool g_talkByKey = false;        // HA voice started by MIC: stops when MIC is let go
+
 void handleKey(const KeyEvent& ev) {
     if (g_idleActive) {                 // any key wakes; the key itself is consumed
         g_idleActive = false;
@@ -10103,6 +10121,10 @@ void handleKey(const KeyEvent& ev) {
     if (g_libOpen) { libKey(ev); return; }
     if (g_gameOpen) { gameKey(ev); return; }
     if (g_chessOpen) { chessKey(ev); return; }
+    if (ev.fn && g_cfg.haVoice && havoice::connected()) {   // MIC held = talk to Home Assistant
+        if (havoice::startTalk()) { g_talkByKey = true; toast("HA: listening, release MIC to send"); }
+        return;
+    }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
     if (g_rtOpen) { rtKey(ev); return; }
     if (g_navOpen) { navKey(ev); return; }
@@ -10570,6 +10592,8 @@ const char* powerSleepBlocker() {
     if (now < 15000) return "boot";
     if (now - g_lastInputMs < (uint32_t)g_pwEff.awakeSecs * 1000UL) return "recent input";
     if (g_usbDrive) return "USB drive";
+    if (havoice::busy()) return "HA voice";
+    if (g_cfg.haVoice && havoice::connected()) return "HA connected";   // must answer HA
     if (g_cThinking) return "chess engine";
     // While the idle splash shows, loop() does not render, so a pending redraw waits for the wake
     // key anyway and must not keep the CPU awake.
@@ -10925,6 +10949,57 @@ void handleSerialLine(char* p) {
         }
         return;
     }
+    if (!strcmp(p, "hav")) {                           // hav: Home Assistant voice status
+        Serial.printf("[HAV] %s, %s, connected %d, busy %d, heard \"%s\", answer \"%s\"\n",
+                      g_cfg.haVoice ? "on" : "off", havoice::status(), havoice::connected(),
+                      havoice::busy(), havoice::heard(), havoice::answer());
+        return;
+    }
+    if (!strncmp(p, "havoice ", 8)) {                  // havoice 0|1
+        g_cfg.haVoice = atoi(p + 8) != 0;
+        saveConfig();
+        Serial.printf("[HAV] voice %s\n", g_cfg.haVoice ? "on" : "off");
+        return;
+    }
+    if (!strncmp(p, "micgain ", 8)) {                  // micgain 1-32
+        g_cfg.micGain = (uint8_t)constrain(atoi(p + 8), 1, 32);
+        havoice::setMicGain(g_cfg.micGain);
+        saveConfig();
+        Serial.printf("[HAV] mic gain %u\n", (unsigned)g_cfg.micGain);
+        return;
+    }
+    if (!strcmp(p, "mictest")) {                       // mictest: record 2 s (with micgain), print the level, play it back
+#if !defined(SIMULATOR)
+        int16_t buf[512];
+        int16_t* rec = (int16_t*)ps_malloc(32000 * sizeof(int16_t));   // played back after
+        uint32_t recN = 0;
+        if (!g_audio.micStart()) { Serial.println("[MIC] start failed"); free(rec); return; }
+        delay(100);
+        while (g_audio.micRead(buf, 512, 1)) {}          // the first samples settle: drop
+        uint32_t n = 0; int32_t peak = 0; double sq = 0; long long sum = 0;
+        const uint32_t t0 = millis();
+        while (millis() - t0 < 2000) {
+            const size_t k = g_audio.micRead(buf, 512, g_cfg.micGain);
+            for (size_t i = 0; i < k && rec && recN < 32000; i++) rec[recN++] = buf[i];
+            for (size_t i = 0; i < k; i++) {
+                const int32_t v = buf[i];
+                sum += v; sq += (double)v * v;
+                if (abs(v) > peak) peak = abs(v);
+            }
+            n += k;
+            delay(5);
+        }
+        g_audio.micStop();
+        const double mean = n ? (double)sum / n : 0;
+        Serial.printf("[MIC] 2 s: %lu samples (%lu/s), peak %ld, rms %.0f, dc %.0f\n", (unsigned long)n,
+                      (unsigned long)(n / 2), (long)peak, n ? sqrt(sq / n) : 0.0, mean);
+        if (rec && recN) { Serial.println("[MIC] playing it back"); g_audio.writePcm(rec, recN); }
+        free(rec);
+#endif
+        return;
+    }
+    if (!strcmp(p, "talk")) { havoice::startTalk(); return; }        // talk / talkstop: test without MIC
+    if (!strcmp(p, "talkstop")) { havoice::stopTalk("console"); return; }
     if (!strncmp(p, "k ", 2)) {                        // k <keys>: press keys (bench timing); ^ back, ~ Enter
         for (const char* q = p + 2; *q; q++) {
             uint8_t next = (uint8_t)((g_keyqHead + 1) % KEYQ_CAP);
@@ -12068,6 +12143,8 @@ bool begin() {
     keyboardSetNumLayer(false);
 
     g_audio.begin();
+    havoice::begin(&g_audio);
+    havoice::setMicGain(g_cfg.micGain);
     g_audio.setEnabled(g_cfg.beep);
     g_audio.setVolume(g_cfg.volume);
 #if defined(BOARD_MOTOR_PIN) && (BOARD_MOTOR_PIN >= 0)
@@ -12115,6 +12192,22 @@ bool begin() {
     return true;
 }
 
+// Home Assistant voice: run the satellite, stop talking when MIC is let go, show what
+// HA heard and answered.
+void haVoiceTick() {
+    havoice::tick(wifiConnected() && g_pwEff.wifi, g_cfg.haVoice, g_selfName);
+    if (g_talkByKey && havoice::talking() && !g_kb.micHeld()) havoice::stopTalk("MIC released");
+    if (!havoice::talking()) g_talkByKey = false;
+    static uint32_t shown = 0;
+    if (havoice::changedAt() != shown) {
+        shown = havoice::changedAt();
+        if (havoice::answer()[0] && !havoice::busy()) toast("HA: %.40s", havoice::answer());
+        else if (havoice::heard()[0] && havoice::busy()) toast("Heard: %.36s", havoice::heard());
+        else if (g_cfg.haVoice) toast("HA: %s", havoice::status());
+        if (g_screen == SCR_SETTINGS && g_page == PG_WIFI) requestRedraw();
+    }
+}
+
 // Loop profiler: a step that holds the loop over 200 ms is logged ("[SLOW] watchPeers 850 ms"),
 // so a 2-3 s pause between a key and the screen can be traced to its cause.
 void slowNote(const char* name, uint32_t ms) {
@@ -12131,6 +12224,7 @@ void loop() {
     SLOW_STEP("pumpOnce", pumpOnce());
     SLOW_STEP("g_announceMgr.loop", g_announceMgr.loop());
     SLOW_STEP("g_audio.loop", g_audio.loop());
+    SLOW_STEP("havoice", haVoiceTick());
     SLOW_STEP("gpsPoll", gpsPoll());
     SLOW_STEP("gpsWatchLink", gpsWatchLink());
 

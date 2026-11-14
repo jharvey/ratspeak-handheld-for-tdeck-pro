@@ -6,7 +6,9 @@
 #include <string.h>
 
 #define AUDIO_SAMPLE_RATE  16000
-#define I2S_PORT           I2S_NUM_0
+// Speaker on I2S1: the PDM microphone can only use I2S0 on the ESP32-S3 (Home Assistant voice).
+#define I2S_PORT           I2S_NUM_1
+#define MIC_PORT           I2S_NUM_0
 
 void AudioNotify::begin() {
     if (I2S_BCK < 0 || I2S_DOUT < 0 || I2S_WS < 0) {
@@ -28,8 +30,8 @@ void AudioNotify::begin() {
     i2s_config.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
     i2s_config.communication_format = I2S_COMM_FORMAT_STAND_I2S;
     i2s_config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-    i2s_config.dma_buf_count = 4;
-    i2s_config.dma_buf_len = 256;
+    i2s_config.dma_buf_count = 8;      // 256 ms queued: HA speech plays smoothly
+    i2s_config.dma_buf_len = 512;
     i2s_config.use_apll = false;
     i2s_config.tx_desc_auto_clear = true;
 
@@ -301,4 +303,76 @@ void AudioNotify::playBoot() {
     i2s_write(I2S_PORT, buf, 512 * sizeof(int16_t), &written, pdMS_TO_TICKS(200));
 
     free(buf);
+}
+// ---- PCM playback (Home Assistant speech replies) -------------------------------------
+// 16 kHz mono 16-bit, scaled by the volume. Blocks while the DMA queue is full (~64 ms).
+void AudioNotify::writePcm(const int16_t* pcm, size_t n) {
+    if (!_i2sReady || !pcm || !n) return;
+    wake();
+    int16_t buf[256];
+    const int32_t vol = _volume;                // 0-100
+    while (n) {
+        const size_t k = n < 256 ? n : 256;
+        for (size_t i = 0; i < k; i++) buf[i] = (int16_t)((int32_t)pcm[i] * vol / 100);
+        size_t written = 0;
+        i2s_write(I2S_PORT, buf, k * sizeof(int16_t), &written, pdMS_TO_TICKS(500));
+        pcm += k; n -= k;
+    }
+    _lastUseMs = millis();
+}
+
+// ---- PDM microphone (MIC_DATA / MIC_CLOCK) ---------------------------------------------
+bool AudioNotify::micStart() {
+    if (_micOn) return true;
+    if (MIC_DATA < 0 || MIC_CLOCK < 0) return false;
+    i2s_config_t c = {};
+    c.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM);
+    c.sample_rate = AUDIO_SAMPLE_RATE;
+    c.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+    c.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
+    c.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+    c.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
+    c.dma_buf_count = 6;
+    c.dma_buf_len = 256;
+    i2s_pin_config_t p = {};
+    p.mck_io_num = I2S_PIN_NO_CHANGE;
+    p.bck_io_num = I2S_PIN_NO_CHANGE;
+    p.ws_io_num = MIC_CLOCK;
+    p.data_out_num = I2S_PIN_NO_CHANGE;
+    p.data_in_num = MIC_DATA;
+    esp_err_t err = i2s_driver_install(MIC_PORT, &c, 0, NULL);
+    if (err != ESP_OK) { Serial.printf("[MIC] install failed %d\n", (int)err); return false; }
+    err = i2s_set_pin(MIC_PORT, &p);
+    if (err != ESP_OK) { Serial.printf("[MIC] pins failed %d\n", (int)err); i2s_driver_uninstall(MIC_PORT); return false; }
+    i2s_zero_dma_buffer(MIC_PORT);
+    _micX = 0;
+    _micY = 0;
+    _micOn = true;
+    Serial.printf("[MIC] on  CLK=%d DATA=%d  %d Hz PDM\n", MIC_CLOCK, MIC_DATA, AUDIO_SAMPLE_RATE);
+    return true;
+}
+
+void AudioNotify::micStop() {
+    if (!_micOn) return;
+    i2s_driver_uninstall(MIC_PORT);
+    _micOn = false;
+    Serial.println("[MIC] off");
+}
+
+// Non-blocking: whatever samples the DMA holds (up to maxSamples), times the gain.
+size_t AudioNotify::micRead(int16_t* out, size_t maxSamples, uint8_t gain) {
+    if (!_micOn) return 0;
+    size_t got = 0;
+    if (i2s_read(MIC_PORT, out, maxSamples * sizeof(int16_t), &got, 0) != ESP_OK) return 0;
+    const size_t n = got / sizeof(int16_t);
+    // DC block (the PDM output sits ~-1400 off zero), then the gain:
+    // y = x - x1 + 0.995 * y1, in Q15.
+    for (size_t i = 0; i < n; i++) {
+        const int32_t x = out[i];
+        _micY = x - _micX + ((_micY * 32604 + 16384) >> 15);   // rounded: a plain >> drifts ~-100
+        _micX = x;
+        int32_t v = _micY * gain;
+        out[i] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
+    return n;
 }

@@ -34,11 +34,20 @@ public:
     void resume();     // path on now (also done automatically before any sound)
     bool isPowered() const { return _i2sReady && _powered; }
 
+    // Home Assistant voice: play 16 kHz mono PCM (volume applied); PDM microphone on I2S0.
+    void writePcm(const int16_t* pcm, size_t n);
+    bool micStart();
+    void micStop();
+    size_t micRead(int16_t* out, size_t maxSamples, uint8_t gain);   // non-blocking
+    bool micOn() const { return _micOn; }
+
 private:
     bool _enabled = true;
     bool _i2sReady = false;
     volatile bool _messagePending = false;
     bool _powered = true;
+    bool _micOn = false;
+    int32_t _micX = 0, _micY = 0;   // DC-block filter state
     uint32_t _lastUseMs = 0;
     void wake();
     uint8_t _volume = 80;  // 0-100

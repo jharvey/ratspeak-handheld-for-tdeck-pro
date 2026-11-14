@@ -287,6 +287,8 @@ Home Assistant integration (user asked 2026-11-12)
   off-grid via the LoRa gateway, e.g. doorbell, water leak, alarm armed).
 - Optional: report battery / GPS position to HA as sensors (opt-in, privacy).
 - Voice (user asked 2026-11-14): make the unit an HA audio / voice device.
+  STARTED 2026-11-14: WiFi push-to-talk satellite (Wyoming) + HA replies on the speaker; see
+  Help-10-Home-Assistant.txt. Still to do: test with HA, wake word, LoRa text-to-speech, settings.
   - Speak to HA: hold MIC, talk, release -> HA Assist pipeline (wake word optional later).
     On home WiFi: stream audio as an ESPHome-style voice satellite (HA Assist API) or the
     Wyoming protocol; HA does speech-to-text, runs the intent, answers with text-to-speech.

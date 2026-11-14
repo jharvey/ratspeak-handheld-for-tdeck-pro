@@ -1,0 +1,32 @@
+HOME ASSISTANT VOICE
+
+The unit can be a voice device for Home Assistant (HA) over WiFi. Hold MIC, speak, let go:
+HA hears it, runs the command and its spoken answer plays on the speaker.
+
+ON THE UNIT
+1. Join your home WiFi: Settings S.3 (WiFi), Scan networks.
+2. Settings S.3, row 7 "Home Assistant voice": Enter turns it on.
+   The row then shows what it is doing:
+   - waiting for Home Assistant: HA has not connected yet
+   - ready: hold MIC to talk
+   - listening / thinking / speaking
+
+IN HOME ASSISTANT (once)
+1. Settings, Devices & services. HA should offer a new "Wyoming Protocol" device named after
+   the unit. Click Configure / Add.
+   If it does not appear: Add integration, Wyoming Protocol,
+   host = the unit's IP address (Settings S.3, row 2), port = 10700.
+2. Open the new device: pick the Assist pipeline (speech-to-text, conversation agent,
+   text-to-speech) it should use.
+
+TALKING
+- Hold MIC on any screen (not while typing a message), say the command, let go.
+- Up to 15 s per command. A message at the bottom shows what HA heard and answered.
+- MIC alone still does a full screen refresh when HA voice is off or not connected.
+
+NOTES
+- WiFi only: voice is too big for LoRa.
+- While HA is connected the unit does not sleep (it must answer HA), so the battery
+  goes down faster. Turn HA voice off (S.3 row 7) when you do not need it.
+- HA announcements (notify / announce to this satellite) also play on the speaker.
+- Too quiet or too loud for HA: console "micgain 1-32" (default 4).

@@ -8,6 +8,7 @@
 
 class Keyboard {
 public:
+  bool micHeld() const { return _micHeld; }   // MIC physically down (push-to-talk)
   bool begin();
   void update();
   void discardPending();
@@ -52,6 +53,7 @@ private:
   bool _shiftHeld = false;
   bool _altHeld = false;
   bool _symHeld = false;
+  bool _micHeld = false;
   // Track whether Shift was only a modifier or a lone press (→ KeyEvent.up).
   bool _shiftAlone = false;
   bool _shiftUsedAsMod = false;
