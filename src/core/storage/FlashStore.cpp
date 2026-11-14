@@ -11,6 +11,8 @@
 #include <stdio.h>
 #include <sys/stat.h>
 #ifdef SIMULATOR
+#include <stdlib.h>
+#include <string.h>
 #include <string>
 namespace sim { std::string vfsHostPath(const char* path); }
 #endif
@@ -389,6 +391,12 @@ handheld::storage::Error FlashStore::writeAtomic(const char* path, const handhel
     handheld::storage::StorageLease lease;
     if (!lease.held()) return handheld::storage::Error::Unavailable;
     const unsigned long start = PerfTrace::nowMs();
+#ifdef SIMULATOR
+    // Test hook: RS_SIM_SLOW_OUT_MS=<ms> delays every outgoing message record save (a slow
+    // flash, as seen once at 55 s on a busy PC) to exercise the late-save path in the app.
+    static const long slowOut = getenv("RS_SIM_SLOW_OUT_MS") ? atol(getenv("RS_SIM_SLOW_OUT_MS")) : 0;
+    if (slowOut > 0 && strstr(path, "_o.json")) delay((uint32_t)slowOut);
+#endif
     const auto error = handheld::storage::atomicStream(*this, path, source);
     PerfTrace::write("flash", "atomic", path, source.length(), start,
                      error == handheld::storage::Error::None);

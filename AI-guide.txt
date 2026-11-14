@@ -283,7 +283,9 @@ BENCH / CONSOLE TOOLS (115200, see guide §11)
   msgidx [check]       record index status / compare with every record on flash
   sim\build-sim.bat checked  UB/bounds traps + libstdc++ assertions build (RS_SIM_EXE for the runners)
   sdinfo | sdarc 0|1   SD status / message archive setting (applies at next boot)
-  maptest <lat> <lon>  bench: write 18 grid test tiles (z14-15) around a point to the SD card
+  maptest <lat> <lon>  bench: write 18 grid test tiles (z14-15) around a point to the SD card.
+                  OVERWRITES the real loose tiles there (a pack still wins). Never run it on a
+                  card with real maps; to check maps read-only: map <lat> <lon> <z>, map, map close
   ev | ev 0       bench: RAM event trace (rx/tx/offer/txdone/msg-in, dup-scan/dup-idx/commit ms,
                   recovered; timer wakes fold into one mark per run; survives light sleep)
   rl / rl 0       RTC power log (survives resets; BOOT lines with reset reason)

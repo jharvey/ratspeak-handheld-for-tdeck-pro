@@ -231,8 +231,25 @@ Fixed findings:
 | 2026-11-13 | (wear) | Flash wear: idle sim 1 h + ping-pong 30 min normal rate (115 msgs) + 60 min overload (705 msgs) | - | PASS | 500 msgs/day: LittleFS ~450 erases/day = 185 years with flash 85 % full (1,100 years mostly empty); NVS 114 years (busiest: clock save once a minute). Overload all day (outbox nearly full): NVS ~10 years (outbox rewrite) - see findings |
 | 2026-11-13 | (ping-pong) | Ping-pong 60 min overload (every ~8 s each way) | 0.13 | PASS | 352 + 353 msgs, all arrived once, all delivered, no restart, queues drained in 292 s |
 | 2026-11-13 | (0.15) | Outbox `q2` + boot recovery wait: 18 sim scripts, old-format outbox moved, 30 power cuts, ping-pong 15 min overload (every ~4 s) | 30 cycles | PASS | sim boot 5.4-6.2 s -> 1.0-3.0 s (recovery done after ~0.4 s); 108 + 108 msgs all delivered once |
+| 2026-11-13 | 2396882 | Units COM3 <-> COM6, ping-pong, every ~45 s each way | 2 | PASS (runner said FAIL) | 116 + 117 msgs, all arrived once, no gap, no restart, index matched flash. The FAIL was one old outgoing "sent" record already in COM3's history (327 outgoing). COM3 flash writes take 1-1.7 s each (COM5/COM9 0.2-1.2 s) |
+| 2026-11-14 | 2396882 | Units COM5 <-> COM9 side by side, 22 dBm, every ~45 s each way | 1.7 | FAIL (radio) | 120/127 and 123/126 arrived; no dup, no restart, heap flat, index matched flash. Lost ones ended "no proof" after the retries. Received at -7..-9 dBm with SNR only 5-8 dB and 8 CRC failures: receiver overload at ~0 m plus collisions. Re-run with the units apart (several metres / a wall) before reading anything into it |
+| 2026-11-14 | 2396882 | Simulator ping-pong, every ~20 s each way | 4 | FAIL -> fixed | 680 + 699 msgs, no restart, memory flat, index ok; 1 duplicate: a 55 s flash write (PC busy) made `sendMessage` give up after ~8 s ("timeout" = failed) although the engine had the message; the runner (as the outbox or a user would) sent it again. See findings |
 
 Open findings:
+- FIXED 2026-11-14: a send whose save took over ~8 s was reported "timeout" (failed) although
+  the engine had accepted it and still saved and sent it: the outbox kept and resent it, the
+  share-card / compose path showed "Not sent" (user resends) -> duplicate; and the ticket was
+  never acknowledged, holding one of the engine's 20 slots for good (about 20 such stalls and
+  nothing could be sent until restart). Now it counts as sent ("saving") and the main loop
+  finishes the ticket (`txLateTick`, "[TX] late save: ..."). Simulator hook
+  `RS_SIM_SLOW_OUT_MS=<ms>` slows every outgoing record save to test it. Ping-pong 8 min
+  with 12 s saves: 21 late saves, all "saved", no duplicate, nothing reported failed; 2 of 14
+  A->B ended "no proof" because the receiver's store was saturated (each message costs
+  ~36 s of saves every ~20 s), so the packets were heard but not taken in. Control with 6 s
+  saves: 17 + 18 all delivered once.
+- Under store saturation an incoming message that is heard on the radio is not taken in, and
+  nothing is logged on the receiver (the sender ends "no proof"). Worth a "[MSG] dropped:
+  store busy" line.
 - FIXED 2026-11-13: flash wear (simulator counters, `tools/stress/wear.py`): nothing near the
   limit in normal use. The outbox was rewritten whole (up to 8 x 177 B, ~41 NVS entries) on
   every add / send (NVS ~10 years with the radio overloaded all day). Now saved without

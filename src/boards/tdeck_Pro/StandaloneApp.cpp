@@ -1985,7 +1985,31 @@ char g_txStr[16] = "";
 bool g_txTransient = false;   // last sendMessage failure will pass by itself (busy, spacing)
 lv_obj_t* g_root = nullptr;
 
-enum class TxStep { Done, Rejected, Timeout, Invalid };
+enum class TxStep { Done, Rejected, Timeout, Late, Invalid };
+
+// Submissions the engine accepted but had not saved within txOnce's ~8 s wait (a slow flash
+// write: 55 s once in a simulator run). The engine still saves and sends them, so they count
+// as sent - reporting "failed" made the outbox / the user send them again (a duplicate) and
+// left the ticket unacknowledged, holding one of the engine's 20 slots for good. The main loop
+// finishes them (txLateTick).
+handheld::outgoing::Ticket g_txLate[8];
+void toast(const char* fmt, ...);
+
+void txLateTick() {
+    for (auto& t : g_txLate) {
+        if (!t.valid()) continue;
+        handheld::outgoing::InitialResult ir{};
+        const auto p = g_proto.lxmfPoll(t, ir);
+        if (p == handheld::outgoing::Poll::Pending) continue;
+        if (p == handheld::outgoing::Poll::Ready) {
+            g_proto.lxmfAcknowledge(t);
+            const bool saved = ir.outcome == handheld::storage::Outcome::Committed;
+            Serial.printf("[TX] late save: %s (error %u)\n", saved ? "saved" : "NOT saved", (unsigned)ir.error);
+            if (!saved) toast("A message was not saved");
+        }
+        t = {};
+    }
+}
 
 TxStep txOnce(const uint8_t dest[16], const char* body, size_t n,
               handheld::outgoing::InitialResult& ir, unsigned& rejection) {
@@ -1998,7 +2022,9 @@ TxStep txOnce(const uint8_t dest[16], const char* body, size_t n,
         if (p == handheld::outgoing::Poll::Ready) { g_proto.lxmfAcknowledge(sub.ticket); return TxStep::Done; }
         return TxStep::Invalid;
     }
-    return TxStep::Timeout;
+    for (auto& t : g_txLate)
+        if (!t.valid()) { t = sub.ticket; return TxStep::Late; }
+    return TxStep::Timeout;                      // 8 already late: something is stuck
 }
 
 bool sendMessage(const uint8_t dest[16], const char* text) {
@@ -2040,6 +2066,12 @@ bool sendMessage(const uint8_t dest[16], const char* text) {
             return false;
         }
         if (st == TxStep::Timeout) { snprintf(g_txStr, sizeof(g_txStr), "timeout"); return false; }
+        if (st == TxStep::Late) {                // accepted, still saving: it will go out
+            lastTx = millis();
+            snprintf(g_txStr, sizeof(g_txStr), "saving");
+            Serial.printf("[TX] saving (slow store) \"%s\"\n", body);
+            return true;
+        }
         if (st == TxStep::Invalid) { snprintf(g_txStr, sizeof(g_txStr), "invalid"); return false; }
         if (ir.outcome == handheld::storage::Outcome::Committed) {
             lastTx = millis();
@@ -10180,6 +10212,7 @@ void powerTick() {
     checkinTick();
     usbDriveTick();
     chessTick();
+    txLateTick();
     if (g_markValidAt && (int32_t)(millis() - g_markValidAt) >= 0) { g_markValidAt = 0; sysimg::markValid(); }
     peerClockTick();
     mapTick();
