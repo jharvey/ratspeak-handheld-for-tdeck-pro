@@ -575,6 +575,11 @@ bool readBattery() {
 
 // ---- SD card + battery log --------------------------------------------------
 bool g_sdMounted = false;
+// Boot phase marks, kept in RAM too: the first seconds are lost on the PC while USB comes
+// up (console "boottime").
+struct BootMark { uint32_t ms; const char* phase; };
+BootMark g_bootMarks[16];
+int g_bootMarkN = 0;
 bool g_usbDrive = false;          // the card is a USB drive on the PC: no file access until restart
 void usbDriveStart();
 // SD tools (S.10.5 rows 8-10): back up / restore, firmware update. Defined after the USB block.
@@ -10514,6 +10519,9 @@ void handleSerialLine(char* p) {
                           done && r.outcome == Outcome::Committed ? "deleted" : "failed");
         }
         requestRedraw();
+    } else if (!strcmp(p, "boottime")) {
+        for (int i = 0; i < g_bootMarkN; i++)
+            Serial.printf("[BOOTTIME] %6lu ms %s\n", (unsigned long)g_bootMarks[i].ms, g_bootMarks[i].phase);
     } else if (!strcmp(p, "backup")) {
         backupNow();
     } else if (!strncmp(p, "restore ", 8)) {
@@ -10974,13 +10982,43 @@ void watchIdle() {
 // =============================================================================
 
 // Boot phase timing: "[BOOT] <ms since power-on> <phase>" (unit boot is ~15 s with an empty store).
-void bootMark(const char* phase) { Serial.printf("[BOOT] %6lu ms %s\n", (unsigned long)millis(), phase); }
+void bootMark(const char* phase) {
+    if (g_bootMarkN < 16) g_bootMarks[g_bootMarkN++] = {millis(), phase};
+    Serial.printf("[BOOT] %6lu ms %s\n", (unsigned long)millis(), phase);
+}
+
+// The vault key (PBKDF2, ~2 s) is derived on core 0 while core 1 starts the radio, flash
+// and protocol; vaultWait() joins it before anything uses the vault.
+SemaphoreHandle_t g_vaultDone = nullptr;
+void vaultTask(void*) {
+    vault::begin();
+    xSemaphoreGive(g_vaultDone);
+    vTaskDelete(nullptr);
+}
+void vaultStart() {
+    g_vaultDone = xSemaphoreCreateBinary();
+    // Priority 0 (idle's): shares core 0 with the idle task, so its watchdog stays fed.
+    if (!g_vaultDone || xTaskCreatePinnedToCore(vaultTask, "vault", 8192, nullptr, 0, nullptr, 0) != pdPASS) {
+        if (g_vaultDone) vSemaphoreDelete(g_vaultDone);
+        g_vaultDone = nullptr;
+        vault::begin();
+    }
+}
+void vaultWait() {
+    if (!g_vaultDone) return;
+    const uint32_t t0 = millis();
+    xSemaphoreTake(g_vaultDone, portMAX_DELAY);
+    vSemaphoreDelete(g_vaultDone);
+    g_vaultDone = nullptr;
+    Serial.printf("[VAULT] ready (waited %lu ms)\n", (unsigned long)(millis() - t0));
+}
 
 bool begin() {
     Serial.println();
     Serial.println("========================================");
     Serial.println(" RatSpeak T-Deck Pro - standalone");
     Serial.println("========================================");
+    bootMark("start");
     sysimg::bootCheck();
     loadConfig();
     outboxLoad();
@@ -10990,6 +11028,7 @@ bool begin() {
     loadSelfName();
 
     handheld::bindDeviceOwner();
+    vaultStart();
 
 #if !defined(SIMULATOR)
     // A pad hold left by other firmware (e.g. a deep-sleep test) survives resets on the RTC
@@ -11037,6 +11076,14 @@ bool begin() {
     logPsram();
     bootMark("config, power, I2C");
 
+    // Boot screen first, so the unit shows it is starting (~1 s after power-on). The radio
+    // shares this SPI bus; its own SPI.begin() later is then a no-op.
+    SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
+    if (!g_display.begin()) { Serial.println("[BOOT] display failed"); return false; }
+    if (!LvglPort::begin(g_display)) { Serial.println("[BOOT] LVGL failed"); return false; }
+    drawBootSplash();
+    bootMark("display, splash");
+
 #if defined(RS_NO_RADIO) && RS_NO_RADIO
     Serial.println("[BOOT] radio DISABLED (RS_NO_RADIO build) - LoRa powered off, no transmit");
 #else
@@ -11057,11 +11104,7 @@ bool begin() {
     }
 
     spiBusIdle();
-    if (!g_display.begin()) { Serial.println("[BOOT] display failed"); return false; }
-    if (!LvglPort::begin(g_display)) { Serial.println("[BOOT] LVGL failed"); return false; }
     g_display.setBusyCallback(onPanelBusy);
-    drawBootSplash();
-    bootMark("display, splash");
 
     g_kbOk = g_kb.begin();
     applyKeyLight();
@@ -11086,7 +11129,7 @@ bool begin() {
     powerApply(true);                     // CPU clock, LoRa, WiFi, key light for the mode
     powerGpsTick();                       // decides whether the GPS starts powered
     gpsApplyPower();
-    vault::begin();                       // custom password -> stays locked until typed
+    vaultWait();                          // custom password -> stays locked until typed
     lockLoadFails();
     if (lockHasPassword()) { g_locked = true; Serial.println("[LOCK] boot locked (password set)"); }
     if (vault::unlocked()) wifiLoad();    // else after unlock (lockTry)

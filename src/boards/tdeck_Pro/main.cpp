@@ -8,7 +8,9 @@ void setup() {
     Serial.setRxBufferSize(17 * 1024);
 #endif
     Serial.begin(115200);
-    delay(800);
+    // No wait for the PC here: after a reset the PC misses the first seconds of output
+    // anyway while USB comes back, and the boot screen should show as soon as it can.
+    // Boot phase times stay in RAM ("boottime").
     Serial.println();
     Serial.println("[MAIN] setup");
     Serial.flush();

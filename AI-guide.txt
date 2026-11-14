@@ -22,6 +22,9 @@ START HERE (handoff 2026-11-11)
   default_reset --after hard_reset --no-stub write_flash 0x10000 <firmware.bin>
   (A unit updated from its SD card runs from app1; at the next boot after a USB flash it
   sees app0 changed and boots it - "[OTA] app0 was flashed over USB". S.10.5 row 10.)
+- Boot: console "boottime" prints the boot phase marks kept in RAM (the PC misses the first
+  seconds after a reset). COM6 2026-11-13: screen starts drawing 1.5 s, boot screen done
+  3.4 s, ready 7.8 s (was 8.5 s / 10.6 s). Vault PBKDF2 runs on core 0 meanwhile.
 - Floor tool: tools/sleepcheck ("floor d <n> <secs>", "floor", "floor x", "bhi").
 - Commit only our files; never stage platformio.ini port lines,
   tools/check_build_identity.py, putty*.log, backups/, Video/, lilygo-tdeck-pro/,
