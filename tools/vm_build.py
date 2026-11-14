@@ -10,10 +10,12 @@ Each run:
      files under src/ lib/ include/ partitions/ tools/ protocol/), as they are in the working
      tree, uncommitted edits included; files deleted here are deleted there;
   2. runs `pio run -e <env>` on the VM (output streamed here);
-  3. copies firmware.bin back to C:/Users/MyPC/pio-build/vm/<env>/firmware.bin.
-Flash from this PC as before (the units are on its USB ports).
+  3. copies firmware.bin back to C:/Users/MyPC/pio-build/vm/<env>/ and into the repo as
+     firmware/<env>.bin + firmware/<env>.txt (source commit, sha256); --commit commits just
+     those two files and pushes.
+Flash from this PC with tools/flash_app.py (no local build; the units are on its USB ports).
 
-  python tools/vm_build.py                     # tdeck_pro_standalone
+  python tools/vm_build.py --commit            # tdeck_pro_standalone, commit + push the image
   python tools/vm_build.py -e <env> [--full]   # --full: resend every file
   python tools/vm_build.py --sync-only
 """
@@ -46,7 +48,7 @@ def ssh(cmd, **kw):
 def sync(full):
     files = set(git_lines("ls-files"))
     files |= {f for f in git_lines("ls-files", "--others", "--exclude-standard") if f.startswith(UNTRACKED_DIRS)}
-    files = {f for f in files if os.path.isfile(os.path.join(ROOT, f))}
+    files = {f for f in files if os.path.isfile(os.path.join(ROOT, f)) and not f.startswith("firmware/")}
     try:
         old = {} if full else json.load(open(STATE))
     except (OSError, ValueError):
@@ -82,6 +84,7 @@ def main():
     ap.add_argument("-e", "--env", default="tdeck_pro_standalone")
     ap.add_argument("--full", action="store_true", help="resend every file")
     ap.add_argument("--sync-only", action="store_true")
+    ap.add_argument("--commit", action="store_true", help="commit firmware/<env>.bin + .txt and push")
     a = ap.parse_args()
     sync(a.full)
     if a.sync_only:
@@ -96,6 +99,38 @@ def main():
     if r.returncode:
         sys.exit("[vm] copy back failed")
     print("[vm] firmware: %s/firmware.bin (%d bytes)" % (dst, os.path.getsize(dst + "/firmware.bin")))
+    store(a.env, dst + "/firmware.bin", a.commit)
+
+
+def store(env, fw, commit):
+    """firmware/<env>.bin + firmware/<env>.txt (source commit, sha256) in the repo, so the
+    PC flashes the committed image without building (tools/flash_app.py). --commit commits
+    just those two files and pushes."""
+    import hashlib
+    import shutil
+    import time
+    src = git_lines("rev-parse", "HEAD")[0]
+    dirty = git_lines("status", "--porcelain", "--untracked-files=no", "--", ".", ":!firmware")
+    d = os.path.join(ROOT, "firmware")
+    os.makedirs(d, exist_ok=True)
+    shutil.copyfile(fw, os.path.join(d, env + ".bin"))
+    sha = hashlib.sha256(open(fw, "rb").read()).hexdigest()
+    with open(os.path.join(d, env + ".txt"), "w", newline="\n") as f:
+        f.write("env %s\nsource %s%s\nbuilt %s on %s (tools/vm_build.py)\nsize %d\nsha256 %s\n"
+                % (env, src, " + uncommitted changes" if dirty else "", time.strftime("%Y-%m-%d %H:%M"),
+                   HOST, os.path.getsize(fw), sha))
+        f.write("uncommitted changes in the build:\n" + ("".join("  %s\n" % l for l in dirty) or "  none\n"))
+    print("[vm] firmware/%s.bin  sha256 %s" % (env, sha[:16]))
+    if not commit:
+        return
+    paths = ["firmware/%s.bin" % env, "firmware/%s.txt" % env]
+    subprocess.run(["git", "-C", ROOT, "add", "--"] + paths, check=True)
+    msg = "firmware/%s.bin: VM build of %s%s\n" % (env, src[:7], " + uncommitted changes" if dirty else "")
+    r = subprocess.run(["git", "-C", ROOT, "commit", "-q", "-m", msg, "--"] + paths)
+    if r.returncode:
+        sys.exit("[vm] commit failed (image unchanged?)")
+    subprocess.run(["git", "-C", ROOT, "push", "-q", "origin", "HEAD:main"], check=True)
+    print("[vm] committed and pushed: %s" % git_lines("log", "--oneline", "-1")[0])
 
 
 if __name__ == "__main__":

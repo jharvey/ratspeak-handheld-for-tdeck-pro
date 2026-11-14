@@ -9,6 +9,8 @@ compile_commands.json
 build/
 dist/
 *.bin
+# VM-built image flashed from the PC without a local build (tools/vm_build.py --commit)
+!firmware/*.bin
 *.elf
 *.map
 __pycache__
