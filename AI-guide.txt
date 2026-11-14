@@ -17,10 +17,12 @@ START HERE (handoff 2026-11-11)
   even for the build default. COM8 unplugged (GPS fault). SD cards (29.5 GB): COM5
   (holds 28 GB of camera videos in /VIDEO - not ours, keep), COM6, COM9 (maps). COM3/COM5 boot slowly (large message stores; COM5 281 s -> 98 s after the 2026-11-11 store fixes).
 - Firmware builds run on the build VM (VM100, ssh host debian-build, copy in ~/ratspeak, no
-  .git): python tools/vm_build.py [-e env] [--full] sends the changed files (uncommitted
-  edits included), builds there and copies firmware.bin to C:/Users/MyPC/pio-build/vm/<env>/.
-  Full build 3 min (the NAS repo locally: ~38 min); one changed file 23 s (~9 min). Flash
-  from the PC as below. The simulator still builds on the PC (Windows Qt).
+  .git): python tools/vm_build.py --commit [-e env] [--full] sends the changed files
+  (uncommitted edits included), builds there, puts the image in the repo as
+  firmware/<env>.bin + .txt (source commit, sha256), commits just those two and pushes.
+  Full build 3 min (the NAS repo locally: ~38 min); one changed file 23 s (~9 min).
+  Flash from the PC without building: python tools/flash_app.py COM5 COM9 ... (checks the
+  sha256; 256 KB pieces with retries). The simulator still builds on the PC (Windows Qt).
 - Bench build (-9 dBm, ~11 min): PLATFORMIO_BUILD_FLAGS="-DRS_BENCH_TX_DBM=-9"
   PLATFORMIO_BUILD_DIR=".pio/build_bench" pio run -e tdeck_pro_standalone
 - Flash app only: esptool.py --chip esp32s3 --port COMx --baud 115200 --before
