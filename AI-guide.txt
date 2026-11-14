@@ -45,6 +45,10 @@ START HERE (handoff 2026-11-11)
   (find) in lists / Atlas / reader. Home N = Announce. Atlas: E S X F, D centre, Z/W, N next contact, P next waypoint,
   Alt+P add, Alt+SYM (Keyboard.cpp emits alt+opt with no char; isAltSym) delete twice, A nothing, K card (7 rows/col).
   Rat Trap: E S X F, D/Enter open, Alt+P mark, Q new, K card.
+  Chess (Library, row after Rat Trap; Chess.cpp rules + engine, perft-checked): E S X F /
+  trackball cursor, D/Enter pick + drop, 1-4 promotion, U take back, L level 1-4, C swap
+  sides, Q Q new, K card. Engine in a task on core 0 (sleep waits for it), ~10k nodes/s on
+  the unit: L4 depth 5 in 8 s. Game kept in NVS rs_chess. Console "chess [new|level n|move e2e4]".
 - Setup wizard (2026-11-13): g_wizNeeded at loadConfig (rs_ui without idleMode = fresh; wizDone key absent = done);
   wizStart/renderWizard/wizKey/wizPick (WZ_* steps), digits pick, Enter next, ^ back, 0 skip. g_cfg.clock12 (fmtTime),
   g_cfg.simple. shareAllTo() (cards via sendOrQueue), contactsExport/Import (contacts.txt), wizCardIn in

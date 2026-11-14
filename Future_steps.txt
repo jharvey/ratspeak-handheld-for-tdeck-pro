@@ -328,6 +328,10 @@ Field / test tools
 - DONE 2026-11-13 (branch claude/features-6-11) - 10. Measured battery-life estimate on screen ("about 31 h left in Balanced") from the
   actual drain; builds on the battery-life test (Stress_test_plan.md section 4b).
 - DONE 2026-11-13 (branch claude/features-6-11) - 11. Low-battery notice: at 10 %, send one chosen contact "battery dying" + my position.
+- DONE (COM6, 2026-11-13) - Chess (user asked 2026-11-13): MENU -> Library, row after Rat
+  Trap. Play the unit at 4 levels; board 8 x 28 px, own 20 px piece drawings; take back,
+  swap sides, promotion choice, game kept across restarts. Ideas: clock, PGN export to SD,
+  play a contact over LoRa (moves as short messages).
 - 15. Learned battery capacity (user asked 2026-11-13): estimate each unit's real mAh and
   base every runtime figure on it instead of the 1450 mAh nominal / the gauge's own
   FullChargeCapacity (unreliable here: the BQ27220 rarely sees the charge taper, SOC tops

@@ -48,6 +48,7 @@
 #include "Eink/LvglPort.h"
 #include "Eink/RatSpeakLogo.h"
 #include "MapView.h"
+#include "Chess.h"
 #include "audio/AudioNotify.h"
 #include "hal/Keyboard.h"
 #include "hal/UsbDrive.h"
@@ -5353,7 +5354,7 @@ const NavKeyRow kGameKeys[] = {
 constexpr int kNavRowH = 14, kNavRows = 7;
 constexpr int kNavH = kNavRows * kNavRowH + 6;   // 90 px: the map keeps the rest
 bool g_navKeysOpen = false;
-extern bool g_libOpen, g_gameOpen;
+extern bool g_libOpen, g_gameOpen, g_chessOpen;
 void mapKey(const KeyEvent& ev);
 
 void navKeysToggle() {
@@ -5408,7 +5409,7 @@ void drawBottomBar() {
     navBox(0, BOT_TOP, BOT_C_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, hk ? 'C' : 0);
     // Middle tab: "Nav / keys" (K) on the Atlas, where it shows the key card; else Atlas (L,
     // the offline map) when the card has maps, else Peers (P). L and P work either way.
-    if (mapview::isOpen() || g_libOpen || g_gameOpen) {
+    if (mapview::isOpen() || g_libOpen || g_gameOpen || g_chessOpen) {
         box(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, g_navKeysOpen ? 3 : 1);
         label(BOT_C_W, BOT_TOP + 2, BOT_A_W, 16, "Nav", g_navKeysOpen);
         label(BOT_C_W, BOT_TOP + 19, BOT_A_W, 16, "keys", g_navKeysOpen, kKeyNav);
@@ -7160,6 +7161,7 @@ void libFind(const char* what) {
 }
 
 bool gameOpen();
+bool chessOpen();
 void libKey(const KeyEvent& ev) {
     const char c = (char)toupper((unsigned char)ev.character);
     if (c == kKeyNav) { navKeysToggle(); return; }
@@ -7186,13 +7188,14 @@ void libKey(const KeyEvent& ev) {
         else if (c == 'M') { libClose(); openMenu(); }
         return;
     }
-    auto pick = [](int k) {                      // the row after the files is the game
+    auto pick = [](int k) {                      // the rows after the files are the games
         if (k == g_libCount) { if (gameOpen()) { g_libOpen = false; } else requestRedraw(); }
+        else if (k == g_libCount + 1) { if (chessOpen()) g_libOpen = false; }
         else libOpenFile(k);
     };
     if (ev.enter) { pick(g_libSel); return; }
-    if (c >= '1' && c <= '9') { const int k = g_libScroll + (c - '1'); if (k <= g_libCount) { g_libSel = k; pick(k); } return; }
-    if (c == 'V' && g_libSel < g_libCount) g_libSel++;
+    if (c >= '1' && c <= '9') { const int k = g_libScroll + (c - '1'); if (k <= g_libCount + 1) { g_libSel = k; pick(k); } return; }
+    if (c == 'V' && g_libSel < g_libCount + 1) g_libSel++;
     if (c == 'G' && g_libSel > 0) g_libSel--;
     if (c == 'M') { libClose(); openMenu(); return; }
     if (g_libSel < g_libScroll) g_libScroll = g_libSel;
@@ -7208,9 +7211,14 @@ void renderLibrary() {
             text(8, LIST_TOP + ROW_H + 8, "No files in ratdeckpro/library", false, W - 16);
             text(8, LIST_TOP + ROW_H + 30, "on the SD card (push_files.py)", false, W - 16);
         }
-        for (int r = 0; r < 4 && g_libScroll + r <= g_libCount; r++) {
+        for (int r = 0; r < 4 && g_libScroll + r <= g_libCount + 1; r++) {
             const int k = g_libScroll + r;
             char t[48], sub[24];
+            if (k == g_libCount + 1) {
+                snprintf(t, sizeof(t), "%d Chess (game)", r + 1);
+                listRow(LIST_TOP + r * ROW_H, t, "play the unit; 4 levels", k == g_libSel);
+                continue;
+            }
             if (k == g_libCount) {
                 snprintf(t, sizeof(t), "%d Rat Trap (game)", r + 1);
                 listRow(LIST_TOP + r * ROW_H, t, "a short puzzle; battery 25%+", k == g_libSel);
@@ -7423,6 +7431,450 @@ void renderGame() {
     else snprintf(foot, sizeof(foot), "K keys  D open  Alt+P mark");
     label(0, FOOT_Y - 1, W, FOOT_H, foot);
     if (g_navKeysOpen) drawNavKeys(FOOT_Y - kNavH, kGameKeys);
+}
+
+// ---- Chess (MENU -> Library, last row) ------------------------------------------------
+// Play against the unit (Chess.cpp: rules + engine). The engine thinks in a task on
+// core 0, so the radio and keys keep working; light sleep waits for it. The game is kept
+// in NVS (rs_chess: moves, level, your colour, score) and goes on where it was left.
+// Keys: E S X F / trackball move the cursor, D / Enter / Space pick up and put down,
+// 1-4 choose a promotion, U takes back, L level, C swap sides, Q new game (twice), K keys.
+constexpr int kChessSq = 28, kChessX = (W - 8 * kChessSq) / 2, kChessY = LIST_TOP;
+constexpr int kChessMaxMoves = 400;
+const NavKeyRow kChessKeys[] = {
+    {"E" LV_SYMBOL_UP " S" LV_SYMBOL_LEFT " X" LV_SYMBOL_DOWN " F" LV_SYMBOL_RIGHT, ""},
+    {"D Enter", "pick / drop"}, {"U", "take back"}, {"L", "level 1-4"},
+    {"C", "swap sides"},      {"Q Q", "new game"},      {"K", "hide keys"},
+    {"M", "menu"},            {"^", "back to Library"}, {"", ""},
+    {"", ""},                 {"", ""},                {"", ""}, {"", ""},
+};
+
+bool g_chessOpen = false;
+chess::Pos g_cPos;
+chess::Move* g_cMoves = nullptr;          // kChessMaxMoves each, in PSRAM (chessAlloc)
+uint64_t* g_cKeys = nullptr;              // position before each move (repetition)
+int g_cN = 0;
+int8_t g_cUser = 1;                       // your colour: +1 white, -1 black
+uint8_t g_cLevel = 2;
+int g_cCur = 12, g_cSel = -1;             // cursor / picked-up square
+int g_cPromoFrom = -1, g_cPromoTo = -1;   // waiting for 1-4
+uint8_t g_cResult = chess::ONGOING;
+char g_cLastName[16] = "";
+uint32_t g_cWins = 0, g_cLosses = 0, g_cDraws = 0;
+// Engine task
+volatile bool g_cThinking = false, g_cDone = false, g_cStop = false;
+chess::Pos g_cJobPos;
+chess::Move g_cReply;
+chess::ThinkInfo g_cInfo;
+
+const char* chessResultText(uint8_t r, int8_t winner) {
+    switch (r) {
+    case chess::CHECKMATE: return winner == g_cUser ? "Checkmate - you win" : "Checkmate - you lose";
+    case chess::STALEMATE: return "Stalemate - draw";
+    case chess::DRAW_50: return "50 moves - draw";
+    case chess::DRAW_MATERIAL: return "No mate possible - draw";
+    case chess::DRAW_REPEAT: return "Repetition - draw";
+    }
+    return "";
+}
+
+void chessSave() {
+    Preferences p;
+    if (!p.begin("rs_chess", false)) return;
+    uint8_t buf[kChessMaxMoves * 3];
+    for (int i = 0; i < g_cN; i++) {
+        buf[i * 3] = g_cMoves[i].from;
+        buf[i * 3 + 1] = g_cMoves[i].to;
+        buf[i * 3 + 2] = (uint8_t)g_cMoves[i].promo;
+    }
+    if (g_cN) p.putBytes("moves", buf, g_cN * 3);
+    else p.remove("moves");
+    p.putUChar("lvl", g_cLevel);
+    p.putChar("user", g_cUser);
+    p.putUInt("w", g_cWins);
+    p.putUInt("l", g_cLosses);
+    p.putUInt("d", g_cDraws);
+    p.end();
+}
+
+bool chessAlloc() {
+    if (g_cMoves && g_cKeys) return true;
+    const size_t bytes = kChessMaxMoves * (sizeof(chess::Move) + sizeof(uint64_t));
+    uint8_t* m = (uint8_t*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!m) m = (uint8_t*)malloc(bytes);
+    if (!m) return false;
+    g_cKeys = (uint64_t*)m;
+    g_cMoves = (chess::Move*)(m + kChessMaxMoves * sizeof(uint64_t));
+    return true;
+}
+
+// Position after the first n moves of the list (from the start position).
+void chessReplay(int n) {
+    chess::startPos(g_cPos);
+    chess::Move legal[chess::kMaxMoves];
+    int ok = 0;
+    for (; ok < n; ok++) {
+        const int k = chess::legalMoves(g_cPos, legal);
+        int hit = -1;
+        for (int j = 0; j < k; j++)
+            if (legal[j].from == g_cMoves[ok].from && legal[j].to == g_cMoves[ok].to && legal[j].promo == g_cMoves[ok].promo) hit = j;
+        if (hit < 0) break;                       // a saved list that does not replay: stop there
+        g_cMoves[ok] = legal[hit];
+        g_cKeys[ok] = g_cPos.key;
+        chess::make(g_cPos, legal[hit]);
+    }
+    g_cN = ok;
+    g_cResult = chess::result(g_cPos, g_cKeys, g_cN);
+    g_cSel = -1;
+    g_cPromoFrom = g_cPromoTo = -1;
+    g_cLastName[0] = 0;
+    if (g_cN) {
+        chess::Pos before;
+        chess::startPos(before);
+        for (int i = 0; i < g_cN - 1; i++) chess::make(before, g_cMoves[i]);
+        chess::moveName(before, g_cMoves[g_cN - 1], g_cLastName, sizeof(g_cLastName));
+    }
+}
+
+bool chessLoad() {
+    if (!chessAlloc()) return false;
+    Preferences p;
+    g_cN = 0;
+    if (p.begin("rs_chess", true)) {
+        uint8_t buf[kChessMaxMoves * 3];
+        const size_t len = p.getBytes("moves", buf, sizeof(buf));
+        for (size_t i = 0; i + 2 < len + 0 && (int)(i / 3) < kChessMaxMoves; i += 3) {
+            g_cMoves[i / 3].from = buf[i];
+            g_cMoves[i / 3].to = buf[i + 1];
+            g_cMoves[i / 3].promo = (int8_t)buf[i + 2];
+            g_cN = (int)(i / 3) + 1;
+        }
+        g_cLevel = p.getUChar("lvl", 2);
+        g_cUser = p.getChar("user", 1) < 0 ? -1 : 1;
+        g_cWins = p.getUInt("w", 0);
+        g_cLosses = p.getUInt("l", 0);
+        g_cDraws = p.getUInt("d", 0);
+        p.end();
+    }
+    if (g_cLevel < 1 || g_cLevel > 4) g_cLevel = 2;
+    chessReplay(g_cN);
+    return true;
+}
+
+void chessTask(void*) {
+    static const uint32_t kMs[5] = {0, 1500, 2000, 4000, 8000};
+    g_cReply = chess::think(g_cJobPos, g_cLevel, kMs[g_cLevel], g_cKeys, g_cN, &g_cInfo, &g_cStop);
+    g_cDone = true;
+    vTaskDelete(nullptr);
+}
+
+void chessThink() {
+    if (g_cThinking || g_cResult != chess::ONGOING || g_cPos.side == g_cUser) return;
+    g_cJobPos = g_cPos;
+    g_cDone = g_cStop = false;
+    g_cThinking = true;
+    // Priority 0 (idle's): the idle task on core 0 still runs, so its watchdog stays fed.
+    if (xTaskCreatePinnedToCore(chessTask, "chess", 32768, nullptr, 0, nullptr, 0) != pdPASS) {
+        g_cThinking = false;
+        toast("Chess: no memory to think");
+    }
+}
+
+// The game has ended with this move: count it once.
+void chessScore() {
+    if (g_cResult == chess::ONGOING) return;
+    if (g_cResult == chess::CHECKMATE) { if (-g_cPos.side == g_cUser) g_cWins++; else g_cLosses++; }
+    else g_cDraws++;
+    Serial.printf("[CHESS] %s after %d moves (won %lu, lost %lu, drawn %lu)\n", chessResultText(g_cResult, -g_cPos.side),
+                  g_cN, (unsigned long)g_cWins, (unsigned long)g_cLosses, (unsigned long)g_cDraws);
+}
+
+void chessPlay(const chess::Move& m) {
+    if (g_cN >= kChessMaxMoves) { toast("Game too long: Q Q new"); return; }
+    chess::moveName(g_cPos, m, g_cLastName, sizeof(g_cLastName));
+    g_cMoves[g_cN] = m;
+    g_cKeys[g_cN] = g_cPos.key;
+    g_cN++;
+    chess::make(g_cPos, m);
+    g_cResult = chess::result(g_cPos, g_cKeys, g_cN);
+    Serial.printf("[CHESS] %d. %s%s\n", (g_cN + 1) / 2, g_cN % 2 ? "" : "... ", g_cLastName);
+    chessScore();
+    chessSave();
+    requestRedraw();
+}
+
+void chessTick() {
+    if (!g_cThinking || !g_cDone) return;
+    g_cThinking = false;
+    if (g_cStop || !g_cReply.valid()) return;          // stopped (take back, new game, swap)
+    Serial.printf("[CHESS] engine L%u: depth %d, %lu nodes, %lu ms, score %d\n", (unsigned)g_cLevel, g_cInfo.depth,
+                  (unsigned long)g_cInfo.nodes, (unsigned long)g_cInfo.ms, g_cInfo.score);
+    chessPlay(g_cReply);
+    if (g_chessOpen) {
+        g_cCur = g_cReply.to;
+        g_audio.requestMessage();
+    }
+}
+
+void chessStopThinking() {
+    if (!g_cThinking) return;
+    g_cStop = true;
+    while (!g_cDone) delay(5);                  // the engine checks every 1024 nodes
+    g_cThinking = false;
+}
+
+void chessNew() {
+    chessStopThinking();
+    g_cN = 0;
+    chessReplay(0);
+    g_cCur = g_cUser > 0 ? 12 : 52;             // e2 / e7
+    chessSave();
+    Serial.printf("[CHESS] new game, you play %s, level %u\n", g_cUser > 0 ? "white" : "black", (unsigned)g_cLevel);
+    chessThink();
+    requestRedraw();
+}
+
+bool chessOpen() {
+    if (!chessLoad()) { toast("Chess: no memory"); return false; }
+    g_chessOpen = true;
+    g_cCur = g_cN && g_cMoves[g_cN - 1].to < 64 ? g_cMoves[g_cN - 1].to : (g_cUser > 0 ? 12 : 52);
+    Serial.printf("[CHESS] open: %d moves, you play %s, level %u\n", g_cN, g_cUser > 0 ? "white" : "black",
+                  (unsigned)g_cLevel);
+    g_fullRefreshReq = true;
+    chessThink();
+    requestRedraw();
+    return true;
+}
+
+void chessClose() { g_chessOpen = false; g_navKeysOpen = false; g_fullRefreshReq = true; requestRedraw(); }
+
+void chessPick() {
+    if (g_cThinking) { toast("Thinking..."); return; }
+    if (g_cResult != chess::ONGOING) { toast("Game over: Q Q new game"); return; }
+    if (g_cPos.side != g_cUser) { chessThink(); return; }
+    const int v = g_cPos.sq[g_cCur];
+    if (g_cSel < 0 || (v * g_cUser > 0 && g_cCur != g_cSel)) {     // pick up (or pick another)
+        if (v * g_cUser <= 0) return;
+        g_cSel = g_cCur;
+        return;
+    }
+    if (g_cCur == g_cSel) { g_cSel = -1; return; }                  // put it back
+    chess::Move legal[chess::kMaxMoves];
+    const int n = chess::legalMoves(g_cPos, legal);
+    int hit = -1;
+    for (int i = 0; i < n; i++)
+        if (legal[i].from == g_cSel && legal[i].to == g_cCur) { hit = i; break; }
+    if (hit < 0) { toast("Not a legal move"); return; }
+    if (legal[hit].promo) { g_cPromoFrom = g_cSel; g_cPromoTo = g_cCur; return; }
+    g_cSel = -1;
+    chessPlay(legal[hit]);
+    chessThink();
+}
+
+void chessPromote(int8_t piece) {
+    chess::Move legal[chess::kMaxMoves];
+    const int n = chess::legalMoves(g_cPos, legal);
+    for (int i = 0; i < n; i++) {
+        if (legal[i].from == g_cPromoFrom && legal[i].to == g_cPromoTo && legal[i].promo == piece) {
+            g_cPromoFrom = g_cPromoTo = -1;
+            g_cSel = -1;
+            chessPlay(legal[i]);
+            chessThink();
+            return;
+        }
+    }
+}
+
+void chessKey(const KeyEvent& ev) {
+    const char c = (char)toupper((unsigned char)ev.character);
+    if (c == 'M') { chessClose(); openMenu(); return; }
+    if (c == kKeyNav) { navKeysToggle(); return; }
+    if (g_cPromoFrom >= 0) {                                      // promotion: 1-4, anything else cancels
+        static const int8_t kPick[4] = {chess::QUEEN, chess::ROOK, chess::BISHOP, chess::KNIGHT};
+        if (c >= '1' && c <= '4') chessPromote(kPick[c - '1']);
+        else { g_cPromoFrom = g_cPromoTo = -1; }
+        requestRedraw();
+        return;
+    }
+    // Cursor moves as the board is shown (turned round when you play black).
+    const int fl = g_cUser > 0 ? 1 : -1;
+    int f = chess::file(g_cCur), r = chess::rank(g_cCur);
+    if (c == 'E' || ev.up) r += fl;
+    else if (c == 'X' || ev.down) r -= fl;
+    else if (c == 'S' || ev.left) f -= fl;
+    else if (c == 'F' || ev.right) f += fl;
+    else if (c == 'D' || ev.enter || ev.space) chessPick();
+    else if (c == 'U') {
+        if (!g_cN) return;
+        chessStopThinking();
+        int n = g_cN - 1;                                         // back to your turn, one of your moves undone
+        if ((n % 2 == 0) != (g_cUser > 0)) n--;
+        if (n < 0) n = 0;
+        chessReplay(n);
+        chessSave();
+        toast("Taken back");
+        chessThink();
+    } else if (c == 'L') {
+        g_cLevel = g_cLevel % 4 + 1;
+        chessSave();
+        toast("Level %u%s", (unsigned)g_cLevel, g_cLevel == 1 ? " (easy)" : g_cLevel == 4 ? " (hard)" : "");
+    } else if (c == 'C') {
+        chessStopThinking();
+        g_cUser = (int8_t)-g_cUser;
+        g_cSel = -1;
+        chessSave();
+        toast("You play %s", g_cUser > 0 ? "white" : "black");
+        chessThink();
+    } else if (c == 'Q') {
+        static uint32_t askedAt = 0;
+        if (!askedAt || millis() - askedAt > 5000) { askedAt = millis(); toast("Q again: new game"); requestRedraw(); return; }
+        askedAt = 0;
+        chessNew();
+    } else return;
+    if (f < 0) f = 0;
+    if (f > 7) f = 7;
+    if (r < 0) r = 0;
+    if (r > 7) r = 7;
+    g_cCur = r * 8 + f;
+    requestRedraw();
+}
+
+void renderChess() {
+    char hdr[48], sq[3] = {(char)('a' + chess::file(g_cCur)), (char)('1' + chess::rank(g_cCur)), 0};
+    if (g_toast[0]) snprintf(hdr, sizeof(hdr), "%s", g_toast);
+    else if (g_cPromoFrom >= 0) snprintf(hdr, sizeof(hdr), "Promote: 1Q 2R 3B 4N");
+    else if (g_cResult != chess::ONGOING) snprintf(hdr, sizeof(hdr), "%s", chessResultText(g_cResult, -g_cPos.side));
+    else if (g_cThinking) snprintf(hdr, sizeof(hdr), "%s%sThinking... L%u", g_cLastName, g_cLastName[0] ? "  " : "", (unsigned)g_cLevel);
+    else if (g_cPos.side == g_cUser && g_cLastName[0])
+        snprintf(hdr, sizeof(hdr), "Bot played %s%s  L%u", g_cLastName, chess::inCheck(g_cPos) ? " check" : "",
+                 (unsigned)g_cLevel);
+    else if (g_cPos.side == g_cUser) snprintf(hdr, sizeof(hdr), "Your move (%s)  L%u", sq, (unsigned)g_cLevel);
+    else snprintf(hdr, sizeof(hdr), "Bot to move  L%u  Enter", (unsigned)g_cLevel);
+    drawHeader(hdr, false);
+    if (g_navKeysOpen) drawNavKeys(BOT_TOP - kNavH, kChessKeys);
+}
+
+// ---- Board pixels (after LVGL; 20x20 pieces, my own drawings) ----------------------------
+const char* const kChessArt[6][20] = {
+    {   // pawn
+        "....................", "....................", "....................", "........XXXX........",
+        ".......XXXXXX.......", ".......XXXXXX.......", ".......XXXXXX.......", "........XXXX........",
+        "......XXXXXXXX......", "........XXXX........", "........XXXX........", ".......XXXXXX.......",
+        ".......XXXXXX.......", "......XXXXXXXX......", ".....XXXXXXXXXX.....", "....XXXXXXXXXXXX....",
+        "...XXXXXXXXXXXXXX...", "...XXXXXXXXXXXXXX...", "....................", "...................."},
+    {   // knight
+        "....................", ".......XX.X.........", "......XXXXXX........", ".....XXXXXXXX.......",
+        "....XXXXXXXXXX......", "...XXXX.XXXXXXX.....", "..XXXXXXXXXXXXXX....", "..XXXXXXXXXXXXXXX...",
+        "...XXXX.XXXXXXXXX...", "....XX..XXXXXXXXX...", ".......XXXXXXXXXX...", "......XXXXXXXXXXX...",
+        ".....XXXXXXXXXXX....", ".....XXXXXXXXXXX....", "....XXXXXXXXXXXX....", "....XXXXXXXXXXXX....",
+        "...XXXXXXXXXXXXXX...", "..XXXXXXXXXXXXXXXX..", "..XXXXXXXXXXXXXXXX..", "...................."},
+    {   // bishop
+        "....................", ".........XX.........", "........XXXX........", ".......XXXXXX.......",
+        "......XXXX.XXX......", "......XXX.XXXX......", "......XX.XXXXX......", "......XXXXXXXX......",
+        ".......XXXXXX.......", "........XXXX........", ".......XXXXXX.......", "........XXXX........",
+        "........XXXX........", ".......XXXXXX.......", "......XXXXXXXX......", ".....XXXXXXXXXX.....",
+        "...XXXXXXXXXXXXXX...", "..XXXXXXXXXXXXXXXX..", "..XXXXXXXXXXXXXXXX..", "...................."},
+    {   // rook
+        "....................", "...XXX..XXXX..XXX...", "...XXX..XXXX..XXX...", "...XXXXXXXXXXXXXX...",
+        "...XXXXXXXXXXXXXX...", "....XXXXXXXXXXXX....", ".....XXXXXXXXXX.....", ".....XXXXXXXXXX.....",
+        ".....XXXXXXXXXX.....", ".....XXXXXXXXXX.....", ".....XXXXXXXXXX.....", ".....XXXXXXXXXX.....",
+        ".....XXXXXXXXXX.....", ".....XXXXXXXXXX.....", "....XXXXXXXXXXXX....", "...XXXXXXXXXXXXXX...",
+        "...XXXXXXXXXXXXXX...", "..XXXXXXXXXXXXXXXX..", "..XXXXXXXXXXXXXXXX..", "...................."},
+    {   // queen
+        "....................", "..X......XX......X..", "..XX....XXXX....XX..", "..XX.X...XX...X.XX..",
+        "..XXXXX.XXXX.XXXXX..", "...XXXXXXXXXXXXXX...", "...XXXXXXXXXXXXXX...", "....XXXXXXXXXXXX....",
+        "....XXXXXXXXXXXX....", ".....XXXXXXXXXX.....", "......XXXXXXXX......", "......XXXXXXXX......",
+        "......XXXXXXXX......", ".....XXXXXXXXXX.....", "....XXXXXXXXXXXX....", "....XXXXXXXXXXXX....",
+        "...XXXXXXXXXXXXXX...", "..XXXXXXXXXXXXXXXX..", "..XXXXXXXXXXXXXXXX..", "...................."},
+    {   // king
+        ".........XX.........", ".........XX.........", ".......XXXXXX.......", ".........XX.........",
+        "........XXXX........", "...XXX.XXXXXX.XXX...", "..XXXXXXXXXXXXXXXX..", "..XXXXXXXXXXXXXXXX..",
+        "..XXXXXXXXXXXXXXXX..", "...XXXXXXXXXXXXXX...", "....XXXXXXXXXXXX....", ".....XXXXXXXXXX.....",
+        "......XXXXXXXX......", "......XXXXXXXX......", ".....XXXXXXXXXX.....", "....XXXXXXXXXXXX....",
+        "...XXXXXXXXXXXXXX...", "..XXXXXXXXXXXXXXXX..", "..XXXXXXXXXXXXXXXX..", "...................."},
+};
+
+inline bool chessArt(int t, int x, int y) {
+    return x >= 0 && y >= 0 && x < 20 && y < 20 && kChessArt[t][y][x] == 'X';
+}
+
+void chessPx(int x, int y, bool black) { mapPixel(x, y, g_cfg.dark ? !black : black); }
+
+void chessFrame(int x0, int y0, int inset, int width) {
+    for (int k = 0; k < width; k++) {
+        const int a = inset + k, b = kChessSq - 1 - inset - k;
+        for (int i = a; i <= b; i++) {
+            chessPx(x0 + i, y0 + a, true); chessPx(x0 + i, y0 + b, true);
+            chessPx(x0 + a, y0 + i, true); chessPx(x0 + b, y0 + i, true);
+        }
+    }
+}
+
+void stampChess() {
+    const int yMax = g_navKeysOpen ? BOT_TOP - kNavH : BOT_TOP;
+    const bool flip = g_cUser < 0;
+    chess::Move legal[chess::kMaxMoves];
+    const int nLegal = g_cSel >= 0 ? chess::legalMoves(g_cPos, legal) : 0;
+    const chess::Move* last = g_cN ? &g_cMoves[g_cN - 1] : nullptr;
+    for (int vr = 0; vr < 8; vr++) {
+        for (int vc = 0; vc < 8; vc++) {
+            const int r = flip ? vr : 7 - vr, f = flip ? 7 - vc : vc, sq = r * 8 + f;
+            const int x0 = kChessX + vc * kChessSq, y0 = kChessY + vr * kChessSq;
+            if (y0 + kChessSq > yMax) continue;
+            const bool dark = ((r + f) & 1) == 0;
+            const int v = g_cPos.sq[sq], t = v < 0 ? -v : v;
+            for (int y = 0; y < kChessSq; y++)
+                for (int x = 0; x < kChessSq; x++) {
+                    bool ink = dark && !((x0 + x) & 1) && !((y0 + y) & 1);    // dark square: 25 % dots
+                    if (t) {
+                        const int px = x - 4, py = y - 4;
+                        const bool in = chessArt(t - 1, px, py);
+                        bool edge = false, near = false;
+                        for (int dy = -1; dy <= 1; dy++)
+                            for (int dx = -1; dx <= 1; dx++) {
+                                const bool o = chessArt(t - 1, px + dx, py + dy);
+                                if (in && !o && (dx == 0 || dy == 0)) edge = true;
+                                if (!in && o) near = true;
+                            }
+                        if (in) ink = v < 0 ? true : edge;                    // black filled, white outlined
+                        else if (near) ink = false;                          // white halo
+                    }
+                    chessPx(x0 + x, y0 + y, ink);
+                }
+            if (last && (sq == last->from || sq == last->to)) {               // last move: corner ticks
+                for (int i = 0; i < 6; i++)
+                    for (int k = 0; k < 2; k++) {
+                        chessPx(x0 + 2 + i, y0 + 2 + k, true); chessPx(x0 + 2 + k, y0 + 2 + i, true);
+                        chessPx(x0 + kChessSq - 3 - i, y0 + kChessSq - 3 - k, true);
+                        chessPx(x0 + kChessSq - 3 - k, y0 + kChessSq - 3 - i, true);
+                    }
+            }
+            for (int i = 0; i < nLegal; i++) {                              // where the picked piece can go
+                if (legal[i].from != g_cSel || legal[i].to != sq) continue;
+                if (v) {
+                    for (int y = 0; y < 5; y++)
+                        for (int x = 0; x < 5 - y; x++) {
+                            chessPx(x0 + x, y0 + y, true); chessPx(x0 + kChessSq - 1 - x, y0 + y, true);
+                            chessPx(x0 + x, y0 + kChessSq - 1 - y, true);
+                            chessPx(x0 + kChessSq - 1 - x, y0 + kChessSq - 1 - y, true);
+                        }
+                } else {
+                    for (int y = 10; y < 18; y++)
+                        for (int x = 10; x < 18; x++)
+                            chessPx(x0 + x, y0 + y, !(x == 10 || x == 17 || y == 10 || y == 17));
+                }
+                break;
+            }
+            if (sq == g_cSel) chessFrame(x0, y0, 1, 2);
+            if (sq == g_cCur) chessFrame(x0, y0, 0, g_cSel == sq ? 1 : 3);
+        }
+    }
+    for (int i = -1; i <= 8 * kChessSq; i++) chessPx(kChessX + i, kChessY - 1, true);   // board edge
+    for (int y = kChessY - 1; y < yMax; y++) {
+        chessPx(kChessX - 1, y, true);
+        chessPx(kChessX + 8 * kChessSq, y, true);
+    }
+    g_display.markDirty();
 }
 
 // ---- Contact page + share picker ----------------------------------------------------
@@ -8407,6 +8859,7 @@ void render() {
     else if (g_cardOpen)               renderCard();
     else if (g_libOpen)                renderLibrary();
     else if (g_gameOpen)               renderGame();
+    else if (g_chessOpen)              renderChess();
     else if (mapview::isOpen())        renderMapHeader();
     else switch (g_screen) {
         case SCR_HOME:     renderHome(); break;
@@ -8417,11 +8870,14 @@ void render() {
     drawBottomBar();
     drawMenuOverlay();
     lv_refr_now(nullptr);
-    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_placeOpen && !g_navOpen)
+    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_chessOpen && !g_placeOpen && !g_navOpen)
         stampMap();   // after LVGL's clear
+    if (g_chessOpen && !g_menuOpen && !g_threadOpen && !g_libOpen && !g_usbDrive && !g_cardOpen && !g_navOpen && !g_rtOpen &&
+        !g_wizOpen && g_entry != Entry::Name)
+        stampChess();
     if (g_navOpen && !g_menuOpen) stampNav();
     if (g_screen == SCR_SETTINGS && g_page == PG_ENERGY_GRAPH && !g_menuOpen && !g_threadOpen && !mapview::isOpen() &&
-        !g_libOpen && !g_gameOpen && !g_wizOpen && !g_rtOpen)
+        !g_libOpen && !g_gameOpen && !g_chessOpen && !g_wizOpen && !g_rtOpen)
         stampGraphLabels();
     const uint32_t t1 = millis();
     // Clear the request first: keys queued during the panel refresh may ask again.
@@ -8711,6 +9167,7 @@ void goScreen(ScreenId s) {
     g_menuOpen = false;
     g_libOpen = false;
     g_gameOpen = false;
+    g_chessOpen = false;
     g_cardOpen = false;
     g_shareActive = false;
     if (mapview::isOpen()) { mapview::close(); mapReadDone(); }
@@ -8833,7 +9290,7 @@ void cancelEntry() {
 void goBack() {
     if (g_menuOpen)              { closeMenu(); return; }
     if (g_navOpen && !entryActive()) { navClose(); return; }
-    if (g_navKeysOpen && (mapview::isOpen() || g_libOpen || g_gameOpen) && !entryActive()) { navKeysToggle(); return; }
+    if (g_navKeysOpen && (mapview::isOpen() || g_libOpen || g_gameOpen || g_chessOpen) && !entryActive()) { navKeysToggle(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
     if (g_rtOpen && !entryActive()) { rtStop(); return; }
     if (g_shareActive && !entryActive()) {
@@ -8847,6 +9304,7 @@ void goBack() {
         return;
     }
     if (g_gameOpen && !entryActive()) { gameClose(); libOpen(); return; }   // back to the Library list
+    if (g_chessOpen && !entryActive()) { chessClose(); libOpen(); return; }
     if (mapview::isOpen() && !entryActive()) { closeMap(); return; }    // map over a list: map first
     if (g_filter[0] && !entryActive() && isListScreen(g_screen)) { g_filter[0] = 0; loadRows(g_screen); requestRedraw(); return; }
     if (entryActive())           { cancelEntry(); return; }
@@ -9239,6 +9697,7 @@ void handleKey(const KeyEvent& ev) {
     if (entryActive()) { entryKey(ev); return; }
     if (g_libOpen) { libKey(ev); return; }
     if (g_gameOpen) { gameKey(ev); return; }
+    if (g_chessOpen) { chessKey(ev); return; }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
     if (g_rtOpen) { rtKey(ev); return; }
     if (g_navOpen) { navKey(ev); return; }
@@ -9607,6 +10066,7 @@ void powerTick() {
 #endif
     checkinTick();
     usbDriveTick();
+    chessTick();
     if (g_markValidAt && (int32_t)(millis() - g_markValidAt) >= 0) { g_markValidAt = 0; sysimg::markValid(); }
     peerClockTick();
     mapTick();
@@ -9695,6 +10155,7 @@ const char* powerSleepBlocker() {
     if (now < 15000) return "boot";
     if (now - g_lastInputMs < (uint32_t)g_pwEff.awakeSecs * 1000UL) return "recent input";
     if (g_usbDrive) return "USB drive";
+    if (g_cThinking) return "chess engine";
     // While the idle splash shows, loop() does not render, so a pending redraw waits for the wake
     // key anyway and must not keep the CPU awake.
     if (!g_idleActive && (g_redraw || g_redrawAt)) return "redraw";
@@ -10519,6 +10980,29 @@ void handleSerialLine(char* p) {
                           done && r.outcome == Outcome::Committed ? "deleted" : "failed");
         }
         requestRedraw();
+    } else if (!strcmp(p, "chess") || !strncmp(p, "chess ", 6)) {
+        const char* a = p[5] ? p + 6 : "";
+        if (!g_cMoves && !chessLoad()) { Serial.println("[CHESS] no memory"); return; }
+        if (!strcmp(a, "new")) chessNew();
+        else if (!strncmp(a, "level ", 6)) { const int l = atoi(a + 6); if (l >= 1 && l <= 4) { g_cLevel = (uint8_t)l; chessSave(); } }
+        else if (!strncmp(a, "move ", 5) && strlen(a) >= 9) {
+            // "chess move e2e4" (q/r/b/n for a promotion): as if picked with the cursor.
+            const int from = (a[6] - '1') * 8 + (a[5] - 'a'), to = (a[8] - '1') * 8 + (a[7] - 'a');
+            const char pr = a[9];
+            chess::Move legal[chess::kMaxMoves];
+            const int n = chess::legalMoves(g_cPos, legal);
+            int hit = -1;
+            for (int i = 0; i < n; i++)
+                if (legal[i].from == from && legal[i].to == to &&
+                    (!legal[i].promo || legal[i].promo == (pr == 'n' ? chess::KNIGHT : pr == 'r' ? chess::ROOK : pr == 'b' ? chess::BISHOP : chess::QUEEN)))
+                    hit = i;
+            if (hit < 0 || g_cThinking || g_cPos.side != g_cUser) Serial.println("[CHESS] move refused");
+            else { chessPlay(legal[hit]); chessThink(); }
+        }
+        char fen[96];
+        chess::toFen(g_cPos, fen, sizeof(fen));
+        Serial.printf("[CHESS] %s | moves %d, you %s, level %u, %s, result %u\n", fen, g_cN, g_cUser > 0 ? "white" : "black",
+                      (unsigned)g_cLevel, g_cThinking ? "thinking" : "idle", (unsigned)g_cResult);
     } else if (!strcmp(p, "boottime")) {
         for (int i = 0; i < g_bootMarkN; i++)
             Serial.printf("[BOOTTIME] %6lu ms %s\n", (unsigned long)g_bootMarks[i].ms, g_bootMarks[i].phase);
