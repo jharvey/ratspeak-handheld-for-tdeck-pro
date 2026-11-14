@@ -185,6 +185,12 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
 [DONE] Audio power-gated (GPIO 41 rail + I2S stop after 3 s silence)
 [DONE] E-ink power stage off before each sleep (DisplayEink::powerOff)
 [DONE] GPS periodic visits (on until 20 s fix or 3 min, then off)
+       2026-11-14: a cold receiver (no fix in 2 h) or the Atlas open stays on up to 12 min while
+       satellites are heard; RMC time without a fix sets the clock (gpsTimeNoFix, not "synchronized").
+       Opening a thread: history first, mark-read in the background (markReadTick); Peers R = announce.
+       Loop profiler: SLOW_STEP logs any loop step over 200 ms ("[SLOW] name ms"), the last 12 in
+       Settings S.10 Diagnostics and console "slow". Console "k <keys>" presses keys (^ back, ~ Enter);
+       "[UI] frame" says how long after the key the panel finished.
 [DONE] LoRa delivery to a SLEEPING receiver: 14/14 at 1.3 frames/msg. Fixes: stay
        awake while LoRaInterface has TX queued, 3 s after a LoRa wake, while message
        writes are pending (proof is sent after the write), wake for scheduled path

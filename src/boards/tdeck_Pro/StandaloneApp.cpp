@@ -1181,6 +1181,28 @@ bool gpsSyncClock() {
 
 int twoDigits(const char* s) { return (s[0] - '0') * 10 + (s[1] - '0'); }
 
+// Time without a position fix: the receiver knows UTC once it hears a satellite (or from its
+// backup clock), well before it can compute a position. The ESP32's own clock drifts a lot in
+// sleep (tens of minutes a day), so set it from this when a satellite is heard and the clock
+// at most every 10 min. Not marked "synchronized" (only a fix does that).
+void gpsTimeNoFix(const char* hms, const char* dmy) {
+    static uint32_t last = 0;
+    if (!g_cfg.gpsAutoSync || (last && millis() - last < 600000UL)) return;
+    int inView = 0, heard = 0, best = 0;
+    gpsSkySummary(inView, heard, best);
+    if (heard == 0) return;
+    const int yr = 2000 + twoDigits(dmy + 4);
+    if (yr < 2026 || yr > 2079) return;
+    const int mo = twoDigits(dmy + 2), d = twoDigits(dmy), hh = twoDigits(hms), mi = twoDigits(hms + 2),
+              ss = twoDigits(hms + 4);
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || hh > 23 || mi > 59 || ss > 60) return;
+    const long long now = (long long)time(nullptr);
+    if (!setClockUtc(yr, mo, d, hh, mi, ss)) return;
+    const long long gps = (long long)time(nullptr);
+    last = millis() | 1;
+    if (llabs(gps - now) > 5) Serial.printf("[RTC] set from GPS time (no fix yet), was %+llds off\n", now - gps);
+}
+
 bool nmeaChecksumOk(char* line) {
     char* star = strchr(line, '*');
     if (!star || !isxdigit((unsigned char)star[1]) || !isxdigit((unsigned char)star[2])) return false;
@@ -1252,6 +1274,7 @@ void gpsHandleSentence(char* line) {
             g_gpsUtc[0] = 2000 + twoDigits(fld[9] + 4);
             g_gpsUtcValid = true;
         }
+        else if (!valid && fld[1][0] && strlen(fld[1]) >= 6 && strlen(fld[9]) >= 6) gpsTimeNoFix(fld[1], fld[9]);
         if (valid && n > 6) gpsNotePosition(fld[3], fld[4], fld[5], fld[6]);
         if (valid && n > 8) {                    // speed + course over ground (no compass on board)
             g_gpsSpeedKn = fld[7][0] ? (float)atof(fld[7]) : 0.0f;
@@ -1635,12 +1658,15 @@ PeerRow* addRow(const uint8_t peer[16]) {
     return &r;
 }
 
+// maxSpin: in 5 ms units, as before (600 = 3 s). Polls each 1 ms (was a 5 ms sleep per try:
+// a list of conversations waits once per row, so the Inbox opened up to 5x slower).
 bool waitResult(MessageStore::Ticket t, MessageStore::Result& res, int maxSpin = 600) {
-    for (int i = 0; i < maxSpin; i++) {
+    const uint32_t until = millis() + (uint32_t)maxSpin * 5;
+    do {
         g_msgStore.poll();
         if (g_msgStore.peekResult(t, res)) return true;
-        delay(5);
-    }
+        delay(1);
+    } while ((int32_t)(millis() - until) < 0);
     return false;
 }
 
@@ -1694,13 +1720,14 @@ void loadConversations(int limit) {
     static ConversationSelector sel[kConvPage];
     ConversationCursor last{};
     bool haveLast = false;
-    int pages = 0;
+    int pages = 0, selfConvs = 0;
+    long unreadSum = 0;
     while (g_convCount < limit && pages < 8) {
         const int n = fetchConversationPage(sel, limit - g_convCount, haveLast ? &last : nullptr);
         if (n < 0) return;                      // keep "not valid": retried next time
         pages++;
         for (int i = 0; i < n && g_convCount < limit; i++) {
-            if (isSelf(sel[i].cursor.peer)) continue;
+            if (isSelf(sel[i].cursor.peer)) { selfConvs++; continue; }
             bool dup = false;
             for (int k = 0; k < g_convCount && !dup; k++) dup = !memcmp(g_convCache[k].peer, sel[i].cursor.peer, 16);
             if (dup) continue;
@@ -1719,6 +1746,7 @@ void loadConversations(int limit) {
             }
             memcpy(g_convCache[g_convCount].peer, sel[i].cursor.peer, 16);
             g_convCache[g_convCount].unread = unread;
+            unreadSum += unread;
             g_convCount++;
         }
         if (n < kConvPage || n == 0) break;   // last page
@@ -1727,8 +1755,8 @@ void loadConversations(int limit) {
     }
     g_convRev = rev;
     g_convValid = true;
-    Serial.printf("[LIST] %d conversations in %lu ms (%d pages)\n", g_convCount,
-                  (unsigned long)(millis() - t0), pages);
+    Serial.printf("[LIST] %d conversations in %lu ms (%d pages), unread %ld listed, store total %d, self %d\n",
+                  g_convCount, (unsigned long)(millis() - t0), pages, unreadSum, g_msgStore.totalUnreadCount(), selfConvs);
 }
 
 void appendConversations(int limit) {
@@ -1750,9 +1778,9 @@ void appendAnnounced(bool savedOnly, bool withSignal) {
         unsigned ageM = (node.lastSeen && millis() >= node.lastSeen)
                             ? (unsigned)((millis() - node.lastSeen) / 60000UL) : 0;
         if (node.rssi)
-            snprintf(r->sub, sizeof(r->sub), "%.10s %ddBm %um", hex, node.rssi, ageM);
+            snprintf(r->sub, sizeof(r->sub), "%.8s.. %ddBm %um", hex, node.rssi, ageM);
         else
-            snprintf(r->sub, sizeof(r->sub), "%.12s %um", hex, ageM);
+            snprintf(r->sub, sizeof(r->sub), "%.12s.. %um", hex, ageM);
     }
 }
 
@@ -1894,6 +1922,14 @@ HistRow g_hist[HIST_ROWS];
 int  g_histCount = 0;
 char g_histNote[24] = "";
 
+MessageStore::Ticket g_markReadTicket{};
+bool g_markReadPending = false;
+char g_markReadNext[33] = "";       // a thread opened while another was still being marked
+void markReadStart(const char* hex) {
+    auto mr = g_msgStore.requestMarkRead(std::string(hex));
+    if (mr.accepted()) { g_markReadTicket = mr.ticket; g_markReadPending = true; }
+}
+
 void loadHistory(const uint8_t peer[16]) {
     using namespace handheld::storage;
     g_histCount = 0;
@@ -1906,20 +1942,10 @@ void loadHistory(const uint8_t peer[16]) {
     hashToHex(peer, hex);
     const std::string peerHex(hex);
 
-    // Mark read when the thread is opened / refreshed.
-    auto mr = g_msgStore.requestMarkRead(peerHex);
-    if (mr.accepted()) {
-        MessageStore::Result r;
-        waitResult(mr.ticket, r, 400);
-        g_msgStore.releaseResult(mr.ticket);
-    }
-    int ri = findRow(peer);
-    if (ri >= 0) g_rows[ri].unread = 0;
-    g_convValid = false;
-
+    const uint32_t t0 = millis();
     auto sub = g_msgStore.requestHistoryPage(peerHex, HistoryEntry{}, (uint8_t)HIST_ROWS,
                                              HistoryDirection::Before);
-    for (int a = 0; a < 8 && !sub.accepted(); a++) {
+    for (int a = 0; a < 40 && !sub.accepted(); a++) {   // store busy (a write): up to 2 s
         unsigned r = (unsigned)sub.rejection;
         if (r != 1 && r != 8) break;
         pumpFor(50, 12);
@@ -2020,6 +2046,30 @@ void loadHistory(const uint8_t peer[16]) {
         }
     }
     if (g_histCount == 0) snprintf(g_histNote, sizeof(g_histNote), "(no messages yet)");
+    const uint32_t tHist = millis() - t0;
+
+    // Mark read after the page is on hand, without waiting: with 100+ unread the store took
+    // over 2 s, the wait gave up while it was still busy, the history request was turned
+    // away and the thread showed nothing. markReadTick() collects the result.
+    if (g_markReadPending) strlcpy(g_markReadNext, hex, sizeof(g_markReadNext));   // after the one running
+    else markReadStart(hex);
+    int ri = findRow(peer);
+    if (ri >= 0) g_rows[ri].unread = 0;
+    g_convValid = false;
+    Serial.printf("[HIST] %d messages in %lu ms\n", g_histCount, (unsigned long)tHist);
+}
+
+void markReadTick() {
+    if (!g_markReadPending) return;
+    MessageStore::Result r;
+    g_msgStore.poll();
+    if (!g_msgStore.peekResult(g_markReadTicket, r)) return;
+    g_msgStore.releaseResult(g_markReadTicket);
+    g_markReadPending = false;
+    g_convValid = false;
+    Serial.printf("[HIST] marked read: outcome %u error %u, %lu records, unread %ld\n", (unsigned)r.outcome,
+                  (unsigned)r.error, (unsigned long)r.total, (long)r.unreadDelta);
+    if (g_markReadNext[0]) { markReadStart(g_markReadNext); g_markReadNext[0] = 0; }
 }
 
 // ---- Send ------------------------------------------------------------------------
@@ -2339,6 +2389,11 @@ const char* const kFoundLabel[10] = {"Name", "Phone", "Address 1", "Address 2", 
 int g_foundField = 0;                            // which If-found line Entry::FoundText edits
 int foundCount() { int n = 0; for (auto& s : g_cfg.found) n += s[0] != 0; return n; }
 
+// Loop steps over 0.2 s (see SLOW_STEP at loop()).
+struct SlowRec { const char* name; uint16_t ms; uint32_t atS; };
+SlowRec  g_slow[12] = {};          // newest slow loop steps (render excluded), Settings S.10
+uint8_t  g_slowHead = 0;
+uint32_t g_slowCount = 0;
 enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
@@ -3730,9 +3785,11 @@ void buildSettingsRows(Page p) {
         break;
 
     case PG_IDENTITY:
-        srow(RK_INFO, "Destination", "%.16s", g_destHex[0] ? g_destHex : "unknown");
+        // The 32-digit LXMF address on two rows: digits 1-16, then 17-32 (a peer's card on
+        // another radio shows all 32 on one line).
+        srow(RK_INFO, "LXMF address 1-16", "%.16s", g_destHex[0] ? g_destHex : "unknown");
         srow(RK_ENTRY, "Display name", "%s", g_selfName);
-        srow(RK_INFO, "LXMF address", "..%.16s", g_destHex[0] ? g_destHex + 16 : "");
+        srow(RK_INFO, "LXMF address 17-32", "%.16s", g_destHex[0] ? g_destHex + 16 : "");
         srow(RK_ACTION, "Announce ID", "last: %s", g_announceStr);
         srow(RK_MENU, "Identities", "%d saved: new/switch/erase", g_idMgr.count());
         srow(RK_ACTION, "Run setup wizard", "name, clock, energy, idle ...");
@@ -3813,6 +3870,13 @@ void buildSettingsRows(Page p) {
         srow(RK_INFO, "LXMF queue", "%d", g_protoReady ? g_proto.lxmfQueuedCount() : 0);
         srow(RK_INFO, "Peers heard", "%d", g_announceMgr.nodeCount());
         srow(RK_INFO, "Protocol", "%s", g_protoReady ? "running" : "off");
+        {
+            const SlowRec& r = g_slow[(g_slowHead + 11) % 12];
+            if (g_slowCount && r.name)
+                srow(RK_INFO, "Pauses over 0.2 s", "%lu, last %.12s %ums", (unsigned long)g_slowCount, r.name, (unsigned)r.ms);
+            else
+                srow(RK_INFO, "Pauses over 0.2 s", "none");
+        }
         srow(RK_INFO, "Uptime", "%lud %02lu:%02lu", (unsigned long)(s / 86400),
              (unsigned long)((s / 3600) % 24), (unsigned long)((s / 60) % 60));
         break;
@@ -4459,15 +4523,16 @@ void drawFooter() {
         label(0, FOOT_Y - 1, W, FOOT_H, g_toast);
         return;
     }
+    // T (up) first, then V (down), as on the keyboard (T sits above V).
     box(0, FOOT_Y, BOT_C_W, FOOT_H, 1);
-    label(0, FOOT_Y - 1, BOT_C_W, FOOT_H, "V=Down", false, 'V');
-    addHit(0, FOOT_Y, BOT_C_W, FOOT_H, H_DOWN);
+    label(0, FOOT_Y - 1, BOT_C_W, FOOT_H, "T=up", false, 'T');
+    addHit(0, FOOT_Y, BOT_C_W, FOOT_H, H_UP);
     box(BOT_C_W, FOOT_Y, BOT_A_W, FOOT_H, 1);
-    label(BOT_C_W, FOOT_Y - 1, BOT_A_W, FOOT_H, "T=up", false, 'T');
-    addHit(BOT_C_W, FOOT_Y, BOT_A_W, FOOT_H, H_UP);
+    label(BOT_C_W, FOOT_Y - 1, BOT_A_W, FOOT_H, "V=dn", false, 'V');
+    addHit(BOT_C_W, FOOT_Y, BOT_A_W, FOOT_H, H_DOWN);
     box(BOT_C_W + BOT_A_W, FOOT_Y, BOT_I_W, FOOT_H, 1);
     if (moreDn) {
-        label(BOT_C_W + BOT_A_W, FOOT_Y - 1, BOT_I_W, FOOT_H, "v more");
+        label(BOT_C_W + BOT_A_W, FOOT_Y - 1, BOT_I_W, FOOT_H, "more below");
         addHit(BOT_C_W + BOT_A_W, FOOT_Y, BOT_I_W, FOOT_H, H_DOWN);
     }
 }
@@ -4476,7 +4541,7 @@ void drawHeader(const char* left, bool moreUp) {
     text(4, HEADER_Y, left, true, moreUp ? MENU_X - 8 : W - 8);
     if (moreUp) {
         // Hangs off MENU: same left/right edges, bottom edge = top line of
-        // the first list row, so it reads like the footer's "v more" cell.
+        // the first list row, so it reads like the footer's "more below" cell.
         const int h = LIST_TOP - (TOP_H - 1) + 1;
         box(MENU_X, TOP_H - 1, TAB_W, h, 1);
         label(MENU_X, TOP_H - 2, TAB_W, h, "^ more");
@@ -4514,13 +4579,14 @@ void renderList() {
         snprintf(hdr, sizeof(hdr), "Send %.12s to:", nm);
     } else {
         snprintf(hdr, sizeof(hdr), pages > 1 ? "%s %d%s" : "%s (%d)%s", screenName(g_screen), g_rowCount, pg);
+        if (g_screen == SCR_PEERS && strlen(hdr) + 13 < sizeof(hdr)) strlcat(hdr, "  R=announce", sizeof(hdr));
     }
     drawHeader(hdr, g_listScroll > 0);
 
     if (g_rowCount == 0) {
         const char* empty = g_filter[0] || g_entry == Entry::Search ? "No match"
                           : g_screen == SCR_CONTACTS ? "No contacts - see Peers"
-                          : g_screen == SCR_PEERS    ? "No peers - Announce on Home"
+                          : g_screen == SCR_PEERS    ? "No peers yet: R = announce"
                                                      : "No chats yet";
         text(8, LIST_TOP + 8, empty);
     }
@@ -5556,36 +5622,32 @@ bool isAltSym(const KeyEvent& ev) {
     return ev.alt && ev.opt && !ev.character && !ev.enter && !ev.del && !ev.space && !ev.fn;
 }
 struct NavKeyRow { const char* keys; const char* what; };
-const NavKeyRow kAtlasKeys[] = {                 // two columns of 7, the 12 px font
-    {"T" LV_SYMBOL_UP " F" LV_SYMBOL_LEFT " V" LV_SYMBOL_DOWN " H" LV_SYMBOL_RIGHT, ""},
+// A key card: a bold title line, a line of the move keys in words, then two columns of 6.
+struct NavCard { const char* title; const char* moves; NavKeyRow rows[12]; };
+constexpr const char* kMoves4 = "T up   F left   V down   H right";
+const NavCard kAtlasKeys = {"Atlas keys", kMoves4, {
     {"D", "centre on me"},   {"Z", "zoom in"},       {"W", "zoom out"},
-    {"L", "find a place"},   {"K", "hide keys"},     {"M ^", "menu, close"},
-    {"N", "next contact"},   {"P", "next wpt"},      {"Alt+P", "add wpt"},
-    {"Alt+SYM", "del wpt"},  {"G", "go: arrow"},     {"B", "track back"},
-    {"12 Ent", "chat #12"},
-};
+    {"L", "locate a place"}, {"N", "next contact"},  {"G", "go: arrow"},
+    {"P", "next wpt"},       {"Alt+P", "add wpt"},   {"Alt+SYM", "del wpt"},
+    {"B", "track back"},     {"12 Ent", "chat #12"}, {"M  ^", "menu, close"},
+}};
 // Library reader and list (K there too).
-const NavKeyRow kReaderKeys[] = {
-    {"Space N", "next page"}, {"B", "prev page"},    {"T V", "half page"},
-    {"W", "wrap on/off"},     {"F H", "pan"},          {"D", "left edge"}, {"", ""},
-    {"L", "find"},            {"K", "hide keys"},      {"M", "menu"},
-    {"^", "list"},            {"", ""},                {"", ""}, {"", ""},
-};
-const NavKeyRow kLibListKeys[] = {
-    {"1-4", "open row"},      {"Enter", "open"},       {"T V", "up / down"},
-    {"K", "hide keys"},       {"", ""},                {"", ""}, {"", ""},
-    {"M", "menu"},            {"^", "close"},          {"", ""},
-    {"", ""},                 {"", ""},                {"", ""}, {"", ""},
-};
-const NavKeyRow kGameKeys[] = {
-    {"T" LV_SYMBOL_UP " F" LV_SYMBOL_LEFT " V" LV_SYMBOL_DOWN " H" LV_SYMBOL_RIGHT, ""},
-    {"D Enter", "open the square"}, {"Alt+P", "mark a trap"}, {"Q", "new game"},
-    {"K", "hide keys"},       {"", ""},                {"", ""},
-    {"M", "menu"},            {"^", "back to Library"}, {"", ""},
-    {"", ""},                 {"", ""},                {"", ""}, {"", ""},
-};
-constexpr int kNavRowH = 14, kNavRows = 7;
-constexpr int kNavH = kNavRows * kNavRowH + 6;   // 90 px: the map keeps the rest
+const NavCard kReaderKeys = {"Reader keys", "T V half page   F H pan", {
+    {"Space N", "next page"}, {"B", "prev page"},   {"W", "wrap on/off"},
+    {"D", "left edge"},       {"L", "find"},        {"", ""},
+    {"M", "menu"},            {"^", "list"},        {"", ""},
+}};
+const NavCard kLibListKeys = {"Library keys", "T up   V down", {
+    {"1-4", "open row"},      {"Enter", "open"},    {"", ""}, {"", ""}, {"", ""}, {"", ""},
+    {"M", "menu"},            {"^", "close"},       {"", ""},
+}};
+const NavCard kGameKeys = {"Rat Trap keys", kMoves4, {
+    {"D Enter", "open square"}, {"Alt+P", "mark a trap"}, {"Q", "new game"},
+    {"", ""},                 {"", ""},             {"", ""},
+    {"M", "menu"},            {"^", "Library"},     {"", ""},
+}};
+constexpr int kNavRowH = 14, kNavRows = 6;      // rows per column
+constexpr int kNavH = (kNavRows + 2) * kNavRowH + 6;   // title + moves + 6 rows: 118 px
 bool g_navKeysOpen = false;
 extern bool g_libOpen, g_gameOpen, g_chessOpen;
 void mapKey(const KeyEvent& ev);
@@ -5608,34 +5670,39 @@ void smallText(int x, int y, const char* s, bool bold) {
 }
 
 // Drawn at the bottom of the map area (y0 .. y0 + kNavH).
-void drawNavKeys(int y0, const NavKeyRow* rows = kAtlasKeys) {
+void drawNavKeys(int y0, const NavCard& card = kAtlasKeys) {
     fillRect(0, y0, W, kNavH, false);
     box(0, y0, W, kNavH, 1);
     auto w12 = [](const char* s) {
         return (int)lv_txt_get_width(s, strlen(s), &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
     };
+    smallText(4, y0 + 3, card.title, true);
+    smallText(W - 4 - w12("K hide") - 1, y0 + 3, "K hide", false);
+    smallText(4, y0 + 3 + kNavRowH, card.moves, true);
+    const NavKeyRow* rows = card.rows;
+    const int top = y0 + 3 + 2 * kNavRowH;
     int keyW[2] = {16, 16}, colEnd = 0;
-    for (int i = 0; i < 2 * kNavRows; i++)          // widest key per column (rows with a text)
-        if (rows[i].keys[0] && rows[i].what[0] && w12(rows[i].keys) + 1 > keyW[i / kNavRows])
+    for (int i = 0; i < 2 * kNavRows; i++)          // widest key per column
+        if (rows[i].keys && rows[i].keys[0] && w12(rows[i].keys) + 1 > keyW[i / kNavRows])
             keyW[i / kNavRows] = w12(rows[i].keys) + 1;           // +1: the bold offset
     for (int i = 0; i < kNavRows; i++) {             // where the left column ends
-        if (!rows[i].keys[0]) continue;
-        const int e = rows[i].what[0] ? keyW[0] + 6 + w12(rows[i].what) : w12(rows[i].keys) + 1;
+        if (!rows[i].keys || !rows[i].keys[0]) continue;
+        const int e = keyW[0] + 6 + w12(rows[i].what);
         if (e > colEnd) colEnd = e;
     }
     const int x1 = std::max(4 + colEnd + 10, W / 3);
     // The right column lines up after its widest key only if every row still fits; else each
-    // text follows its own key (a long "Alt+SYM" would push the others off the screen).
+    // text follows its own key.
     bool aligned = true;
     for (int i = kNavRows; i < 2 * kNavRows; i++)
-        if (rows[i].keys[0] && rows[i].what[0] && x1 + keyW[1] + 6 + w12(rows[i].what) > W - 2) aligned = false;
+        if (rows[i].keys && rows[i].keys[0] && x1 + keyW[1] + 6 + w12(rows[i].what) > W - 2) aligned = false;
     for (int i = 0; i < 2 * kNavRows; i++) {
-        const int c = i / kNavRows, x = c ? x1 : 4, y = y0 + 3 + (i % kNavRows) * kNavRowH;
-        if (!rows[i].keys[0]) continue;
+        if (!rows[i].keys || !rows[i].keys[0]) continue;
+        const int c = i / kNavRows, x = c ? x1 : 4, y = top + (i % kNavRows) * kNavRowH;
         smallText(x, y, rows[i].keys, true);
         const int dx = c == 0 || aligned ? keyW[c] + 6 : std::max(w12(rows[i].keys) + 7, 22);
-        if (rows[i].what[0]) smallText(x + dx, y, rows[i].what, false);
-        if (rows[i].what[0] && x + dx + w12(rows[i].what) > W - 2)
+        smallText(x + dx, y, rows[i].what, false);
+        if (x + dx + w12(rows[i].what) > W - 2)
             Serial.printf("[NAV] key card row \"%s\" runs past the edge\n", rows[i].keys);
     }
 }
@@ -5663,8 +5730,8 @@ void drawBottomBar() {
     // Middle tab: where you are + "K keys" over the Atlas / Library / games (K shows the key
     // card); Menu in Minimal; else Atlas when the card has maps, else Peers.
     if (over) {
-        const char* where = mapview::isOpen() ? "Atlas" : g_libOpen ? (g_haveLib ? "Library" : "Games")
-                          : g_chessOpen ? "Chess" : "Rat Trap";
+        const char* where = mapview::isOpen() ? "Atlas" : g_chessOpen ? "Chess" : g_gameOpen ? "Trap"
+                          : g_haveLib ? "Library" : "Games";
         box(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, 3);
         label(BOT_C_W, BOT_TOP + 2, BOT_A_W, 16, where, true);
         label(BOT_C_W, BOT_TOP + 19, BOT_A_W, 16, g_navKeysOpen ? "K hide" : "K keys", g_navKeysOpen, kKeyNav);
@@ -7713,13 +7780,11 @@ void renderGame() {
 // 1-4 choose a promotion, U takes back, L level, C swap sides, Q new game (twice), K keys.
 constexpr int kChessSq = 28, kChessX = (W - 8 * kChessSq) / 2, kChessY = LIST_TOP;
 constexpr int kChessMaxMoves = 400;
-const NavKeyRow kChessKeys[] = {
-    {"T" LV_SYMBOL_UP " F" LV_SYMBOL_LEFT " V" LV_SYMBOL_DOWN " H" LV_SYMBOL_RIGHT, ""},
+const NavCard kChessKeys = {"Chess keys", kMoves4, {
     {"D Enter", "pick / drop"}, {"U", "take back"}, {"L", "level 1-4"},
-    {"C", "swap sides"},      {"Q Q", "new game"},      {"K", "hide keys"},
-    {"M", "menu"},            {"^", "back to Library"}, {"", ""},
-    {"", ""},                 {"", ""},                {"", ""}, {"", ""},
-};
+    {"C", "swap sides"},      {"Q Q", "new game"},  {"", ""},
+    {"M", "menu"},            {"^", "Library"},     {"", ""},
+}};
 
 bool g_chessOpen = false;
 chess::Pos g_cPos;
@@ -8168,8 +8233,9 @@ void renderCard() {
     hashToHex(g_cardPeer, hex);
     snprintf(line, sizeof(line), "%s%s", isSelf(g_cardPeer) ? "MyID: " : "", name);
     text(4, HEADER_Y, line, true, W - 8);
-    snprintf(line, sizeof(line), "%.20s..", hex);         // one line: room for 4 rows
-    text(6, HEADER_Y + 19, line);
+    // The whole 32-digit LXMF address in the small font (same digits as Settings S.7 shows
+    // on that radio, which splits it into two lines of 16).
+    smallText(6, HEADER_Y + 21, hex, false);
     int y = HEADER_Y + 39;
     for (int i = 0; i < 4; i++) {
         char sub[40];
@@ -8187,7 +8253,7 @@ void renderCard() {
         y += ROW_H;
     }
     box(0, FOOT_Y, W, FOOT_H, 1);
-    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4 / Enter    ^ = back");
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4  T up  V dn  Ent  ^ back");
 }
 
 void startNameEntry(const uint8_t peer[16]);
@@ -9160,8 +9226,10 @@ void render() {
     if (g_fullRefreshReq) { g_fullRefreshReq = false; g_display.fullRefresh(); }
     else g_display.refreshIfDirty();
     syncNumLayer();
-    Serial.printf("[UI] frame %ums (build %u, panel %u)\n", (unsigned)(millis() - t0),
-                  (unsigned)(t1 - t0), (unsigned)g_display.lastRefreshMs());
+    const uint32_t sinceKey = g_lastInputMs ? millis() - g_lastInputMs : 0;
+    Serial.printf("[UI] frame %ums (build %u, panel %u), %u ms after the last key / touch\n",
+                  (unsigned)(millis() - t0), (unsigned)(t1 - t0), (unsigned)g_display.lastRefreshMs(),
+                  (unsigned)sinceKey);
 }
 
 // ---- Idle splash -----------------------------------------------------------------
@@ -9186,12 +9254,12 @@ constexpr int kIdleMapTop = 38, kIdleMapBottom = 300;
 // Every idle screen: time, battery and unread across the top, the date and the radio's name
 // under them, and the wake / LOCKED line at the bottom.
 void drawIdleTop() {
-    // Line 1: "1:45 PM EST  100% bat  ~12h"; line 2: "11/14  name  3 NEW". Regular weight (bold
+    // Line 1: "1:45 PM EST  100% bat  ~12h"; line 2: "11/14/2026  name  3 NEW". Regular weight (bold
     // was hard to read). Each line drops its least important part until it fits the width.
-    char t[12], line[64], line2[64], bat[16] = "", left[10] = "", md[8] = "--/--", unr[12];
+    char t[12], line[64], line2[64], bat[16] = "", left[10] = "", md[12] = "--/--/----", unr[12];
     fmtTime(t, sizeof(t));
     struct tm lt;
-    if (localNow(lt)) snprintf(md, sizeof(md), "%d/%d", lt.tm_mon + 1, lt.tm_mday);
+    if (localNow(lt)) snprintf(md, sizeof(md), "%d/%d/%d", lt.tm_mon + 1, lt.tm_mday, lt.tm_year + 1900);
     const int pct = g_bat.valid ? g_bat.pct : -1;
     const int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
     box(0, 0, W, kIdleMapTop, 1);
@@ -9209,7 +9277,8 @@ void drawIdleTop() {
     label(0, 0, W, 20, line);
     snprintf(line2, sizeof(line2), "%s  %s  %s", md, g_selfName, unr);
     if (textW(line2) > maxW) snprintf(line2, sizeof(line2), "%s  %.12s  %s", md, g_selfName, unr);
-    if (textW(line2) > maxW) snprintf(line2, sizeof(line2), "%.12s  %s", g_selfName, unr);
+    if (textW(line2) > maxW) snprintf(line2, sizeof(line2), "%s  %.8s  %s", md, g_selfName, unr);
+    if (textW(line2) > maxW) snprintf(line2, sizeof(line2), "%s  %s", md, unr);   // the date stays
     label(0, 18, W, 18, line2);
     g_idleShownUnread = unread;
     g_idleShownPct = pct;
@@ -9914,6 +9983,13 @@ void entryKey(const KeyEvent& ev) {
         c = isupper((unsigned char)c) ? (char)tolower(c) : (char)toupper(c);   // Alt = case
     }
     if (g_entry == Entry::Name && g_bufLen >= 23) { toast("Max 23 chars"); return; }
+    if (g_entry == Entry::Name && isSelf(g_nameTarget)) {
+        // Own name: short enough for the idle screen's second line at its widest,
+        // "12/31/2026  <name>  999 NEW", so the name is never cut there.
+        char probe[64];
+        snprintf(probe, sizeof(probe), "12/31/2026  %.*s%c  999 NEW", (int)g_bufLen, g_buf, c);
+        if (textW(probe) > W - 6) { toast("Max length (idle screen)"); return; }
+    }
     if (g_entry == Entry::WifiPass && g_bufLen >= WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
     if (passEntry(g_entry) && g_bufLen >= kLockPassMax) { toast("Max 32 chars"); return; }
     if (g_entry == Entry::Search && g_bufLen >= sizeof(g_filter) - 1) return;
@@ -9983,6 +10059,13 @@ void browseKey(const KeyEvent& ev) {
             else pageJump(+1);
             break;
         case 'B': pageJump(-1); break;
+        case 'R':                                   // Peers: announce this radio (as Home's button)
+            if (g_screen == SCR_PEERS) {
+                doAnnounce();
+                toast("Announce: %s", g_announceStr);
+                Serial.printf("[PEERS] announce: %s\n", g_announceStr);
+            }
+            break;
         default: break;
     }
 }
@@ -10274,8 +10357,14 @@ void powerGpsTick() {
         int inView = 0, heard = 0, best = 0;
         gpsSkySummary(inView, heard, best);
         const bool hopeless = g_gpsBbrFault || (now - g_gpsVisitStart >= 60000 && heard == 0 && !g_gpsFix);
-        const bool done = (fixSince && now - fixSince >= 20000) || now - g_gpsVisitStart >= power::kGpsWindowMs ||
-                          hopeless;
+        // No fix in the last 2 h (cold receiver: it must download orbit data first, which takes
+        // minutes) or the Atlas open: stay on up to 12 min while satellites are heard, not 3.
+        const bool cold = !g_gpsPosValid || now - g_gpsPosAt > 2UL * 3600UL * 1000UL;
+        // Only where the map may wake the GPS (Full, Balanced): the saving modes keep 3 min.
+        const bool mapOn = mapview::isOpen() && g_pwEff.mapGps;
+        const uint32_t window = (cold || mapOn) && g_pwEff.mapGps && heard > 0 ? 12UL * 60000UL : power::kGpsWindowMs;
+        const bool done = (fixSince && now - fixSince >= (mapOn ? 600000UL : 20000UL)) ||
+                          now - g_gpsVisitStart >= window || hopeless;
         if (done) {
             Serial.printf("[GPS] visit done after %lus (%s), next in %lu min\n",
                           (unsigned long)((now - g_gpsVisitStart) / 1000), g_gpsFix ? "fix" : "no fix",
@@ -10390,6 +10479,7 @@ void powerTick() {
     usbDriveTick();
     chessTick();
     txLateTick();
+    markReadTick();
     if (g_markValidAt && (int32_t)(millis() - g_markValidAt) >= 0) { g_markValidAt = 0; sysimg::markValid(); }
     peerClockTick();
     mapTick();
@@ -10825,6 +10915,25 @@ void handleSerialLine(char* p) {
         }
         buildSettingsRows(g_page);
         Serial.printf("[SETCHECK] %d rows too wide\n", bad);
+        return;
+    }
+    if (!strcmp(p, "slow")) {                          // slow: the newest loop steps over 0.2 s
+        Serial.printf("[SLOW] %lu so far\n", (unsigned long)g_slowCount);
+        for (int k = 0; k < 12; k++) {
+            const SlowRec& r = g_slow[(g_slowHead + k) % 12];
+            if (r.name) Serial.printf("[SLOW]   %s %u ms at %lus\n", r.name, (unsigned)r.ms, (unsigned long)r.atS);
+        }
+        return;
+    }
+    if (!strncmp(p, "k ", 2)) {                        // k <keys>: press keys (bench timing); ^ back, ~ Enter
+        for (const char* q = p + 2; *q; q++) {
+            uint8_t next = (uint8_t)((g_keyqHead + 1) % KEYQ_CAP);
+            if (next == g_keyqTail) break;
+            KeyEvent ev{};
+            if (*q == '^') ev.up = true; else if (*q == '~') ev.enter = true; else ev.character = *q;
+            g_keyq[g_keyqHead] = ev;
+            g_keyqHead = next;
+        }
         return;
     }
     if (!strncmp(p, "found ", 6)) {                    // found <1-10> [text]: an If-found line
@@ -11993,6 +12102,11 @@ bool begin() {
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
     noteInput();
     goScreen(minimalMode() ? SCR_INBOX : SCR_HOME);
+    // The first screen replaces the boot splash with a full refresh: a partial one left the
+    // splash showing through it (after the side-button reset the panel's old-image RAM did not
+    // hold the splash, so its pixels were never cleared).
+    g_fullRefreshReq = true;
+    requestRedraw();
     render();
     Serial.println("[BOOT] ready");
     restoreReport();
@@ -12001,13 +12115,24 @@ bool begin() {
     return true;
 }
 
+// Loop profiler: a step that holds the loop over 200 ms is logged ("[SLOW] watchPeers 850 ms"),
+// so a 2-3 s pause between a key and the screen can be traced to its cause.
+void slowNote(const char* name, uint32_t ms) {
+    Serial.printf("[SLOW] %s %u ms\n", name, (unsigned)ms);
+    if (!strcmp(name, "render")) return;   // the panel refresh: logged per frame already
+    g_slow[g_slowHead] = {name, (uint16_t)(ms > 65535 ? 65535 : ms), millis() / 1000};
+    g_slowHead = (uint8_t)((g_slowHead + 1) % 12);
+    g_slowCount++;
+}
+#define SLOW_STEP(name, call) do { const uint32_t t_ = millis(); call; const uint32_t d_ = millis() - t_; if (d_ > 200) slowNote(name, d_); } while (0)
+
 void loop() {
-    processKeys();          // input first: lowest latency to the next render
-    pumpOnce();
-    g_announceMgr.loop();
-    g_audio.loop();
-    gpsPoll();
-    gpsWatchLink();
+    SLOW_STEP("keys", processKeys());   // input first: lowest latency to the next render
+    SLOW_STEP("pumpOnce", pumpOnce());
+    SLOW_STEP("g_announceMgr.loop", g_announceMgr.loop());
+    SLOW_STEP("g_audio.loop", g_audio.loop());
+    SLOW_STEP("gpsPoll", gpsPoll());
+    SLOW_STEP("gpsWatchLink", gpsWatchLink());
 
     static uint32_t bootAnnounceAt = millis() + 3000;
     if (bootAnnounceAt && (int32_t)(millis() - bootAnnounceAt) >= 0) {
@@ -12016,35 +12141,35 @@ void loop() {
         if (g_screen == SCR_HOME && !g_idleActive) requestRedraw();
     }
 
-    watchBattery();
-    batLogTick();
-    saveEpochThrottled();
-    watchMessages();
-    watchPeers();
-    watchClockAndToast();
-    watchWifi();
-    tcpTick();
-    autoShareTick();
-    inboundTick();
-    trackTick();
-    navTick();
-    rtTick();
+    SLOW_STEP("watchBattery", watchBattery());
+    SLOW_STEP("batLogTick", batLogTick());
+    SLOW_STEP("saveEpochThrottled", saveEpochThrottled());
+    SLOW_STEP("watchMessages", watchMessages());
+    SLOW_STEP("watchPeers", watchPeers());
+    SLOW_STEP("watchClockAndToast", watchClockAndToast());
+    SLOW_STEP("watchWifi", watchWifi());
+    SLOW_STEP("tcpTick", tcpTick());
+    SLOW_STEP("autoShareTick", autoShareTick());
+    SLOW_STEP("inboundTick", inboundTick());
+    SLOW_STEP("trackTick", trackTick());
+    SLOW_STEP("navTick", navTick());
+    SLOW_STEP("rtTick", rtTick());
 
-    processKeys();         // again, in case a watcher above took a while
-    pollTouch();
-    pollSerial();
-    watchIdle();
-    powerTick();
+    SLOW_STEP("processKeys", processKeys());         // again, in case a watcher above took a while
+    SLOW_STEP("pollTouch", pollTouch());
+    SLOW_STEP("pollSerial", pollSerial());
+    SLOW_STEP("watchIdle", watchIdle());
+    SLOW_STEP("powerTick", powerTick());
 
     if (!g_idleActive) {
         const bool debounced = g_redrawAt && (int32_t)(millis() - g_redrawAt) >= 0;
         if (g_redraw || debounced) {
             processKeys();  // fold any just-arrived keys into this frame
-            render();
+            SLOW_STEP("render", render());
         }
     }
-    mirrorTick();
-    powerIdle();
+    SLOW_STEP("mirrorTick", mirrorTick());
+    powerIdle();            // (sleeps on purpose: not timed)
 }
 
 }  // namespace standalone

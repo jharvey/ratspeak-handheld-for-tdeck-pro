@@ -22,14 +22,14 @@ shot gps-01-searching.png
 gps on
 wait 6000
 shot gps-02-fix.png
-# The visit ends once the fix has held 20 s; indoors again, the footer shows the fix
-# age and the next scheduled visit.
-expect 40000 (fix), next in 15 min
-gps off
-wait 3000
-shot gps-03-next.png
+# With the Atlas open the receiver stays on (2026-11-14: up to 12 min) so the position keeps
+# up while driving. Closed, the visit ends once the fix has held 20 s.
+wait 25000
+shot gps-03-still-on.png
 serial map close
 expect 3000 [MAP] closed
+expect 10000 (fix), next in 15 min
+gps off
 # The fix is stale after 2 min: the map opens on it ("last fix"), and asks for a new one.
 wait 100000
 key T
