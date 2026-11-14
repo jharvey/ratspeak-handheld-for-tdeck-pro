@@ -7,7 +7,7 @@ expect 60000 [BOOT] ready
 serial wiz skip
 wait 1500
 serial batleft
-expect 3000 not enough data yet
+expect 3000 learning: 
 serial batleft feed 25 60
 expect 3000 [BAT] left: about
 wait 500

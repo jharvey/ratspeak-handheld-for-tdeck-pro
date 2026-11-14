@@ -159,6 +159,10 @@ firmware itself:
   which survives the final brown-out.
 - At the end the last CSV line shows the cut-off point; the % reading vs. real time left
   also checks the gauge (the 85 % "full" calibration, S.5.10).
+- Learned capacity (Future_steps 15): before each run `batcap` (and after the charge, once
+  unplugged: "start counting at 100 % (full charge)"); the `[BAT] capacity:` lines in the
+  log show each rest reading and every learned value. Compare the learned mAh with the
+  total mAh the run actually drew (battery.csv / energy monitor) to the cut-off.
 
 **Runs (each until the unit shuts down, then charge to full and start the next):**
 

@@ -332,7 +332,8 @@ Field / test tools
   Trap. Play the unit at 4 levels; board 8 x 28 px, own 20 px piece drawings; take back,
   swap sides, promotion choice, game kept across restarts. Ideas: clock, PGN export to SD,
   play a contact over LoRa (moves as short messages).
-- 15. Learned battery capacity (user asked 2026-11-13): estimate each unit's real mAh and
+- BUILT 2026-11-13, to validate in the 4b battery test - 15. Learned battery capacity (user
+  asked 2026-11-13; console "batcap", S.5 last row, S.4 last row "Times use"): estimate each unit's real mAh and
   base every runtime figure on it instead of the 1450 mAh nominal / the gauge's own
   FullChargeCapacity (unreliable here: the BQ27220 rarely sees the charge taper, SOC tops
   out ~85 %, see the per-device full-charge calibration).

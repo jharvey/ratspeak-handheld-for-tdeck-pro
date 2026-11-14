@@ -1,0 +1,3 @@
+expect 60000 [BOOT] ready
+serial batcap
+expect 3000 learned 1350 mAh (w 100, 2 discharges)

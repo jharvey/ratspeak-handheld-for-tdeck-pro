@@ -1,0 +1,39 @@
+# Learned battery capacity (Future_steps 15): discharges fed by console, then the pages.
+#   run-script.bat scripts\batcap.txt batcap fresh   (then batcap_after.txt: kept over a restart)
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+serial batcap
+expect 3000 learned 0 mAh
+serial batcap sample 100 50 650
+expect 3000 -> learned 1300 mAh, 1 discharges
+serial batcap sample 90 40 700
+expect 3000 -> learned 1350 mAh, 2 discharges
+serial batcap sample 80 50 500
+expect 3000 learned 1350 mAh (w 100, 2 discharges)
+serial batcap sample 90 40 2000
+expect 3000 not used
+serial batcap
+expect 3000 uses 1350
+serial setcheck
+expect 5000 0 rows too wide
+key M
+wait 300
+key S
+wait 300
+key 4
+wait 800
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+wait 800
+shot batcap-01-power.png

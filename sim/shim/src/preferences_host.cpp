@@ -5,7 +5,9 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <chrono>
 #include <mutex>
+#include <thread>
 #include <sstream>
 #include <vector>
 
@@ -54,7 +56,15 @@ void save(const std::string& ns) {   // caller holds g_mu
             out << '\n';
         }
     }
-    fsx::rename(tmp, nsPath(ns), ec);
+    // Windows: the rename fails while another program (indexer, antivirus) has the file
+    // open for a moment; a lost save looked like settings going back after a restart.
+    for (int i = 0; i < 50; i++) {
+        ec.clear();
+        fsx::rename(tmp, nsPath(ns), ec);
+        if (!ec) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    fprintf(stderr, "[SIM] NVS save failed: %s (%s)\n", nsPath(ns).c_str(), ec.message().c_str());
 }
 }  // namespace
 

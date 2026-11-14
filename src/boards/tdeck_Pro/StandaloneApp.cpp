@@ -492,6 +492,114 @@ void learnFullCharge(bool full, bool fallback, int rawSoc) {
     if (episodeMax != g_fullSoc) saveBatteryCal((uint8_t)episodeMax);
 }
 
+// ---- Learned battery capacity (Future_steps 15) ------------------------------------------
+// The mAh this battery really holds, learned from ordinary use. Between two points whose
+// charge is known without the gauge's own capacity model - a confirmed full charge (100 %)
+// or the cell at rest (draw under 100 mA for 10 min; voltage + draw x 0.15 ohm read on a
+// rested-cell table) - the mAh counted on battery (gauge current, as the energy monitor and
+// "time left" count it) divided by the % drop is one estimate. Only drops of 40 % or more
+// count; each is averaged in by the size of its drop (newer ones keep weight: the sum is
+// capped at 300). Per unit in NVS rs_bat (capMah / capW / capN), so a same-unit backup
+// carries it. Runtimes (S.4.12), "time left" and the battery page use it once there is one.
+constexpr uint16_t kNominalMah = 1450;     // a new battery (published figure)
+uint16_t g_capMah = 0;                     // learned, 0 = not yet
+uint16_t g_capW = 0;                       // sum of the % drops used (weight), capped
+uint8_t  g_capN = 0;                       // discharges used
+double   g_capMas = 0;                     // mA x s drawn on battery since the anchor
+int      g_capAnchor = -1;                 // % at the anchor, -1 = none
+bool     g_capSawFull = false;             // charge-done seen while on USB
+uint32_t g_capCalmSince = 0, g_capLastRest = 0;
+char     g_capLast[48] = "none yet";
+
+// Rested Li-ion / LiPo cell (no load for a while): volts -> %.
+int restedPct(float v) {
+    static const float vv[] = {3.27f, 3.61f, 3.69f, 3.71f, 3.73f, 3.75f, 3.77f, 3.79f, 3.80f, 3.82f, 3.84f,
+                               3.85f, 3.87f, 3.91f, 3.95f, 3.98f, 4.02f, 4.08f, 4.11f, 4.15f, 4.20f};
+    constexpr int n = sizeof(vv) / sizeof(vv[0]);        // 0, 5, 10 ... 100 %
+    if (v <= vv[0]) return 0;
+    if (v >= vv[n - 1]) return 100;
+    for (int i = 0; i < n - 1; i++)
+        if (v <= vv[i + 1]) return (int)(5 * i + 5 * (v - vv[i]) / (vv[i + 1] - vv[i]) + 0.5f);
+    return 50;
+}
+
+void capLoad() {
+    Preferences p;
+    if (!p.begin("rs_bat", true)) return;
+    g_capMah = p.getUShort("capMah", 0);
+    g_capW = p.getUShort("capW", 0);
+    g_capN = p.getUChar("capN", 0);
+    p.end();
+    if (g_capMah < 600 || g_capMah > 3000) g_capMah = g_capW = g_capN = 0;
+    if (g_capMah) Serial.printf("[BAT] learned capacity %u mAh from %u discharges\n", (unsigned)g_capMah, (unsigned)g_capN);
+}
+
+void capSave() {
+    Preferences p;
+    if (!p.begin("rs_bat", false)) return;
+    p.putUShort("capMah", g_capMah);
+    p.putUShort("capW", g_capW);
+    p.putUChar("capN", g_capN);
+    p.end();
+}
+
+void capAnchor(int pct, const char* how) {
+    g_capAnchor = pct;
+    g_capMas = 0;
+    Serial.printf("[BAT] capacity: start counting at %d %% (%s)\n", pct, how);
+}
+
+// One discharge from fromPct to toPct that used mah.
+void capSample(int fromPct, int toPct, float mah) {
+    const int span = fromPct - toPct;
+    if (span < 40 || mah <= 0) return;
+    const float est = mah * 100.0f / span;
+    if (est < 600 || est > 3000) {
+        snprintf(g_capLast, sizeof(g_capLast), "%d->%d%%: %u mAh, not used", fromPct, toPct, (unsigned)est);
+        Serial.printf("[BAT] capacity: %s (outside 600-3000)\n", g_capLast);
+        return;
+    }
+    g_capMah = g_capW ? (uint16_t)((g_capMah * (float)g_capW + est * span) / (g_capW + span) + 0.5f) : (uint16_t)(est + 0.5f);
+    g_capW = (uint16_t)(g_capW + span > 300 ? 300 : g_capW + span);
+    if (g_capN < 255) g_capN++;
+    capSave();
+    snprintf(g_capLast, sizeof(g_capLast), "%d->%d%%: %u mAh", fromPct, toPct, (unsigned)est);
+    Serial.printf("[BAT] capacity: %s (%.0f mAh used) -> learned %u mAh, %u discharges\n", g_capLast, mah,
+                  (unsigned)g_capMah, (unsigned)g_capN);
+}
+
+// Capacity for estimates; *learned says which.
+uint16_t batCapacityMah(bool* learned) {
+    if (learned) *learned = g_capMah != 0;
+    if (g_capMah) return g_capMah;
+    return (g_bat.valid && g_bat.fccMah >= 500 && g_bat.fccMah <= 6000) ? g_bat.fccMah : kNominalMah;
+}
+
+// After each battery reading (main loop).
+void capTick() {
+    if (!g_bat.valid) return;
+    const uint32_t now = millis();
+    if (g_bat.usb) {                                  // on USB: counting starts again at unplug
+        if (g_bat.full) g_capSawFull = true;
+        g_capAnchor = -1;
+        g_capMas = 0;
+        g_capCalmSince = 0;
+        return;
+    }
+    if (g_capSawFull) { g_capSawFull = false; capAnchor(100, "full charge"); }
+    if (g_bat.avgMa > 0 || -g_bat.avgMa >= 100) { g_capCalmSince = 0; return; }
+    if (!g_capCalmSince) g_capCalmSince = now ? now : 1;
+    if (now - g_capCalmSince < 600000UL || (g_capLastRest && now - g_capLastRest < 1800000UL)) return;
+    g_capLastRest = now ? now : 1;
+    const float ocv = g_bat.volts + (-g_bat.avgMa) * 0.00015f;     // 0.15 ohm cell + wiring
+    const int pct = restedPct(ocv);
+    Serial.printf("[BAT] capacity: rest %.3f V (%d mA) = %d %%, anchor %d %%, %.0f mAh since\n", ocv,
+                  (int)-g_bat.avgMa, pct, g_capAnchor, g_capMas / 3600.0);
+    if (g_capAnchor < 0) capAnchor(pct, "rest");
+    else if (g_capAnchor - pct >= 40) { capSample(g_capAnchor, pct, (float)(g_capMas / 3600.0)); capAnchor(pct, "rest"); }
+    else if (pct > g_capAnchor + 5) capAnchor(pct, "rest (higher)");   // the first reading was low
+}
+
 // Voltage 0x08, Flags 0x0A, RemainingCap 0x10, FullChargeCap 0x12,
 // AvgCurrent 0x14, StateOfCharge 0x2C
 bool readBattery() {
@@ -3308,8 +3416,9 @@ void buildSettingsRows(Page p) {
         break;
 
     case PG_POWER: {
-        // Estimated runtime on a full battery (gauge FullChargeCapacity, else ~1450 mAh).
-        const uint16_t cap = (g_bat.valid && g_bat.fccMah >= 500 && g_bat.fccMah <= 6000) ? g_bat.fccMah : 1450;
+        // Estimated runtime on a full battery: learned capacity, else the gauge's, else 1450 mAh.
+        bool capLearned = false;
+        const uint16_t cap = batCapacityMah(&capLearned);
         static const char* kNote[power::MODE_CUSTOM] = {"always awake", "wake 1 s", "wake 60 s",
                                                         "LoRa only", "LoRa on key", ""};
         char rt[16], ci[24], at[12];
@@ -3342,6 +3451,7 @@ void buildSettingsRows(Page p) {
             srow(RK_INFO, "Battery draw", "%d mA, %u h %02u m left", (int)-g_bat.avgMa,
                  (unsigned)(g_bat.tteMin / 60), (unsigned)(g_bat.tteMin % 60));
         else                                       srow(RK_INFO, "Battery draw", "%d mA", (int)-g_bat.avgMa);
+        srow(RK_INFO, "Times use", capLearned ? "%u mAh (learned)" : "%u mAh (nominal)", (unsigned)cap);
         break;
     }
 
@@ -3496,6 +3606,9 @@ void buildSettingsRows(Page p) {
             srow(RK_INFO, "Time left (measured)", "%s", t);
         }
         srow(RK_MENU, "Low-battery notice", "%s", g_cfg.lowBatPct ? "on" : "off");
+        if (g_capMah) srow(RK_INFO, "Learned capacity", "%u mAh, %u%% of new", (unsigned)g_capMah,
+                           (unsigned)(g_capMah * 100u / kNominalMah));
+        else srow(RK_INFO, "Learned capacity", "%s", g_capAnchor >= 0 ? "counting (needs 40% drop)" : "after a 40% drop");
         break;
 
     case PG_LOWBAT: {
@@ -10135,6 +10248,8 @@ void energyAccountAwake() {
     energy::addEvent(energy::E_DISPLAY, 8.0f * ein / 1000.0f);
     if (g_bat.valid && (!g_bat.usb || g_benchUntil))  // gauge average over the time since the last reading
         energy::addMeasured(g_bat.avgMa, now - g_enLastMeasMs);
+    if (g_bat.valid && !g_bat.usb && g_bat.avgMa < 0)   // learned capacity: the same count, battery only
+        g_capMas += -g_bat.avgMa * ((now - g_enLastMeasMs) / 1000.0);
     g_enLastMeasMs = now;
     const time_t t = time(nullptr);
     energy::tick(now, t > 100000 ? (uint32_t)t : 0, g_bat.valid ? g_bat.pct : -1);
@@ -10430,6 +10545,20 @@ void handleSerialLine(char* p) {
         else if (!strncmp(p, "rt start ", 9) && sscanf(p + 9, "%39s %d", hx, &secs) >= 1 && hexToHash(hx, h)) rtStart(h, secs);
         Serial.printf("[RT] on=%d sent=%lu replies=%lu lost=%lu heard=%lu file=%s\n", g_rtOn, (unsigned long)g_rtSent,
                       (unsigned long)g_rtGot, (unsigned long)g_rtLost, (unsigned long)g_rtHeard, g_rtFile);
+        return;
+    }
+    if (!strncmp(p, "batcap", 6)) {           // batcap | batcap reset | batcap sample <from%> <to%> <mAh>
+        int a = 0, b = 0, m = 0;
+        if (!strcmp(p, "batcap reset")) {
+            g_capMah = g_capW = g_capN = 0;
+            capSave();
+            snprintf(g_capLast, sizeof(g_capLast), "reset");
+        } else if (sscanf(p + 6, " sample %d %d %d", &a, &b, &m) == 3) {
+            capSample(a, b, (float)m);
+        }
+        Serial.printf("[BATCAP] learned %u mAh (w %u, %u discharges), anchor %d %%, %.0f mAh since, last: %s, uses %u\n",
+                      (unsigned)g_capMah, (unsigned)g_capW, (unsigned)g_capN, g_capAnchor, g_capMas / 3600.0, g_capLast,
+                      (unsigned)batCapacityMah(nullptr));
         return;
     }
     if (!strncmp(p, "batleft", 7)) {          // batleft [feed <mA> <min>]: estimate (bench: feed drain data)
@@ -11319,7 +11448,8 @@ int batHoursLeft10(int* dataMin) {
     if (sec < 1800 || !mah10 || !g_bat.valid) return -1;
     const float ma = (mah10 / 10.0f) * 3600.0f / sec;
     if (ma < 0.5f) return -1;
-    const float rem = g_bat.remMah ? (float)g_bat.remMah : 1450.0f * g_bat.pct / 100.0f;
+    const float rem = g_capMah ? g_capMah * g_bat.pct / 100.0f
+                    : g_bat.remMah ? (float)g_bat.remMah : kNominalMah * g_bat.pct / 100.0f;
     return (int)(rem / ma * 10.0f);
 }
 
@@ -11327,7 +11457,7 @@ void batLeftText(char* out, size_t n) {
     int mins = 0;
     const int h10 = batHoursLeft10(&mins);
     if (g_bat.usb) snprintf(out, n, "on USB power");
-    else if (h10 < 0) snprintf(out, n, "not enough data yet (%d/30 min)", mins);
+    else if (h10 < 0) snprintf(out, n, "learning: %d of 30 min", mins);
     else if (h10 < 480) snprintf(out, n, "about %d h in %s", (h10 + 5) / 10, power::modeName(g_pw.mode));
     else snprintf(out, n, "about %.1f days in %s", h10 / 240.0f, power::modeName(g_pw.mode));
 }
@@ -11378,6 +11508,7 @@ void watchBattery() {
     const int pct = g_bat.pct;
     const bool wasValid = g_bat.valid;
     readBattery();
+    capTick();
     lowBatTick();
     if (g_idleActive) return;
     const bool changed = chg != g_bat.charging || usb != g_bat.usb || wasValid != g_bat.valid ||
@@ -11609,6 +11740,7 @@ bool begin() {
     bootMark("keyboard, audio, touch");
     pinMode(KB_INT, INPUT_PULLUP);
     loadBatteryCal();
+    capLoad();
     readBattery();
     powerApply(true);                     // CPU clock, LoRa, WiFi, key light for the mode
     powerGpsTick();                       // decides whether the GPS starts powered
