@@ -328,6 +328,23 @@ Field / test tools
 - DONE 2026-11-13 (branch claude/features-6-11) - 10. Measured battery-life estimate on screen ("about 31 h left in Balanced") from the
   actual drain; builds on the battery-life test (Stress_test_plan.md section 4b).
 - DONE 2026-11-13 (branch claude/features-6-11) - 11. Low-battery notice: at 10 %, send one chosen contact "battery dying" + my position.
+- 15. Learned battery capacity (user asked 2026-11-13): estimate each unit's real mAh and
+  base every runtime figure on it instead of the 1450 mAh nominal / the gauge's own
+  FullChargeCapacity (unreliable here: the BQ27220 rarely sees the charge taper, SOC tops
+  out ~85 %, see the per-device full-charge calibration).
+  How: count the mAh actually drawn on battery (the energy monitor already integrates the
+  gauge current) between two resting points whose state of charge is known from the cell
+  voltage at rest (open-circuit voltage after >= 20 min with no load change) or from a
+  confirmed full charge. Capacity = mAh drawn / SOC change. Only discharges that span
+  >= 40 % count; each new one is averaged in (weighted by its span), with sanity limits
+  (600-3000 mAh) and no update while on USB. Stored per unit in NVS (rs_bat "capMah",
+  "capN"), so it carries in a same-unit backup.
+  Use: S.4.12 runtime per energy mode, "time left" (learned mAh x calibrated %), the
+  low-battery notice timing. Show on the battery page: "Capacity: learned 1320 mAh (91 %
+  of 1450 new), from 3 discharges" - also a battery-health hint (replace below ~70 %).
+  Until the first good discharge: the current behaviour, marked "(nominal)".
+  Validate with the battery-life test (Stress_test_plan.md section 4b, week of
+  2026-11-16): those full discharges give the true mAh to compare the learned value with.
 Nice to have
 - 12. Group threads: one message to a named set of contacts.
 - 13. Relay mode when plugged in: act as a Reticulum transport node on USB power to extend
