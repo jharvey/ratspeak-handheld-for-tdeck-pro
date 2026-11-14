@@ -286,6 +286,19 @@ Home Assistant integration (user asked 2026-11-12)
 - HA -> handheld: HA automations send alerts / notifications to the unit over LXMF (works
   off-grid via the LoRa gateway, e.g. doorbell, water leak, alarm armed).
 - Optional: report battery / GPS position to HA as sensors (opt-in, privacy).
+- Voice (user asked 2026-11-14): make the unit an HA audio / voice device.
+  - Speak to HA: hold MIC, talk, release -> HA Assist pipeline (wake word optional later).
+    On home WiFi: stream audio as an ESPHome-style voice satellite (HA Assist API) or the
+    Wyoming protocol; HA does speech-to-text, runs the intent, answers with text-to-speech.
+    Off WiFi (LoRa only): audio is far too big for LoRa; record + speech-to-text on the
+    bridge is not possible, so send typed / saved commands instead (above).
+  - HA speaks to me: HA notifications read aloud on the unit speaker (I2S, 16 kHz), e.g.
+    "front door open". On WiFi: HA sends TTS audio (media_player / Assist satellite
+    announce). Over LoRa: HA sends text, the unit speaks it with an on-device TTS (small
+    voice, or chime + text on screen if no TTS fits in flash).
+  - Settings: voice on/off, volume, which notifications are spoken, quiet hours.
+  - Check first: mic hardware on the T-Deck Pro (and its power cost), speaker volume, WiFi
+    audio streaming while LoRa keeps running, flash room for a TTS voice.
 - Needs: a small bridge (Python, Reticulum + MQTT or an HA custom integration) on the home
   gateway; message format for commands (plain text first, then a field-tagged LXMF type).
 
