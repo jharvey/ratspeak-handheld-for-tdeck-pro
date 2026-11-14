@@ -1,5 +1,5 @@
 # Chess: MENU -> Library, row after Rat Trap (row 2 on a card with no library files).
-# Pick up e2 (Enter), cursor up twice (E E), put down on e4; the unit answers. Then level 4,
+# Pick up e2 (Enter), cursor up twice (T T), put down on e4; the unit answers. Then level 4,
 # a move typed on the console, the keys card, leave and come back (the game is kept).
 #   run-script.bat scripts\chess.txt chess fresh
 expect 60000 [BOOT] ready
@@ -16,8 +16,8 @@ expect 5000 [CHESS] open
 wait 1000
 shot chess-01-start.png
 key ENTER
-key E
-key E
+key T
+key T
 wait 600
 shot chess-02-picked.png
 key ENTER

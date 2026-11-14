@@ -28,7 +28,7 @@ START HERE (handoff 2026-11-11)
 - Flash app only: esptool.py --chip esp32s3 --port COMx --baud 115200 --before
   default_reset --after hard_reset --no-stub write_flash 0x10000 <firmware.bin>
   (A unit updated from its SD card runs from app1; at the next boot after a USB flash it
-  sees app0 changed and boots it - "[OTA] app0 was flashed over USB". S.10.5 row 10.)
+  sees app0 changed and boots it - "[OTA] app0 was flashed over USB". S.11.5 row 10.)
 - Boot: console "boottime" prints the boot phase marks kept in RAM (the PC misses the first
   seconds after a reset). COM6 2026-11-13: screen starts drawing 1.5 s, boot screen done
   3.4 s, ready 7.8 s (was 8.5 s / 10.6 s). Vault PBKDF2 runs on core 0 meanwhile.
@@ -48,11 +48,21 @@ START HERE (handoff 2026-11-11)
   test rt* (raw frames 0xFF'RT1' via LoRaInterface::setRxTap, CSV rangetest/, tools/rangetest/rangetest_map.py).
   batHoursLeft10/batLeftText (energy monitor measured drain), lowBatTick (g_cfg.lowBat*). Console: track gpx|back,
   geof, wpt add, rt, batleft, lowbat. sim: track_nav, geofence, rangetest_screen, battery_left, rt_pair.py.
+- Operator mode (2026-11-14, user): S.1 = Mode (g_cfg.opMode, NVS opMode; 0 Minimal, 1 Normal,
+  2 Advanced = default) + Touch screen on/off (g_cfg.touchOff: CST328 held in reset, handleTouch
+  ignores). All other settings moved down one (Time S.2 ... Diagnostics S.10 = key 0, Storage S.11 by
+  scrolling). Minimal: menuShown() = Settings/Contacts/Inbox, PG_ROOT shows S.1 only, P/A off, middle
+  tab Menu, minimalToInbox() on wake/unlock, boots to Inbox. Normal = Advanced for now. Menu: Atlas only
+  if g_haveMaps; Library row reads "Games" when the card has no library files (g_haveLib). SD mounted
+  at boot (maps/library known at once). Console: opmode 0|1|2, touchscreen 0|1, found <1-10> <text>.
+- If found (S.4.2.9 submenu PG_FOUND): g_cfg.found[10][41] (NVS fnd0..9; old foundTxt moved: line 1 ->
+  Name, rest -> Misc) Name, Phone, Address 1-2, Town, State, ZIP, Country, Misc 1-2; the idle screen
+  joins "Town, State ZIP" and drops to the 12 px font when the lines do not fit.
 - Keys (2026-11-13, user): always-navigate M C I A P H (A = Atlas, was L; P on the Atlas = next waypoint). L = locate
-  (find) in lists / Atlas / reader. Home N = Announce. Atlas: E S X F, D centre, Z/W, N next contact, P next waypoint,
+  (find) in lists / Atlas / reader. Home N = Announce. Atlas: T F V H (up/left/down/right; no global H - Home is M then H), D centre, Z/W, N next contact, P next waypoint,
   Alt+P add, Alt+SYM (Keyboard.cpp emits alt+opt with no char; isAltSym) delete twice, A nothing, K card (7 rows/col).
-  Rat Trap: E S X F, D/Enter open, Alt+P mark, Q new, K card.
-  Chess (Library, row after Rat Trap; Chess.cpp rules + engine, perft-checked): E S X F /
+  Rat Trap: T F V H, D/Enter open, Alt+P mark, Q new, K card.
+  Chess (Library, row after Rat Trap; Chess.cpp rules + engine, perft-checked): T F V H /
   trackball cursor, D/Enter pick + drop, 1-4 promotion, U take back, L level 1-4, C swap
   sides, Q Q new, K card. Engine in a task on core 0 (sleep waits for it), ~10k nodes/s on
   the unit: L4 depth 5 in 8 s. Game kept in NVS rs_chess. Console "chess [new|level n|move e2e4]".
@@ -66,13 +76,13 @@ START HERE (handoff 2026-11-11)
   (';' new line) + name + g_destHex; locked: Map/Library fall back to Splash. Console idlescr <n>, idle now.
   sim/scripts/idle_screens.txt (libsim).
 - Library reader (2026-11-13): libLayout() lays out a page (wrap on: W-12 px; off: one file line, 255 chars kept);
-  W wrap (off for .csv), S/F pan g_libCol, D left, E/X libHalf() via the offset stack, R find, K card (kReaderKeys /
+  W wrap (off for .csv), F/H pan g_libCol, D left, T/V libHalf() via the offset stack, R find, K card (kReaderKeys /
   kLibListKeys). sim library.txt + wide_table.csv in libsim's library.
-- Atlas keys (2026-11-13): E S X F pan, D/Enter me, Z/W zoom (MapView::key); Q add / N next waypoint, T contact,
+- Atlas keys (2026-11-13): T F V H pan (was E S X F until 2026-11-14), D/Enter me, Z/W zoom (MapView::key); Q add / N next waypoint, T contact,
   R find, K = Nav keys card (kAtlasKeys, g_navKeysOpen, map drawn shorter above it), M menu, C I P H navigate.
   Letters: kKeyNav/kKeyFind/kKeyWptAdd/kKeyWptNext/kKeyContact. Middle tab: Nav keys on the map, Atlas if g_haveMaps
   (card has /maps), else Peers. Map GPS per mode: Profile.mapGps: Full/Balanced yes, saving modes no, Custom
-  knob S.4.7.9 "Map wakes GPS" (NVS cMapGps, default off; console pset mapgps). sim/scripts/map_keys.txt.
+  knob S.5.7.9 "Map wakes GPS" (NVS cMapGps, default off; console pset mapgps). sim/scripts/map_keys.txt.
 - GPS + map (2026-11-13): openMap() centres on fresh fix > last fix (g_gpsPosValid) > saved pos > card home, follow on;
   mapGpsAsk() requests a GPS visit on open and each minute while open + in use (no fresh fix); gpsPosText()
   footer = fix age + gpsStateText() (GPS on Ns heard/inView, next Nm, off, backup fault). sim/scripts/gps_map.txt.
@@ -127,13 +137,13 @@ START HERE (handoff 2026-11-11)
   vs the PC clock (clk + rtcdrift log, Theil-Sen fit, late USB replies after a wake dropped):
   COM9 asleep on battery +33 ppm (+2.9 s/day), COM5 awake on USB +28 ppm (+2.4 s/day), fit rms
   < 4 ms. The 1 min lead covers ~20 days without a peer clock sync. PC clock not verified.
-- UI features (2026-11-11, branch claude/ui-features-fb43b8): idle password lock (S.3.2;
+- UI features (2026-11-11, branch claude/ui-features-fb43b8): idle password lock (S.4.2;
   lock password = vault password, mode 3 asks new + repeat when none is set, boot lock,
   lockout 3 free then 30 s..16 min, NVS rs_lock; console lock / lock now; locked console
   = status commands only), share contact (contact page 1 Message / 2 Rename / 3 Share;
   "Contact card: <name>\n<32 hex>" text, receiver Enter on empty draft saves), lists 48
-  rows with pages (N/B, digits per page) and find (F), TCP hub S.2.6 (device only, NVS
-  rs_tcp, default off) and identity slots S.6.5 (new / switch / erase, Enter x2, restart).
+  rows with pages (N/B, digits per page) and find (F), TCP hub S.3.6 (device only, NVS
+  rs_tcp, default off) and identity slots S.7.5 (new / switch / erase, Enter x2, restart).
   Console: ids, contact <hex> <name>. Sim scripts: lock(+_boot), share_a/_b, lists,
   inbox_pages, identity(+_after), id, more_box, map_menu.
   2026-11-12: no default lock password any more: mode 3 with none asks new + repeat (^ cancels, lock stays off). MIC
@@ -159,11 +169,11 @@ Status tags: [DONE] solid on hardware   [IN-PROGRESS] partial / next polish
 --------------------------------------------------------------------------------
 CURRENT PHASE — energy modes (2026-11-09 … 11-10)
 --------------------------------------------------------------------------------
-ENERGY MODES  (Settings S.4 Power; power/PowerModes.*, power/LightSleep.*)
+ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
 [DONE] Four modes: Full / Balanced (160 MHz, wake 1 s, GPS 15 min) /
        Saver (80 MHz, wake 60 s, GPS hourly, no WiFi / key light) / Custom
 [DONE] Custom knobs: CPU, wake interval, awake-after-key, LoRa, GPS schedule,
-       WiFi, key backlight (S.4.4); NVS rs_power; "Full power on USB" rule
+       WiFi, key backlight (S.5.4); NVS rs_power; "Full power on USB" rule
 [DONE] Light sleep with wake on timer / key INT (15) / touch INT (12) / LoRa DIO1 (5)
 [DONE] Light-sleep crash FIXED: vendor/esp_idf_compat rtc_sleep.c + rtc_init.c
        (deep-sleep backports pulled in by core/compat/) break light sleep on
@@ -206,7 +216,7 @@ ENERGY MODES  (Settings S.4 Power; power/PowerModes.*, power/LightSleep.*)
        adopted +38 s, queued message delivered in the window.
        Console: checkin [min [every]], epoch [secs].
 [DONE] Energy monitor (power/EnergyMonitor.*): state-time x bench currents + TX airtime +
-       e-ink refresh time, vs gauge integral; hourly 48-entry RTC ring; S.4.9 table +
+       e-ink refresh time, vs gauge integral; hourly 48-entry RTC ring; S.5.9 table +
        trend graph; console energy / energy period <s> / energy clear.
 [DONE] LoRa RX duty cycle (2026-11-11): SX1262 SetRxDutyCycle in every sleeping mode
        (not Full); SF11/250k: listen 45 ms / sleep 81 ms (~36 %), senders unchanged.
@@ -351,10 +361,10 @@ G1.98 (2026-11-01)
 - Announce button: "Announce ID" (public ID chirp, NOT private key)
 - Bottom nav: Inbox (key I); MENU stays M
 - Settings path line: left S.x, right-justified name (e.g. Battery)
-- Battery log: internal ring + SD CSV every 5 s (now S.5.8)
-- SD card tools: mount/unmount/reset log (now S.10.5)
+- Battery log: internal ring + SD CSV every 5 s (now S.6.8)
+- SD card tools: mount/unmount/reset log (now S.11.5)
 - How to get logs: USB Serial dump, or pull TF card /batlog.csv
 - Idle: local name above "press a KEY to wake"
 Earlier G1.9x: top nav (refresh / battery / clock / MENU), bottom nav, footer,
 idle splash, home identity card, battery icons + charge detection, Settings
-battery page (now S.5), SYM / number-layer rules — all [DONE].
+battery page (now S.6), SYM / number-layer rules — all [DONE].

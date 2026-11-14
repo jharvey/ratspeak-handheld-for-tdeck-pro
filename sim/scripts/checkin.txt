@@ -1,4 +1,4 @@
-# Check-in mode (S.4.6 / S.4.8 open the Check-in page): turn it on, set the time 08:15
+# Check-in mode (S.5.6 / S.5.8 open the Check-in page): turn it on, set the time 08:15
 # (hhmm), back to Power: the row reads "ON 08:15, every 1 h". Default time 07:30.
 usb off
 expect 20000 [BOOT] ready
@@ -8,7 +8,7 @@ key M
 wait 800
 key S
 wait 800
-key 4
+key 5
 wait 1200
 shot checkin-00-power.png
 key 6

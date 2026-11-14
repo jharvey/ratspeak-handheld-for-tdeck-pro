@@ -7,7 +7,7 @@ key M
 wait 800
 key S
 wait 800
-key 4
+key 5
 wait 1200
 shot power-01-page.png
 key 3
@@ -25,7 +25,7 @@ expect 5000 [POWER] Saver (USB -> Full): cpu 240 MHz
 usb off
 expect 5000 [POWER] Saver: cpu 240 MHz
 # The idle splash (30 s) is up by now: the first key only wakes it.
-key G
+key T
 wait 300
 shot power-02b-woke.png
 wait 1500

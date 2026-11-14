@@ -11,7 +11,7 @@ expect 3000 [POWER] Balanced
 # The mode change starts a visit; no satellite heard (indoors) ends it after 60 s.
 expect 70000 (no fix), next in 15 min
 # A key first: after 15 s without input the device sleeps and the waking key is used up.
-key G
+key T
 wait 1500
 key A
 expect 3000 [GPS] visit requested (map)
@@ -32,7 +32,7 @@ serial map close
 expect 3000 [MAP] closed
 # The fix is stale after 2 min: the map opens on it ("last fix"), and asks for a new one.
 wait 100000
-key G
+key T
 wait 1500
 key A
 expect 3000 [GPS] visit requested (map)

@@ -1,4 +1,4 @@
-# Part 2: S.10.5 row 9 opens the backup list, Enter twice on the newest restores it.
+# Part 2: S.11.5 row 9 opens the backup list, Enter twice on the newest restores it.
 expect 60000 [BOOT] ready
 wait 1500
 serial id
@@ -8,6 +8,12 @@ wait 300
 key S
 wait 300
 key 0
+wait 600
+key BACK
+wait 600
+key V
+wait 300
+key ENTER
 wait 300
 key 5
 wait 800

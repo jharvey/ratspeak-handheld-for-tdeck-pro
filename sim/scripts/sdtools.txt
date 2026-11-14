@@ -1,5 +1,5 @@
 # Back up to the card, change the name, then the firmware update from /firmware
-# (S.10.5 rows 8 and 10). Then sdtools_restore.txt (row 9), sdtools_after.txt, sdtools_check.txt.
+# (S.11.5 rows 8 and 10). Then sdtools_restore.txt (row 9), sdtools_after.txt, sdtools_check.txt.
 #   copy .pio\build\tdeck_pro_standalone\firmware.bin to build\simdata\sdtools\sd\firmware\ first
 #   run-script.bat scripts\sdtools.txt sdtools fresh, then the other three with "sdtools"
 expect 60000 [BOOT] ready
@@ -12,6 +12,12 @@ wait 300
 key S
 wait 300
 key 0
+wait 600
+key BACK
+wait 600
+key V
+wait 300
+key ENTER
 wait 300
 key 5
 wait 800

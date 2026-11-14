@@ -28,7 +28,7 @@ Hardware / platform
 - DONE - PSRAM fully leveraged for protocol + LVGL buffers (QSPI mapped — keep verifying)
 - DONE - Keyboard backlight GPIO control beyond serial L
 - DONE - Partial e-ink refresh / ghosting control for lower energy
-- DONE - Light sleep between wake-ups; wake on LoRa / key / touch / timer (energy modes, S.4 Power)
+- DONE - Light sleep between wake-ups; wake on LoRa / key / touch / timer (energy modes, S.5 Power)
 - DONE - Energy modes Full / Balanced / Saver / Custom; audio + e-ink power gating; GPS visits
 - DONE - Reliable LoRa delivery to a sleeping receiver (14/14, 1.3 frames/msg)
 - DONE - Sleep floor 27 -> 7 mA (GPS UART back-power fix, touch gating); Saver ~7 mA asleep
@@ -50,7 +50,7 @@ Hardware / platform
   23 -> 1.3 s, send -> proof 28 -> 7 s, outgoing recovery 0.5 s after the scan. DONE: peer
   folders sharded (64 records per subfolder, old layout moved at boot): fopen 209 -> 36 ms,
   COM5 boot 98 -> 29.8 s, send -> proof 4-5 s.
-- DONE - Energy monitor: hourly per-part estimate vs gauge, trend graph on the e-ink (S.4.9)
+- DONE - Energy monitor: hourly per-part estimate vs gauge, trend graph on the e-ink (S.5.9)
 - DONE - LoRa RX duty cycle (SX1262 SetRxDutyCycle) in sleeping modes: ~36 % listening, 14/14
   (gauge: ~13 -> 8 mA asleep). Open: sleeping receiver's replies missed ~1 in 3 (retries)
 - Measure the duty-cycle saving with the INA226 rig; consider rxdc 3
@@ -65,7 +65,7 @@ Hardware / platform
   backports break light sleep); needs a backport that keeps both working
 - DONE - Battery model accuracy + charge UI (per-device full-charge calibration)
 - DONE - Bench current measurement with USB attached (bench / usbsleep / RTC log)
-- DONE - SD card mount, eject, format card found under S.9.5
+- DONE - SD card mount, eject, format card found under S.10.5
 - SD card support: DONE, sim + COM9 (shared SPI lock, mount/eject, battery log, optional
   message archive mirror). Next: time it with a real card; a cheap per-conversation trim
   so flash can keep only the newest messages when the card holds the rest
@@ -82,7 +82,7 @@ UI / UX
 -------
 - DONE - Theme toggle: white paper (default) vs black ink background
 - DONE (sim; TCP device-only) - Settings parity with Plus: WiFi client + GPS time were already in;
-  added TCP hub client (S.2.6, TcpClientSet) and identity slots (S.6.5 new / switch / erase).
+  added TCP hub client (S.3.6, TcpClientSet) and identity slots (S.7.5 new / switch / erase).
   Next: try TCP against a hub on hardware (not done: needs WiFi + a hub); WiFi AP mode and
   AutoInterface (LAN) not added - they need the Plus NetworkCoordinator; identity import
   from SD not added (no file picker).
@@ -94,8 +94,8 @@ UI / UX
 - DONE (sim, two devices) - share my location (chat MIC menu): readable LXMF text, last fix
   with its age when there is none, GPS visit on demand; per-contact auto-share 5/15/30/60
   min for 1 h / 4 h / until off (moved > 50 m or 2 intervals, Check-in queues, header pin,
-  stop all in S.1.8); receiver shows [loc] and opens it on the map. GPS position text on the
-  map footer and S.1.7. World map z0-7 from Natural Earth (render_world.py).
+  stop all in S.2.8); receiver shows [loc] and opens it on the map. GPS position text on the
+  map footer and S.2.7. World map z0-7 from Natural Earth (render_world.py).
   Next: send the position in the LXMF telemetry field too (Sideband FIELD_TELEMETRY 0x02,
   msgpack'd sensor data) - needs a fields argument on rsLXMFLite's send path; try between
   two units outdoors.
@@ -145,7 +145,7 @@ UI / UX
   Needs: a "Share maps" / "Receive maps" screen, region/zoom pick, progress, resume, and
   pack files (loose tiles make the receiving card's FAT writes the bottleneck either way).
   WiFi radio is shared with the client mode: pause it while sharing.
-- DONE (COM6, 2026-11-13) - USB drive mode: S.10.5 row 7 "USB drive" (console "usbdrive", on USB
+- DONE (COM6, 2026-11-13) - USB drive mode: S.11.5 row 7 "USB drive" (console "usbdrive", on USB
   power only) unmounts the card and moves the USB port from USB-Serial/JTAG to OTG (TinyUSB
   MSC, hal/UsbDrive). Windows sees "RatSpeak T-Deck SD card" (FAT32, 32 GB card): 10 MB write
   232 KB/s, read 570 KB/s (SPI 16 MHz, 8-sector transfers), data verified. Eject on the PC ->
@@ -187,7 +187,7 @@ Robustness to verify (before the stress-test pass)
   Next: time the usage check (LittleFS walk) and a removal pass on a unit with ~1,500
   messages (msgfill), once a unit is free from the map copies.
 - Same for a full SD card (archive + map tiles).
-- DONE (sim + COM5) - idle screen password lock: S.3.2 "On + password" (password = vault password,
+- DONE (sim + COM5) - idle screen password lock: S.4.2 "On + password" (password = vault password,
   asked new + repeat when the lock is turned on), boot lock, lockout after 3 wrong tries, messages keep arriving.
   Next: optional fully blank splash (no time/unread) and a duress/wipe-after-N option. 
 - DONE (sim) 2026-11-13 - FLASH WEAR: simulator write counters (sim/shim/src/wear.cpp) +
@@ -210,9 +210,9 @@ Audio / modes
   voice messages over Reticulum (record, Codec2 at 700-3200 bps, send as an LXMF audio
   field like Sideband's FIELD_AUDIO so other clients can play it; LoRa airtime limits
   length - a few seconds per message at low bitrate).
-- DONE - in settings, add volum controls for the beeps (S.8 Alerts): 0 (silent) / 20 / 40 /
+- DONE - in settings, add volum controls for the beeps (S.9 Alerts): 0 (silent) / 20 / 40 /
   60 / 80 (default, spares the speaker) / 100 %, plays the level when picked (2026-11-12).
-- DONE (sim) - idle screen = map around you (S.3.2 row 8): GPS / saved / card home position at
+- DONE (sim) - idle screen = map around you (S.4.2 row 8): GPS / saved / card home position at
   z13, time + battery + unread across the top, GPS line at the bottom (2026-11-12).
 - intergreate audio, perhaps https://codeberg.org/rfnxdev/partyline
 - text to audio, so it can read you a message. 
@@ -301,14 +301,14 @@ Everyday use
 - 3. SOS / check-in beacon: a held key combination sends my position to chosen contacts and
   repeats every few minutes until cancelled; clear on-screen state; works in every energy
   mode (wakes GPS + radio).
-- DONE (COM6, 2026-11-13) - 4. Firmware update from the SD card: S.10.5 row 10 (console
+- DONE (COM6, 2026-11-13) - 4. Firmware update from the SD card: S.11.5 row 10 (console
   "fwupdate") writes the newest *.bin in /firmware to the other app slot (hal/SysImage):
   app image check (E9 + app description), "RatSpeak T-Deck Pro - standalone" banner must be
   in the file, launcher layout (ota_2) refused, 30 % battery or USB. Bootloader rollback:
   the new firmware confirms itself 10 s after "[BOOT] ready". After an SD update the unit
   runs from app1; a later USB flash of app0 (0x10000) is noticed at boot (app0 SHA-256
   differs from the one saved at the update) and app0 boots. COM6: 1.9 MB in 26 s.
-- DONE (COM6, 2026-11-13) - 5. Backup / restore to SD: S.10.5 row 8 "Back up now" (console
+- DONE (COM6, 2026-11-13) - 5. Backup / restore to SD: S.11.5 row 8 "Back up now" (console
   "backup") copies all flash files + every NVS setting/key (rs_*, gps, identity, message
   index) to /backups/<YYYYMMDD-HHMM>/ (flash/, nvs.txt, info.txt with "complete 1" last).
   Row 9 lists the backups; Enter twice restores at the next boot (wipe, copy back, restart;
@@ -333,7 +333,7 @@ Field / test tools
   swap sides, promotion choice, game kept across restarts. Ideas: clock, PGN export to SD,
   play a contact over LoRa (moves as short messages).
 - BUILT 2026-11-13, to validate in the 4b battery test - 15. Learned battery capacity (user
-  asked 2026-11-13; console "batcap", S.5 last row, S.4 last row "Times use"): estimate each unit's real mAh and
+  asked 2026-11-13; console "batcap", S.6 last row, S.5 last row "Times use"): estimate each unit's real mAh and
   base every runtime figure on it instead of the 1450 mAh nominal / the gauge's own
   FullChargeCapacity (unreliable here: the BQ27220 rarely sees the charge taper, SOC tops
   out ~85 %, see the per-device full-charge calibration).
@@ -344,7 +344,7 @@ Field / test tools
   >= 40 % count; each new one is averaged in (weighted by its span), with sanity limits
   (600-3000 mAh) and no update while on USB. Stored per unit in NVS (rs_bat "capMah",
   "capN"), so it carries in a same-unit backup.
-  Use: S.4.12 runtime per energy mode, "time left" (learned mAh x calibrated %), the
+  Use: S.5.12 runtime per energy mode, "time left" (learned mAh x calibrated %), the
   low-battery notice timing. Show on the battery page: "Capacity: learned 1320 mAh (91 %
   of 1450 new), from 3 discharges" - also a battery-health hint (replace below ~70 %).
   Until the first good discharge: the current behaviour, marked "(nominal)".

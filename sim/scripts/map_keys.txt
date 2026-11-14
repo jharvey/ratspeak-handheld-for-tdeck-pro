@@ -9,7 +9,7 @@ expect 60000 [BOOT] ready
 serial pm1
 expect 3000 [POWER] Balanced
 expect 70000 (no fix), next in 15 min
-key G
+key T
 wait 1500
 key A
 expect 3000 [GPS] visit requested (map)
@@ -20,7 +20,7 @@ expect 3000 [MAP] closed
 serial pm2
 expect 3000 [POWER] Saver
 expect 70000 (no fix), next in 60 min
-key G
+key T
 wait 1500
 key A
 expect 3000 [GPS] map: no visit in this power mode
@@ -32,7 +32,7 @@ expect 3000 [MAP] closed
 serial pset mapgps 1
 expect 3000 [POWER] Custom
 expect 70000 (no fix), next in 60 min
-key G
+key T
 wait 1500
 key A
 expect 3000 [GPS] visit requested (map)
@@ -44,7 +44,7 @@ wait 1500
 shot keys-02-navkeys.png
 key Z
 wait 1200
-key E
+key T
 wait 1200
 serial map
 expect 3000 m *

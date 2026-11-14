@@ -38,7 +38,7 @@ key M
 wait 600
 key S
 wait 600
-key 8
+key 9
 wait 600
 key 5
 wait 800

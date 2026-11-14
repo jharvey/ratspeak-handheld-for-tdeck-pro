@@ -106,10 +106,10 @@ In a chat, **MIC** opens the location menu (**MIC** or **^** goes back):
 1. **Share my location** sends a normal message any LXMF client can read:
    `My location: 43.64012, -70.92011 (+-10 m, 14:32)`. Without a fresh fix (GPS resting
    in Balanced / Saver, or indoors) it sends the last fix with its age, `My last
-   location: … (35 min old)`, or the manual location (S.1.4), and wakes the GPS for a visit.
+   location: … (35 min old)`, or the manual location (S.2.4), and wakes the GPS for a visit.
 2. **Auto-share location**: Enter steps off → every 5 → 15 → 30 → 60 min → off.
 3. **Auto-share for**: 1 h / 4 h / until off (applies to the next and the running share).
-4. **Stop all auto-sharing** (also S.1.8).
+4. **Stop all auto-sharing** (also S.2.8).
 5. **Show them on the map** (their last shared position, see §8.1).
 
 Auto updates are short (`Loc: 43.64012, -70.92011 14:32`), go out only with a fresh fix
@@ -134,13 +134,13 @@ step it also goes on), **0** skips the rest (left as it is).
 |------|------|
 | 1 | Welcome (what RatSpeak is, the keys) |
 | 2 | Device name (**1** = change; default TDP-xxxx) |
-| 3 | Time zone (**1** = next zone); the clock sets itself from GPS or radios heard (by hand: S.1.1) |
+| 3 | Time zone (**1** = next zone); the clock sets itself from GPS or radios heard (by hand: S.2.1) |
 | 4 | Clock: **1** 24 h (13:45) / **2** 12 h (1:45 PM): top bar, idle screens, Settings |
 | 5 | Energy mode: Full / Balanced (default) / Saver / Check-in (§6) |
 | 6 | Idle screen: Splash / Map / Library page / If found (asks for the text, §4.1) |
 | 7 | Simple / Advanced (stored; Simple mode itself comes later, today both are the same) |
 | 8 | Password lock: none / set one (§1.2c) |
-| 9 | Import contacts: **1** listen over the radio (every contact card that arrives is saved; the other radio uses S.6 **Share all contacts**), **2** read `ratdeckpro/contacts.txt` from the SD card |
+| 9 | Import contacts: **1** listen over the radio (every contact card that arrives is saved; the other radio uses S.7 **Share all contacts**), **2** read `ratdeckpro/contacts.txt` from the SD card |
 | 10 | Done: a summary; **Enter** announces this radio and finishes |
 
 Then, if you like: theme (**M → S → 3 → 1**), WiFi (**M → S → 2**), and meet the other
@@ -192,11 +192,10 @@ changes. While USB power is plugged in the device runs **Full** anyway (row 5).
 | **P** | Peers | types letter |
 | **A** | Atlas (offline map; on a list row with a position: that contact). Nothing on the Atlas itself | types letter |
 | **M** | MENU overlay (**H**ome · **S**ettings · **C**ontacts · **P**eers · **I**nbox · **A**tlas · Lib**r**ary) | does **not** open the menu |
-| **H** | Home | — |
-| **G** / **V** | Up / down | — |
+| **T** / **V** | Up / down (no global Home key: **M** then **H**) | — |
 | **N** / **B** | Lists: next / previous page. Home: **N** = Announce ID | — |
 | **L** | Locate (find): lists (type to filter), Atlas (a place), Library reader (text) | — |
-| **K** | Atlas, Library, Rat Trap: the keys card (also the middle tab "Nav / keys") | — |
+| **K** | Atlas, Library, Rat Trap, Chess: the keys card (also the middle tab, which shows where you are + "K keys"; Contact / Inbox are not highlighted there) | — |
 | **1**–**9**, **0** | Lists: select row on the page. Settings: select **and** activate row 1–9, **0** = row 10 | digits (numeric fields) |
 | **Enter** | Activate / open | Send / save |
 | **Alt** | — | Case shift while typing |
@@ -215,7 +214,7 @@ and queued (48 events) — nothing typed during a refresh is lost.
 
 ## 3. Navigation model
 
-**Browse:** hotkeys and underlines active; **G/V** move; digits select (Settings rows
+**Browse:** hotkeys and underlines active; **T/V** move; digits select (Settings rows
 activate).  
 **Entry:** a text field or the compose line is focused — **M/C/P/I** do not navigate.  
 **MENU overlay:** **M** opens a column under MENU; top bar stays visible.  
@@ -232,7 +231,7 @@ Row text is `n : Kind : Name` with the value underneath. Kinds: **Menu** (opens 
 ### 4.1 Idle splash
 ![Idle splash](images/screen-idle.png)
 
-Pick the idle screen in **S.3.2 row 8 "Idle screen"** (Enter steps through them). Every one
+Pick the idle screen in **S.4.2 row 8 "Idle screen"** (Enter steps through them). Every one
 has the same top strip: time, battery %, unread count, date (MM/DD/YYYY) and the radio's
 name, and the wake / LOCKED line at the bottom. Updates at most once a minute. **Press a key
 to wake** (touch does not wake).
@@ -277,12 +276,12 @@ Per-row **unrd ##** when unread.
 ### 4.7 Settings root
 ![Settings](images/screen-settings.png)
 
-### 4.8 Settings S.3 Screen & I/O
-![Settings S.3](images/screen-settings-s3.png)
+### 4.8 Settings S.4 Screen & I/O
+![Settings S.4](images/screen-settings-s3.png)
 
-### 4.9 Settings S.4 Power, S.4.7 Custom and S.4.8 Check-in sched
-![Settings S.4 Power](images/screen-settings-power.png)
-![Settings S.4.7 Custom](images/screen-settings-power-custom.png)
+### 4.9 Settings S.5 Power, S.5.7 Custom and S.5.8 Check-in sched
+![Settings S.5 Power](images/screen-settings-power.png)
+![Settings S.5.7 Custom](images/screen-settings-power-custom.png)
 
 Simulator screenshots (`sim/scripts/power.txt`): Saver selected; Custom with CPU set to 240 MHz.
 
@@ -292,70 +291,77 @@ Simulator screenshots (`sim/scripts/power.txt`): Saver selected; Custom with CPU
 
 ```
 S     Settings                      ← M then S
-├── S.1   Time & Location
-│   ├── S.1.1  Set RTC              hour, minute, month, day, year → Apply
-│   ├── S.1.2  Time zone            18 zones (EST … UTC+9)
-│   ├── S.1.3  Enable GPS           shows heard/in-view satellites, "backup cell low", or "resting"
-│   ├── S.1.4  Manual location      latitude / longitude / clear
-│   ├── S.1.5  Sync GPS now         needs a fix
-│   ├── S.1.6  Auto GPS sync        boot + daily
-│   ├── S.1.7  GPS position         lat, lon, satellites; or the last fix and its age
-│   ├── S.1.8  Location auto-share  how many contacts; Enter = stop all (set in a chat, §1.2d)
-│   ├── S.1.9  Waypoints            list with distance; Enter = show on the map (§8.1)
-│   ├── S.1.10 Track                breadcrumb recording on/off
-│   ├── S.1.11 Clear track          Enter twice
-│   └── S.1.12 Coordinates          Decimal 43.64012,-70.92011 / Deg min sec 43 38'24"N 70 55'12"W /
+├── S.1   Mode                      Minimal / Normal / Advanced (default; kept over a power cycle),
+│                                   Touch screen ON / OFF (keys only). Minimal: the menu has
+│                                   Settings, Contacts, Inbox only; Settings shows S.1 only;
+│                                   P / A do nothing; the middle tab is Menu; waking from the
+│                                   idle screen (or unlocking) goes to the Inbox. Normal = Advanced
+│                                   for now (2026-11-14).
+├── S.2   Time & Location
+│   ├── S.2.1  Set RTC              hour, minute, month, day, year → Apply
+│   ├── S.2.2  Time zone            18 zones (EST … UTC+9)
+│   ├── S.2.3  Enable GPS           shows heard/in-view satellites, "backup cell low", or "resting"
+│   ├── S.2.4  Manual location      latitude / longitude / clear
+│   ├── S.2.5  Sync GPS now         needs a fix
+│   ├── S.2.6  Auto GPS sync        boot + daily
+│   ├── S.2.7  GPS position         lat, lon, satellites; or the last fix and its age
+│   ├── S.2.8  Location auto-share  how many contacts; Enter = stop all (set in a chat, §1.2d)
+│   ├── S.2.9  Waypoints            list with distance; Enter = show on the map (§8.1)
+│   ├── S.2.10 Track                breadcrumb recording on/off
+│   ├── S.2.11 Clear track          Enter twice
+│   └── S.2.12 Coordinates          Decimal 43.64012,-70.92011 / Deg min sec 43 38'24"N 70 55'12"W /
 │                                   MGRS 19T CJ 4513 3368 (10 m): map header, GPS lines, lists.
 │                                   Messages keep decimal degrees (other clients read them);
 │                                   with MGRS a manual share also names the grid square.
-├── S.2   WiFi                      status, IP
-│   ├── S.2.3  Scan networks        pick → saved: join; new locked: type password
+├── S.3   WiFi                      status, IP
+│   ├── S.3.3  Scan networks        pick → saved: join; new locked: type password
 │   │   └── …  Join WiFi            Password · Auto-connect · Join (saves on success)
-│   ├── S.2.4  Saved networks       up to 8; passwords sealed (§12)
+│   ├── S.3.4  Saved networks       up to 8; passwords sealed (§12)
 │   │   └── …  Saved network        Connect now · Auto-connect · Password · Forget
-│   ├── S.2.5  Disconnect           radio off, auto-connect paused until a manual join
-│   └── S.2.6  TCP hub              Reticulum TCP client while WiFi is up: on/off, host, port,
+│   ├── S.3.5  Disconnect           radio off, auto-connect paused until a manual join
+│   └── S.3.6  TCP hub              Reticulum TCP client while WiFi is up: on/off, host, port,
 │                                   status, "Use RatSpeak hub" (rns.ratspeak.org:4242); default off
-├── S.3   Screen & I/O
-│   ├── S.3.1  Theme                White paper / Black ink
-│   ├── S.3.2  Idle splash          Off / On (no password) / On + password / timeout /
+├── S.4   Screen & I/O
+│   ├── S.4.1  Theme                White paper / Black ink
+│   ├── S.4.2  Idle splash          Off / On (no password) / On + password / timeout /
 │   │                               set-change password / remove / lock now (§1.2c) /
 │   │                               idle screen Splash / Map / Library page / If found (§4.1) /
 │   │                               if-found text / if found: my address shown / hidden
-│   └── S.3.3  Key backlight        (a power mode may hold it off)
-├── S.4   Power                     energy modes (§6)
-│   ├── S.4.1  Full power
-│   ├── S.4.2  Balanced             (default)
-│   ├── S.4.3  Saver
-│   ├── S.4.4  Ultra-low            LoRa listening only
-│   ├── S.4.5  On demand            LoRa 2 min after a key
-│   ├── S.4.6  Check-in             menu: the Check-in page (§6.7): use it, time (07:30), every
-│   ├── S.4.7  Custom               → S.4.7.1–9 knobs (§6.2)
-│   ├── S.4.8  Check-in sched       the same Check-in page (time · every · next · waiting · clock)
-│   ├── S.4.9  Energy monitor       per-part mAh vs gauge, trend graph (§6.5)
-│   ├── S.4.10 Full power on USB    ON (default) / OFF
-│   ├── S.4.11 Now                  CPU MHz and % of time asleep
-│   └── S.4.12 Battery draw         mA and estimated time left (gauge)
-├── S.5   Battery                   volts, %, current, charger status, capacity
-│   ├── S.5.8  Battery log          internal RAM ring / SD CSV, dump to USB
-│   └── S.5.10 Reset calibration
-├── S.6   Identity                  destination, display name, LXMF address, Announce,
+│   └── S.4.3  Key backlight        (a power mode may hold it off)
+├── S.5   Power                     energy modes (§6)
+│   ├── S.5.1  Full power
+│   ├── S.5.2  Balanced             (default)
+│   ├── S.5.3  Saver
+│   ├── S.5.4  Ultra-low            LoRa listening only
+│   ├── S.5.5  On demand            LoRa 2 min after a key
+│   ├── S.5.6  Check-in             menu: the Check-in page (§6.7): use it, time (07:30), every
+│   ├── S.5.7  Custom               → S.5.7.1–9 knobs (§6.2)
+│   ├── S.5.8  Check-in sched       the same Check-in page (time · every · next · waiting · clock)
+│   ├── S.5.9  Energy monitor       per-part mAh vs gauge, trend graph (§6.5)
+│   ├── S.5.10 Full power on USB    ON (default) / OFF
+│   ├── S.5.11 Now                  CPU MHz and % of time asleep
+│   └── S.5.12 Battery draw         mA and estimated time left (gauge)
+├── S.6   Battery                   volts, %, current, charger status, capacity
+│   ├── S.6.8  Battery log          internal RAM ring / SD CSV, dump to USB
+│   └── S.6.10 Reset calibration
+├── S.7   Identity                  destination, display name, LXMF address, Announce,
 │   │                               Run setup wizard (§1.3), Share all contacts (a card per
 │   │                               contact to one radio), Export / Import contacts
 │   │                               (<SD>/ratdeckpro/contacts.txt, "name<TAB>32 hex" per line)
-│   └── S.6.5  Identities           slots; New identity (make + switch + restart); per slot:
+│   └── S.7.5  Identities           slots; New identity (make + switch + restart); per slot:
 │                                   Switch (restart) / Erase (key deleted; the active one is
 │                                   replaced by a new identity first). Enter twice to confirm.
-├── S.7   LoRa                      915 MHz; link preset (Long Fast / Long Slow / Medium / Fast Short)
-├── S.8   Alerts                    beep, vibrate, volume 0 (silent) / 20 … 80 (default) / 100 %
+├── S.8   LoRa                      915 MHz; link preset (Long Fast / Long Slow / Medium / Fast Short)
+├── S.9   Alerts                    beep, vibrate, volume 0 (silent) / 20 … 80 (default) / 100 %
 │                                   (plays the new level), test
-├── S.9   Diagnostics               paths/links, LXMF queue, peers, uptime
-└── S.10  Storage  (key 0)          heap, PSRAM, flash, messages, SD card (+ S.10.5 SD), secrets key
+├── S.10  Diagnostics  (key 0)      paths/links, LXMF queue, peers, uptime
+└── S.11  Storage  (no number key: T / V to it, Enter)
+                                    heap, PSRAM, flash, messages, SD card (+ S.11.5 SD), secrets key
 ```
 
 ---
 
-## 6. Power & energy modes (S.4) — Works (light sleep verified 2026-11-10)
+## 6. Power & energy modes (S.5) — Works (light sleep verified 2026-11-10)
 
 The ESP32-S3 awake is the biggest single load (~50 mA of a ~80–100 mA total); a powered
 GPS adds ~20–30 mA, the LoRa receiver ~10 mA, the audio path ~15–20 mA while it runs.
@@ -378,17 +384,17 @@ messages are immediate in every mode**, because they wake the processor directly
 | Runtime (~1450 mAh) | ~21–30 h | ~5–6 days | ~6–8 days | ~8 days | ~10 days | ~10 days |
 | Messages in | immediate | immediate | immediate | immediate | only while LoRa is on | only in a window |
 
-Plus **Custom** (your own knobs, §6.2). Runtimes on S.4 come from these bench numbers.
+Plus **Custom** (your own knobs, §6.2). Runtimes on S.5 come from these bench numbers.
 Ultra-low, On demand and Check-in all sit on the **~4 mA board floor** (§6.6): parts
 that stay powered whatever the ESP32 does. A month (~2 mA) needs that floor lowered first.
 
-**Full power on USB** (S.4.10, default ON): whenever USB power is present the device
+**Full power on USB** (S.5.10, default ON): whenever USB power is present the device
 runs **Full**, whatever mode is chosen, and goes back to the chosen mode when unplugged.
 The Power row on the Settings root then reads e.g. `Saver (USB: Full)`.
 
 Modes are stored in NVS namespace `rs_power` and survive reboots.
 
-### 6.2 Custom knobs (S.4.7)
+### 6.2 Custom knobs (S.5.7)
 
 Choosing **Custom** the first time copies the mode you were in, then each row changes
 one knob (Enter steps to the next value):
@@ -487,10 +493,10 @@ Example: GPS off but snappy UI → Custom, CPU 240, sleep "never", GPS Off.
 - **GPS schedule:** a "visit" powers the receiver (GPS_EN, GPIO 39) until a fix has held
   for 20 s (which also syncs the clock if Auto GPS sync is on) or 3 minutes pass, then
   powers it off until the next interval. The backup cell keeps satellite data, so later
-  visits are usually hot starts. S.1.3 shows `resting (Every hour)` between visits.
+  visits are usually hot starts. S.2.3 shows `resting (Every hour)` between visits.
 - **WiFi off:** the radio is turned off and scans / auto-connect are refused with a toast.
-- **Key backlight:** lit only if S.3.3 is ON **and** the mode allows it.
-- **Battery estimate:** S.4.7 shows the gauge's average current and its TimeToEmpty.
+- **Key backlight:** lit only if S.4.3 is ON **and** the mode allows it.
+- **Battery estimate:** S.5.7 shows the gauge's average current and its TimeToEmpty.
 
 ### 6.4 Measuring
 
@@ -544,7 +550,7 @@ light on v1.1) was driven high as "touch reset" (+2 mA).
 A message store bloated by thousands of test messages slows every write (and boot, to ~2
 minutes); that also delays proofs. Separate storage issue, tracked in Future_steps.txt.
 
-### 6.5 Energy monitor (S.4.9)
+### 6.5 Energy monitor (S.5.9)
 
 **Settings → Power → Energy monitor** shows where the battery charge goes. The board has one
 current sensor (the gauge, total only), so the split is an **estimate**: the time each part
@@ -605,7 +611,7 @@ Four units, `floor d 8 300` (8 × 5 min deep sleep), 2026-11-10:
   `--zero` offset, `--summary` of a saved CSV). Wiring and use: `tools/inalogger/README.md`.
   Built and self-tested; not yet run on hardware.
 
-### 6.7 Check-in mode (S.4.6, S.4.8)
+### 6.7 Check-in mode (S.5.6, S.5.8)
 
 All devices set to the same schedule (e.g. every hour at :30) keep LoRa **off** except
 in a short window around each check-in:
@@ -630,7 +636,7 @@ in a short window around each check-in:
   converge on the fastest clock, synchronized ones give true time. A GPS fix now also
   marks the clock synchronized for the protocol (it did not before), so announces carry
   real time.
-- **S.4.6 Check-in** and **S.4.8 Check-in sched** open the Check-in page: **Use Check-in
+- **S.5.6 Check-in** and **S.5.8 Check-in sched** open the Check-in page: **Use Check-in
   mode** (on; off goes back to Balanced), **Check-in time** (type hhmm, default **07:30**; with
   the 12 h clock 1-12 plus the **am / pm** row), **Every** (15 min … 24 h), then the next
   check-in, messages waiting, and where the clock came from. Hourly at 07:30 = :30 every hour;
@@ -672,11 +678,11 @@ in a short window around each check-in:
 
 | Topic | Behaviour |
 |-------|-----------|
-| Timeout | **S.3.2** (10–99999 s, default 30 s); never while a draft is unsent (with a password lock it locks anyway; the draft is kept) |
-| Password lock | **S.3.2** mode 3, see §1.2c |
+| Timeout | **S.4.2** (10–99999 s, default 30 s); never while a draft is unsent (with a password lock it locks anyway; the draft is kept) |
+| Password lock | **S.4.2** mode 3, see §1.2c |
 | Wake | Any **key** |
 | Unread on splash | Updates on receive without leaving idle |
-| Beep / vibe | **S.8** when enabled |
+| Beep / vibe | **S.9** when enabled |
 | With energy modes | The splash and light sleep are independent; in Balanced/Saver the device usually sleeps behind the splash |
 
 ---
@@ -707,7 +713,7 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
 
 The **Atlas** tab in the bottom bar, **A** on any screen, or **M → Atlas** (MENU row 6, hotkey **A**). The map is centred
 on the newest position: a fresh GPS fix, else the last fix (however old), else the saved
-position (S.2), and follows the own position until you pan (a fix that arrives while the
+position (S.3), and follows the own position until you pan (a fix that arrives while the
 map is open moves it there). With none of these, it opens on the card's start view `maps/home.txt` (`lat lon zoom`, written by
 the tile tool). If the card has no tile under the centre at that zoom, it zooms out to
 the deepest level that has one (a card often holds a wide area coarse and a small one
@@ -722,7 +728,7 @@ fix (or the saved position) and its age. A visit indoors ends after
 `17T PJ 3037 3462 7sat` (fresh fix) · `fix 28m old, GPS on 45s 3/9 sats` (last fix's age;
 searching, 45 s into the visit, 3 satellites heard of 9 in view) · `fix 28m old, GPS next
 12m` (receiver off until the next visit) · `saved pos, ...` / `no fix, ...` (no fix since
-boot) · `GPS off` (S.2) · `GPS off (power)` (power mode without GPS) · `GPS backup fault`.
+boot) · `GPS off` (S.3) · `GPS off (power)` (power mode without GPS) · `GPS backup fault`.
 
 Ready-made set (2026-11-12): USGS National Map topo (public domain, credit U.S.
 Geological Survey) as 1-bit tiles at `--threshold 150`: the lower 48 states at zoom
@@ -755,7 +761,7 @@ location. Markers also show on the map idle screen. Console `cpos` (`cpos clear`
 `WP3` goes on the first key; Enter alone keeps it), Enter. **P** steps through them: the map
 centres on it, the diamond is selected, a dashed line runs from your position to it and the
 bottom line reads `W2 BALLFIELD 2.1km SW`. **Alt+SYM** twice (within 3 s) removes the selected one. Up to 32
-(NVS rs_wpt); **S.1.9 Waypoints** lists them with distance (Enter = show on the map).
+(NVS rs_wpt); **S.2.9 Waypoints** lists them with distance (Enter = show on the map).
 
 **Find a place:** on the map **L** (locate), type the start of a name (add a state to narrow it:
 `knoxville tn`), Enter: the 6 nearest matches with kind and distance (`2 Knoxville, PA /
@@ -769,10 +775,10 @@ python tools/places/make_places.py --gnis DomesticNames_National_Text.zip --out 
 python tools/sdcard/push_files.py --port COM5 --dest /places sdcard/ratdeckpro/places/*.txt
 ```
 
-**Track (breadcrumbs):** **S.1.10** on/off. A point is added when the GPS fix has moved more
+**Track (breadcrumbs):** **S.2.10** on/off. A point is added when the GPS fix has moved more
 than 25 m; in Balanced / Saver the GPS is woken about every 2 minutes for it (sparser
 points, small battery cost). The last 1000 points are drawn as a dotted line; all of them
-are appended to `<SD>/ratdeckpro/tracks/track.bin`. **S.1.11** clears it (Enter twice).
+are appended to `<SD>/ratdeckpro/tracks/track.bin`. **S.2.11** clears it (Enter twice).
 Console `wpt` (`wpt clear`), `track` (`track add <lat> <lon>`, `track clear`).
 
 The map's bottom line shows the GPS position (`43.64012,-70.92011 8sat`, or `old … 12m`
@@ -783,7 +789,7 @@ Cards are best formatted with 8 KB clusters (console `sdformat 8192 ERASE-ALL`, 
 the card): a header-less 8 KB tile then takes exactly 8 KB instead of 32 KB.
 Tiles can go onto the card over USB with the card left in the unit:
 `tools/maptiles/push_tiles.py` (console `sdput`, about 7 tiles/s; `sdls` lists a folder). Atlas keys (2026-11-13):
-**E S X F** move up / left / down / right half a screen (a diamond around D), **D** or
+**T F V H** move up / left / down / right half a screen (a diamond around G), **D** or
 **Enter** back to your position (following again), **Z** zoom in, **W** zoom out (wider),
 **N** next contact, **P** next waypoint, **Alt+P** add a waypoint, **Alt+SYM** (twice) delete
 the selected waypoint, **L** locate a place, **G** arrow + distance (§8.1b), **B** track back,
@@ -813,13 +819,13 @@ tiles (z14–15) to the card (2.1 s).
 
 ### 8.1b Track, navigation, arrival alerts, range test, battery (2026-11-13, simulator)
 
-**Track (S.1 row 10, Track page):** Record on/off (a point every 20 m moved, or every 10 min
+**Track (S.2 row 10, Track page):** Record on/off (a point every 20 m moved, or every 10 min
 standing; dotted line on the Atlas; all points in `<SD>/ratdeckpro/tracks/track.bin`), **Track
 back** (also **B** on the Atlas: from the nearest track point a line to the earlier points,
 one after the other, moving on within 25 m; a beep at the start), **Export as GPX**
 (`tracks/track-YYYYMMDD-HHMM.gpx`), Clear (Enter twice). The track logs when the GPS is on
-anyway; only Custom with **Track wakes GPS** (S.4.7) asks it for a visit every ~2 min.
-**Units** (S.1 row 11): m / km or ft / mi.
+anyway; only Custom with **Track wakes GPS** (S.5.7) asks it for a visit every ~2 min.
+**Units** (S.2 row 11): m / km or ft / mi.
 
 **Bearing + distance (G on the Atlas):** for the selected contact (N), waypoint (P) or the
 track-back point: a big arrow in a ring, the distance in large digits, the compass direction
@@ -827,11 +833,11 @@ and the age of a contact's fix. There is no compass: while moving (GPS speed > 1
 arrow is relative to the course over ground ("ahead" = up), standing it is north-up. G, Enter
 or ^ goes back to the map.
 
-**Arrival alerts (S.8 Alerts row 5):** "tell me when <contact> is within <100 m - 5 km> of
+**Arrival alerts (S.9 Alerts row 5):** "tell me when <contact> is within <100 m - 5 km> of
 <me | a waypoint>", once or every time (again after they were 25 % further away). Checked when
 their shared position arrives: a beep, a vibration and a 15 s message. Up to 8 (NVS rs_geof).
 
-**Range test (S.7 LoRa row 6):** pick the other radio (it does the same); every 15 s (1-4 on
+**Range test (S.8 LoRa row 6):** pick the other radio (it does the same); every 15 s (1-4 on
 the screen: 10 / 15 / 30 / 60 s) a ping, answered by a pong with the RSSI / SNR heard there.
 The screen shows pings, replies, lost %, the last signal both ways, their pings heard and
 your position; ^ stops, M leaves it running. Both log to
@@ -841,9 +847,9 @@ inbox. On a PC: `python tools/rangetest/rangetest_map.py rt-....csv` writes a KM
 Earth, points coloured by RSSI, lost pings red) and an SVG plot. Needs the LoRa receiver on
 (not On demand / Check-in outside their windows).
 
-**Battery time left (S.5 row 11, idle strip `~34h`):** the gauge's remaining mAh over the drain
+**Battery time left (S.6 row 11, idle strip `~34h`):** the gauge's remaining mAh over the drain
 the energy monitor measured on battery (up to the last 13 h); "not enough data yet" before
-30 min on battery. **Low-battery notice (S.5 row 12):** off by default; at 5 / 10 / 15 / 20 %
+30 min on battery. **Low-battery notice (S.6 row 12):** off by default; at 5 / 10 / 15 / 20 %
 one chosen contact gets "Battery dying (9%). Last position lat, lon (n min old)", once per
 discharge (again after charging); queued in check-in mode.
 
@@ -871,7 +877,7 @@ atspeak-inforequencies_quick_reference.txt
 
 The card shares the SPI bus with the e-ink panel and the radio; all three take the shared
 SPI lock (the e-ink driver since 2026-11-11), so the storage worker can use the card while
-the screen refreshes. S.10 → SD card: status, mount, eject, battery log file, and
+the screen refreshes. S.11 → SD card: status, mount, eject, battery log file, and
 **Message archive** (off by default): with it on and a card present at boot, every new
 message is also written to `/ratdeckpro/messages/` on the card (a backup copy; flash keeps
 everything as before). On COM9 a save with the archive takes 0.2–0.45 s and boot is
@@ -955,7 +961,7 @@ The same note sits next to the GPS pins in `config/BoardConfig.h`.
 
 The battery gauge often stops at ~85% when full (the charger terminates before the
 gauge sees the taper), so each device learns its own full point at a charge-done and
-scales by it (S.5.9 "Full-charge cal").
+scales by it (S.6.9 "Full-charge cal").
 
 ---
 
@@ -1057,7 +1063,7 @@ secret with AES-256-GCM (random nonce, SSID as associated data).
 
 - **Default:** a built-in password, applied automatically at boot. This stops a flash
   dump or copied NVS from being read on a PC, but not someone holding the device.
-- **Your password (S.3.2, §1.2c):** the lock password is the vault password. At boot the
+- **Your password (S.4.2, §1.2c):** the lock password is the vault password. At boot the
   vault stays locked until it is typed, so WiFi auto-connect waits; changing or removing
   it re-seals the saved WiFi passwords with the new key.
 - **Strongest option (not enabled):** ESP32-S3 flash + NVS encryption. Burns eFuses and
@@ -1101,7 +1107,7 @@ entry mode.
 | Idle password lock = vault password, boot lock, lockout (§1.2c) | Works (simulator; COM5 smoke test) |
 | Share a contact as an LXMF message, save on receipt (§1.2a) | Works in the simulator (two devices) |
 | Lists: 48 rows, pages, find (§1.2b) | Works (simulator) |
-| TCP hub client (S.2.6), identity slots (S.6.5) | Identities work in the simulator; TCP is device-only (sim: settings only), not yet tried against a hub |
+| TCP hub client (S.3.6), identity slots (S.7.5) | Identities work in the simulator; TCP is device-only (sim: settings only), not yet tried against a hub |
 | LoRa RX duty cycle in sleeping modes (§6.3) | Works: 14/14, ~13 → 8 mA asleep (gauge); reply latency same as continuous (the ~1 in 3 retries were a test artifact) |
 | Deep-sleep storage mode, GPS power-save | Planned |
 | Repeater / propagation-node sync for Check-in and On demand | Planned |
@@ -1126,5 +1132,5 @@ entry mode.
 | 0.11 | Thread status labels fixed (sent / delivered were swapped, failed showed "s5"); new-message beep no longer missed when old messages are removed; stress tools (`hb`, `msgstat`, `flashcap`, `tools/stress/pingpong.py`) |
 | 0.12 | Sending no longer freezes the screen when the radio is busy (was up to 16-24 s): busy or within 3 s of the last send, the message goes to the outbox ("Queued: radio busy") and is sent in the background, in order |
 | 0.13 | Boot no longer opens every saved message: a record index (saved after 30 s without a change, checked against the file names at boot) replaces the scan (§8.4); opening threads and mark-read use it too |
-| 0.14 | Password lock (§1.2c), contact sharing (§1.2a), list pages + find (§1.2b), TCP hub (S.2.6), identity slots (S.6.5) |
+| 0.14 | Password lock (§1.2c), contact sharing (§1.2a), list pages + find (§1.2b), TCP hub (S.3.6), identity slots (S.7.5) |
 | 0.15 | Boot: the outgoing-recovery wait stops when recovery is done (was a fixed 3 s); boot phase times on the console (`[BOOT] <ms> <phase>`). Outbox saved without padding (NVS key `q2`, ~6x less NVS wear when messages queue) |

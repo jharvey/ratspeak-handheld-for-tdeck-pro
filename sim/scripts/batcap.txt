@@ -21,7 +21,7 @@ key M
 wait 300
 key S
 wait 300
-key 4
+key 5
 wait 800
 key V
 key V

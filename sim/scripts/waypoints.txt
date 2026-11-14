@@ -1,7 +1,7 @@
 # Waypoints + track on the map (tiles near 04095 in build\simdata\cmap\sd).
 # Alt+P marks a waypoint at the map centre (name, Enter), P cycles them (centred, diamond
 # selected, dashed guide line from own position, footer "W1 NAME dist dir"), Alt+SYM twice
-# removes; Settings S.1.9 lists them; the track (bench "track add") draws as a dotted line.
+# removes; Settings S.2.9 lists them; the track (bench "track add") draws as a dotted line.
 expect 60000 [BOOT] ready
 serial track clear
 serial wpt clear
@@ -15,9 +15,9 @@ wait 300
 shot wpt-01-name.png
 key ENTER
 expect 3000 [WPT] W1 BALLFIELD
-key F
+key H
 wait 800
-key F
+key H
 wait 800
 key ALT+P
 type HOME
@@ -54,7 +54,7 @@ key M
 wait 800
 key S
 wait 800
-key 1
+key 2
 wait 800
 key 9
 wait 1500

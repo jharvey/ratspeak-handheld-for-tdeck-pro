@@ -1,5 +1,5 @@
 #pragma once
-// Low-level pieces for "Update firmware from SD" and "Back up / restore" (S.10.5):
+// Low-level pieces for "Update firmware from SD" and "Back up / restore" (S.11.5):
 //
 //  * NVS (Preferences) listing and raw writes, so a backup can carry every setting,
 //    the identity key and the message index without knowing each namespace's layout.

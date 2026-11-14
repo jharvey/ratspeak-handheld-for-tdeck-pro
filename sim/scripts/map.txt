@@ -11,7 +11,7 @@ devshot map_z14.png
 key Z
 wait 1200
 devshot map_z15.png
-key F
+key H
 wait 1200
 serial map
 expect 3000 m *

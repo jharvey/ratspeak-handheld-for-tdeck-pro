@@ -50,7 +50,7 @@ bool positionNeedsRedraw();
 // Draws the map into the rectangle (x0, y0, w, h). dark = invert (black paper theme).
 void draw(PixelFn px, int x0, int y0, int w, int h, bool dark);
 // One-line header: "z14 43.65321,-79.38320 200 m" / "no map tiles here (z14)".
-void status(char* out, size_t n);
+void status(char* out, size_t n, int shorter = 0);   // 1 = no scale text, 2 = also 4 decimals
 // How the header writes the centre (decimal / DMS / MGRS); null = decimal degrees.
 using CoordFormatter = void (*)(double lat, double lon, char* out, size_t n);
 void setCoordFormatter(CoordFormatter f);

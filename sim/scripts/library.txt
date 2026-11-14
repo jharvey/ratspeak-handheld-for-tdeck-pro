@@ -39,9 +39,9 @@ key 4
 expect 5000 [LIB] open wide_table.csv
 wait 1500
 shot lib-05-csv-nowrap.png
-key F
+key H
 expect 3000 [LIB] column 12
-key F
+key H
 expect 3000 [LIB] column 24
 wait 1500
 shot lib-06-csv-panned.png
@@ -51,11 +51,11 @@ key W
 expect 3000 [LIB] wrap on
 wait 1500
 shot lib-07-csv-wrap.png
-key X
+key V
 wait 1000
-key X
+key V
 wait 1000
-key E
+key T
 wait 1000
 shot lib-08-half.png
 key K

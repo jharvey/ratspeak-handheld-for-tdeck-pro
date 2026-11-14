@@ -1,0 +1,61 @@
+# Operator modes (S.1, 2026-11-14): Minimal = Inbox, Contacts, Settings S.1 only; the middle tab
+# is Menu; waking from the idle screen goes to the Inbox; P / A do nothing. Touch screen on/off is
+# S.1 row 4. Back to Advanced (the default) at the end.
+#   run-script.bat scripts\modes.txt modes fresh
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+serial opmode 0
+expect 3000 [MODE] Minimal
+wait 1200
+shot modes-00-minimal-inbox.png
+key M
+wait 800
+shot modes-01-menu.png
+key S
+wait 800
+shot modes-02-settings.png
+# S.3 (WiFi) is not shown in Minimal and the key does nothing
+key 3
+wait 800
+shot modes-03-s3-ignored.png
+key 1
+wait 800
+shot modes-04-mode-page.png
+key 4
+expect 3000 [TOUCH] screen off (keys only)
+wait 800
+key 4
+expect 3000 [TOUCH] screen on
+wait 800
+key BACK
+wait 600
+key BACK
+wait 600
+key C
+wait 1000
+serial idle now
+expect 3000 [IDLE] enter
+wait 1000
+key T
+expect 3000 [IDLE] wake
+wait 1500
+shot modes-05-wake-inbox.png
+key P
+wait 600
+key A
+wait 1000
+shot modes-06-p-a-ignored.png
+# Back to Advanced from S.1
+key M
+wait 800
+key S
+wait 800
+key 1
+wait 800
+key 3
+expect 3000 [MODE] Advanced
+wait 800
+key BACK
+wait 800
+shot modes-07-advanced-settings.png

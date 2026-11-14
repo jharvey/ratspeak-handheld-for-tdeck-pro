@@ -22,7 +22,7 @@ key V
 key V
 key V
 key V
-key G
+key T
 wait 400
 key ENTER
 expect 5000 [GAME] Rat Trap open
@@ -31,9 +31,9 @@ shot game-01-new.png
 key ENTER
 wait 800
 shot game-02-opened.png
-key F
-key F
-key X
+key H
+key H
+key V
 key ALT+P
 wait 800
 shot game-03-marked.png

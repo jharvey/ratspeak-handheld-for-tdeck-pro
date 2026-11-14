@@ -2,7 +2,7 @@ HELP: WAYPOINTS AND PLACES
 
 All on the map (A).
 
-Mark a waypoint: move the map so the spot is in the centre (E S X F), press Alt+P, type a name (or Enter keeps WP1, WP2 ...), Enter.
+Mark a waypoint: move the map so the spot is in the centre (T F V H), press Alt+P, type a name (or Enter keeps WP1, WP2 ...), Enter.
 
 Go to one: P steps through them. A dashed line runs from you to it: "W2 BALLFIELD 2.1km SW". Alt+SYM (Alt and SYM together) twice removes the selected one. List of all: M, S, 1, 9.
 

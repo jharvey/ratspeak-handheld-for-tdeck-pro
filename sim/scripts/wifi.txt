@@ -4,7 +4,7 @@ key M
 wait 800
 key S
 wait 800
-key 2
+key 3
 wait 800
 shot wifi-01-page.png
 key 3

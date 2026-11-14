@@ -4,7 +4,7 @@ Open it with A on any screen, or M then A. On a list row, A shows that contact's
 
 K = show / hide the keys card (also the "Nav keys" tab at the bottom)
 
-E S X F = move up / left / down / right, half a screen (a diamond around D)
+T F V H = move up / left / down / right, half a screen (a diamond around G)
 D or Enter = centre on me
 Z = zoom in, W = zoom out (wider)
 N = next contact, L = locate a place
@@ -17,7 +17,7 @@ C I H leave the map for Contacts, Inbox, Home. Peers from the map: M then P.
 Top line: zoom, centre, scale bar; * means the map is not following you. Bottom line: your GPS position, or the last fix's age and what the GPS is doing:
 "fix 28m old, GPS on 45s 3/9 sats" (searching), "GPS next 12m" (off until the next try).
 In Full and Balanced, opening the map turns the GPS on for a fix. The saving modes keep
-their schedule and show the last fix (Custom: S.4.7 "Map wakes GPS").
+their schedule and show the last fix (Custom: S.5.7 "Map wakes GPS").
 
 Contacts' last shared positions show as numbered rings. A thick ring is under an hour old.
 N steps through them, newest first: "#1 Alice 12km NE 8m ago".

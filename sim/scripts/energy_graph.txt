@@ -1,4 +1,4 @@
-# Energy trend graph (S.4.9 > 1): left mA axis (0, half, rounded max), a tick under every
+# Energy trend graph (S.5.9 > 1): left mA axis (0, half, rounded max), a tick under every
 # bar, clock-time labels under the bars (rotated), "now" under the newest. Bars are made up
 # with the bench command "energy fill <n>" (30 min periods). 24 bars, then 4.
 # Run: run-script.bat scripts\energy_graph.txt egraph fresh
@@ -13,7 +13,7 @@ key M
 wait 600
 key S
 wait 600
-key 4
+key 5
 wait 800
 key 9
 wait 800

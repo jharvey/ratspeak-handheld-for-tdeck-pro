@@ -12,7 +12,7 @@ shot live-02-menu.png
 key S
 wait 1500
 shot live-03-settings.png
-key 2
+key 3
 wait 1500
 shot live-04-wifi.png
 key BACK

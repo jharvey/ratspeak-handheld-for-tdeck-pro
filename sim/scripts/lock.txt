@@ -1,4 +1,4 @@
-# Idle password lock (Settings S.3.2). Run with a fresh device:
+# Idle password lock (Settings S.4.2). Run with a fresh device:
 #   run-script.bat scripts\lock.txt lock fresh
 # then scripts\lock_boot.txt on the same device name (no "fresh"): it boots locked.
 expect 60000 [BOOT] ready
@@ -8,7 +8,7 @@ key M
 wait 800
 key S
 wait 800
-key 3
+key 4
 wait 800
 key 2
 wait 800
@@ -124,6 +124,6 @@ key BKSP
 type 10
 key ENTER
 wait 500
-key G
+key T
 expect 20000 [LOCK] locked
 quit

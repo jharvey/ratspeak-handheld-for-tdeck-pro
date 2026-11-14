@@ -608,7 +608,7 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
     for (int yy = by - 3; yy <= by + 1; yy++) { px(x0 + bx, y0 + yy, !dark); px(x0 + bx + bar, y0 + yy, !dark); }
 }
 
-void status(char* out, size_t n) {
+void status(char* out, size_t n, int shorter) {
     double lat, lon;
     unproject(g_cx, g_cy, g_zoom, lat, lon);
     double metres; int bar;
@@ -619,12 +619,15 @@ void status(char* out, size_t n) {
     // The header is built before the tiles are drawn, so ask the cache about the centre tile.
     const Tile* centre = g_open ? tile(g_zoom, (int)floor(g_cx / kTileSize), (int)floor(g_cy / kTileSize)) : nullptr;
     char pos[40];
-    if (g_coordFmt) g_coordFmt(lat, lon, pos, sizeof(pos));
+    if (g_coordFmt && shorter < 2) g_coordFmt(lat, lon, pos, sizeof(pos));
     else snprintf(pos, sizeof(pos), "%.4f,%.4f", lat, lon);
+    const char* away = g_follow && g_posValid ? "" : " *";
     if (g_open && !(centre && centre->present))
-        snprintf(out, n, "z%d no tiles  %s", g_zoom, pos);
+        snprintf(out, n, shorter ? "z%d no tiles %s" : "z%d no tiles  %s", g_zoom, pos);
+    else if (shorter)                                // the scale bar on the map still shows it
+        snprintf(out, n, "z%d %s%s", g_zoom, pos, away);
     else
-        snprintf(out, n, "z%d %s %s%s", g_zoom, pos, scale, g_follow && g_posValid ? "" : " *");
+        snprintf(out, n, "z%d %s %s%s", g_zoom, pos, scale, away);
 }
 
 // Atlas keys: E S X F move (a diamond around D), D or Enter back to the own position,
@@ -639,10 +642,10 @@ bool key(char c, bool enter) {
     }
     const double stepX = g_viewW / 2.0, stepY = g_viewH / 2.0;
     switch (c) {
-        case 'e': case 'E': g_cy -= stepY; break;
-        case 'x': case 'X': g_cy += stepY; break;
-        case 's': case 'S': g_cx -= stepX; break;
-        case 'f': case 'F': g_cx += stepX; break;
+        case 't': case 'T': g_cy -= stepY; break;      // T up, V down, F left, H right
+        case 'v': case 'V': g_cy += stepY; break;
+        case 'f': case 'F': g_cx -= stepX; break;
+        case 'h': case 'H': g_cx += stepX; break;
         case 'z': case 'Z': case '+':
             if (g_zoom >= kMaxZoom) return false;
             g_zoom++; g_cx *= 2; g_cy *= 2; wrapCentre(); return true;

@@ -15,7 +15,7 @@ key M
 wait 800
 key S
 wait 800
-key 3
+key 4
 wait 800
 key 2
 wait 800

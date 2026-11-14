@@ -19,9 +19,9 @@ wait 1200
 key Z
 wait 1200
 devshot packs_z13.png
-key F
+key H
 wait 1200
-key F
+key H
 wait 1200
 devshot packs_z13_east.png
 key W

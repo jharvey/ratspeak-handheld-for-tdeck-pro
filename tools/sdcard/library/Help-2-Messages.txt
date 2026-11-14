@@ -1,7 +1,7 @@
 HELP: SEND A MESSAGE
 
 1. I opens the Inbox: your chats first, then every radio heard.
-2. Pick a row: type its number, or G / V then Enter.
+2. Pick a row: type its number, or T / V then Enter.
 3. Type the message (Alt + key = other case, SYM = digits).
 4. Enter sends it.
 5. ^ goes back to the list.

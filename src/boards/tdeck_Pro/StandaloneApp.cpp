@@ -123,7 +123,7 @@ bool rtRxTap(const uint8_t* d, size_t n, int rssi, float snr);
 
 constexpr const char* kDefaultSelfName = "MyRatSpeakPro";
 
-// Idle screens (S.3.2 "Idle screen"); add new ones at the end.
+// Idle screens (S.4.2 "Idle screen"); add new ones at the end.
 enum IdleScreen : uint8_t { IDLE_SPLASH, IDLE_MAP, IDLE_LIBRARY, IDLE_FOUND, IDLE_COUNT };
 const char* const kIdleScreenName[IDLE_COUNT] = {"Splash", "Map", "Library page", "If found"};
 
@@ -136,7 +136,9 @@ struct Config {
     bool     vibe        = true;
     uint8_t  volume      = 80;      // 0..100 %, steps of 20; 80 spares the small speaker
     uint8_t  idleScreen  = 0;       // IdleScreen: splash, map, library page, if-found
-    char     foundText[121] = "";   // if-found screen: owner text, ';' = new line (SYM J)
+    char     found[10][41] = {};    // if-found screen: name, phone, address 1-2, town, state, zip,
+                                    // country, misc 1-2 (S.4.2.9); NVS fnd0..fnd9
+    bool     touchOff    = false;   // S.1.4: touch screen off, keys only
     bool     foundAddr   = true;    // if-found screen shows this radio's LXMF address
     char     libLast[40] = "";      // library file last read (idle screen "Library")
     uint32_t libLastOff  = 0;       // and the page it was on
@@ -146,10 +148,10 @@ struct Config {
     uint8_t  lowBatPct   = 0;       // low-battery notice at this % (0 = off)
     uint8_t  lowBatTo[16] = {};     // ... sent to this contact
     bool     lowBatSent  = false;   // sent in this discharge (reset when charging)
-    bool     simple      = false;   // Simple mode (wizard step 7; the mode itself comes later)
+    uint8_t  opMode      = 2;       // S.1 operator mode: 0 Minimal, 1 Normal, 2 Advanced (default)
     bool     wizDone     = true;    // setup wizard finished or skipped
-    bool     trackOn     = false;   // breadcrumb track recording (S.1.10)
-    uint8_t  coordFmt    = 0;       // 0 decimal degrees, 1 deg-min-sec, 2 MGRS (S.1.12)
+    bool     trackOn     = false;   // breadcrumb track recording (S.2.10)
+    uint8_t  coordFmt    = 0;       // 0 decimal degrees, 1 deg-min-sec, 2 MGRS (S.2.12)
     bool     kbLight     = false;
     bool     gpsOn       = true;
     bool     gpsAutoSync = true;
@@ -158,6 +160,12 @@ struct Config {
     float    lon         = 0.0f;
 };
 Config g_cfg;
+// Operator modes (S.1). Minimal: Inbox, Contacts and Settings S.1 only (no Home, Peers, Atlas,
+// Library); waking goes to the Inbox. Normal is Advanced for now.
+constexpr uint8_t OP_MINIMAL = 0, OP_NORMAL = 1, OP_ADVANCED = 2;
+const char* const kOpModeName[3] = {"Minimal", "Normal", "Advanced"};
+bool minimalMode() { return g_cfg.opMode == OP_MINIMAL; }
+bool g_haveLib = false;           // the card's library folder has files (else the menu says Games)
 
 // ---- Energy modes (Settings > Power; power/PowerModes.h) ----------------------
 power::Settings g_pw;                 // chosen mode, USB rule, custom knobs (NVS rs_power)
@@ -256,7 +264,24 @@ void loadConfig() {
     if (p.isKey("idleScr")) g_cfg.idleScreen = p.getUChar("idleScr", IDLE_SPLASH);
     else g_cfg.idleScreen = p.getBool("idleMap", false) ? IDLE_MAP : IDLE_SPLASH;
     if (g_cfg.idleScreen >= IDLE_COUNT) g_cfg.idleScreen = IDLE_SPLASH;
-    p.getString("foundTxt", g_cfg.foundText, sizeof(g_cfg.foundText));
+    bool anyFound = false;
+    for (int i = 0; i < 10; i++) {
+        char k[6]; snprintf(k, sizeof(k), "fnd%d", i);
+        p.getString(k, g_cfg.found[i], sizeof(g_cfg.found[i]));
+        anyFound |= g_cfg.found[i][0] != 0;
+    }
+    if (!anyFound && p.isKey("foundTxt")) {          // older single text: line 1 -> Name, the rest -> Misc
+        char old[121] = "";
+        p.getString("foundTxt", old, sizeof(old));
+        int line = 0;
+        for (char* tok = strtok(old, ";|"); tok; tok = strtok(nullptr, ";|"), line++) {
+            while (*tok == ' ') tok++;
+            char* dst = line == 0 ? g_cfg.found[0] : line == 1 ? g_cfg.found[8] : g_cfg.found[9];
+            if (line >= 2 && dst[0]) strlcat(dst, ", ", sizeof(g_cfg.found[9]));
+            strlcat(dst, tok, sizeof(g_cfg.found[0]));
+        }
+    }
+    g_cfg.touchOff    = p.getBool("touchOff", false);
     g_cfg.foundAddr   = p.getBool("foundAddr", true);
     p.getString("libLast", g_cfg.libLast, sizeof(g_cfg.libLast));
     g_cfg.libLastOff  = p.getUInt("libOff", 0);
@@ -266,7 +291,8 @@ void loadConfig() {
     g_cfg.lowBatPct   = p.getUChar("lbPct", 0);
     p.getBytes("lbTo", g_cfg.lowBatTo, 16);
     g_cfg.lowBatSent  = p.getBool("lbSent", false);
-    g_cfg.simple      = p.getBool("simple", false);
+    g_cfg.opMode      = p.getUChar("opMode", 2);
+    if (g_cfg.opMode > 2) g_cfg.opMode = 2;
     // Units that had settings before the wizard existed never see it (flag absent = done).
     g_cfg.wizDone     = p.isKey("wizDone") ? p.getBool("wizDone", true) : true;
     g_wizNeeded       = !g_cfg.wizDone;
@@ -308,7 +334,12 @@ void saveConfig() {
     p.putUChar("vol", g_cfg.volume);
     p.putUChar("idleScr", g_cfg.idleScreen);
     if (p.isKey("idleMap")) p.remove("idleMap");
-    p.putString("foundTxt", g_cfg.foundText);
+    for (int i = 0; i < 10; i++) {
+        char k[6]; snprintf(k, sizeof(k), "fnd%d", i);
+        p.putString(k, g_cfg.found[i]);
+    }
+    if (p.isKey("foundTxt")) p.remove("foundTxt");   // moved to fnd0..9
+    p.putBool("touchOff", g_cfg.touchOff);
     p.putBool("foundAddr", g_cfg.foundAddr);
     p.putString("libLast", g_cfg.libLast);
     p.putUInt("libOff", g_cfg.libLastOff);
@@ -318,7 +349,7 @@ void saveConfig() {
     p.putUChar("lbPct", g_cfg.lowBatPct);
     p.putBytes("lbTo", g_cfg.lowBatTo, 16);
     p.putBool("lbSent", g_cfg.lowBatSent);
-    p.putBool("simple", g_cfg.simple);
+    p.putUChar("opMode", g_cfg.opMode);
     p.putBool("wizDone", g_cfg.wizDone);
     p.putBool("trackOn", g_cfg.trackOn);
     p.putUChar("coordFmt", g_cfg.coordFmt);
@@ -500,7 +531,7 @@ void learnFullCharge(bool full, bool fallback, int rawSoc) {
 // "time left" count it) divided by the % drop is one estimate. Only drops of 40 % or more
 // count; each is averaged in by the size of its drop (newer ones keep weight: the sum is
 // capped at 300). Per unit in NVS rs_bat (capMah / capW / capN), so a same-unit backup
-// carries it. Runtimes (S.4.12), "time left" and the battery page use it once there is one.
+// carries it. Runtimes (S.5.12), "time left" and the battery page use it once there is one.
 constexpr uint16_t kNominalMah = 1450;     // a new battery (published figure)
 uint16_t g_capMah = 0;                     // learned, 0 = not yet
 uint16_t g_capW = 0;                       // sum of the % drops used (weight), capped
@@ -691,7 +722,7 @@ BootMark g_bootMarks[16];
 int g_bootMarkN = 0;
 bool g_usbDrive = false;          // the card is a USB drive on the PC: no file access until restart
 void usbDriveStart();
-// SD tools (S.10.5 rows 8-10): back up / restore, firmware update. Defined after the USB block.
+// SD tools (S.11.5 rows 8-10): back up / restore, firmware update. Defined after the USB block.
 constexpr int kMaxBackups = 12;
 char g_bkNames[kMaxBackups][24];
 int g_bkCount = 0;
@@ -747,6 +778,16 @@ bool sdMount() {
     g_sdMounted = true;
     if (!g_sdStore.formatForRsDeck()) Serial.println("[SD] folder setup failed");
     g_haveMaps = g_sdStore.exists(SD_PATH_ROOT "/maps");
+    g_haveLib = false;
+    if (File d = g_sdStore.openDir(SD_PATH_ROOT "/library")) {
+        for (File e = d.openNextFile(); e && !g_haveLib; e = d.openNextFile()) {
+            const char* nm = strrchr(e.name(), '/');
+            nm = nm ? nm + 1 : e.name();
+            g_haveLib = !e.isDirectory() && nm[0] != '.';
+            e.close();
+        }
+        d.close();
+    }
     sdStatusRefresh();
     if (!g_sdStore.exists(kBatLogPath)) {
         File f = g_sdStore.openFile(kBatLogPath, FILE_WRITE);
@@ -772,6 +813,7 @@ void sdUnmount() {
     mapReadDone();
     if (g_sdMounted) { g_sdStore.end(); g_sdMounted = false; }
     g_haveMaps = false;
+    g_haveLib = false;
     snprintf(g_sdStatus, sizeof(g_sdStatus), "not mounted");
     Serial.println("[SD] unmounted");
 }
@@ -1725,9 +1767,9 @@ bool    g_cardOpen = false;        // contact page (Message / Rename / Share) ov
 uint8_t g_cardPeer[16];
 int     g_cardSel = 0;
 bool    g_shareActive = false;     // the Contacts list is picking who gets g_sharePeer
-bool    g_shareAll = false;        // ... and gets every contact's card (Settings S.6)
-bool    g_pickRt = false;          // ... or is the range-test partner (Settings S.7)
-bool    g_pickLowbat = false;      // ... or gets the low-battery notice (Settings S.5)
+bool    g_shareAll = false;        // ... and gets every contact's card (Settings S.7)
+bool    g_pickRt = false;          // ... or is the range-test partner (Settings S.8)
+bool    g_pickLowbat = false;      // ... or gets the low-battery notice (Settings S.6)
 uint8_t g_sharePeer[16];
 
 int hexNib(char c) {
@@ -2273,7 +2315,7 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              LibFind,                           // library: find text
                              PlaceFind,                         // map R: place name
                              FoundText,                         // idle "If found": owner text
-                             CheckinTime };                     // S.4.8: hhmm
+                             CheckinTime };                     // S.5.8: hhmm
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -2292,12 +2334,17 @@ bool entryNumeric() {
 }
 
 // Settings
+const char* const kFoundLabel[10] = {"Name", "Phone", "Address 1", "Address 2", "Town", "State",
+                                      "ZIP code", "Country", "Misc 1", "Misc 2"};
+int g_foundField = 0;                            // which If-found line Entry::FoundText edits
+int foundCount() { int n = 0; for (auto& s : g_cfg.found) n += s[0] != 0; return n; }
+
 enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
     PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW, PG_LOWBAT,
-    PG_BACKUPS
+    PG_BACKUPS, PG_FOUND, PG_MODE
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -3126,12 +3173,14 @@ void lockNow() {
 void lockTry() {
     if (lockWaitS() || !g_lockLen) { requestRedraw(); return; }
     const bool vaultWasLocked = !vault::unlocked();
+    void minimalToInbox();
     const bool ok = vault::unlock(g_lockBuf);   // derives the key, or checks it when unlocked
     lockWipe();
     if (!ok) { lockNoteWrong(); requestRedraw(); return; }
     lockNoteRight();
     g_locked = false;
     if (vaultWasLocked) wifiLoad();            // saved WiFi passwords readable now
+    minimalToInbox();
     g_fullRefreshReq = true;
     requestRedraw();
     Serial.println("[LOCK] unlocked");
@@ -3244,6 +3293,8 @@ const char* pageTitle(Page p) {
         case PG_LOWBAT:       return "Low-battery notice";
         case PG_GEOF_NEW:     return "New arrival alert";
         case PG_BACKUPS:      return "Restore backup";
+        case PG_FOUND:        return "If found";
+        case PG_MODE:         return "Mode";
     }
     return "";
 }
@@ -3277,6 +3328,8 @@ void buildSettingsRows(Page p) {
     const char* e;
     switch (p) {
     case PG_ROOT:
+        srow(RK_MENU, "Mode", "%s, touch %s", kOpModeName[g_cfg.opMode], g_cfg.touchOff ? "off" : "on");
+        if (minimalMode()) break;                  // Minimal: only the mode (S.1)
         fmtTime(a, sizeof(a));
         srow(RK_MENU, "Time & Location", "%s %s", a, tzCur().name);
         wifiStatusLine(a, sizeof(a));
@@ -3608,12 +3661,25 @@ void buildSettingsRows(Page p) {
         srow(RK_ACTION, "Remove password", "%s", pw ? "Enter = remove" : "-");
         srow(RK_ACTION, "Lock now", "%s", pw ? "Enter = lock" : "set a password first");
         srow(RK_PICK, "Idle screen", "%s", kIdleScreenName[g_cfg.idleScreen]);
-        e = editingSub(Entry::FoundText);
-        if (e) srow(RK_ENTRY, "If-found text ( ; = new line)", "%s", e);
-        else   srow(RK_ENTRY, "If-found text", "%s", g_cfg.foundText[0] ? g_cfg.foundText : "none: Enter to type");
+        srow(RK_MENU, "If-found details", "%d of 10 lines set", foundCount());
         srow(RK_TOGGLE, "If found: my address", "%s", g_cfg.foundAddr ? "shown" : "hidden");
         break;
     }
+
+    case PG_MODE:
+        srow(RK_PICK, "Minimal", "%sInbox, Contacts, Settings", g_cfg.opMode == OP_MINIMAL ? "(current) " : "");
+        srow(RK_PICK, "Normal", "%severything (for now)", g_cfg.opMode == OP_NORMAL ? "(current) " : "");
+        srow(RK_PICK, "Advanced", "%severything", g_cfg.opMode == OP_ADVANCED ? "(current) " : "");
+        srow(RK_TOGGLE, "Touch screen", "%s", g_cfg.touchOff ? "OFF (keys only)" : "ON");
+        break;
+
+    case PG_FOUND:                                   // S.4.2.9: what the If found idle screen shows
+        for (int i = 0; i < 10; i++) {
+            const char* e = g_foundField == i ? editingSub(Entry::FoundText) : nullptr;
+            if (e) srow(RK_ENTRY, kFoundLabel[i], "%s", e);
+            else   srow(RK_ENTRY, kFoundLabel[i], "%s", g_cfg.found[i][0] ? g_cfg.found[i] : "-");
+        }
+        break;
 
     case PG_BATTERY:
         if (g_bat.valid) srow(RK_INFO, "Voltage", "%.3f V", g_bat.volts);
@@ -3849,11 +3915,26 @@ void goScreen(ScreenId s);
 void activateSetting(int idx) {
     switch (g_page) {
     case PG_ROOT: {
-        static const Page kSub[10] = {PG_TIME, PG_WIFI, PG_SCREEN, PG_POWER, PG_BATTERY, PG_IDENTITY,
-                                      PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE};
-        if (idx >= 0 && idx < 10) pushPage(kSub[idx], idx == 3 ? g_pw.mode : 0);
+        static const Page kSub[11] = {PG_MODE, PG_TIME, PG_WIFI, PG_SCREEN, PG_POWER, PG_BATTERY, PG_IDENTITY,
+                                      PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE};   // S.11 Storage: by scrolling
+        if (minimalMode() && idx != 0) break;
+        if (idx >= 0 && idx < 11) pushPage(kSub[idx], idx == 0 ? g_cfg.opMode : idx == 4 ? g_pw.mode : 0);
         break;
     }
+    case PG_MODE:
+        if (idx >= 0 && idx <= 2) {
+            g_cfg.opMode = (uint8_t)idx;
+            saveConfig();
+            Serial.printf("[MODE] %s\n", kOpModeName[idx]);
+            toast("Mode: %s", kOpModeName[idx]);
+            requestRedraw();
+        } else if (idx == 3) {
+            g_cfg.touchOff = !g_cfg.touchOff;
+            saveConfig();
+            Serial.printf("[TOUCH] screen %s\n", g_cfg.touchOff ? "off (keys only)" : "on");
+            requestRedraw();
+        }
+        break;
     case PG_TIME:
         if (idx == 0) { loadRtcStaging(); pushPage(PG_RTC); }
         else if (idx == 1) pushPage(PG_TZ, g_cfg.tz);
@@ -4150,15 +4231,22 @@ void activateSetting(int idx) {
             g_cfg.idleScreen = (uint8_t)((g_cfg.idleScreen + 1) % IDLE_COUNT);
             saveConfig();
             Serial.printf("[IDLE] screen %s\n", kIdleScreenName[g_cfg.idleScreen]);
-            if (g_cfg.idleScreen == IDLE_FOUND && !g_cfg.foundText[0]) toast("Type your text: row 9");
+            if (g_cfg.idleScreen == IDLE_FOUND && !foundCount()) toast("Fill in row 9: If-found details");
             requestRedraw();
         } else if (idx == 8) {
-            startEntry(Entry::FoundText, g_cfg.foundText);
-            g_entryReplace = true;            // typing starts over, Backspace edits the old text
+            pushPage(PG_FOUND);
         } else if (idx == 9) {
             g_cfg.foundAddr = !g_cfg.foundAddr;
             saveConfig();
             requestRedraw();
+        }
+        break;
+
+    case PG_FOUND:
+        if (idx >= 0 && idx < 10) {
+            g_foundField = idx;
+            startEntry(Entry::FoundText, g_cfg.found[idx]);
+            g_entryReplace = true;            // typing starts over, Backspace edits the old text
         }
         break;
 
@@ -4375,7 +4463,7 @@ void drawFooter() {
     label(0, FOOT_Y - 1, BOT_C_W, FOOT_H, "V=Down", false, 'V');
     addHit(0, FOOT_Y, BOT_C_W, FOOT_H, H_DOWN);
     box(BOT_C_W, FOOT_Y, BOT_A_W, FOOT_H, 1);
-    label(BOT_C_W, FOOT_Y - 1, BOT_A_W, FOOT_H, "G=up", false, 'G');
+    label(BOT_C_W, FOOT_Y - 1, BOT_A_W, FOOT_H, "T=up", false, 'T');
     addHit(BOT_C_W, FOOT_Y, BOT_A_W, FOOT_H, H_UP);
     box(BOT_C_W + BOT_A_W, FOOT_Y, BOT_I_W, FOOT_H, 1);
     if (moreDn) {
@@ -4802,7 +4890,7 @@ void renderEnergyGraph() {
     drawFooter();
 }
 
-// ---- SD tools: back up / restore, firmware update (S.10.5 rows 8-10) ------------------------
+// ---- SD tools: back up / restore, firmware update (S.11.5 rows 8-10) ------------------------
 // Backup: /backups/<YYYYMMDD-HHMM>/ on the card holds a copy of every file in the unit's
 // flash (flash/...), the settings, keys and message index from NVS (nvs.txt: one
 // "namespace<TAB>key<TAB>type<TAB>hex" per line) and info.txt, written last: a backup
@@ -5335,7 +5423,7 @@ void fwUpdateKey() {
     fwUpdate();
 }
 
-// ---- USB drive mode (S.10.5 row 6) -------------------------------------------------------
+// ---- USB drive mode (S.11.5 row 6) -------------------------------------------------------
 // The SD card becomes a USB drive on the PC (hal/UsbDrive). The firmware unmounts the card
 // and keeps its hands off it (sdMount() refuses) until the restart that ends the mode:
 // Eject on the PC (restarts by itself), or Enter / ^ on the unit. Messages still arrive and
@@ -5469,28 +5557,28 @@ bool isAltSym(const KeyEvent& ev) {
 }
 struct NavKeyRow { const char* keys; const char* what; };
 const NavKeyRow kAtlasKeys[] = {                 // two columns of 7, the 12 px font
-    {"E" LV_SYMBOL_UP " S" LV_SYMBOL_LEFT " X" LV_SYMBOL_DOWN " F" LV_SYMBOL_RIGHT, ""},
+    {"T" LV_SYMBOL_UP " F" LV_SYMBOL_LEFT " V" LV_SYMBOL_DOWN " H" LV_SYMBOL_RIGHT, ""},
     {"D", "centre on me"},   {"Z", "zoom in"},       {"W", "zoom out"},
-    {"L", "locate a place"}, {"K", "hide keys"},     {"M ^", "menu, close"},
-    {"N", "next contact"},   {"P", "next waypoint"}, {"Alt+P", "add waypoint"},
-    {"Alt+SYM", "delete waypt"}, {"G", "arrow + distance"}, {"B", "track back"},
-    {"12 Enter", "chat #12"},
+    {"L", "find a place"},   {"K", "hide keys"},     {"M ^", "menu, close"},
+    {"N", "next contact"},   {"P", "next wpt"},      {"Alt+P", "add wpt"},
+    {"Alt+SYM", "del wpt"},  {"G", "go: arrow"},     {"B", "track back"},
+    {"12 Ent", "chat #12"},
 };
 // Library reader and list (K there too).
 const NavKeyRow kReaderKeys[] = {
-    {"Space N", "next page"}, {"B", "previous page"}, {"E X", "half page"},
-    {"W", "wrap on / off"},   {"S F", "pan left/right"}, {"D", "left edge"}, {"", ""},
-    {"L", "locate (find)"},   {"K", "hide keys"},      {"M", "menu"},
-    {"^", "back to the list"}, {"", ""},              {"", ""}, {"", ""},
+    {"Space N", "next page"}, {"B", "prev page"},    {"T V", "half page"},
+    {"W", "wrap on/off"},     {"F H", "pan"},          {"D", "left edge"}, {"", ""},
+    {"L", "find"},            {"K", "hide keys"},      {"M", "menu"},
+    {"^", "list"},            {"", ""},                {"", ""}, {"", ""},
 };
 const NavKeyRow kLibListKeys[] = {
-    {"1-4", "open that row"}, {"Enter", "open selected"}, {"G V", "up / down"},
+    {"1-4", "open row"},      {"Enter", "open"},       {"T V", "up / down"},
     {"K", "hide keys"},       {"", ""},                {"", ""}, {"", ""},
     {"M", "menu"},            {"^", "close"},          {"", ""},
     {"", ""},                 {"", ""},                {"", ""}, {"", ""},
 };
 const NavKeyRow kGameKeys[] = {
-    {"E" LV_SYMBOL_UP " S" LV_SYMBOL_LEFT " X" LV_SYMBOL_DOWN " F" LV_SYMBOL_RIGHT, ""},
+    {"T" LV_SYMBOL_UP " F" LV_SYMBOL_LEFT " V" LV_SYMBOL_DOWN " H" LV_SYMBOL_RIGHT, ""},
     {"D Enter", "open the square"}, {"Alt+P", "mark a trap"}, {"Q", "new game"},
     {"K", "hide keys"},       {"", ""},                {"", ""},
     {"M", "menu"},            {"^", "back to Library"}, {"", ""},
@@ -5523,14 +5611,32 @@ void smallText(int x, int y, const char* s, bool bold) {
 void drawNavKeys(int y0, const NavKeyRow* rows = kAtlasKeys) {
     fillRect(0, y0, W, kNavH, false);
     box(0, y0, W, kNavH, 1);
-    const int colW = W / 2;
+    auto w12 = [](const char* s) {
+        return (int)lv_txt_get_width(s, strlen(s), &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
+    };
+    int keyW[2] = {16, 16}, colEnd = 0;
+    for (int i = 0; i < 2 * kNavRows; i++)          // widest key per column (rows with a text)
+        if (rows[i].keys[0] && rows[i].what[0] && w12(rows[i].keys) + 1 > keyW[i / kNavRows])
+            keyW[i / kNavRows] = w12(rows[i].keys) + 1;           // +1: the bold offset
+    for (int i = 0; i < kNavRows; i++) {             // where the left column ends
+        if (!rows[i].keys[0]) continue;
+        const int e = rows[i].what[0] ? keyW[0] + 6 + w12(rows[i].what) : w12(rows[i].keys) + 1;
+        if (e > colEnd) colEnd = e;
+    }
+    const int x1 = std::max(4 + colEnd + 10, W / 3);
+    // The right column lines up after its widest key only if every row still fits; else each
+    // text follows its own key (a long "Alt+SYM" would push the others off the screen).
+    bool aligned = true;
+    for (int i = kNavRows; i < 2 * kNavRows; i++)
+        if (rows[i].keys[0] && rows[i].what[0] && x1 + keyW[1] + 6 + w12(rows[i].what) > W - 2) aligned = false;
     for (int i = 0; i < 2 * kNavRows; i++) {
-        const int x = 4 + (i / kNavRows) * colW, y = y0 + 3 + (i % kNavRows) * kNavRowH;
+        const int c = i / kNavRows, x = c ? x1 : 4, y = y0 + 3 + (i % kNavRows) * kNavRowH;
         if (!rows[i].keys[0]) continue;
         smallText(x, y, rows[i].keys, true);
-        const int kw = lv_txt_get_width(rows[i].keys, strlen(rows[i].keys), &lv_font_montserrat_12, 0,
-                                        LV_TEXT_FLAG_NONE);
-        if (rows[i].what[0]) smallText(x + (kw + 6 > 22 ? kw + 6 : 22), y, rows[i].what, false);
+        const int dx = c == 0 || aligned ? keyW[c] + 6 : std::max(w12(rows[i].keys) + 7, 22);
+        if (rows[i].what[0]) smallText(x + dx, y, rows[i].what, false);
+        if (rows[i].what[0] && x + dx + w12(rows[i].what) > W - 2)
+            Serial.printf("[NAV] key card row \"%s\" runs past the edge\n", rows[i].keys);
     }
 }
 
@@ -5551,33 +5657,51 @@ void drawBottomBar() {
         return;
     }
     const bool hk = browseMode();
-    navBox(0, BOT_TOP, BOT_C_W, BOT_H, "Contact", g_screen == SCR_CONTACTS, hk ? 'C' : 0);
-    // Middle tab: "Nav / keys" (K) on the Atlas, where it shows the key card; else Atlas (L,
-    // the offline map) when the card has maps, else Peers (P). L and P work either way.
-    if (mapview::isOpen() || g_libOpen || g_gameOpen || g_chessOpen) {
-        box(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, g_navKeysOpen ? 3 : 1);
-        label(BOT_C_W, BOT_TOP + 2, BOT_A_W, 16, "Nav", g_navKeysOpen);
-        label(BOT_C_W, BOT_TOP + 19, BOT_A_W, 16, "keys", g_navKeysOpen, kKeyNav);
+    // Over the Atlas / Library / a game, Contacts and Inbox are not where you are: no highlight.
+    const bool over = mapview::isOpen() || g_libOpen || g_gameOpen || g_chessOpen;
+    navBox(0, BOT_TOP, BOT_C_W, BOT_H, "Contact", g_screen == SCR_CONTACTS && !over, hk ? 'C' : 0);
+    // Middle tab: where you are + "K keys" over the Atlas / Library / games (K shows the key
+    // card); Menu in Minimal; else Atlas when the card has maps, else Peers.
+    if (over) {
+        const char* where = mapview::isOpen() ? "Atlas" : g_libOpen ? (g_haveLib ? "Library" : "Games")
+                          : g_chessOpen ? "Chess" : "Rat Trap";
+        box(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, 3);
+        label(BOT_C_W, BOT_TOP + 2, BOT_A_W, 16, where, true);
+        label(BOT_C_W, BOT_TOP + 19, BOT_A_W, 16, g_navKeysOpen ? "K hide" : "K keys", g_navKeysOpen, kKeyNav);
         addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_NAVKEYS);
+    } else if (minimalMode()) {
+        navBox(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, "Menu", g_menuOpen, hk ? 'M' : 0);
+        if (hk) addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_MENU);
     } else if (g_haveMaps) {
         navBox(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, "Atlas", false, hk ? 'A' : 0);
         if (hk) addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_MENU_GO, kMenuMap);
     } else {
-        navBox(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, "Peers", g_screen == SCR_PEERS, hk ? 'P' : 0);
+        navBox(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, "Peers", g_screen == SCR_PEERS && !over, hk ? 'P' : 0);
         if (hk) addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_TAB, SCR_PEERS);
     }
-    navBox(BOT_C_W + BOT_A_W, BOT_TOP, BOT_I_W, BOT_H, "Inbox", g_screen == SCR_INBOX, hk ? 'I' : 0);
+    navBox(BOT_C_W + BOT_A_W, BOT_TOP, BOT_I_W, BOT_H, "Inbox", g_screen == SCR_INBOX && !over, hk ? 'I' : 0);
     if (hk) {
         addHit(0, BOT_TOP, BOT_C_W, BOT_H, H_TAB, SCR_CONTACTS);
         addHit(BOT_C_W + BOT_A_W, BOT_TOP, BOT_I_W, BOT_H, H_TAB, SCR_INBOX);
     }
 }
 
+// Menu rows shown: Minimal = Settings, Contacts, Inbox; else all, Atlas only with maps on the
+// card. Library reads "Games" when the card has no library files (Rat Trap, Chess live there).
+bool menuShown(int i) {
+    if (minimalMode()) return kMenuKeys[i] == 'S' || kMenuKeys[i] == 'C' || kMenuKeys[i] == 'I';
+    if (i == kMenuMap) return g_haveMaps;
+    return true;
+}
+const char* menuLabel(int i) { return i == kMenuLib && !g_haveLib ? "Games" : kMenuLabels[i]; }
+
 void drawMenuOverlay() {
     if (!g_menuOpen) return;
+    int row = 0;
     for (int i = 0; i < kMenuCount; i++) {
-        const int y = TOP_H + i * MENU_ROW_H;
-        navBox(MENU_X, y, TAB_W, MENU_ROW_H, kMenuLabels[i], i == g_menuSel, kMenuKeys[i]);
+        if (!menuShown(i)) continue;
+        const int y = TOP_H + row++ * MENU_ROW_H;
+        navBox(MENU_X, y, TAB_W, MENU_ROW_H, menuLabel(i), i == g_menuSel, kMenuKeys[i]);
         addHit(MENU_X, y, TAB_W, MENU_ROW_H, H_MENU_GO, i);
     }
 }
@@ -5838,7 +5962,10 @@ void renderMapHeader() {
     }
     else if (g_mapSel >= 0) snprintf(st, sizeof(st), "N next  #+Enter chat  D me");   // what to press
     else if (g_wptSel >= 0) snprintf(st, sizeof(st), "P next  Alt+SYM del  D me");
-    else mapview::status(st, sizeof(st));
+    else {
+        mapview::status(st, sizeof(st));
+        for (int s = 1; s <= 2 && textW(st) > W - 8; s++) mapview::status(st, sizeof(st), s);
+    }
     drawHeader(st, false);
     char pos[56];
     if (g_placeOpen) renderPlaces();
@@ -5899,7 +6026,7 @@ void fmtAge(uint32_t s, char* out, size_t n) {
     else snprintf(out, n, "%u h", (unsigned)((s + 1800) / 3600));
 }
 
-// ---- Coordinate formats (S.1.12) ---------------------------------------------------
+// ---- Coordinate formats (S.2.12) ---------------------------------------------------
 // Decimal degrees "43.64012,-70.92011", DMS "43 38'24"N 70 55'12"W", or MGRS to 10 m
 // "19T CJ 4513 3368" (WGS84 / UTM; Norway + Svalbard zone exceptions). Messages always
 // carry decimal degrees (machine-readable); MGRS is added to manual shares as text.
@@ -6046,7 +6173,7 @@ void shareMyLocation(const uint8_t dest[16]) {
     } else if (g_cfg.hasPos) {
         snprintf(body, sizeof(body), "%s%.5f, %.5f (set by hand)", kLocLastPrefix, g_cfg.lat, g_cfg.lon);
     } else {
-        toast(g_cfg.gpsOn ? "No GPS position yet" : "GPS is off (S.1)");
+        toast(g_cfg.gpsOn ? "No GPS position yet" : "GPS is off (S.2)");
         return;
     }
     const SendResult r = locSendOrQueue(dest, body);
@@ -6115,7 +6242,7 @@ void ashareCycle(const uint8_t dest[16]) {
         const uint16_t forMin = kAutoForMin[g_autoForSel];
         const time_t now = time(nullptr);
         g_ashare[i].until = forMin ? (uint32_t)now + forMin * 60UL : 0;
-        if (!g_cfg.gpsOn) toast("Every %u min; GPS is OFF (S.1)", (unsigned)next);
+        if (!g_cfg.gpsOn) toast("Every %u min; GPS is OFF (S.2)", (unsigned)next);
         else toast("Every %u min, %s", (unsigned)next, kAutoForName[g_autoForSel]);
     }
     ashareSave();
@@ -6255,7 +6382,7 @@ int cposSlot(const uint8_t dest[16]) {
     return i;
 }
 
-// ---- Arrival alerts (Settings S.8 Alerts > Arrival alerts) ---------------------------------
+// ---- Arrival alerts (Settings S.9 Alerts > Arrival alerts) ---------------------------------
 // "Tell me when <contact> is within <distance> of <me | waypoint>": checked whenever their
 // shared position arrives. A beep (+ vibration) and a 15 s message; once = then removed,
 // repeat = again after they have been 25 % further away. Up to 8, NVS rs_geof.
@@ -6553,12 +6680,12 @@ void mapContactsFeed() {
 // Waypoints: named places (up to 32, NVS rs_wpt), drawn as diamonds. Map keys: P = mark a
 // waypoint at the map centre (name it, Enter), N = next waypoint (centred, selected, a
 // dashed guide line from your position, footer "W2 Ballfield 2.1km SW"), Del twice =
-// remove the selected one. Settings S.1.9 lists them (Enter = show on the map).
-// Track: Settings S.1.10 on/off. Records a point when the GPS fix moved > 25 m (fresh fix
+// remove the selected one. Settings S.2.9 lists them (Enter = show on the map).
+// Track: Settings S.2.10 on/off. Records a point when the GPS fix moved > 25 m (fresh fix
 // only; in Balanced / Saver it asks the GPS for a visit every ~2 min, so points are
 // sparser and the battery cost stays low). Last 1000 points in RAM, all of them appended
 // to <SD>/ratdeckpro/tracks/track.bin (uint32 epoch, float lat, float lon); dotted line on
-// the map. S.1.11 clears it.
+// the map. S.2.11 clears it.
 
 void wptSave() {
     Preferences p;
@@ -7008,7 +7135,7 @@ void tmenuKey(const KeyEvent& ev) {
     if (ev.enter) { tmenuAct(g_tmenuSel); return; }
     const char c = (char)toupper((unsigned char)ev.character);
     if (c >= '1' && c <= '0' + kTmenuRows) { g_tmenuSel = c - '1'; tmenuAct(g_tmenuSel); return; }
-    if (c == 'G' && g_tmenuSel > 0) g_tmenuSel--;
+    if (c == 'T' && g_tmenuSel > 0) g_tmenuSel--;
     if (c == 'V' && g_tmenuSel < kTmenuRows - 1) g_tmenuSel++;
     requestRedraw();
 }
@@ -7311,20 +7438,20 @@ void libKey(const KeyEvent& ev) {
     const char c = (char)toupper((unsigned char)ev.character);
     if (c == kKeyNav) { navKeysToggle(); return; }
     if (g_libReading) {
-        if (c == 'N' || c == 'V' || ev.space) libPage(+1);
-        else if (c == 'B' || c == 'G') libPage(-1);
-        else if (c == 'X') libHalf(+1);
-        else if (c == 'E') libHalf(-1);
+        if (c == 'N' || ev.space) libPage(+1);
+        else if (c == 'B') libPage(-1);
+        else if (c == 'V') libHalf(+1);
+        else if (c == 'T') libHalf(-1);
         else if (c == 'L') startEntry(Entry::LibFind);
         else if (c == 'W') {
             g_libWrap = !g_libWrap;
             g_libCol = 0;
             libLoadPage(g_libPages.back());
-            toast(g_libWrap ? "Wrap on" : "Wrap off: S / F pan");
+            toast(g_libWrap ? "Wrap on" : "Wrap off: F / H pan");
             Serial.printf("[LIB] wrap %s\n", g_libWrap ? "on" : "off");
             requestRedraw();
-        } else if ((c == 'S' || c == 'F') && !g_libWrap) {
-            g_libCol += c == 'F' ? kLibPanCols : -kLibPanCols;
+        } else if ((c == 'F' || c == 'H') && !g_libWrap) {
+            g_libCol += c == 'H' ? kLibPanCols : -kLibPanCols;
             if (g_libCol < 0) g_libCol = 0;
             if (g_libCol > kLibLineMax - 2) g_libCol = kLibLineMax - 2;
             Serial.printf("[LIB] column %d\n", g_libCol);
@@ -7341,7 +7468,7 @@ void libKey(const KeyEvent& ev) {
     if (ev.enter) { pick(g_libSel); return; }
     if (c >= '1' && c <= '9') { const int k = g_libScroll + (c - '1'); if (k <= g_libCount + 1) { g_libSel = k; pick(k); } return; }
     if (c == 'V' && g_libSel < g_libCount + 1) g_libSel++;
-    if (c == 'G' && g_libSel > 0) g_libSel--;
+    if (c == 'T' && g_libSel > 0) g_libSel--;
     if (c == 'M') { libClose(); openMenu(); return; }
     if (g_libSel < g_libScroll) g_libScroll = g_libSel;
     if (g_libSel >= g_libScroll + 4) g_libScroll = g_libSel - 3;
@@ -7376,7 +7503,7 @@ void renderLibrary() {
             listRow(LIST_TOP + r * ROW_H, t, sub, k == g_libSel);
         }
         box(0, FOOT_Y, W, FOOT_H, 1);
-        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4 / Enter  G/V  K keys");
+        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4 / Enter  T/V  K keys");
         if (g_navKeysOpen) drawNavKeys(FOOT_Y - kNavH, kLibListKeys);
         return;
     }
@@ -7532,10 +7659,10 @@ void gameKey(const KeyEvent& ev) {
     if (c == 'M') { gameClose(); openMenu(); return; }
     if (c == kKeyNav) { navKeysToggle(); return; }
     if (c == 'Q') { gameNew(); return; }
-    if (c == 'E' && g_gameCy > 0) g_gameCy--;
-    else if (c == 'X' && g_gameCy < kGameRows - 1) g_gameCy++;
-    else if (c == 'S' && g_gameCx > 0) g_gameCx--;
-    else if (c == 'F' && g_gameCx < kGameCols - 1) g_gameCx++;
+    if (c == 'T' && g_gameCy > 0) g_gameCy--;
+    else if (c == 'V' && g_gameCy < kGameRows - 1) g_gameCy++;
+    else if (c == 'F' && g_gameCx > 0) g_gameCx--;
+    else if (c == 'H' && g_gameCx < kGameCols - 1) g_gameCx++;
     else if (c == 'D' || ev.enter || ev.space) gameDig();
     else if (c == kKeyWpt && ev.alt && !g_gameOver) {
         uint8_t& cell = g_gameCell[g_gameCy][g_gameCx];
@@ -7587,7 +7714,7 @@ void renderGame() {
 constexpr int kChessSq = 28, kChessX = (W - 8 * kChessSq) / 2, kChessY = LIST_TOP;
 constexpr int kChessMaxMoves = 400;
 const NavKeyRow kChessKeys[] = {
-    {"E" LV_SYMBOL_UP " S" LV_SYMBOL_LEFT " X" LV_SYMBOL_DOWN " F" LV_SYMBOL_RIGHT, ""},
+    {"T" LV_SYMBOL_UP " F" LV_SYMBOL_LEFT " V" LV_SYMBOL_DOWN " H" LV_SYMBOL_RIGHT, ""},
     {"D Enter", "pick / drop"}, {"U", "take back"}, {"L", "level 1-4"},
     {"C", "swap sides"},      {"Q Q", "new game"},      {"K", "hide keys"},
     {"M", "menu"},            {"^", "back to Library"}, {"", ""},
@@ -7844,10 +7971,10 @@ void chessKey(const KeyEvent& ev) {
     // Cursor moves as the board is shown (turned round when you play black).
     const int fl = g_cUser > 0 ? 1 : -1;
     int f = chess::file(g_cCur), r = chess::rank(g_cCur);
-    if (c == 'E' || ev.up) r += fl;
-    else if (c == 'X' || ev.down) r -= fl;
-    else if (c == 'S' || ev.left) f -= fl;
-    else if (c == 'F' || ev.right) f += fl;
+    if (c == 'T' || ev.up) r += fl;
+    else if (c == 'V' || ev.down) r -= fl;
+    else if (c == 'F' || ev.left) f -= fl;
+    else if (c == 'H' || ev.right) f += fl;
     else if (c == 'D' || ev.enter || ev.space) chessPick();
     else if (c == 'U') {
         if (!g_cN) return;
@@ -8105,7 +8232,7 @@ void cardKey(const KeyEvent& ev) {
     const char raw = ev.character;
     if (raw >= '1' && raw <= '4') { g_cardSel = raw - '1'; cardAct(g_cardSel); return; }
     switch (toupper((unsigned char)raw)) {
-        case 'G': if (g_cardSel > 0) g_cardSel--; requestRedraw(); break;
+        case 'T': if (g_cardSel > 0) g_cardSel--; requestRedraw(); break;
         case 'V': if (g_cardSel < 3) g_cardSel++; requestRedraw(); break;
         case 'M': closeCard(); openMenu(); break;
         default: break;
@@ -8174,7 +8301,7 @@ void saveThreadCard() {
     toast("Saved %.18s", g_threadCard.name);
 }
 
-// ---- Contacts: share all, export / import (Settings S.6, setup wizard) -----------------
+// ---- Contacts: share all, export / import (Settings S.7, setup wizard) -----------------
 constexpr const char* kContactsFile = SD_PATH_ROOT "/contacts.txt";   // "name<TAB>32 hex" per line
 
 // Every saved contact as a contact card to one radio (it saves them while its setup wizard
@@ -8275,7 +8402,7 @@ int contactsImport() {
     return n;
 }
 
-// ---- Setup wizard (fresh device, or Settings S.6 "Run setup wizard") --------------------
+// ---- Setup wizard (fresh device, or Settings S.7 "Run setup wizard") --------------------
 // One screen per step, "Step 3/10" in the header. Enter keeps what is shown and goes on, ^
 // goes back a step, 0 finishes with the rest left as it is. A digit picks a row: on a
 // choice step it also goes on.
@@ -8359,15 +8486,16 @@ bool wizPick(int k) {
         case WZ_IDLE:
             if (k < 1 || k > IDLE_COUNT) return false;
             g_cfg.idleScreen = (uint8_t)(k - 1); saveConfig();
-            if (g_cfg.idleScreen == IDLE_FOUND) {      // the text right away
-                startEntry(Entry::FoundText, g_cfg.foundText);
+            if (g_cfg.idleScreen == IDLE_FOUND) {      // the name right away; the rest in S.4.2.9
+                g_foundField = 0;
+                startEntry(Entry::FoundText, g_cfg.found[0]);
                 g_entryReplace = true;
                 return false;
             }
             return true;
         case WZ_MODE:
-            if (k < 1 || k > 2) return false;
-            g_cfg.simple = k == 1; saveConfig();
+            if (k < 1 || k > 3) return false;
+            g_cfg.opMode = (uint8_t)(k - 1); saveConfig();
             return true;
         case WZ_LOCK:
             if (k == 1) return true;
@@ -8435,7 +8563,7 @@ void renderWizard() {
             row(a, "sets itself from GPS / radios", false);
             y += 6;
             line("By hand later: Settings", false);
-            line("S.1 Time > Set RTC", false);
+            line("S.2 Time > Set RTC", false);
             break;
         }
         case WZ_CLOCK:
@@ -8466,10 +8594,11 @@ void renderWizard() {
             if (g_entry == Entry::FoundText) { snprintf(b, sizeof(b), "%s_", g_buf); line(b, false); }
             break;
         case WZ_MODE:
-            row("1 Simple", "fewer options (coming later)", g_cfg.simple);
-            row("2 Advanced", "everything (today's screens)", !g_cfg.simple);
+            row("1 Minimal", "Inbox, Contacts, Settings", g_cfg.opMode == OP_MINIMAL);
+            row("2 Normal", "everything (for now)", g_cfg.opMode == OP_NORMAL);
+            row("3 Advanced", "everything", g_cfg.opMode == OP_ADVANCED);
             y += 6;
-            line("Simple mode: coming later", false);
+            line("Change later: Settings S.1", false);
             break;
         case WZ_LOCK:
             row(lockHasPassword() ? "1 Keep the password" : "1 No password", "anyone can use it", false);
@@ -8481,7 +8610,7 @@ void renderWizard() {
             }
             break;
         case WZ_IMPORT:
-            snprintf(b, sizeof(b), g_wizListen ? "listening: %d received" : "the other: S.6 Share all", g_wizGot);
+            snprintf(b, sizeof(b), g_wizListen ? "listening: %d received" : "the other: S.7 Share all", g_wizGot);
             row(g_wizListen ? "1 Stop listening" : "1 Listen over the radio", b, g_wizListen);
             row("2 Read contacts.txt (SD)", "ratdeckpro/contacts.txt", false);
             y += 6;
@@ -8502,7 +8631,7 @@ void renderWizard() {
 }
 
 // ---- Track back, GPX export -------------------------------------------------------------
-// Track back (Atlas B, Settings S.1.10): from the track point nearest to you, walk the
+// Track back (Atlas B, Settings S.2.10): from the track point nearest to you, walk the
 // recorded points backwards; the guide line (and G's arrow) points at the next one, which
 // moves on when you are within 25 m; at the first point: "Back at the start".
 constexpr float kTbReach = 25.0f, kTbStep = 30.0f;
@@ -8517,7 +8646,7 @@ int tbStepBack(int from) {                  // the first earlier point at least 
 bool tbStart() {
     trackLoad();
     double la, lo;
-    if (g_trackN < 2) { toast("No track yet (S.1.10)"); return false; }
+    if (g_trackN < 2) { toast("No track yet (S.2.10)"); return false; }
     if (!ownPosition(la, lo)) { toast("No position yet"); return false; }
     int best = 0;
     float bd = 1e30f;
@@ -8718,7 +8847,7 @@ void renderNav() {
     const bool own = ownPosition(la, lo);
     if (!own) {
         label(0, 120, W, 20, "No own position yet", true);
-        label(0, 142, W, 18, "(GPS or saved position S.1)");
+        label(0, 142, W, 18, "(GPS or saved position S.2)");
     } else {
         const double m = metersBetween(la, lo, tla, tlo);
         const double brg = bearingDeg(la, lo, tla, tlo);
@@ -8808,7 +8937,7 @@ void navTick() {
     if (far || turned || millis() / 60000UL != g_navShownMin || navMoving()) requestRedraw();
 }
 
-// ---- Range test (Settings S.7 LoRa > Range test) -----------------------------------------
+// ---- Range test (Settings S.8 LoRa > Range test) -----------------------------------------
 // Two units in range-test mode ping each other: every N s this one sends a ping to the chosen
 // partner; a unit in range-test mode answers a ping meant for it with a pong carrying the
 // RSSI / SNR it heard. Both log every event to <SD>/ratdeckpro/rangetest/rt-<date>-<time>.csv
@@ -9057,20 +9186,31 @@ constexpr int kIdleMapTop = 38, kIdleMapBottom = 300;
 // Every idle screen: time, battery and unread across the top, the date and the radio's name
 // under them, and the wake / LOCKED line at the bottom.
 void drawIdleTop() {
-    char t[12], d[12], line[48];
+    // Line 1: "1:45 PM EST  100% bat  ~12h"; line 2: "11/14  name  3 NEW". Regular weight (bold
+    // was hard to read). Each line drops its least important part until it fits the width.
+    char t[12], line[64], line2[64], bat[16] = "", left[10] = "", md[8] = "--/--", unr[12];
     fmtTime(t, sizeof(t));
-    fmtDate(d, sizeof(d));
+    struct tm lt;
+    if (localNow(lt)) snprintf(md, sizeof(md), "%d/%d", lt.tm_mon + 1, lt.tm_mday);
     const int pct = g_bat.valid ? g_bat.pct : -1;
     const int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
     box(0, 0, W, kIdleMapTop, 1);
-    char left[10] = "";
+    if (pct >= 0) snprintf(bat, sizeof(bat), "%d%%%s", pct, g_bat.charging ? "+" : "");
     const int h10 = g_bat.usb ? -1 : batHoursLeft10(nullptr);
-    if (h10 >= 0) snprintf(left, sizeof(left), h10 < 480 ? " ~%dh" : " ~%dd", h10 < 480 ? (h10 + 5) / 10 : (h10 + 120) / 240);
-    if (unread > 0) snprintf(line, sizeof(line), "%s  %d%%%s%s  %d NEW", t, pct, g_bat.charging ? "+" : "", left, unread);
-    else snprintf(line, sizeof(line), "%s  %d%%%s%s  no new", t, pct, g_bat.charging ? "+" : "", left);
-    label(0, 0, W, 20, line, true);
-    snprintf(line, sizeof(line), "%s  %s", d, g_selfName);
-    label(0, 18, W, 18, line);
+    if (h10 >= 0) snprintf(left, sizeof(left), h10 < 480 ? "~%dh" : "~%dd", h10 < 480 ? (h10 + 5) / 10 : (h10 + 120) / 240);
+    if (unread > 0) snprintf(unr, sizeof(unr), "%d NEW", unread); else snprintf(unr, sizeof(unr), "no new");
+    const int maxW = W - 6;
+    const char* tz = tzCur().name;
+    const char* bw = bat[0] ? " bat" : "";
+    snprintf(line, sizeof(line), "%s %s  %s%s  %s", t, tz, bat, bw, left);
+    if (!left[0] || textW(line) > maxW) snprintf(line, sizeof(line), "%s %s  %s%s", t, tz, bat, bw);
+    if (textW(line) > maxW) snprintf(line, sizeof(line), "%s %s  %s", t, tz, bat);
+    if (textW(line) > maxW) snprintf(line, sizeof(line), "%s  %s", t, bat);
+    label(0, 0, W, 20, line);
+    snprintf(line2, sizeof(line2), "%s  %s  %s", md, g_selfName, unr);
+    if (textW(line2) > maxW) snprintf(line2, sizeof(line2), "%s  %.12s  %s", md, g_selfName, unr);
+    if (textW(line2) > maxW) snprintf(line2, sizeof(line2), "%.12s  %s", g_selfName, unr);
+    label(0, 18, W, 18, line2);
     g_idleShownUnread = unread;
     g_idleShownPct = pct;
     g_idleShownMin = millis() / 60000UL;
@@ -9078,7 +9218,11 @@ void drawIdleTop() {
 
 void drawIdleFoot(const char* unlockedText) {
     box(0, kIdleMapBottom, W, H - kIdleMapBottom, 1);
-    label(0, kIdleMapBottom, W, H - kIdleMapBottom, g_locked ? "LOCKED | press a key" : unlockedText, g_locked);
+    // About to go flat (under 1 %, on battery): say so instead of "press a key".
+    const bool dying = g_bat.valid && !g_bat.usb && g_bat.pct < 1;
+    const char* s = dying ? (g_locked ? "LOCKED | plug in USB" : "PLUG IN USB TO CHARGE")
+                          : g_locked ? "LOCKED | press a key" : unlockedText;
+    label(0, kIdleMapBottom, W, H - kIdleMapBottom, s, g_locked || dying);
 }
 
 void paintIdle() {
@@ -9100,8 +9244,7 @@ void paintIdle() {
     label(0, y0 + 2 * step + 6, W, 16, "uptime");
     snprintf(line, sizeof(line), "%05luD : %02luH : %02luM", (unsigned long)(s / 86400UL),
              (unsigned long)((s / 3600UL) % 24UL), (unsigned long)((s / 60UL) % 60UL));
-    label(0, y0 + 3 * step + 6, W, 16, line);
-    label(0, y0 + 4 * step + 14, W, 18, tzCur().name);
+    label(0, y0 + 3 * step + 6, W, 16, line);   // (the time zone is beside the clock at the top)
     drawIdleFoot("press a KEY to wake");
     lv_refr_now(nullptr);
     drawLogo(W / 2, kIdleMapTop + 50);       // stamped after LVGL so the clear does not wipe it
@@ -9173,18 +9316,29 @@ void paintIdleFound() {
     label(0, y, W, 20, "IF FOUND, PLEASE", true);
     label(0, y + 20, W, 20, "RETURN TO:", true);
     y += 48;
-    if (g_cfg.foundText[0]) {
-        char t[sizeof(g_cfg.foundText)];
-        strlcpy(t, g_cfg.foundText, sizeof(t));
-        int lines = 0;
-        for (char* tok = strtok(t, ";|"); tok && lines < 7; tok = strtok(nullptr, ";|"), lines++) {
-            while (*tok == ' ') tok++;
-            label(0, y, W, 20, tok, lines == 0);
-            y += 22;
+    // The filled lines: Name, Phone, Address 1, Address 2, "Town, State ZIP", Country, Misc 1, 2.
+    const auto& F = g_cfg.found;
+    char place[96] = "";
+    snprintf(place, sizeof(place), "%s%s%s%s%s", F[4], F[4][0] && (F[5][0] || F[6][0]) ? ", " : "", F[5],
+             F[5][0] && F[6][0] ? " " : "", F[6]);
+    const char* show[8] = {F[0], F[1], F[2], F[3], place, F[7], F[8], F[9]};
+    const char* lines[8];
+    int n = 0;
+    for (const char* s : show) if (s[0]) lines[n++] = s;
+    if (n) {
+        const int bottom = g_cfg.foundAddr ? 222 : 296;
+        if (n * 20 <= bottom - y) {                  // the normal font, the name in bold
+            for (int i = 0; i < n; i++) { label(0, y, W, 20, lines[i], i == 0 && F[0][0]); y += 20; }
+        } else {                                     // many lines: the 12 px font
+            for (int i = 0; i < n; i++) {
+                const int w = lv_txt_get_width(lines[i], strlen(lines[i]), &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
+                smallText(w < W - 4 ? (W - w) / 2 : 2, y, lines[i], i == 0 && F[0][0]);
+                y += 15;
+            }
         }
     } else {
-        label(0, y, W, 20, "(owner text not set:");
-        label(0, y + 22, W, 20, "Settings S.3.2)");
+        label(0, y, W, 20, "(details not set:");
+        label(0, y + 22, W, 20, "Settings S.4.2.9)");
         y += 44;
     }
     if (g_cfg.foundAddr) {
@@ -9204,7 +9358,7 @@ void paintIdleFound() {
     lv_refr_now(nullptr);
 }
 
-// Idle screen "Map" (S.3.2 "Idle screen"): the map centred on the GPS fix, else the
+// Idle screen "Map" (S.4.2 "Idle screen"): the map centred on the GPS fix, else the
 // saved position, else the card's home.txt, at zoom 13 (or the deepest level with tiles),
 // with time / battery / unread across the top. false = no position: the splash is shown.
 constexpr int kIdleMapZoom = 13;
@@ -9269,7 +9423,9 @@ void drawBootSplash() {
     label(0, 240, W, 18, "BOOTING...", true);
     lv_refr_now(nullptr);
     drawLogo(W / 2, 64);
-    g_display.refreshIfDirty();
+    // Full refresh: after a reset (side button) the panel's previous-image RAM is cleared, so a
+    // partial update showed nothing (white). Full is also quicker here (1.1 s vs 1.9 s).
+    g_display.fullRefresh();
 }
 
 // =============================================================================
@@ -9342,7 +9498,8 @@ void openMenu() {
     if (g_wizOpen) return;                   // finish or skip the wizard first
     g_menuOpen = true;
     g_menuSel = 0;
-    for (int i = 0; i < kMenuMap; i++) if (kMenuScreens[i] == g_screen) g_menuSel = i;   // not Map / Library
+    while (g_menuSel < kMenuCount - 1 && !menuShown(g_menuSel)) g_menuSel++;
+    for (int i = 0; i < kMenuMap; i++) if (kMenuScreens[i] == g_screen && menuShown(i)) g_menuSel = i;   // not Map / Library
     requestRedraw();
 }
 
@@ -9584,12 +9741,14 @@ void commitEntry() {
         Serial.printf("[CHECKIN] time %s\n", at);
         return;
     }
-    case Entry::FoundText:
-        strlcpy(g_cfg.foundText, g_buf, sizeof(g_cfg.foundText));
+    case Entry::FoundText: {
+        const int i = g_foundField < 0 || g_foundField > 9 ? 0 : g_foundField;
+        strlcpy(g_cfg.found[i], g_buf, sizeof(g_cfg.found[i]));
         saveConfig();
         endEntry();
-        toast(g_cfg.foundText[0] ? "If-found text saved" : "If-found text cleared");
+        toast(g_cfg.found[i][0] ? "%s saved" : "%s cleared", kFoundLabel[i]);
         return;
+    }
     case Entry::IdleSecs: {
         long v;
         if (!parseLong(g_buf, v) || v < 10 || v > 99999) { toast("Out of range 10-99999"); return; }
@@ -9764,7 +9923,7 @@ void entryKey(const KeyEvent& ev) {
     }
     if (g_entry == Entry::WptName && g_bufLen >= 15) { toast("Max 15 chars"); return; }
     if (g_entry == Entry::TcpHost && g_bufLen >= sizeof(g_tcpCfg.host) - 1) { toast("Max 63 chars"); return; }
-    if (g_entry == Entry::FoundText && g_bufLen >= sizeof(g_cfg.foundText) - 1) { toast("Max 120 chars"); return; }
+    if (g_entry == Entry::FoundText && g_bufLen >= sizeof(g_cfg.found[0]) - 1) { toast("Max 40 chars"); return; }
     bufAppend(c);
     if (g_entry == Entry::Search) searchChanged();
     // Show it on the next frame. Keys typed while that frame is on the panel are
@@ -9784,10 +9943,14 @@ void menuKey(const KeyEvent& ev) {
     if (ev.enter) { menuGo(g_menuSel); return; }
     const char c = (char)toupper((unsigned char)ev.character);
     if (c == 'M') { closeMenu(); return; }
-    if (c == 'G') { if (g_menuSel > 0) g_menuSel--; requestRedraw(); return; }
-    if (c == 'V') { if (g_menuSel < kMenuCount - 1) g_menuSel++; requestRedraw(); return; }
+    if (c == 'T' || c == 'V') {                     // to the previous / next shown row
+        for (int i = g_menuSel + (c == 'T' ? -1 : 1); i >= 0 && i < kMenuCount; i += c == 'T' ? -1 : 1)
+            if (menuShown(i)) { g_menuSel = i; break; }
+        requestRedraw();
+        return;
+    }
     for (int i = 0; i < kMenuCount; i++)
-        if (c == kMenuKeys[i]) { menuGo(i); return; }
+        if (c == kMenuKeys[i] && menuShown(i)) { menuGo(i); return; }
 }
 
 void browseKey(const KeyEvent& ev) {
@@ -9797,15 +9960,16 @@ void browseKey(const KeyEvent& ev) {
     const char raw = ev.character;
     if (raw >= '0' && raw <= '9') { digitPressed(raw - '0'); return; }
     switch (toupper((unsigned char)raw)) {
-        case 'G': moveSelection(-1); break;
+        case 'T': moveSelection(-1); break;
         case 'V': moveSelection(+1); break;
         case 'M': openMenu(); break;
-        case 'H': goScreen(SCR_HOME); break;
+        // No global Home key: Home is M then H.
         // 'S' is intentionally absent: Settings is reached only via M -> S (guide §7).
         case 'C': goScreen(SCR_CONTACTS); break;
-        case 'P': goScreen(SCR_PEERS); break;
+        case 'P': if (!minimalMode()) goScreen(SCR_PEERS); break;
         case 'I': goScreen(SCR_INBOX); break;
         case 'A':                                   // Atlas; on a list row with a known position: there
+            if (minimalMode()) break;
             if (isListScreen(g_screen) && g_listSel < g_rowCount && cposFind(g_rows[g_listSel].peer) >= 0 &&
                 g_cpos[cposFind(g_rows[g_listSel].peer)].hasPos)
                 mapShowContact(g_rows[g_listSel].peer);
@@ -9823,10 +9987,23 @@ void browseKey(const KeyEvent& ev) {
     }
 }
 
+// Minimal mode: out of the idle screen (or the lock) straight to the Inbox. A message being
+// typed (thread open) is left as it is.
+void minimalToInbox() {
+    if (!minimalMode() || g_threadOpen || entryActive()) return;
+    if (g_menuOpen) closeMenu();
+    if (mapview::isOpen()) closeMap();
+    if (g_libOpen) libClose();
+    if (g_gameOpen) gameClose();
+    if (g_chessOpen) chessClose();
+    if (g_screen != SCR_INBOX) goScreen(SCR_INBOX);
+}
+
 void handleKey(const KeyEvent& ev) {
     if (g_idleActive) {                 // any key wakes; the key itself is consumed
         g_idleActive = false;
         noteInput();
+        if (!g_locked) minimalToInbox();
         g_fullRefreshReq = true;
         requestRedraw();
         Serial.println(g_locked ? "[IDLE] wake (locked)" : "[IDLE] wake");
@@ -9859,9 +10036,9 @@ void mapKey(const KeyEvent& ev) {
     if (mapNumberKey(ev)) return;                         // "12" Enter: open chat #12
     if (mc == kKeyNav) { navKeysToggle(); return; }
     if (mc == 'M') { openMenu(); return; }
-    if (mc == 'C' || mc == 'I' || mc == 'H') {
+    if (mc == 'C' || mc == 'I') {
         closeMap();
-        goScreen(mc == 'C' ? SCR_CONTACTS : mc == 'I' ? SCR_INBOX : SCR_HOME);
+        goScreen(mc == 'C' ? SCR_CONTACTS : SCR_INBOX);
         return;
     }
     if (mc == 'A') return;
@@ -9930,7 +10107,7 @@ bool cst328Read(int16_t& x, int16_t& y) {
 }
 
 void handleTouch(int16_t x, int16_t y) {
-    if (g_idleActive || g_locked) return;     // doc: key-only wake; no touch while locked
+    if (g_idleActive || g_locked || g_cfg.touchOff) return;   // key-only wake; none while locked or off
     noteInput();
     const Hit* hit = nullptr;
     for (int i = g_hitCount - 1; i >= 0; i--) {      // last drawn = topmost
@@ -9943,7 +10120,7 @@ void handleTouch(int16_t x, int16_t y) {
     switch (hit->act) {
         case H_REFRESH:    g_fullRefreshReq = true; requestRedraw(); break;
         case H_MENU:       if (g_menuOpen) closeMenu(); else openMenu(); break;
-        case H_MENU_GO:    menuGo(hit->arg); break;
+        case H_MENU_GO:    if (hit->arg >= 0 && hit->arg < kMenuCount && menuShown(hit->arg)) menuGo(hit->arg); break;
         case H_TAB:        goScreen((ScreenId)hit->arg); break;
         case H_BACK:       goBack(); break;
         case H_ANNOUNCE:   activateCurrent(); break;
@@ -10235,7 +10412,7 @@ void powerTick() {
 bool g_touchGated = false;
 void powerTouchTick() {
     // Idle splash: touch is off in every mode (key-only wake, no accidental touches).
-    const bool want = !g_idleActive && (!g_pwEff.touchOnKey || millis() - g_lastInputMs < 60000UL);
+    const bool want = !g_cfg.touchOff && !g_idleActive && (!g_pwEff.touchOnKey || millis() - g_lastInputMs < 60000UL);
     if (want == !g_touchGated) return;
     g_touchGated = !want;
     digitalWrite(TOUCH_RST, want ? HIGH : LOW);
@@ -10648,6 +10825,28 @@ void handleSerialLine(char* p) {
         }
         buildSettingsRows(g_page);
         Serial.printf("[SETCHECK] %d rows too wide\n", bad);
+        return;
+    }
+    if (!strncmp(p, "found ", 6)) {                    // found <1-10> [text]: an If-found line
+        const int i = atoi(p + 6) - 1;
+        const char* t = strchr(p + 6, ' ');
+        if (i < 0 || i > 9) { Serial.println("[FOUND] found <1-10> [text]"); return; }
+        strlcpy(g_cfg.found[i], t ? t + 1 : "", sizeof(g_cfg.found[i]));
+        saveConfig();
+        requestRedraw();
+        Serial.printf("[FOUND] %s = \"%s\" (%d of 10 set)\n", kFoundLabel[i], g_cfg.found[i], foundCount());
+        return;
+    }
+    if (!strncmp(p, "opmode ", 7)) {                   // opmode 0|1|2 (Minimal / Normal / Advanced)
+        const int m = atoi(p + 7);
+        if (m >= 0 && m <= 2) { g_cfg.opMode = (uint8_t)m; saveConfig(); minimalToInbox(); requestRedraw(); }
+        Serial.printf("[MODE] %s\n", kOpModeName[g_cfg.opMode]);
+        return;
+    }
+    if (!strncmp(p, "touchscreen ", 12)) {             // touchscreen 0|1
+        g_cfg.touchOff = atoi(p + 12) == 0;
+        saveConfig();
+        Serial.printf("[TOUCH] screen %s\n", g_cfg.touchOff ? "off (keys only)" : "on");
         return;
     }
     if (!strncmp(p, "idlescr", 7)) {                   // idlescr [0-3]: idle screen; "idle now"
@@ -11171,7 +11370,7 @@ void handleSerialLine(char* p) {
     } else if (!strcmp(p, "backup")) {
         backupNow();
     } else if (!strncmp(p, "restore ", 8)) {
-        // "restore <folder name in /backups> | newest": as S.10.5 > Restore backup, without
+        // "restore <folder name in /backups> | newest": as S.11.5 > Restore backup, without
         // asking twice.
         sdMount();
         sdToolsScan(true);
@@ -11188,12 +11387,12 @@ void handleSerialLine(char* p) {
         for (int i = 0; i < g_bkCount; i++) Serial.printf(" %s", g_bkNames[i]);
         Serial.println();
     } else if (!strcmp(p, "fwupdate")) {
-        // As S.10.5 > Update firmware, without asking twice.
+        // As S.11.5 > Update firmware, without asking twice.
         sdMount();
         sdToolsScan(true);
         fwUpdate();
     } else if (!strcmp(p, "usbdrive")) {
-        // The SD card becomes a USB drive on the PC (as S.10.5 row 6); this COM port goes away.
+        // The SD card becomes a USB drive on the PC (as S.11.5 row 6); this COM port goes away.
         usbDriveStart();
         if (!g_usbDrive) Serial.printf("[USB] drive mode not started: %s\n", usbdrive::message());
 #if defined(SIMULATOR)
@@ -11495,7 +11694,7 @@ void batLeftText(char* out, size_t n) {
     else snprintf(out, n, "about %.1f days in %s", h10 / 240.0f, power::modeName(g_pw.mode));
 }
 
-// Low-battery notice (S.5 row 12): once per discharge, at the chosen %, one contact gets
+// Low-battery notice (S.6 row 12): once per discharge, at the chosen %, one contact gets
 // "Battery dying (9%). Last position ..."; check-in mode queues it for the window.
 void lowBatTick() {
     if (!g_bat.valid) return;
@@ -11741,6 +11940,7 @@ bool begin() {
     restoreAtBoot();                    // a restore asked for before the restart (restarts again)
     initStorageAndProto();
     bootMark("flash, messages, protocol");
+    if (sdMount()) Serial.printf("[SD] maps %s, library %s\n", g_haveMaps ? "yes" : "no", g_haveLib ? "yes" : "no");
 
     // Finish LXMF outbound recovery while internal heap is still large: pump until the
     // engine has read the persisted outgoing records (was a fixed 3 s on every boot).
@@ -11792,7 +11992,7 @@ bool begin() {
     g_proto.setMessageCallback(onCommittedMessage);
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
     noteInput();
-    goScreen(SCR_HOME);
+    goScreen(minimalMode() ? SCR_INBOX : SCR_HOME);
     render();
     Serial.println("[BOOT] ready");
     restoreReport();

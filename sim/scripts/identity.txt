@@ -11,7 +11,7 @@ key M
 wait 800
 key S
 wait 800
-key 2
+key 3
 wait 800
 key 6
 wait 800
@@ -33,7 +33,7 @@ key BACK
 wait 500
 key BACK
 wait 500
-key 6
+key 7
 wait 800
 key 5
 wait 800

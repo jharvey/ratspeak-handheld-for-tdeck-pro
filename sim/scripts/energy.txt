@@ -9,13 +9,13 @@ wait 135000
 serial energy
 expect 3000 [ENERGY] -2
 # The idle splash is up after the wait: the first key only wakes it.
-key G
+key T
 wait 2500
 key M
 wait 800
 key S
 wait 800
-key 4
+key 5
 wait 1200
 key 9
 wait 1500
