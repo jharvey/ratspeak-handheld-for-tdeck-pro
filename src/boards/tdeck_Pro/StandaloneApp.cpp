@@ -991,6 +991,8 @@ char     g_gpsLastGga[96] = "", g_gpsLastRmc[96] = "";
 // rate and send the vendor's "clear saved config + load defaults" (UBX-CFG-CFG), like
 // LilyGo's own GPS_Recovery(). An L76K (9600 baud) simply ignores the UBX frames.
 uint32_t g_gpsLastGoodMs = 0, g_gpsStepAt = 0, g_gpsBaud = GPS_BAUD;
+int8_t g_gpsPsmSent = -1;          // operate mode last sent (-1: send again)
+uint32_t g_gpsRmcAt = 0;           // millis() of the last good RMC sentence
 uint8_t  g_gpsStep = 0;
 // "CANNOT USE BBR -> NO GNSS OPERATION": the receiver will not navigate because its backup
 // domain (V_BCKP, fed by the small MS621FE cell J6 through D8 + R15) is not usable. The
@@ -1050,11 +1052,26 @@ void gpsApplyPower() {
     g_gpsBaud = GPS_BAUD;
     g_gpsStep = 0;
     g_gpsLastGoodMs = g_gpsStepAt = millis();
+    g_gpsPsmSent = -1;                 // power-save setting goes out once it talks
     snprintf(g_gpsStatus, sizeof(g_gpsStatus), "searching");
     Serial.printf("[GPS] on RX=%d TX=%d baud=%d\n", GPS_RX, GPS_TX, GPS_BAUD);
 #else
     snprintf(g_gpsStatus, sizeof(g_gpsStatus), "n/a");
 #endif
+}
+
+void ubxSend(uint8_t cls, uint8_t id, const uint8_t* payload, uint16_t len);
+
+// GPS on while the CPU sleeps (Balanced): the receiver may use its own power-save mode
+// (u-blox M10 PSMCT: about half the current once it has a fix). Full keeps full power.
+bool gpsSleepsWithCpu() { return g_pwEff.gps == power::GPS_ON && g_pwEff.wakeSecs != 0; }
+
+void gpsSetPowerSave(bool on) {
+    if (!g_gpsSerial) return;
+    const uint8_t pl[9] = {0, 0x01, 0, 0, 0x01, 0x00, 0xd0, 0x20, (uint8_t)(on ? 2 : 0)};   // RAM, CFG-PM-OPERATEMODE
+    ubxSend(0x06, 0x8A, pl, sizeof(pl));
+    g_gpsPsmSent = on ? 1 : 0;
+    Serial.printf("[GPS] receiver power save %s\n", on ? "on (PSMCT)" : "off (full power)");
 }
 
 void ubxSend(uint8_t cls, uint8_t id, const uint8_t* payload, uint16_t len) {
@@ -1109,7 +1126,7 @@ void gpsSendDefaults() {
         {0x209100bb, 1},   // CFG-MSGOUT-NMEA_ID_GGA_UART1
         {0x209100ac, 1},   // CFG-MSGOUT-NMEA_ID_RMC_UART1
         {0x209100c5, 1},   // CFG-MSGOUT-NMEA_ID_GSV_UART1
-        {0x20d00001, 0},   // CFG-PM-OPERATEMODE = FULL
+        {0x20d00001, 0},   // CFG-PM-OPERATEMODE = FULL (gpsSetPowerSave sets PSMCT later)
     };
     uint8_t pl[4 + sizeof(kv) / sizeof(kv[0]) * 5];
     size_t n = 0;
@@ -1271,6 +1288,8 @@ void gpsHandleSentence(char* line) {
     const bool rmc = !strncmp(fld[0], "$GPRMC", 6) || !strncmp(fld[0], "$GNRMC", 6);
     const bool gga = !strncmp(fld[0], "$GPGGA", 6) || !strncmp(fld[0], "$GNGGA", 6);
     if (rmc && n > 9) {
+        g_gpsRmcAt = millis() | 1;
+        if (g_gpsPsmSent != (gpsSleepsWithCpu() ? 1 : 0)) gpsSetPowerSave(gpsSleepsWithCpu());
         const bool valid = fld[2][0] == 'A';
         if (valid && strlen(fld[1]) >= 6 && strlen(fld[9]) >= 6) {
             g_gpsUtc[3] = twoDigits(fld[1]);
@@ -5792,6 +5811,7 @@ void drawMenuOverlay() {
 // ---- Offline map (MapView.cpp; tiles from the SD card) ----------------------------------
 void gpsRequestVisit(const char* why = "location share");
 void mapGpsAsk(bool opening);
+bool gpsCurrent();
 bool gpsFresh();
 bool g_mapSdTried = false;
 File g_mapFile;                  // pack file kept open between reads
@@ -5905,7 +5925,7 @@ void openMap() {
     // Centre on the newest position: a fresh fix, the last fix, the saved position (S.2).
     double lat = 0, lon = 0; bool have = false;
     const char* how = "no position";
-    if (g_gpsPosValid) { lat = g_gpsLat; lon = g_gpsLon; have = true; how = gpsFresh() ? "GPS" : "last fix"; }
+    if (g_gpsPosValid) { lat = g_gpsLat; lon = g_gpsLon; have = true; how = gpsCurrent() ? "GPS" : "last fix"; }
     else if (g_cfg.hasPos) { lat = g_cfg.lat; lon = g_cfg.lon; have = true; how = "saved position"; }
     if (g_menuOpen) g_menuOpen = false;
     // No position: the card's own start view, maps/home.txt = "lat lon zoom"
@@ -5991,6 +6011,7 @@ void heartbeatTick() {
 }
 
 bool gpsFresh();
+bool gpsCurrent();
 
 // The map wants the own position: without a fresh fix ask for a GPS visit when it opens and
 // again each minute while it stays open and in use (keys in the last 5 min), so Balanced does
@@ -6103,6 +6124,15 @@ uint8_t g_autoForSel = 1;    // duration picked in the thread menu (4 h)
 
 bool gpsFresh() { return g_gpsFix && g_gpsPosValid && millis() - g_gpsPosAt < kFreshFixMs; }
 
+// "Current" for what the screens show: in a mode where the GPS rests between visits, the last
+// fix stays good until two visits in a row have failed (2.5 x the interval + a visit), so the
+// Atlas does not say "no fix" just because the receiver is waiting for its next visit.
+uint32_t gpsCurrentMs() {
+    const uint32_t ivl = power::gpsIntervalMs(g_pwEff.gps);
+    return ivl ? ivl * 5 / 2 + power::kGpsWindowMs : kFreshFixMs;
+}
+bool gpsCurrent() { return g_gpsPosValid && (gpsFresh() || millis() - g_gpsPosAt < gpsCurrentMs()); }
+
 void fmtAge(uint32_t s, char* out, size_t n) {
     if (s < 90) snprintf(out, n, "%u s", (unsigned)s);
     else if (s < 5400) snprintf(out, n, "%u min", (unsigned)((s + 30) / 60));
@@ -6188,9 +6218,18 @@ void gpsPosText(char* out, size_t n) {
         snprintf(out, n, "%s %usat", c, (unsigned)g_gpsSats);
         return;
     }
-    // No fresh fix: what the receiver is doing, after the age of the last fix (or "set" =
-    // the saved position S.2 is what the map shows). Fits the 240 px footer.
     char st[28];
+    if (gpsCurrent()) {                      // between visits: the last fix with its age
+        char c[40], age[8];
+        fmtCoord(g_gpsLat, g_gpsLon, c, sizeof(c));
+        const uint32_t a = (millis() - g_gpsPosAt) / 1000;
+        if (a < 90) snprintf(age, sizeof(age), "%us", (unsigned)a);
+        else snprintf(age, sizeof(age), "%um", (unsigned)((a + 30) / 60));
+        snprintf(out, n, "%s %s ago", c, age);
+        return;
+    }
+    // No current fix: what the receiver is doing, after the age of the last fix (or "set" =
+    // the saved position S.2 is what the map shows). Fits the 240 px footer.
     gpsStateText(st, sizeof(st));
     if (g_gpsPosValid) {
         const uint32_t a = (millis() - g_gpsPosAt) / 1000;
@@ -9184,7 +9223,7 @@ void renderRangeTest() {
     else line("-", false);
     snprintf(a, sizeof(a), "their pings heard: %lu", (unsigned long)g_rtHeard); line(a, false);
     double la, lo;
-    if (gpsFresh() && ownPosition(la, lo)) snprintf(a, sizeof(a), "me %.5f,%.5f", la, lo);
+    if (gpsCurrent() && ownPosition(la, lo)) snprintf(a, sizeof(a), "me %.5f,%.5f", la, lo);
     else snprintf(a, sizeof(a), "me: no GPS fix (logged as such)");
     line(a, false);
     box(0, FOOT_Y, W, FOOT_H, 1);
@@ -10606,7 +10645,21 @@ const char* powerSleepBlocker() {
     if (HWCDC::isPlugged() && !g_usbSleepUntil) return "usb host";   // console drops while asleep
     if (mirror::active()) return "mirror";
     if (g_wifiSt != WifiSt::Off || g_wifiScanning || WiFi.getMode() != WIFI_OFF) return "wifi";
-    if (g_gpsSerial) return "gps";
+    if (g_gpsSerial) {
+        if (!gpsSleepsWithCpu()) return "gps";
+        // The UART is off in light sleep: about every 30 s stay awake until one RMC sentence
+        // (position + time) is in (at most 2.5 s), so the position is never > ~30 s old.
+        static uint32_t winAt = 0, lastRead = 0;
+        if (!winAt && (!lastRead || now - lastRead >= 30000)) winAt = now | 1;
+        if (winAt) {
+            if ((g_gpsRmcAt && (int32_t)(g_gpsRmcAt - winAt) > 0) || now - winAt > 2500) {
+                winAt = 0;
+                lastRead = now;
+            } else {
+                return "gps read";
+            }
+        }
+    }
     if (g_protoReady && g_proto.lxmfQueuedCount() > 0) return "lxmf queue";
     if (g_radio && (g_radio->packetAvailable || g_radio->isTxBusy())) return "lora busy";
     if (g_loraIf && !g_loraIf->txIdle()) return "lora tx queue";

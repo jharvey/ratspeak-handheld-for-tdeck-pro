@@ -396,6 +396,9 @@ Energy target (rough)
 - Few messages per day + sleep: multi-day battery goal; measure after sleep work
   Now (2026-11-10): Saver ~7 mA asleep (LoRa listening) -> ~6-8 days on ~1450 mAh;
   Balanced ~9-10 mA -> ~5-6 days; Full ~48-67 mA -> ~21-30 h. Multi-day goal reached.
+  2026-11-14: Balanced now keeps the GPS on (CPU still sleeps, wakes ~30 s to read it;
+  receiver PSMCT once it has a fix): measured 28 mA on COM6 indoors without a fix (receiver
+  at full power) -> ~2 days; with a fix and PSMCT ~20 mA -> ~3 days expected (measure outdoors).
 
 Hardware issues
 ---------------

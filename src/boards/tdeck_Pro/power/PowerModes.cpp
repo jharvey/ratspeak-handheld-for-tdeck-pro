@@ -7,13 +7,15 @@
 namespace power {
 namespace {
 
+// Balanced (2026-11-14): GPS always on, but the CPU still sleeps (it wakes ~every 30 s to
+// read a position) and the receiver runs its own power-save mode (PSMCT).
 // mapGps: only Full and Balanced let the map wake the GPS; the saving modes keep their
 // schedule (the map shows the last fix and its age).
 // trackGps: no preset wakes the GPS for the track; it logs when the GPS is on anyway (Full:
 // always). Custom has the knob.
 //                         cpu  wake awake  lora   gps         wifi   keyLight touchOnKey loraOnUse checkin mapGps trackGps
 const Profile kFull     = {240,   0,   0,  true,  GPS_ON,     true,  true,    false,     false,    false,  true,  false};
-const Profile kBalanced = {240,   1,  15,  true,  GPS_15MIN,  true,  true,    false,     false,    false,  true,  false};
+const Profile kBalanced = {240,   1,  15,  true,  GPS_ON,      true,  true,    false,     false,    false,  true,  false};
 const Profile kSaver    = {240,  60,   5,  true,  GPS_HOURLY, false, false,   true,      false,    false,  false, false};
 const Profile kUltra    = {240, 300,   5,  true,  GPS_OFF,    false, false,   true,      false,    false,  false, false};
 const Profile kOnDemand = {240, 300,  10,  false, GPS_ON_USE, false, false,   true,      true,     false,  false, false};
