@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include "reticulum/LXMFManager.h"
 #include "protocol/OutgoingContract.h"
+#include "protocol/LxmfFields.h"
 
 class ProtocolBackend {
 public:
@@ -49,6 +50,30 @@ public:
     virtual handheld::outgoing::Submission lxmfSubmit(const uint8_t dest[16],
         const uint8_t* title, size_t titleLength, const uint8_t* content,
         size_t contentLength, bool preferLink = false) = 0;
+    // As lxmfSubmit, plus a raw msgpack LXMF fields map (exactly one map) given as two spans
+    // that are concatenated (head then tail; see LxmfFields.h). Rejection::Invalid when the
+    // protocol archive has no fields support, TooLarge past the 3659-byte body.
+    virtual handheld::outgoing::Submission lxmfSubmitFields(const uint8_t dest[16],
+        const uint8_t* title, size_t titleLength, const uint8_t* content, size_t contentLength,
+        const uint8_t* fieldsHead, size_t fieldsHeadLength, const uint8_t* fieldsTail,
+        size_t fieldsTailLength, bool preferLink = false) {
+        (void)dest; (void)title; (void)titleLength; (void)content; (void)contentLength;
+        (void)fieldsHead; (void)fieldsHeadLength; (void)fieldsTail; (void)fieldsTailLength; (void)preferLink;
+        return {{}, handheld::outgoing::Rejection::Unavailable};
+    }
+    // Voice message: LXMF FIELD_AUDIO [audioMode, audio] (Sideband compatible; for Codec2 the
+    // audio is raw 8 kHz Codec2 frames, no header, mode handheld::lxmf::AudioCodec2_*), plus
+    // optional text as content. audio is copied at admission. Up to lxmf::MaxAudioBytes minus
+    // the text. Same ticket/poll/acknowledge/status flow as lxmfSubmit.
+    handheld::outgoing::Submission lxmfSubmitAudio(const uint8_t dest[16], uint8_t audioMode,
+        const uint8_t* audio, size_t audioLength, const uint8_t* content = nullptr,
+        size_t contentLength = 0, bool preferLink = false) {
+        handheld::lxmf::AudioField field;
+        if (!handheld::lxmf::makeAudioField(audioMode, audio, audioLength, field))
+            return {{}, handheld::outgoing::Rejection::Invalid};
+        return lxmfSubmitFields(dest, nullptr, 0, content, contentLength, field.head, field.headLength,
+                                field.audio, field.audioLength, preferLink);
+    }
     virtual handheld::outgoing::Poll lxmfPoll(handheld::outgoing::Ticket,
         handheld::outgoing::InitialResult&) const = 0;
     virtual bool lxmfAcknowledge(handheld::outgoing::Ticket) = 0;

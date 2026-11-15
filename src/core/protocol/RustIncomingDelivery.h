@@ -3,6 +3,7 @@
 #include "reticulum/LXMFManager.h"
 #include "transport/TxLease.h"
 #include "ratspeak_protocol.h"
+#include "protocol/LxmfFields.h"
 #include <cstddef>
 #include <cstdint>
 
@@ -48,6 +49,8 @@ public:
         const uint8_t* title = nullptr;
         const uint8_t* content = nullptr;
         size_t titleLength = 0, contentLength = 0;
+        // Stored fields (the audio field only); its audio bytes are borrowed until accept returns.
+        handheld::lxmf::AudioField fields;
         double timestamp = 0;
         bool reaction = false;
     };

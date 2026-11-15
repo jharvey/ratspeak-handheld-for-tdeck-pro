@@ -535,6 +535,7 @@ rs_handheld_status_t rs_handheld_rns_known_dest_import(rs_handheld_rns_t *ctx,
  * (a compile-time assert there pins both to 303). */
 #define RS_HANDHELD_LXMF_TITLE_MAX   303u
 #define RS_HANDHELD_LXMF_CONTENT_MAX 303u
+#define RS_HANDHELD_LXMF_FIELDS_MAX  303u
 /* Exact-key hint returned by lxmf_peek_source_hint for the base identity key. Other valid hints
  * are retained-ring indices 0..63. */
 #define RS_HANDHELD_LXMF_BASE_KEY_HINT 255u
@@ -553,6 +554,10 @@ typedef struct rs_handheld_lxmf_message {
     /* 1 if the message carries a reaction (standard FIELD_REACTION 0x40 or the legacy Ratspeak
      * envelope). Proof it, but skip store/UI (reactions are not displayed). */
     uint8_t  is_reaction;
+    /* Raw msgpack LXMF `fields` element (signature-covered), fields_len valid bytes; the 1-byte
+     * empty map 0x80 when the message has no fields. Read audio with rs_handheld_lxmf_fields_audio. */
+    uint32_t fields_len;
+    uint8_t  fields[RS_HANDHELD_LXMF_FIELDS_MAX];
 } rs_handheld_lxmf_message_t;
 
 /* Build a single-frame OPPORTUNISTIC LXMF message from the active identity (source) to
@@ -665,11 +670,65 @@ typedef struct rs_handheld_lxmf_view {
     uint32_t title_offset, title_len;
     uint32_t content_offset, content_len;
     int32_t is_reaction;
+    uint32_t fields_offset, fields_len; /* raw msgpack `fields` element (0x80 = none) */
 } rs_handheld_lxmf_view_t;
 rs_handheld_status_t rs_handheld_rns_lxmf_parse_link_view(const rs_handheld_rns_t *ctx,
                                            const uint8_t *data, size_t data_len,
                                            const uint8_t source_public_key[64],
                                            rs_handheld_lxmf_view_t *out_view);
+
+/* ---- LXMF message fields (voice messages) ----
+ * LXMF fields are a msgpack map {int key: value} carried as element 4 of the signed payload.
+ * Constants from LXMF/LXMF.py. FIELD_AUDIO's value is [audio_mode, audio_bytes]; for Codec2
+ * (as Sideband sends it) audio_bytes are the raw concatenated frames of an 8 kHz Codec2 encoder,
+ * no header; the mode alone tells the decoder the frame size. */
+#define RS_HANDHELD_LXMF_FIELD_AUDIO        0x07u
+#define RS_HANDHELD_LXMF_AM_CODEC2_700C     0x03u
+#define RS_HANDHELD_LXMF_AM_CODEC2_1600     0x07u
+#define RS_HANDHELD_LXMF_AM_CODEC2_3200     0x09u
+/* Largest header rs_handheld_lxmf_audio_field_header writes. */
+#define RS_HANDHELD_LXMF_AUDIO_HEADER_MAX   10u
+
+/* rs_handheld_lxmf_packed_size with a fields element of fields_len bytes (0 = the empty map). */
+rs_handheld_status_t rs_handheld_lxmf_packed_size_fields(size_t title_len, size_t content_len,
+                                                      size_t fields_len, size_t *out_size);
+
+/* rs_handheld_rns_lxmf_build with a raw msgpack fields map (fields_len 0 = none, byte-identical
+ * to rs_handheld_rns_lxmf_build). A non-empty `fields` must be exactly one well-formed msgpack
+ * map, else RS_HANDHELD_ERR_INVALID_ARG. RS_HANDHELD_ERR_CAPACITY when it does not fit one frame
+ * (then send it over a link with _build_link_fields). */
+rs_handheld_status_t rs_handheld_rns_lxmf_build_fields(const rs_handheld_rns_t *ctx,
+                                      const uint8_t recipient_public_key[64], double timestamp,
+                                      uint64_t wall_secs, uint64_t uptime_ms,
+                                      const uint8_t *title, size_t title_len,
+                                      const uint8_t *content, size_t content_len,
+                                      const uint8_t *fields, size_t fields_len,
+                                      const uint8_t ephemeral_priv[32], const uint8_t iv[16],
+                                      uint8_t *out, size_t out_cap, size_t *out_len,
+                                      uint8_t out_dest_hash[16], uint8_t out_message_id[32]);
+
+/* rs_handheld_rns_lxmf_build_link with a raw msgpack fields map (as _build_fields). */
+rs_handheld_status_t rs_handheld_rns_lxmf_build_link_fields(const rs_handheld_rns_t *ctx,
+                                           const uint8_t recipient_public_key[64], double timestamp,
+                                           const uint8_t *title, size_t title_len,
+                                           const uint8_t *content, size_t content_len,
+                                           const uint8_t *fields, size_t fields_len,
+                                           uint8_t *out, size_t out_cap, size_t *out_len,
+                                           uint8_t out_dest_hash[16], uint8_t out_message_id[32]);
+
+/* Write the bytes that precede audio_len audio bytes in a fields map holding only the audio field,
+ * {0x07: [mode, bin(audio_len)]}, packed like Python msgpack. The complete fields element is these
+ * *out_len bytes followed by the audio bytes. RS_HANDHELD_ERR_CAPACITY if out_cap is too small
+ * (RS_HANDHELD_LXMF_AUDIO_HEADER_MAX always suffices). */
+rs_handheld_status_t rs_handheld_lxmf_audio_field_header(uint8_t mode, size_t audio_len,
+                                                      uint8_t *out, size_t out_cap, size_t *out_len);
+
+/* Find FIELD_AUDIO in a raw fields map: *out_mode = audio mode; the audio bytes are
+ * fields[*out_offset .. *out_offset + *out_len). RS_HANDHELD_ERR_UNSUPPORTED if there is no
+ * well-formed audio field ([uint <= 255, bin]); outputs are then unchanged. */
+rs_handheld_status_t rs_handheld_lxmf_fields_audio(const uint8_t *fields, size_t fields_len,
+                                                uint8_t *out_mode, size_t *out_offset,
+                                                size_t *out_len);
 
 /* ---- Proof / delivery-status / dedup: byte-exact with Python RNS 1.3.8 ----
  * A proof of receipt is the receiver's Ed25519 signature over the proven packet's full 32-byte hash:

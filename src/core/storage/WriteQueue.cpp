@@ -68,7 +68,7 @@ WriteQueue::Submission WriteQueue::submit(const Request& request, const PayloadP
     auto reject = [](Rejection reason) { return Submission{{}, reason}; };
     if (!_accepting) return reject(Rejection::Unavailable);
     if (_nextSequence == UINT64_MAX) return reject(Rejection::Exhausted);
-    if (request.operation > Operation::Trim || partCount > 3 || (partCount && !parts))
+    if (request.operation > Operation::Trim || partCount > 4 || (partCount && !parts))
         return reject(Rejection::Invalid);
     size_t length = 0;
     for (size_t i = 0; i < partCount; ++i) {
@@ -78,8 +78,10 @@ WriteQueue::Submission WriteQueue::submit(const Request& request, const PayloadP
     }
     if (resultCapacity > Budget::LargePayload) return reject(Rejection::TooLarge);
     if (request.operation == Operation::CreateIncoming || request.operation == Operation::CreateOutgoing) {
-        if (!Budget::validBody(request.titleLength, request.contentLength)) return reject(Rejection::TooLarge);
-        if (length != size_t(request.titleLength) + request.contentLength) return reject(Rejection::Invalid);
+        if (!Budget::validBody(request.titleLength, request.contentLength, request.fieldsLength))
+            return reject(Rejection::TooLarge);
+        if (length != size_t(request.titleLength) + request.contentLength + request.fieldsLength)
+            return reject(Rejection::Invalid);
     }
     size_t first = 0, end = Budget::NormalSlots;
     if (request.operation == Operation::DeleteConversation) {

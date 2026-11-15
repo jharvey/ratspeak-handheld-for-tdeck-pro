@@ -11,6 +11,8 @@ mod incoming_view_tests;
 /// (title + content together are <= MAX_LXMF_PAYLOAD; either alone is <= it).
 pub const RS_HANDHELD_LXMF_TITLE_MAX: usize = lxmf_lite_core::lxmf::MAX_LXMF_PAYLOAD;
 pub const RS_HANDHELD_LXMF_CONTENT_MAX: usize = lxmf_lite_core::lxmf::MAX_LXMF_PAYLOAD;
+/// Inline cap for the raw `fields` element of a single-frame message (same reasoning).
+pub const RS_HANDHELD_LXMF_FIELDS_MAX: usize = lxmf_lite_core::lxmf::MAX_LXMF_PAYLOAD;
 pub const RS_HANDHELD_LXMF_BASE_KEY_HINT: u8 = 0xff;
 const _: () =
     assert!(rns_lite_core::ratchet::RATCHET_RING_MAX < RS_HANDHELD_LXMF_BASE_KEY_HINT as usize);
@@ -29,6 +31,10 @@ pub struct RsHandheldLxmfMessage {
     /// 1 if the message carries a reaction (standard `FIELD_REACTION` 0x40 or the legacy
     /// Ratspeak envelope). The C++ engine proofs it but skips store/UI.
     pub is_reaction: u8,
+    /// Raw msgpack `fields` element (signature-covered), `fields_len` valid bytes; `0x80` (one
+    /// byte) when the message has no fields. Read the audio field with `rs_handheld_lxmf_fields_audio`.
+    pub fields_len: u32,
+    pub fields: [u8; RS_HANDHELD_LXMF_FIELDS_MAX],
 }
 
 pub(super) fn fill_lxmf_message(
@@ -37,6 +43,7 @@ pub(super) fn fill_lxmf_message(
 ) -> RsHandheldStatus {
     if view.title.len() > RS_HANDHELD_LXMF_TITLE_MAX
         || view.content.len() > RS_HANDHELD_LXMF_CONTENT_MAX
+        || view.fields.len() > RS_HANDHELD_LXMF_FIELDS_MAX
     {
         return RsHandheldStatus::ErrCapacity;
     }
@@ -50,6 +57,9 @@ pub(super) fn fill_lxmf_message(
     message.content[..view.content.len()].copy_from_slice(view.content);
     message.content_len = view.content.len() as u32;
     message.is_reaction = lxmf_is_reaction(view.fields) as u8;
+    message.fields = [0u8; RS_HANDHELD_LXMF_FIELDS_MAX];
+    message.fields[..view.fields.len()].copy_from_slice(view.fields);
+    message.fields_len = view.fields.len() as u32;
     RsHandheldStatus::Ok
 }
 
@@ -88,6 +98,11 @@ pub(super) fn lxmf_is_reaction(fields: &[u8]) -> bool {
 const _: () = {
     assert!(RS_HANDHELD_LXMF_TITLE_MAX == 303 && RS_HANDHELD_LXMF_CONTENT_MAX == 303);
     assert!(core::mem::offset_of!(RsHandheldLxmfMessage, timestamp) == 48);
+    assert!(RS_HANDHELD_LXMF_FIELDS_MAX == 303);
+    // fields_len/fields follow is_reaction (671 + 1 padding byte); pinned against the C header.
+    assert!(core::mem::offset_of!(RsHandheldLxmfMessage, is_reaction) == 671);
+    assert!(core::mem::offset_of!(RsHandheldLxmfMessage, fields_len) == 672);
+    assert!(core::mem::offset_of!(RsHandheldLxmfMessage, fields) == 676);
 };
 
 /// Build a single-frame OPPORTUNISTIC LXMF message from the active identity (the source) to
@@ -758,6 +773,9 @@ pub struct RsHandheldLxmfView {
     pub content_offset: u32,
     pub content_len: u32,
     pub is_reaction: i32,
+    /// Raw msgpack `fields` element span (`0x80` = no fields).
+    pub fields_offset: u32,
+    pub fields_len: u32,
 }
 
 /// Validate with the same codec as the copying direct API and return input-relative spans.
@@ -804,7 +822,8 @@ pub unsafe extern "C" fn rs_handheld_rns_lxmf_parse_link_view(
             }
             u32::try_from(at).ok()
         };
-        let (Some(title_offset), Some(content_offset)) = (offset(view.title), offset(view.content))
+        let (Some(title_offset), Some(content_offset), Some(fields_offset)) =
+            (offset(view.title), offset(view.content), offset(view.fields))
         else {
             return RsHandheldStatus::ErrInternal;
         };
@@ -818,6 +837,8 @@ pub unsafe extern "C" fn rs_handheld_rns_lxmf_parse_link_view(
                 content_offset,
                 content_len: view.content.len() as u32,
                 is_reaction: lxmf_is_reaction(view.fields) as i32,
+                fields_offset,
+                fields_len: view.fields.len() as u32,
             };
         }
         RsHandheldStatus::Ok

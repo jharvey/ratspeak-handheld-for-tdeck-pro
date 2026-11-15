@@ -37,8 +37,12 @@ public:
     using InitialResult = handheld::outgoing::InitialResult;
     using StatusView = handheld::outgoing::StatusView;
     bool begin(const Deps& deps);
+    // fields: optional raw msgpack LXMF fields map as two spans (head, then tail), copied at
+    // admission (see LxmfFields.h). It must be exactly one msgpack map.
     Submission submit(const uint8_t dest[16], const uint8_t* title, size_t titleLength,
-                      const uint8_t* content, size_t contentLength, bool preferLink = false);
+                      const uint8_t* content, size_t contentLength, bool preferLink = false,
+                      const uint8_t* fieldsHead = nullptr, size_t fieldsHeadLength = 0,
+                      const uint8_t* fieldsTail = nullptr, size_t fieldsTailLength = 0);
     handheld::outgoing::Poll poll(Ticket, InitialResult&) const;
     bool acknowledge(Ticket);
     bool cancel(Ticket);

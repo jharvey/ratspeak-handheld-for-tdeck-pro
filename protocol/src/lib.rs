@@ -391,6 +391,8 @@ mod transport;
 pub use transport::*;
 mod lxmf;
 pub use lxmf::*;
+mod fields;
+pub use fields::*;
 mod proof;
 pub use proof::*;
 mod link;

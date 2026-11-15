@@ -89,6 +89,10 @@ public:
     handheld::outgoing::Submission lxmfSubmit(const uint8_t dest[16],
         const uint8_t* title, size_t titleLength, const uint8_t* content,
         size_t contentLength, bool preferLink = false) override;
+    handheld::outgoing::Submission lxmfSubmitFields(const uint8_t dest[16],
+        const uint8_t* title, size_t titleLength, const uint8_t* content, size_t contentLength,
+        const uint8_t* fieldsHead, size_t fieldsHeadLength, const uint8_t* fieldsTail,
+        size_t fieldsTailLength, bool preferLink = false) override;
     handheld::outgoing::Poll lxmfPoll(handheld::outgoing::Ticket,
         handheld::outgoing::InitialResult&) const override;
     bool lxmfAcknowledge(handheld::outgoing::Ticket) override;

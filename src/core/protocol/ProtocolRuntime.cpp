@@ -681,6 +681,16 @@ handheld::outgoing::Submission ProtocolRuntime::lxmfSubmit(const uint8_t dest[16
     return _lxmf.submit(dest, title, titleLength, content, contentLength, preferLink);
 }
 
+handheld::outgoing::Submission ProtocolRuntime::lxmfSubmitFields(const uint8_t dest[16],
+        const uint8_t* title, size_t titleLength, const uint8_t* content, size_t contentLength,
+        const uint8_t* fieldsHead, size_t fieldsHeadLength, const uint8_t* fieldsTail,
+        size_t fieldsTailLength, bool preferLink) {
+    handheld::assertDeviceOwner();
+    if (!_enginesUp) return {};
+    return _lxmf.submit(dest, title, titleLength, content, contentLength, preferLink,
+                        fieldsHead, fieldsHeadLength, fieldsTail, fieldsTailLength);
+}
+
 handheld::outgoing::Poll ProtocolRuntime::lxmfPoll(handheld::outgoing::Ticket ticket,
         handheld::outgoing::InitialResult& result) const {
     handheld::assertDeviceOwner();

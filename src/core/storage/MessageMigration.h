@@ -123,7 +123,7 @@ class MessageMigration {
         // numeric values through serializer rounding while comparing revisions.
         for (JsonPairConst member : document.document().as<JsonObjectConst>()) {
             const char* key=member.key().c_str();bool known=false;
-            for (const char* allowed : {"src","dst","ts","title","content","incoming","read","status","store_revision","rcv","msgid"})
+            for (const char* allowed : {"src","dst","ts","title","content","fields","incoming","read","status","store_revision","rcv","msgid"})
                 if (!strcmp(key,allowed)) { known=true;break; }
             if (!known) return false;
         }

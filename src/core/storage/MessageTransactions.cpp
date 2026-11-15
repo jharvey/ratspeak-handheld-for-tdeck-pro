@@ -989,12 +989,14 @@ void MessageTransactions::read(const Request& request, uint8_t* bytes, size_t ca
     MessageDocument document; StoredRecordHeader header;
     result.error = load(request.key, document, header);
     if (result.error != Error::None) return;
-    const size_t total = size_t(header.titleLength) + header.contentLength;
+    const size_t total = size_t(header.titleLength) + header.contentLength +
+                         (request.withFields ? header.fieldsLength : 0);
     if (request.offset > total) { result.error = Error::InvalidRecord; return; }
     memcpy(bytes, &header, sizeof(header));
     const size_t count = std::min(total - request.offset, capacity - sizeof(header));
     size_t offset = request.offset, copied = 0;
-    for (const char* field : {"title", "content"}) {
+    for (const char* field : {"title", "content", "fields"}) {
+        if (!request.withFields && !strcmp(field, "fields")) break;
         const auto value = document.document()[field].as<JsonString>();
         if (offset >= value.size()) { offset -= value.size(); continue; }
         const size_t take = std::min(value.size() - offset, count - copied);
@@ -1590,8 +1592,9 @@ void MessageTransactions::execute(const Request& request, uint8_t* bytes, size_t
     }
     switch (request.operation) {
     case Operation::CreateIncoming: case Operation::CreateOutgoing:
-        if (!Budget::validBody(request.titleLength, request.contentLength) ||
-            length != size_t(request.titleLength) + request.contentLength || request.status > 6 ||
+        if (!Budget::validBody(request.titleLength, request.contentLength, request.fieldsLength) ||
+            length != size_t(request.titleLength) + request.contentLength + request.fieldsLength ||
+            request.status > 6 ||
             !std::isfinite(request.timestamp) ||
             request.key.incoming != (request.operation == Operation::CreateIncoming) ||
             memcmp(request.key.peer, request.key.incoming ? request.source : request.destination, 16)) {

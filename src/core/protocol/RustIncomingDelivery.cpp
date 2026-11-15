@@ -124,7 +124,7 @@ RustIncomingDelivery::ReceiveResult RustIncomingDelivery::accept(const MessageVi
     handheld::assertDeviceOwner();
     if (!_accepting) return {ReceiveCode::Rejected, {}, ReceiveError::Stopped};
     if (!message.messageId || !message.source || !std::isfinite(message.timestamp) ||
-        !Budget::validBody(message.titleLength, message.contentLength) ||
+        !Budget::validBody(message.titleLength, message.contentLength, message.fields.total()) ||
         (message.titleLength && !message.title) || (message.contentLength && !message.content) ||
         (seed.kind != Kind::NoProof && (!seed.raw || !seed.length || seed.length > 128)))
         return {ReceiveCode::Rejected, {}, ReceiveError::Invalid};
@@ -196,8 +196,10 @@ RustIncomingDelivery::ReceiveResult RustIncomingDelivery::accept(const MessageVi
     memcpy(request.destination, _d.ourDestHash, 16); memcpy(request.messageId, message.messageId, 32);
     request.hasMessageId = true; request.timestamp = message.timestamp; request.status = uint8_t(LXMFStatus::DELIVERED);
     request.titleLength = uint16_t(message.titleLength); request.contentLength = uint16_t(message.contentLength);
+    request.fieldsLength = uint16_t(message.fields.total());
     request.identityGeneration = incoming->identityGeneration; request.peerGeneration = incoming->visibilityGeneration;
-    const auto admitted = _d.store->requestSave(request, message.title, message.content);
+    const auto admitted = _d.store->requestSave(request, message.title, message.content,
+        message.fields.head, message.fields.headLength, message.fields.audio);
     if (!admitted.accepted()) {
         retireReceipt(proof); releaseRow(ref);
         const bool retry = admitted.rejection == Rejection::Busy || admitted.rejection == Rejection::NoMemory;

@@ -35,10 +35,17 @@ public:
     // Validated create metadata plus borrowed spans, copied into the owned slot
     // before return. No title/content allocation is required by the producer.
     Submission requestSave(const Request&, const void* title, const void* content);
+    // With request.fieldsLength bytes of LXMF fields, given as two spans so a caller can
+    // prepend a small header to borrowed bytes without a copy: fieldsHead[fieldsHeadLength]
+    // then fieldsTail[request.fieldsLength - fieldsHeadLength] (either may be empty).
+    Submission requestSave(const Request&, const void* title, const void* content,
+                           const void* fieldsHead, size_t fieldsHeadLength, const void* fieldsTail);
     Submission requestStatus(const RecordKey&, LXMFStatus, uint32_t identityGeneration = 0, uint32_t peerGeneration = 0);
     Submission requestMarkRead(const std::string& peer, uint32_t identityGeneration = 0, uint32_t peerGeneration = 0);
     Submission requestDelete(const std::string& peer, uint32_t identityGeneration = 0, uint32_t peerGeneration = 0);
-    Submission requestRecord(const RecordKey&, uint32_t offset = 0, uint16_t capacity = 4096);
+    // withFields: the payload after the header is title||content||fields (else title||content).
+    Submission requestRecord(const RecordKey&, uint32_t offset = 0, uint16_t capacity = 4096,
+                             bool withFields = false);
     Submission requestPending(const RecordKey& after = {});
     Submission requestHistoryPage(const std::string& peer, HistoryEntry cursor = {}, uint8_t limit = 48,
                                   HistoryDirection direction = HistoryDirection::Before);

@@ -51,14 +51,24 @@ MessageStore::Submission MessageStore::requestSave(const LXMFMessage& message,
 }
 
 MessageStore::Submission MessageStore::requestSave(const Request& request, const void* title, const void* content) {
-    if (!Budget::validBody(request.titleLength, request.contentLength)) return {{}, Rejection::TooLarge};
+    if (request.fieldsLength) return {{}, Rejection::Invalid};
+    return requestSave(request, title, content, nullptr, 0, nullptr);
+}
+
+MessageStore::Submission MessageStore::requestSave(const Request& request, const void* title, const void* content,
+        const void* fieldsHead, size_t fieldsHeadLength, const void* fieldsTail) {
+    if (!Budget::validBody(request.titleLength, request.contentLength, request.fieldsLength))
+        return {{}, Rejection::TooLarge};
+    if (fieldsHeadLength > request.fieldsLength || (fieldsHeadLength && !fieldsHead) ||
+        (request.fieldsLength > fieldsHeadLength && !fieldsTail)) return {{}, Rejection::Invalid};
     if ((request.operation != Operation::CreateIncoming && request.operation != Operation::CreateOutgoing) ||
         request.key.counter || request.key.incoming != (request.operation == Operation::CreateIncoming) ||
         memcmp(request.key.peer, request.key.incoming ? request.source : request.destination, 16) ||
         !std::isfinite(request.timestamp) || request.status > 6 ||
         (request.titleLength && !title) || (request.contentLength && !content)) return {{}, Rejection::Invalid};
-    const WriteQueue::PayloadPart parts[] = {{title, request.titleLength}, {content, request.contentLength}};
-    return submit(request, parts, 2);
+    const WriteQueue::PayloadPart parts[] = {{title, request.titleLength}, {content, request.contentLength},
+        {fieldsHead, fieldsHeadLength}, {fieldsTail, size_t(request.fieldsLength) - fieldsHeadLength}};
+    return submit(request, parts, 4);
 }
 
 MessageStore::Submission MessageStore::requestStatus(const RecordKey& key, LXMFStatus status,
@@ -85,9 +95,11 @@ MessageStore::Submission MessageStore::requestDelete(const std::string& peer,
     return submit(request);
 }
 
-MessageStore::Submission MessageStore::requestRecord(const RecordKey& key, uint32_t offset, uint16_t capacity) {
+MessageStore::Submission MessageStore::requestRecord(const RecordKey& key, uint32_t offset, uint16_t capacity,
+                                                    bool withFields) {
     if (!key.counter || capacity < sizeof(StoredRecordHeader)) return {{}, Rejection::Invalid};
     Request request; request.operation = Operation::ReadRecord; request.key = key; request.offset = offset;
+    request.withFields = withFields;
     return submit(request, nullptr, 0, capacity);
 }
 

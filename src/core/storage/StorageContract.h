@@ -50,8 +50,9 @@ struct RecordKey {
     bool incoming = false;
 };
 
-// Scalars are copied at admission. Title/content occupy the slot's separate
+// Scalars are copied at admission. Title/content/fields occupy the slot's separate
 // bounded byte buffer, with explicit lengths (embedded NUL bytes are preserved).
+// fields = the raw msgpack LXMF fields map (empty = none); see protocol/LxmfFields.h.
 struct Request {
     // ReadPending: exclusive after (counter, peer), outgoing only.
     // ReadHistoryPage: peer plus exclusive (counter, incoming) in historyDirection.
@@ -67,11 +68,14 @@ struct Request {
     double timestamp = 0;
     uint16_t titleLength = 0;
     uint16_t contentLength = 0;
+    uint16_t fieldsLength = 0;
     uint16_t readCapacity = 0;
     Operation operation = Operation::CreateIncoming;
     uint8_t status = 0; // persisted LXMFStatus numeric value
     bool read = false;
     bool hasMessageId = false;
+    // ReadRecord: the slice covers title||content||fields instead of title||content.
+    bool withFields = false;
     HistoryDirection historyDirection = HistoryDirection::Before;
     // Conversation pages use (timestamp, key.peer), while a detail query binds
     // that timestamp to key.counter/incoming. These scalars reuse request space.
@@ -121,12 +125,13 @@ struct HistoryEntry {
 static_assert(sizeof(HistoryEntry) == 8, "History page entry budget changed");
 
 // Every ReadRecord response starts with this fixed header, followed by the
-// requested slice of title||content. Lengths and offsets count bytes, including
-// embedded NUL. No JSON or full legacy body is copied into the mailbox.
+// requested slice of title||content (title||content||fields with withFields).
+// Lengths and offsets count bytes, including embedded NUL. No JSON or full
+// legacy body is copied into the mailbox. fieldsLength is 0 for no fields.
 struct StoredRecordHeader {
     uint8_t source[16] = {}, destination[16] = {}, messageId[32] = {};
     double timestamp = 0;
-    uint32_t counter = 0, revision = 0, titleLength = 0, contentLength = 0;
+    uint32_t counter = 0, revision = 0, titleLength = 0, contentLength = 0, fieldsLength = 0;
     uint8_t status = 0;
     bool incoming = false, read = false, hasMessageId = false;
 };
@@ -184,8 +189,9 @@ struct Budget {
         return slot >= NormalSlots ? 0 :
             (cardputer && slot < NormalSlots - 1 ? SmallPayload : LargePayload);
     }
-    static constexpr bool validBody(size_t title, size_t content) {
-        return title <= MaxMessageBody && content <= MaxMessageBody - title;
+    static constexpr bool validBody(size_t title, size_t content, size_t fields = 0) {
+        return title <= MaxMessageBody && content <= MaxMessageBody - title &&
+               fields <= MaxMessageBody - title - content;
     }
     static constexpr size_t storageWorkingSet(bool cardputer) {
         return (cardputer ? CardPayloadBytes : LargeBoardPayloadBytes) + SlotCeiling +

@@ -10,6 +10,7 @@
 #include "protocol/RustLinkManager.h"
 #include "protocol/RustResourceEngine.h"
 #include "storage/MessageStore.h"
+#include "protocol/LxmfFields.h"
 #include <Arduino.h>
 #include <algorithm>
 
@@ -47,11 +48,15 @@ void secureZero(uint8_t* data, size_t len) {
     volatile uint8_t* p = data;
     while (len--) *p++ = 0;
 }
-bool sendableBody(size_t titleLength, size_t contentLength) {
+bool sendableBody(size_t titleLength, size_t contentLength, size_t fieldsLength = 0) {
     size_t packed = 0;
-    return handheld::storage::Budget::validBody(titleLength, contentLength) &&
-        rs_handheld_lxmf_packed_size(titleLength, contentLength, &packed) == RS_HANDHELD_OK &&
-        packed <= RS_HANDHELD_RESOURCE_DATA_MAX;
+    if (!handheld::storage::Budget::validBody(titleLength, contentLength, fieldsLength)) return false;
+    if (fieldsLength) {
+        if (!handheld::lxmf::available() ||
+            rs_handheld_lxmf_packed_size_fields(titleLength, contentLength, fieldsLength, &packed) != RS_HANDHELD_OK)
+            return false;
+    } else if (rs_handheld_lxmf_packed_size(titleLength, contentLength, &packed) != RS_HANDHELD_OK) return false;
+    return packed <= RS_HANDHELD_RESOURCE_DATA_MAX;
 }
 }  // namespace
 
@@ -130,12 +135,16 @@ void RustLxmfEngine::retire(Ticket ticket) {
 }
 
 RustLxmfEngine::Submission RustLxmfEngine::submit(const uint8_t dest[16], const uint8_t* title,
-    size_t titleLength, const uint8_t* content, size_t contentLength, bool preferLink) {
+    size_t titleLength, const uint8_t* content, size_t contentLength, bool preferLink,
+    const uint8_t* fieldsHead, size_t fieldsHeadLength, const uint8_t* fieldsTail, size_t fieldsTailLength) {
     if (!_accepting) return {{}, Rejection::Stopped};
     if (_recovering) return {{}, Rejection::Recovering};
-    if (!dest || (titleLength && !title) || (contentLength && !content)) return {{}, Rejection::Invalid};
+    if (!dest || (titleLength && !title) || (contentLength && !content) ||
+        (fieldsHeadLength && !fieldsHead) || (fieldsTailLength && !fieldsTail)) return {{}, Rejection::Invalid};
+    const size_t fieldsLength = fieldsHeadLength + fieldsTailLength;
+    if (fieldsLength && !handheld::lxmf::available()) return {{}, Rejection::Invalid};
     if (_deleting && !memcmp(_deletingPeer, dest, 16)) return {{}, Rejection::Fenced};
-    if (!sendableBody(titleLength, contentLength)) return {{}, Rejection::TooLarge};
+    if (!sendableBody(titleLength, contentLength, fieldsLength)) return {{}, Rejection::TooLarge};
     const Ticket ticket = allocate();
     auto* value = row(ticket);
     if (!value) {
@@ -153,8 +162,9 @@ RustLxmfEngine::Submission RustLxmfEngine::submit(const uint8_t dest[16], const 
     memcpy(request.destination, dest, 16); request.timestamp = value->timestamp;
     request.identityGeneration = _identityGeneration;
     request.titleLength = titleLength; request.contentLength = contentLength;
+    request.fieldsLength = uint16_t(fieldsLength);
     request.status = uint8_t(LXMFStatus::QUEUED);
-    const auto admission = _d.store->requestSave(request, title, content);
+    const auto admission = _d.store->requestSave(request, title, content, fieldsHead, fieldsHeadLength, fieldsTail);
     if (!admission.accepted()) {
         retire(ticket);
         return {{}, static_cast<Rejection>(admission.rejection)};
@@ -290,14 +300,15 @@ void RustLxmfEngine::settleStorage(Ticket ticket) {
         if (operation == Operation::ReadRecord) {
             validHeader = validHeader && value->counter == result.key.counter &&
                 !memcmp(value->peer, result.key.peer, 16) &&
-                sendableBody(header.titleLength, header.contentLength) &&
-                result.length == sizeof(header) + header.titleLength + header.contentLength && !result.more &&
-                result.nextOffset == header.titleLength + header.contentLength &&
+                sendableBody(header.titleLength, header.contentLength, header.fieldsLength) &&
+                result.length == sizeof(header) + header.titleLength + header.contentLength + header.fieldsLength &&
+                !result.more &&
+                result.nextOffset == header.titleLength + header.contentLength + header.fieldsLength &&
                 _body.slot == ticket.slot && _body.generation == ticket.generation;
             if (validHeader) {
                 _body.header = header;
                 validHeader = _d.store->readPayload(held, _body.bytes,
-                    header.titleLength + header.contentLength, sizeof(header));
+                    header.titleLength + header.contentLength + header.fieldsLength, sizeof(header));
             }
         }
     }
@@ -338,7 +349,7 @@ void RustLxmfEngine::settleStorage(Ticket ticket) {
                     value->counter = result.key.counter; value->revision = result.revision;
                     value->timestamp = header.timestamp; value->durable = LXMFStatus(header.status);
                     value->desired = LXMFStatus::QUEUED; value->phase = Phase::Ready; value->error = Error::None;
-                    if (!sendableBody(header.titleLength, header.contentLength)) {
+                    if (!sendableBody(header.titleLength, header.contentLength, header.fieldsLength)) {
                         value->error = Error::InvalidRecord; value->phase = Phase::Settled;
                         value->flags |= Suppressed | BlockedRecord;
                         setStatus(ticket, LXMFStatus::FAILED);
@@ -561,9 +572,17 @@ void RustLxmfEngine::attempt(Ticket ticket) {
     if (!(value->flags & (ViaLink | PreferLink))) {
         uint8_t ephemeral[32], iv[16], cipher[600], destination[16], messageId[32]; size_t cipherLength = 0;
         RustEntropy::fill(ephemeral, sizeof(ephemeral)); RustEntropy::fill(iv, sizeof(iv));
-        const auto built = rs_handheld_rns_lxmf_build(_d.ctx, value->publicKey, value->timestamp,
-            RustClock::synchronizedEpochSecs(), now, _body.bytes, header.titleLength, _body.bytes + header.titleLength,
-            header.contentLength, ephemeral, iv, cipher, sizeof(cipher), &cipherLength, destination, messageId);
+        const uint8_t* fields = _body.bytes + header.titleLength + header.contentLength;
+        const auto built = header.fieldsLength
+            ? (handheld::lxmf::available()
+                ? rs_handheld_rns_lxmf_build_fields(_d.ctx, value->publicKey, value->timestamp,
+                    RustClock::synchronizedEpochSecs(), now, _body.bytes, header.titleLength,
+                    _body.bytes + header.titleLength, header.contentLength, fields, header.fieldsLength,
+                    ephemeral, iv, cipher, sizeof(cipher), &cipherLength, destination, messageId)
+                : RS_HANDHELD_ERR_UNSUPPORTED)
+            : rs_handheld_rns_lxmf_build(_d.ctx, value->publicKey, value->timestamp,
+                RustClock::synchronizedEpochSecs(), now, _body.bytes, header.titleLength, _body.bytes + header.titleLength,
+                header.contentLength, ephemeral, iv, cipher, sizeof(cipher), &cipherLength, destination, messageId);
         secureZero(ephemeral, sizeof(ephemeral)); secureZero(iv, sizeof(iv));
         if (built == RS_HANDHELD_OK && !memcmp(destination, value->peer, 16)) {
             uint8_t raw[640]; size_t length = 0;
@@ -593,9 +612,16 @@ void RustLxmfEngine::attempt(Ticket ticket) {
     // bytes. The FFI's temporary signing scratch is a separate heap allocation.
     auto& packed = _d.resources->_codec;
     uint8_t destination[16]; size_t length = 0;
-    const auto built = rs_handheld_rns_lxmf_build_link(_d.ctx, value->publicKey, value->timestamp,
-        _body.bytes, header.titleLength, _body.bytes + header.titleLength, header.contentLength,
-        packed, RS_HANDHELD_RESOURCE_DATA_MAX, &length, destination, value->messageId);
+    const auto built = header.fieldsLength
+        ? (handheld::lxmf::available()
+            ? rs_handheld_rns_lxmf_build_link_fields(_d.ctx, value->publicKey, value->timestamp,
+                _body.bytes, header.titleLength, _body.bytes + header.titleLength, header.contentLength,
+                _body.bytes + header.titleLength + header.contentLength, header.fieldsLength,
+                packed, RS_HANDHELD_RESOURCE_DATA_MAX, &length, destination, value->messageId)
+            : RS_HANDHELD_ERR_UNSUPPORTED)
+        : rs_handheld_rns_lxmf_build_link(_d.ctx, value->publicKey, value->timestamp,
+            _body.bytes, header.titleLength, _body.bytes + header.titleLength, header.contentLength,
+            packed, RS_HANDHELD_RESOURCE_DATA_MAX, &length, destination, value->messageId);
     if (built != RS_HANDHELD_OK || memcmp(destination, value->peer, 16)) {
         releaseBody(ticket); value->phase = Phase::Settled; setStatus(ticket, LXMFStatus::FAILED); return;
     }
@@ -690,7 +716,7 @@ void RustLxmfEngine::advance(Ticket ticket) {
     if (value->phase == Phase::Prepared) { offerPrepared(ticket); return; }
     if (value->phase == Phase::Reading) { attempt(ticket); return; }
     if (value->phase != Phase::Ready || _body.slot != UINT8_MAX) return;
-    const auto admission = _d.store->requestRecord(key(*value));
+    const auto admission = _d.store->requestRecord(key(*value), 0, 4096, true);
     if (admission.accepted()) {
         _body.slot = ticket.slot; _body.generation = ticket.generation;
         hold(*value, admission, Operation::ReadRecord); value->phase = Phase::Reading;
@@ -768,7 +794,10 @@ void RustLxmfEngine::onDataFrame(const rs_handheld_local_frame_t& f, uint8_t ifa
         Serial.println("[RUST-LXMF] inbound: source key unknown; dropping");
         return;
     }
-    rs_handheld_lxmf_message_t msg;
+    // ~1 KB with the fields buffer: static scratch (protocol owner only, not re-entered;
+    // accept() copies everything it keeps before returning), like RustInterfacePump's.
+    static rs_handheld_lxmf_message_t msg;
+    msg = {};
     if (rs_handheld_rns_lxmf_parse_hint(_d.ctx, f.payload, f.payload_len, keyHint, pub, &msg) !=
         RS_HANDHELD_OK) {
         Serial.println("[RUST-LXMF] inbound parse/validate failed");
@@ -785,6 +814,11 @@ void RustLxmfEngine::onDataFrame(const rs_handheld_local_frame_t& f, uint8_t ifa
     view.title = msg.title; view.titleLength = msg.title_len;
     view.content = msg.content; view.contentLength = msg.content_len;
     view.timestamp = epoch ? double(epoch) : msg.timestamp; view.reaction = msg.is_reaction != 0;
+    // Keep the audio field (voice message); other fields are not stored. Old archives leave
+    // fields_len 0 (the struct is zero-initialised below the old size).
+    handheld::lxmf::AudioField audio;
+    if (msg.fields_len <= sizeof(msg.fields) && handheld::lxmf::keepAudio(msg.fields, msg.fields_len, audio))
+        view.fields = audio;
     if (msg.timestamp > 0) peerclock::note((uint32_t)msg.timestamp, peerclock::MESSAGE);
     _incoming.accept(view, seed);
 }
@@ -820,6 +854,10 @@ RustIncomingDelivery::ReceiveResult RustLxmfEngine::onDirectPayload(
     view.title = packed + parsed.title_offset; view.titleLength = parsed.title_len;
     view.content = packed + parsed.content_offset; view.contentLength = parsed.content_len;
     view.timestamp = epoch ? double(epoch) : parsed.timestamp; view.reaction = parsed.is_reaction != 0;
+    handheld::lxmf::AudioField audio;
+    if (parsed.fields_len && parsed.fields_offset <= len && parsed.fields_len <= len - parsed.fields_offset &&
+        handheld::lxmf::keepAudio(packed + parsed.fields_offset, parsed.fields_len, audio))
+        view.fields = audio;
     if (parsed.timestamp > 0) peerclock::note((uint32_t)parsed.timestamp, peerclock::MESSAGE);
     return _incoming.accept(view, seed);
 }

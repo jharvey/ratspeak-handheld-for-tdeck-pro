@@ -41,7 +41,8 @@ inline void encodeHex(const uint8_t* source, size_t bytes, char* destination) {
 inline bool recordHeader(JsonVariantConst document, StoredRecordHeader& header) {
     if (!document.is<JsonObjectConst>() || !document["src"].is<const char*>() ||
         !document["dst"].is<const char*>() || !document["content"].is<const char*>() ||
-        (!document["title"].isNull() && !document["title"].is<const char*>())) return false;
+        (!document["title"].isNull() && !document["title"].is<const char*>()) ||
+        (!document["fields"].isNull() && !document["fields"].is<const char*>())) return false;
     const auto src = document["src"].as<JsonString>(), dst = document["dst"].as<JsonString>();
     if (!decodeHex(src.c_str(), src.size(), header.source, 16) ||
         !decodeHex(dst.c_str(), dst.size(), header.destination, 16)) return false;
@@ -58,6 +59,7 @@ inline bool recordHeader(JsonVariantConst document, StoredRecordHeader& header) 
     header.read = document["read"] | false;
     header.titleLength = document["title"].as<JsonString>().size();
     header.contentLength = document["content"].as<JsonString>().size();
+    header.fieldsLength = document["fields"].as<JsonString>().size();
     header.hasMessageId = !document["msgid"].isNull();
     if (header.hasMessageId) {
         const auto id = document["msgid"].as<JsonString>();
@@ -354,6 +356,10 @@ inline bool createRecord(JsonDocument& document, const Request& request, const u
     document["ts"] = request.timestamp;
     document["title"] = JsonString(reinterpret_cast<const char*>(body), request.titleLength, false);
     document["content"] = JsonString(reinterpret_cast<const char*>(body + request.titleLength), request.contentLength, false);
+    // Raw msgpack LXMF fields map (binary bytes in a JSON string, like content). Absent = none.
+    if (request.fieldsLength)
+        document["fields"] = JsonString(reinterpret_cast<const char*>(body + request.titleLength + request.contentLength),
+                                        request.fieldsLength, false);
     document["incoming"] = request.operation == Operation::CreateIncoming;
     document["read"] = request.operation == Operation::CreateOutgoing || request.read;
     document["status"] = request.status;

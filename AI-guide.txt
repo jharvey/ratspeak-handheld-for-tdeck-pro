@@ -219,6 +219,28 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        Space talk/listen, ^ hang up; console wt call <hex> | answer | talk | hang. Tested COM5<->COM6.
        Internal RAM is tight: HA voice buffers moved to PSRAM, mic DMA 4x256, speaker DMA 4x512.
        Next: LoRa invite + hotspot (no shared WiFi), LXMF audio field (voice messages, Sideband).
+[DONE 2026-11-15] LXMF fields / voice-message engine API (src/core/protocol/LxmfFields.h; UI not done).
+       Send: backend.lxmfSubmitAudio(dest16, lxmf::AudioCodec2_700C|_1600|_3200, audio, len[, text,
+       textLen]) -> same ticket/poll/acknowledge flow as lxmfSubmit (generic: lxmfSubmitFields with a
+       raw msgpack map). Wire = LXMF FIELD_AUDIO 0x07: [mode, raw Codec2 frames], 8 kHz codec, no
+       header (= Sideband; AM_CODEC2_700C 3 / 1600 7 / 3200 9, checked against LXMF/LXMF.py).
+       Limit: title+content+fields <= 3659 B -> audio <= lxmf::MaxAudioBytes (3542) minus text
+       (700C ~40 s, 1600 ~17 s, 3200 ~8.8 s); > one LoRa frame goes by link + Resource.
+       Receive: onCommittedMessage key -> store.requestRecord(key, 0, 4096, true): StoredRecordHeader
+       + title||content||fields; header.fieldsLength 0 = none; lxmf::findAudio(fields, n, mode, ptr, len).
+       Store: record JSON "fields" = raw msgpack (binary string like content); incoming keeps only
+       the audio field. Rust: protocol/src/fields.rs (+fields_tests.rs, hand-built msgpack vectors;
+       no Python LXMF installed). Old archives: LxmfFields.h declares the new Rust functions weak,
+       lxmf::available() false -> audio submit Rejection::Invalid, incoming audio dropped.
+- Rust protocol library (protocol/): the firmware links the PREBUILT
+       protocol/prebuilt/xtensa-esp32s3/{small,micro}/libratspeak_protocol.a (platformio.ini -L);
+       nothing builds Rust during pio run. Any protocol/src change needs the archives rebuilt with
+       protocol/build-xtensa.sh (espup "esp" toolchain = tools/release_identity.json
+       archive_toolchain, -Zbuild-std, --offline) with rsReticulumLite + rsLXMFLite checked out as
+       siblings of the repo (../../ from protocol/; today only C:/Users/MyPC/Desktop/rs*Lite, at the
+       PROVENANCE.txt commits). Host tests on the PC: copy protocol/ next to those two (scratch dir
+       with junctions) and cargo test --offline (Rust 1.87 gnu is installed; crates in ~/.cargo).
+       tools/check_prebuilt.py checks the archives export exactly the header's 104 functions.
 [DONE] LoRa delivery to a SLEEPING receiver: 14/14 at 1.3 frames/msg. Fixes: stay
        awake while LoRaInterface has TX queued, 3 s after a LoRa wake, while message
        writes are pending (proof is sent after the write), wake for scheduled path
