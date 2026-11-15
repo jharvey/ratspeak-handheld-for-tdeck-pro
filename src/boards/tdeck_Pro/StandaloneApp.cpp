@@ -1985,7 +1985,7 @@ bool locOffered() { return g_threadLoc.valid && (!cardOffered() || g_threadLoc.c
 
 // ---- Thread history ------------------------------------------------------------
 constexpr int HIST_ROWS = 6;
-struct HistRow { char text[36]; char status[12]; bool incoming; bool autoLoc; };
+struct HistRow { char text[96]; char status[12]; bool incoming; bool autoLoc; };   // text wraps to 3 lines
 HistRow g_hist[HIST_ROWS];
 int  g_histCount = 0;
 char g_histNote[24] = "";
@@ -4857,15 +4857,48 @@ void renderList() {
 }
 
 // ---- Thread (entry mode: typing goes to compose) ---------------------------------
+// A message in up to 3 lines (word wrap, the last line cut with ".."), each <= maxW pixels.
+constexpr int kBubbleLines = 3, kBubbleLineH = 18;
+int bubbleWrap(const char* s, int maxW, char out[kBubbleLines][48]) {
+    int n = 0;
+    const char* p = s;
+    while (*p && n < kBubbleLines) {
+        while (*p == ' ') p++;
+        size_t best = 0, i = 0;
+        char tmp[48];
+        while (p[i] && i < sizeof(tmp) - 1) {     // longest prefix that fits, ending at a word
+            memcpy(tmp, p, i + 1); tmp[i + 1] = 0;
+            if (textW(tmp) > maxW) break;
+            i++;
+            if (!p[i] || p[i] == ' ') best = i;
+        }
+        if (!best) best = i ? i : 1;              // one long word: cut it
+        if (n == kBubbleLines - 1 && p[best]) {   // last line and more text: end with ".."
+            size_t k = best;
+            while (k > 0) { memcpy(tmp, p, k); memcpy(tmp + k, "..", 3); if (textW(tmp) <= maxW) break; k--; }
+            strlcpy(out[n++], tmp, 48);
+            return n;
+        }
+        memcpy(out[n], p, best); out[n][best] = 0;
+        n++;
+        p += best;
+    }
+    return n ? n : (strlcpy(out[0], "", 48), 1);
+}
+int bubbleLines(const char* s) { char l[kBubbleLines][48]; return bubbleWrap(s, W - 28 - 16, l); }
+
 void drawBubble(int y, const char* s, bool incoming, const char* status) {
-    int tw = textW(s) + 16;
+    char l[kBubbleLines][48];
+    const int n = bubbleWrap(s, W - 28 - 16, l);
+    int tw = 40;
+    for (int i = 0; i < n; i++) if (textW(l[i]) + 16 > tw) tw = textW(l[i]) + 16;
     if (tw > W - 28) tw = W - 28;
-    if (tw < 40) tw = 40;
     const int x = incoming ? (W - 4 - tw) : 4;   // sent left, received right
-    lv_obj_t* b = box(x, y, tw, 24, 2);
+    const int h = 6 + n * kBubbleLineH;
+    lv_obj_t* b = box(x, y, tw, h, 2);
     lv_obj_set_style_radius(b, 4, 0);
-    text(x + 6, y + 4, s, false, tw - 10);
-    if (status && status[0]) text(x + 2, y + 25, status);
+    for (int i = 0; i < n; i++) text(x + 6, y + 4 + i * kBubbleLineH, l[i], false, tw - 10);
+    if (status && status[0]) text(x + 2, y + h + 1, status);
 }
 
 extern bool g_tmenuOpen;
@@ -4907,7 +4940,9 @@ void renderThread() {
         text(4, y, g_histNote[0] ? g_histNote : "(no messages yet)");
     } else if (g_histCount) {
         // Newest messages win the space; older ones drop off the top.
-        auto hOf = [](int i) { return (!g_hist[i].incoming && g_hist[i].status[0]) ? 42 : 28; };
+        auto hOf = [](int i) {                 // 28 per one-line bubble, +18 a line, +14 with a status
+            return 28 + (bubbleLines(g_hist[i].text) - 1) * kBubbleLineH + ((!g_hist[i].incoming && g_hist[i].status[0]) ? 14 : 0);
+        };
         int start = g_histCount, used = 0;
         while (start > 0 && y + used + hOf(start - 1) <= yMax) { used += hOf(start - 1); start--; }
         for (int i = start; i < g_histCount; i++) {
@@ -9970,6 +10005,16 @@ void startNameEntry(const uint8_t peer[16]) {
 }
 
 void goScreen(ScreenId s) {
+    // Picking who gets a contact card: Contacts and Peers both offer people; anything else cancels.
+    if (g_shareActive && (s == SCR_CONTACTS || s == SCR_PEERS)) {
+        g_menuOpen = false;
+        if (g_screen != s) { g_listScroll = 0; g_filter[0] = 0; }
+        g_screen = s;
+        loadRows(s);
+        requestRedraw();
+        Serial.printf("[UI] -> %s (still picking who gets the card)\n", screenName(s));
+        return;
+    }
     g_menuOpen = false;
     g_libOpen = false;
     g_gameOpen = false;
