@@ -239,6 +239,11 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        no Python LXMF installed). Archives rebuilt 2026-11-15 with it (all 5 symbols resolve in
        firmware.elf). LxmfFields.h still declares them weak: an older archive -> lxmf::available()
        false, audio submit Rejection::Invalid, incoming audio dropped. Not yet tested on units.
+       UI 2026-11-15: chat menu 5 Voice message (vmOpen/vmStartRec/vmTick/vmSend/vmPlayLast):
+       Codec2 700C, max 20 s, encoded on the main loop from the mic ring, lxmfSubmitAudio; history
+       rows mark voice (header.fieldsLength > 0) "[voice ~N s]"; P plays (requestRecord withFields,
+       findAudio). Console vm <hex> | rec | send | play | close. COM5 -> COM6: 5 s = 496 B, sent
+       over a link (first link attempt timed out, second ok), delivered, played. Help-12.
 - Rust protocol library (protocol/): the firmware links the PREBUILT
        protocol/prebuilt/xtensa-esp32s3/{small,micro}/libratspeak_protocol.a (platformio.ini -L);
        nothing builds Rust during pio run. Any protocol/src change needs the archives rebuilt with

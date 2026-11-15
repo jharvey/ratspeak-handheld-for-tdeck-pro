@@ -1,0 +1,22 @@
+VOICE MESSAGES
+
+Record a short spoken message and send it like a text, over LoRa or WiFi. Sideband and
+other LXMF apps can play it too.
+
+SEND
+1. Open the chat (Inbox, Enter on the person).
+2. MIC opens the chat menu; 5 = Voice message.
+3. Space (or Enter) = start recording. Speak.
+4. Space (or Enter) again = stop and send. ^ = cancel.
+   Up to 20 s; it stops and sends by itself at 20 s.
+
+LISTEN
+- Voice messages show in the chat as "[voice ~5 s]".
+- MIC, 5 = Voice message, then P = play the newest one in the chat.
+
+GOOD TO KNOW
+- Speech is Codec2 700C: about 88 bytes per second, so 5 s is ~440 bytes.
+- A voice message is bigger than one LoRa packet: it goes over a short link, which can
+  take 10-30 s on LoRa (much less on WiFi). The chat shows it as sent / delivered like a
+  text.
+- In Typical mode, voice messages are off until turned on in S.1.5.

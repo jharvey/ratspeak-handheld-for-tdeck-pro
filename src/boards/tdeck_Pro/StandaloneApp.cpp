@@ -53,6 +53,7 @@
 #include "voice/HaVoice.h"
 #include "voice/VoiceCodec.h"
 #include "voice/Walkie.h"
+#include "protocol/LxmfFields.h"
 
 // Shown on the boot screen and in Settings (bump with each release to the units).
 #define RATSPEAK_FW_VERSION "v0.1"
@@ -1985,7 +1986,7 @@ bool locOffered() { return g_threadLoc.valid && (!cardOffered() || g_threadLoc.c
 
 // ---- Thread history ------------------------------------------------------------
 constexpr int HIST_ROWS = 6;
-struct HistRow { char text[96]; char status[12]; bool incoming; bool autoLoc; };   // text wraps to 3 lines
+struct HistRow { char text[96]; char status[12]; bool incoming; bool autoLoc; bool voice; uint32_t counter; };   // text wraps to 3 lines
 HistRow g_hist[HIST_ROWS];
 int  g_histCount = 0;
 char g_histNote[24] = "";
@@ -2057,6 +2058,8 @@ void loadHistory(const uint8_t peer[16]) {
 
         StoredRecordHeader hdr;
         memcpy(&hdr, buf, sizeof(hdr));
+        h.counter = entries[i].counter;
+        h.voice = hdr.fieldsLength > 0;            // only the audio field is kept: a voice message
         size_t off = sizeof(hdr) + hdr.titleLength;
         if (off > got) off = got;
         size_t clen = hdr.contentLength;
@@ -2087,7 +2090,11 @@ void loadHistory(const uint8_t peer[16]) {
         const size_t wtLen = strlen(walkie::kInvitePrefix);   // walkie-talkie invite: not its key
         const bool isWt = !isCard && !isLoc && clen >= wtLen && !memcmp(buf + off, walkie::kInvitePrefix, wtLen);
         if (isWt) snprintf(h.text, sizeof(h.text), "[walkie-talkie call]");
-        if (clen && !isCard && !isLoc && !isWt) {
+        if (h.voice && !isWt) {                  // ~87.5 B per second of Codec2 700C
+            snprintf(h.text, sizeof(h.text), "[voice ~%u s] %.*s", (unsigned)((hdr.fieldsLength + 44) / 88),
+                     (int)(clen < 60 ? clen : 60), (const char*)buf + off);
+        }
+        if (clen && !isCard && !isLoc && !isWt && !h.voice) {
             memcpy(h.text, buf + off, clen);
             h.text[clen] = 0;
             for (size_t k = 0; k < clen; k++)
@@ -7628,6 +7635,174 @@ bool mapNumberKey(const KeyEvent& ev) {
     return false;
 }
 
+void render();
+
+// ---- Voice messages (chat menu 5; LXMF FIELD_AUDIO, Sideband compatible) -------------------
+// Codec2 700C (~88 bytes per second: fine for LoRa), up to 20 s. Recorded on the main loop
+// from the mic ring (an e-ink refresh does not lose audio); sent with lxmfSubmitAudio.
+// P plays the newest voice message in the chat.
+constexpr int kVmMaxSec = 20;
+bool     g_vmOpen = false;
+bool     g_vmRec = false;
+uint8_t* g_vmBits = nullptr;            // PSRAM: encoded frames
+size_t   g_vmLen = 0;
+int16_t* g_vmPcm = nullptr;             // one frame of 16 kHz samples being filled
+int      g_vmHave = 0;
+uint32_t g_vmStart = 0;
+char     g_vmStatus[40] = "";
+
+void vmStatus(const char* fmt, ...) {
+    va_list ap; va_start(ap, fmt); vsnprintf(g_vmStatus, sizeof(g_vmStatus), fmt, ap); va_end(ap);
+    Serial.printf("[VM] %s\n", g_vmStatus);
+    requestRedraw();
+}
+
+void vmOpen() {
+    g_vmOpen = true;
+    g_vmRec = false;
+    vmStatus(handheld::lxmf::available() ? "Space = record" : "engine without voice support");
+    g_fullRefreshReq = true;
+}
+
+void vmClose() {
+    if (g_vmRec) { g_audio.micStop(); g_vmRec = false; }
+    voicecodec::end();
+    g_vmOpen = false;
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void vmStartRec() {
+    if (!handheld::lxmf::available()) { vmStatus("engine without voice support"); return; }
+    if (walkie::state() != walkie::State::Idle) { vmStatus("a walkie-talkie call is open"); return; }
+    if (!voicecodec::begin(700)) { vmStatus("codec failed"); return; }
+    const size_t cap = (size_t)kVmMaxSec * 1000 / voicecodec::frameMs() * voicecodec::frameBytes();
+    if (!g_vmBits) g_vmBits = (uint8_t*)ps_malloc(handheld::lxmf::MaxAudioBytes);
+    if (!g_vmPcm) g_vmPcm = (int16_t*)ps_malloc(sizeof(int16_t) * 640);
+    if (!g_vmBits || !g_vmPcm || cap > handheld::lxmf::MaxAudioBytes) { vmStatus("no memory"); return; }
+    if (!g_audio.micStart()) { vmStatus("microphone failed"); return; }
+    g_vmLen = 0; g_vmHave = 0; g_vmRec = true; g_vmStart = millis();
+    vmStatus("RECORDING  Space = send");
+}
+
+bool vmSend() {
+    if (!g_vmLen) { vmStatus("nothing recorded"); return false; }
+    if (g_root) lv_obj_clean(g_root);
+    auto sub = g_proto.lxmfSubmitAudio(g_threadPeer, handheld::lxmf::AudioCodec2_700C, g_vmBits, g_vmLen);
+    if (!sub.accepted()) { vmStatus("not sent (%u)", (unsigned)sub.rejection); return false; }
+    handheld::outgoing::InitialResult ir{};
+    for (int i = 0; i < 800; i++) {
+        pumpOnce();
+        auto p = g_proto.lxmfPoll(sub.ticket, ir);
+        if (p == handheld::outgoing::Poll::Pending) { delay(10); continue; }
+        if (p == handheld::outgoing::Poll::Ready) {
+            g_proto.lxmfAcknowledge(sub.ticket);
+            vmStatus("sent: %u bytes, %u s", (unsigned)g_vmLen, (unsigned)(g_vmLen / 88));
+            loadHistory(g_threadPeer);
+            return true;
+        }
+        vmStatus("not sent");
+        return false;
+    }
+    for (auto& t : g_txLate)
+        if (!t.valid()) { t = sub.ticket; vmStatus("saving, then sent"); return true; }
+    vmStatus("send timed out");
+    return false;
+}
+
+void vmStopRec(bool send) {
+    if (!g_vmRec) return;
+    g_audio.micStop();
+    g_vmRec = false;
+    if (send) vmSend(); else vmStatus("cancelled");
+}
+
+// Main loop: encode what the mic has (one 40 ms frame per pass at most two).
+void vmTick() {
+    if (!g_vmRec) return;
+    const int fs = voicecodec::frameSamples16k(), fb = voicecodec::frameBytes();
+    for (int k = 0; k < 2; k++) {
+        g_vmHave += (int)g_audio.micRead(g_vmPcm + g_vmHave, fs - g_vmHave, g_cfg.micGain);
+        if (g_vmHave < fs) break;
+        g_vmHave = 0;
+        if (g_vmLen + fb > (size_t)kVmMaxSec * 1000 / voicecodec::frameMs() * fb) { vmStopRec(true); return; }
+        voicecodec::encode(g_vmPcm, g_vmBits + g_vmLen);
+        g_vmLen += fb;
+    }
+    static uint32_t shown = 0;
+    if (millis() - shown > 1000) { shown = millis(); vmStatus("RECORDING %u s  Space = send", (unsigned)((millis() - g_vmStart) / 1000)); }
+}
+
+// Play the newest voice message in this chat (blocking: up to ~40 s of audio).
+void vmPlayLast() {
+    int idx = -1;
+    for (int i = g_histCount - 1; i >= 0; i--) if (g_hist[i].voice) { idx = i; break; }
+    if (idx < 0) { vmStatus("no voice message in this chat"); return; }
+    handheld::storage::RecordKey key{};
+    memcpy(key.peer, g_threadPeer, 16);
+    key.counter = g_hist[idx].counter;
+    key.incoming = g_hist[idx].incoming;
+    auto rs = g_msgStore.requestRecord(key, 0, 4096, true);
+    if (!rs.accepted()) { vmStatus("store busy"); return; }
+    MessageStore::Result rr;
+    uint8_t* buf = (uint8_t*)ps_malloc(4096);
+    size_t got = 0;
+    if (buf && waitResult(rs.ticket, rr) && rr.outcome == handheld::storage::Outcome::Committed &&
+        rr.error == handheld::storage::Error::None) {
+        got = rr.length < 4096 ? rr.length : 4096;
+        if (!g_msgStore.readPayload(rs.ticket, buf, got)) got = 0;
+    }
+    g_msgStore.releaseResult(rs.ticket);
+    handheld::storage::StoredRecordHeader hdr;
+    uint8_t mode = 0; const uint8_t* audio = nullptr; size_t alen = 0;
+    bool ok = got >= sizeof(hdr);
+    if (ok) {
+        memcpy(&hdr, buf, sizeof(hdr));
+        const size_t off = sizeof(hdr) + hdr.titleLength + hdr.contentLength;
+        ok = off + hdr.fieldsLength <= got && handheld::lxmf::findAudio(buf + off, hdr.fieldsLength, mode, audio, alen);
+    }
+    const int bps = mode == handheld::lxmf::AudioCodec2_700C ? 700 : mode == handheld::lxmf::AudioCodec2_1600 ? 1600
+                  : mode == handheld::lxmf::AudioCodec2_3200 ? 3200 : 0;
+    if (!ok || !bps || !voicecodec::begin(bps)) { free(buf); vmStatus("cannot play (mode %u)", (unsigned)mode); return; }
+    vmStatus("PLAYING %u s", (unsigned)(alen / voicecodec::frameBytes() * voicecodec::frameMs() / 1000));
+    render();
+    static int16_t pcm[640];
+    const int fb = voicecodec::frameBytes();
+    for (size_t i = 0; i + fb <= alen; i += fb) {
+        voicecodec::decode(audio + i, pcm);
+        g_audio.writePcm(pcm, voicecodec::frameSamples16k());
+        pumpOnce();
+    }
+    free(buf);
+    vmStatus("played  P = again");
+}
+
+void vmKey(const KeyEvent& ev) {
+    if (ev.up) { if (g_vmRec) vmStopRec(false); else vmClose(); return; }
+    const char c = (char)toupper((unsigned char)ev.character);
+    if (ev.enter || ev.space || ev.character == ' ') { if (g_vmRec) vmStopRec(true); else vmStartRec(); return; }
+    if (c == 'P' && !g_vmRec) vmPlayLast();
+}
+
+void renderVoiceMsg() {
+    char nm[24];
+    peerName(g_threadPeer, nm, sizeof(nm));
+    drawHeader("Voice message", false);
+    int y = LIST_TOP + 6;
+    label(0, y, W, 22, nm, true); y += 34;
+    label(0, y, W, 24, g_vmStatus, true); y += 44;
+    if (g_vmRec) {
+        label(0, y, W, 20, "Space / Enter = stop and send"); y += 24;
+        label(0, y, W, 20, "^ = cancel");
+    } else {
+        label(0, y, W, 20, "Space / Enter = record"); y += 24;
+        label(0, y, W, 20, "P = play the newest"); y += 24;
+        label(0, y, W, 20, "^ = back to the chat");
+    }
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "Codec2 700C, max 20 s, LoRa ok");
+}
+
 // ---- Thread menu (MIC in a conversation) -----------------------------------------------
 bool g_tmenuOpen = false;
 int  g_tmenuSel = 0;
@@ -7644,8 +7819,12 @@ void tmenuAct(int i) {
             g_ashare[k].until = m ? (uint32_t)time(nullptr) + m * 60UL : 0;
             ashareSave();
         }
-    } else if (i == 3) { if (g_ashareCount) { ashareStopAll(); toast("All auto-sharing stopped"); } else toast("Nothing to stop"); }
-    else if (i == 4) {
+    } else if (i == 4) {
+        if (!feature(F_VOICEMSG)) { toast("Voice messages are off (S.1.5)"); return; }
+        g_tmenuOpen = false;
+        vmOpen();
+        return;
+    } else if (i == 3) {
         uint8_t peer[16];
         memcpy(peer, g_threadPeer, 16);
         if (cposFind(peer) < 0 || !g_cpos[cposFind(peer)].hasPos) { toast("No position from them yet"); return; }
@@ -7689,9 +7868,6 @@ void renderThreadMenu(int y) {
     addHit(2, y, W - 4, ROW_H, H_TMENU, 1); y += ROW_H;
     listRow(y, "3 Auto-share for", kAutoForName[g_autoForSel], g_tmenuSel == 2);
     addHit(2, y, W - 4, ROW_H, H_TMENU, 2); y += ROW_H;
-    snprintf(sub, sizeof(sub), "%d contact%s on", g_ashareCount, g_ashareCount == 1 ? "" : "s");
-    listRow(y, "4 Stop all auto-sharing", sub, g_tmenuSel == 3);
-    addHit(2, y, W - 4, ROW_H, H_TMENU, 3); y += ROW_H;
     const int ci = cposFind(g_threadPeer);
     if (ci >= 0 && g_cpos[ci].hasPos) {
         const time_t now = time(nullptr);
@@ -7702,7 +7878,9 @@ void renderThreadMenu(int y) {
     } else {
         snprintf(sub, sizeof(sub), "no position from them yet");
     }
-    listRow(y, "5 Show them on the map", sub, g_tmenuSel == 4);
+    listRow(y, "4 Show them on the map", sub, g_tmenuSel == 3);
+    addHit(2, y, W - 4, ROW_H, H_TMENU, 3); y += ROW_H;
+    listRow(y, "5 Voice message", feature(F_VOICEMSG) ? "record, send, play" : "off (S.1.5)", g_tmenuSel == 4);
     addHit(2, y, W - 4, ROW_H, H_TMENU, 4);
 }
 
@@ -9661,6 +9839,7 @@ void render() {
     }
     if (g_usbDrive)                    renderUsbDrive();
     else if (g_wtOpen)                 renderWalkie();
+    else if (g_vmOpen)                 renderVoiceMsg();
     else if (g_threadOpen)             renderThread();
     else if (g_entry == Entry::Name)   renderRename();
     else if (g_wizOpen)                renderWizard();
@@ -10591,6 +10770,7 @@ void handleKey(const KeyEvent& ev) {
     if (g_locked) { lockKey(ev); return; }
     if (g_usbDrive) { usbDriveKey(ev); return; }
     if (g_wtOpen) { wtKey(ev); return; }
+    if (g_vmOpen) { vmKey(ev); return; }
     if (g_threadOpen && g_tmenuOpen) { tmenuKey(ev); return; }
     if (g_wizOpen && !entryActive()) { wizKey(ev); return; }   // setup wizard (^ = step back)
     if (ev.up) { goBack(); return; }                          // lone Shift = ^
@@ -11083,6 +11263,7 @@ const char* powerSleepBlocker() {
     if (g_usbDrive) return "USB drive";
     if (havoice::busy()) return "HA voice";
     if (walkie::state() != walkie::State::Idle || g_wtOpen) return "walkie-talkie";
+    if (g_vmOpen) return "voice message";
     if (g_cfg.haVoice && havoice::connected()) return "HA connected";   // must answer HA
     if (g_cThinking) return "chess engine";
     // While the idle splash shows, loop() does not render, so a pending redraw waits for the wake
@@ -11457,6 +11638,20 @@ void handleSerialLine(char* p) {
         Serial.printf("[HAV] %s, %s, connected %d, busy %d, heard \"%s\", answer \"%s\"\n",
                       g_cfg.haVoice ? "on" : "off", havoice::status(), havoice::connected(),
                       havoice::busy(), havoice::heard(), havoice::answer());
+        return;
+    }
+    if (!strncmp(p, "vm", 2) && (p[2] == ' ' || !p[2])) {   // vm <32 hex> | vm rec | vm send | vm play | vm close
+        const char* q = p[2] ? p + 3 : "";
+        if (strlen(q) >= 32) {
+            uint8_t d[16];
+            for (int i = 0; i < 16; i++) { char h[3] = {q[2 * i], q[2 * i + 1], 0}; d[i] = (uint8_t)strtoul(h, nullptr, 16); }
+            openThread(d);
+            vmOpen();
+        } else if (!strcmp(q, "rec")) vmStartRec();
+        else if (!strcmp(q, "send")) vmStopRec(true);
+        else if (!strcmp(q, "play")) { if (g_threadOpen) loadHistory(g_threadPeer); vmPlayLast(); }
+        else if (!strcmp(q, "close")) vmClose();
+        Serial.printf("[VM] open %d rec %d len %u: %s\n", g_vmOpen, g_vmRec, (unsigned)g_vmLen, g_vmStatus);
         return;
     }
     if (!strncmp(p, "wt ", 3)) {                       // wt call <32 hex> | wt answer | wt talk | wt hang
@@ -12840,6 +13035,7 @@ void loop() {
     SLOW_STEP("g_audio.loop", g_audio.loop());
     SLOW_STEP("havoice", haVoiceTick());
     SLOW_STEP("walkie", walkieTick());
+    SLOW_STEP("vm", vmTick());
     SLOW_STEP("gpsPoll", gpsPoll());
     SLOW_STEP("gpsWatchLink", gpsWatchLink());
 
