@@ -54,7 +54,8 @@ def flash(port, fw):
             for attempt in range(6):
                 r = subprocess.run(esptool_cmd() + ["--chip", "esp32s3", "--port", port, "--baud", "115200",
                                                     "--before", "default_reset", "--after", after, "--no-stub",
-                                                    "write_flash", "0x%x" % (APP + off), path],
+                                                    "write_flash", "--flash_size", "16MB",   # ROM loader: else 2 MB, no erase past 0x200000
+                                                    "0x%x" % (APP + off), path],
                                    capture_output=True, text=True)
                 if "Hash of data verified" in r.stdout:
                     print("%s 0x%x ok" % (port, APP + off))

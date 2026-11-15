@@ -67,6 +67,10 @@
 #include "config/Config.h"
 #if !defined(SIMULATOR)
 #include "transport/TcpClientSet.h"     // TCP hub client (device only: FreeRTOS tasks + lwIP)
+#if !defined(SIMULATOR)
+#include "transport/RnsAutoInterface.h"  // Reticulum over WiFi (LAN peers)
+#include <esp_netif.h>
+#endif
 #include "config/UserConfig.h"
 #include "ff.h"                          // sdformat: FatFs f_mkfs / f_getfree on the card
 #endif
@@ -142,6 +146,7 @@ struct Config {
     bool     touchOff    = false;   // S.1.4: touch screen off, keys only
     bool     haVoice     = false;   // S.3.7: Home Assistant voice satellite (WiFi, ESPHome API)
     char     haKey[45]   = "";      // its ESPHome API encryption key (base64); "" = none
+    bool     meshWifi    = true;    // S.3.8: Reticulum over WiFi (AutoInterface: units on the LAN)
     uint8_t  micGain     = 4;       // microphone gain for HA voice (console micgain)
     bool     foundAddr   = true;    // if-found screen shows this radio's LXMF address
     char     libLast[40] = "";      // library file last read (idle screen "Library")
@@ -288,6 +293,7 @@ void loadConfig() {
     g_cfg.touchOff    = p.getBool("touchOff", false);
     g_cfg.haVoice     = p.getBool("haVoice", false);
     p.getString("haKey", g_cfg.haKey, sizeof(g_cfg.haKey));
+    g_cfg.meshWifi    = p.getBool("meshWifi", true);
     g_cfg.micGain     = p.getUChar("micGain", 4);
     g_cfg.foundAddr   = p.getBool("foundAddr", true);
     p.getString("libLast", g_cfg.libLast, sizeof(g_cfg.libLast));
@@ -349,6 +355,7 @@ void saveConfig() {
     p.putBool("touchOff", g_cfg.touchOff);
     p.putBool("haVoice", g_cfg.haVoice);
     p.putString("haKey", g_cfg.haKey);
+    p.putBool("meshWifi", g_cfg.meshWifi);
     p.putUChar("micGain", g_cfg.micGain);
     p.putBool("foundAddr", g_cfg.foundAddr);
     p.putString("libLast", g_cfg.libLast);
@@ -3129,6 +3136,89 @@ void tcpTick() {
 #endif
 }
 
+// ---- Reticulum over WiFi (Settings > WiFi row 8) -----------------------------------------
+// The core's RnsAutoInterface (as on the T-Pager): IPv6 link-local discovery + UDP, group
+// "reticulum", so units (and Reticulum on PCs / phones) on the same WiFi exchange packets
+// without LoRa. Started once WiFi is up and the link-local address exists; on the protocol
+// pump like the TCP hub. Device only (the simulator has no lwIP).
+#if !defined(SIMULATOR)
+RnsAutoInterface g_auto;
+#endif
+bool g_autoUp = false;
+
+int meshPeers() {
+#if !defined(SIMULATOR)
+    return g_autoUp ? (int)g_auto.peerCount() : -1;
+#else
+    return -1;
+#endif
+}
+
+void meshTick() {
+#if !defined(SIMULATOR)
+    if (!g_protoReady) return;
+    static uint32_t checkAt = 0, lastLink = 0;
+    const bool want = g_cfg.meshWifi && wifiConnected();
+    if (!want) {
+        if (g_autoUp) {
+            g_proto.pump().attachAuto(nullptr);
+            g_auto.stop();
+            g_autoUp = false;
+            Serial.println("[MESH] WiFi interface stopped");
+        }
+        return;
+    }
+    auto linkLocal = [](const IPv6Address& a) { return a[0] == 0xfe && (a[1] & 0xc0) == 0x80; };
+    auto scope = []() {
+        auto* sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        return sta ? (uint32_t)esp_netif_get_netif_impl_index(sta) : 1u;
+    };
+    const uint32_t now = millis();
+    if (!g_autoUp) {
+        if (now - checkAt < 1000) return;
+        checkAt = now;
+        // (Not WiFi.enableIpV6() here: that creates the address again each call, which restarts
+        // its duplicate-address check, so it never became usable.)
+        const IPv6Address a = WiFi.localIPv6();
+        if (!linkLocal(a)) {
+            // No address yet: ask for one once, then give it 15 s to pass the check.
+            static uint32_t askedAt = 0;
+            if (!askedAt || now - askedAt > 15000) {
+                askedAt = now;
+                auto* sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+                if (sta) esp_netif_create_ip6_linklocal(sta);
+                Serial.println("[MESH] waiting for an IPv6 link-local address");
+            }
+            return;
+        }
+        if (g_auto.start("reticulum", 8, (const uint8_t*)a, scope())) {
+            g_proto.pump().attachAuto(&g_auto);
+            g_autoUp = true;
+            lastLink = now;
+            Serial.printf("[MESH] WiFi interface up (group reticulum, %s)\n", g_auto.multicastAddress().c_str());
+        } else {
+            g_auto.stop();
+            Serial.println("[MESH] WiFi interface failed to start");
+            checkAt = now + 9000;                // retry in ~10 s
+        }
+        return;
+    }
+    if (now - lastLink >= 5000) {                // the address can change after a rejoin
+        lastLink = now;
+        const IPv6Address a = WiFi.localIPv6();
+        if (linkLocal(a)) g_auto.notifyLinkChange((const uint8_t*)a, scope());
+    }
+    g_auto.loop();
+    static int lastPeers = -2;
+    const int peers = (int)g_auto.peerCount();
+    if (peers != lastPeers) {
+        lastPeers = peers;
+        Serial.printf("[MESH] %d unit%s on WiFi\n", peers, peers == 1 ? "" : "s");
+        if (g_screen == SCR_SETTINGS && g_page == PG_WIFI) requestRedraw();
+    }
+#endif
+}
+
 // ---- Identities (Settings > Identity > Identities) ------------------------------------
 // The core's IdentityManager slots (as on the Plus build): list, create, switch, erase.
 // The protocol loads the active identity at boot, so a switch restarts the device.
@@ -3537,6 +3627,9 @@ void buildSettingsRows(Page p) {
         srow(RK_ACTION, "Disconnect", g_wifiSt == WifiSt::Off ? "-" : "Enter = off (pause auto)");
         srow(RK_MENU, "TCP hub", "%s", tcpStatus());
         srow(RK_MENU, "Home Assistant voice", "%s", g_cfg.haVoice ? havoice::status() : "OFF");
+        if (!g_cfg.meshWifi) srow(RK_TOGGLE, "Mesh over WiFi", "OFF");
+        else if (meshPeers() < 0) srow(RK_TOGGLE, "Mesh over WiFi", "ON (starts with WiFi)");
+        else srow(RK_TOGGLE, "Mesh over WiFi", "ON, %d unit%s seen", meshPeers(), meshPeers() == 1 ? "" : "s");
         break;
 
     case PG_HAVOICE: {                               // S.3.7: on / off, the encryption key
@@ -4132,6 +4225,12 @@ void activateSetting(int idx) {
         else if (idx == 4 && g_wifiSt != WifiSt::Off) { wifiDisconnect(); toast("WiFi off"); }
         else if (idx == 5) pushPage(PG_TCP);
         else if (idx == 6) pushPage(PG_HAVOICE);
+        else if (idx == 7) {
+            g_cfg.meshWifi = !g_cfg.meshWifi;
+            saveConfig();
+            toast(g_cfg.meshWifi ? "Mesh over WiFi on" : "Mesh over WiFi off");
+            requestRedraw();
+        }
         break;
 
     case PG_HAVOICE: {
@@ -11069,6 +11168,24 @@ void handleSerialLine(char* p) {
                       havoice::busy(), havoice::heard(), havoice::answer());
         return;
     }
+    if (!strcmp(p, "mesh")) {                          // mesh: Reticulum over WiFi state
+#if !defined(SIMULATOR)
+        {
+            auto* sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+            esp_ip6_addr_t ll = {};
+            const esp_err_t e = sta ? esp_netif_get_ip6_linklocal(sta, &ll) : ESP_FAIL;
+            const IPv6Address a = WiFi.localIPv6();
+            Serial.printf("[MESH] link-local: netif %s err %d %08lx..%08lx; Arduino %02x%02x::%02x%02x\n", sta ? "ok" : "none",
+                          (int)e, (unsigned long)ll.addr[0], (unsigned long)ll.addr[3], a[0], a[1], a[14], a[15]);
+        }
+        const auto& st = g_auto.stats();
+        Serial.printf("[MESH] %s, up %d, peers %d, rx %lu tx %lu beacons %lu/%lu bad %lu\n",
+                      g_cfg.meshWifi ? "on" : "off", g_autoUp, meshPeers(), (unsigned long)st.rxFrames,
+                      (unsigned long)st.txFrames, (unsigned long)st.rxBeacons, (unsigned long)st.txBeacons,
+                      (unsigned long)st.rxBadBeacons);
+#endif
+        return;
+    }
     if (!strcmp(p, "hakey")) { Serial.printf("[HAV] key %s\n", g_cfg.haKey[0] ? g_cfg.haKey : "(none)"); return; }
     if (!strncmp(p, "hakey ", 6)) {                    // hakey new | none | <44-char base64>
         uint8_t k[32];
@@ -12371,6 +12488,7 @@ void loop() {
     SLOW_STEP("watchClockAndToast", watchClockAndToast());
     SLOW_STEP("watchWifi", watchWifi());
     SLOW_STEP("tcpTick", tcpTick());
+    SLOW_STEP("meshTick", meshTick());
     SLOW_STEP("autoShareTick", autoShareTick());
     SLOW_STEP("inboundTick", inboundTick());
     SLOW_STEP("trackTick", trackTick());
