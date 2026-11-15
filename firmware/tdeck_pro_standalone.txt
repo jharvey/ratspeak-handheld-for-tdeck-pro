@@ -1,22 +1,8 @@
 env tdeck_pro_standalone
-source a38b4b970cc92b67630c630487d296f69993c75d + uncommitted changes
-built 2026-11-14 23:50 on debian-build (tools/vm_build.py)
-size 2032128
-sha256 166270ae9d5f2dae56f784eec2ddf32161d2fe188bfd880231056d881122aeb6
+source c3f78f4a68edf3804141dfeb06bb34a18a6881c9 + uncommitted changes
+built 2026-11-15 06:59 on debian-build (tools/vm_build.py)
+size 2299520
+sha256 3afbd4667d8c8d00c8afa482447c096d945a694e768455ec813581f9f8c59c72
 uncommitted changes in the build:
    M platformio.ini
-   M sim/README.md
-   M sim/app/DeviceWidget.cpp
-   M sim/app/DeviceWidget.h
-   M sim/app/MainWindow.cpp
-   M sim/app/MainWindow.h
-   M src/boards/tdeck_Pro/RatSpeak_TDeck-Pro_Description.md
    M tools/check_build_identity.py
-   M tools/sdcard/library/Help-1-Keys.txt
-   M tools/sdcard/library/Help-2-Messages.txt
-   M tools/sdcard/library/Help-3-Contacts.txt
-   M tools/sdcard/library/Help-4-Share-card.txt
-   M tools/sdcard/library/Help-5-Location.txt
-   M tools/sdcard/library/Help-7-Waypoints.txt
-   M tools/sdcard/library/Help-8-Lock.txt
-   M tools/sdcard/library/Help-9-Battery.txt
