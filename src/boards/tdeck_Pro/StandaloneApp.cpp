@@ -140,7 +140,8 @@ struct Config {
     char     found[10][41] = {};    // if-found screen: name, phone, address 1-2, town, state, zip,
                                     // country, misc 1-2 (S.4.2.9); NVS fnd0..fnd9
     bool     touchOff    = false;   // S.1.4: touch screen off, keys only
-    bool     haVoice     = false;   // S.3: Home Assistant voice satellite (WiFi)
+    bool     haVoice     = false;   // S.3.7: Home Assistant voice satellite (WiFi, ESPHome API)
+    char     haKey[45]   = "";      // its ESPHome API encryption key (base64); "" = none
     uint8_t  micGain     = 4;       // microphone gain for HA voice (console micgain)
     bool     foundAddr   = true;    // if-found screen shows this radio's LXMF address
     char     libLast[40] = "";      // library file last read (idle screen "Library")
@@ -286,6 +287,7 @@ void loadConfig() {
     }
     g_cfg.touchOff    = p.getBool("touchOff", false);
     g_cfg.haVoice     = p.getBool("haVoice", false);
+    p.getString("haKey", g_cfg.haKey, sizeof(g_cfg.haKey));
     g_cfg.micGain     = p.getUChar("micGain", 4);
     g_cfg.foundAddr   = p.getBool("foundAddr", true);
     p.getString("libLast", g_cfg.libLast, sizeof(g_cfg.libLast));
@@ -346,6 +348,7 @@ void saveConfig() {
     if (p.isKey("foundTxt")) p.remove("foundTxt");   // moved to fnd0..9
     p.putBool("touchOff", g_cfg.touchOff);
     p.putBool("haVoice", g_cfg.haVoice);
+    p.putString("haKey", g_cfg.haKey);
     p.putUChar("micGain", g_cfg.micGain);
     p.putBool("foundAddr", g_cfg.foundAddr);
     p.putString("libLast", g_cfg.libLast);
@@ -2382,6 +2385,14 @@ bool    g_threadOpen = false;
 uint8_t g_threadPeer[16];
 
 // Entry mode: one text buffer, one owner.
+// A new random ESPHome API encryption key (32 bytes, base64), as "esphome" would make one.
+void haNewKey() {
+    uint8_t k[32];
+    for (int i = 0; i < 32; i += 4) { const uint32_t r = esp_random(); memcpy(k + i, &r, 4); }
+    havoice::keyEncode(k, g_cfg.haKey);
+    Serial.printf("[HAV] new key %s\n", g_cfg.haKey);
+}
+
 enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, Longitude, WifiPass,
                              PassOld, PassNew, PassConfirm,     // Pass*: lock password (arg = purpose)
                              Search,                            // list filter (Inbox / Contacts / Peers)
@@ -2391,7 +2402,8 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              LibFind,                           // library: find text
                              PlaceFind,                         // map R: place name
                              FoundText,                         // idle "If found": owner text
-                             CheckinTime };                     // S.5.8: hhmm
+                             CheckinTime,                       // S.5.8: hhmm
+                             HaKey };                           // S.3.7: HA encryption key
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -2425,7 +2437,7 @@ enum Page : uint8_t {
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
     PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW, PG_LOWBAT,
-    PG_BACKUPS, PG_FOUND, PG_MODE
+    PG_BACKUPS, PG_FOUND, PG_MODE, PG_HAVOICE
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -2532,7 +2544,7 @@ bool     g_joinAuto = true;
 
 bool isWifiPage(Page p) {
     return p == PG_WIFI || p == PG_WIFI_SCAN || p == PG_WIFI_SAVED ||
-           p == PG_WIFI_NET || p == PG_WIFI_JOIN || p == PG_TCP;
+           p == PG_WIFI_NET || p == PG_WIFI_JOIN || p == PG_TCP || p == PG_HAVOICE;
 }
 
 void wifiUiChanged() {
@@ -3375,6 +3387,7 @@ const char* pageTitle(Page p) {
         case PG_GEOF_NEW:     return "New arrival alert";
         case PG_BACKUPS:      return "Restore backup";
         case PG_FOUND:        return "If found";
+        case PG_HAVOICE:      return "Home Assistant voice";
         case PG_MODE:         return "Mode";
     }
     return "";
@@ -3523,8 +3536,21 @@ void buildSettingsRows(Page p) {
              wifiHasAutoCreds() ? ", auto" : "");
         srow(RK_ACTION, "Disconnect", g_wifiSt == WifiSt::Off ? "-" : "Enter = off (pause auto)");
         srow(RK_MENU, "TCP hub", "%s", tcpStatus());
-        srow(RK_TOGGLE, "Home Assistant voice", "%s", g_cfg.haVoice ? havoice::status() : "OFF");
+        srow(RK_MENU, "Home Assistant voice", "%s", g_cfg.haVoice ? havoice::status() : "OFF");
         break;
+
+    case PG_HAVOICE: {                               // S.3.7: on / off, the encryption key
+        srow(RK_TOGGLE, "Voice for Home Assistant", "%s", g_cfg.haVoice ? havoice::status() : "OFF");
+        const bool hasKey = g_cfg.haKey[0] != 0;
+        e = editingSub(Entry::HaKey);
+        if (e) srow(RK_ENTRY, "Encryption key (44)", "%s", e);
+        else   srow(RK_ENTRY, "Encryption key 1-22", "%.22s", hasKey ? g_cfg.haKey : "none: Enter to type");
+        srow(RK_INFO, "Encryption key 23-44", "%s", hasKey ? g_cfg.haKey + 22 : "-");
+        srow(RK_ACTION, "New random key", "%s", hasKey ? "Enter twice" : "Enter");
+        srow(RK_ACTION, "No encryption", "%s", hasKey ? "Enter twice" : "(none set)");
+        srow(RK_INFO, "Name in Home Assistant", "%s, port %u", havoice::nodeName(), (unsigned)havoice::kPort);
+        break;
+    }
 
     case PG_TCP:
         srow(RK_TOGGLE, "TCP hub", "%s", g_tcpCfg.on ? "ON (while WiFi is up)" : "OFF");
@@ -4105,15 +4131,37 @@ void activateSetting(int idx) {
         else if (idx == 3) pushPage(PG_WIFI_SAVED);
         else if (idx == 4 && g_wifiSt != WifiSt::Off) { wifiDisconnect(); toast("WiFi off"); }
         else if (idx == 5) pushPage(PG_TCP);
-        else if (idx == 6) {
+        else if (idx == 6) pushPage(PG_HAVOICE);
+        break;
+
+    case PG_HAVOICE: {
+        static uint32_t armed = 0;               // Enter twice within 3 s for the key actions
+        static int armedRow = -1;
+        const bool twice = armedRow == idx && armed && millis() - armed < 3000;
+        if (idx == 0) {
             g_cfg.haVoice = !g_cfg.haVoice;
+            if (g_cfg.haVoice && !g_cfg.haKey[0]) haNewKey();   // first time: make a key
             saveConfig();
             Serial.printf("[HAV] voice %s\n", g_cfg.haVoice ? "on" : "off");
-            toast(g_cfg.haVoice ? (wifiConnected() ? "HA voice on: add it in HA" : "HA voice on when WiFi is up")
+            toast(g_cfg.haVoice ? (wifiConnected() ? "On: add it in HA, give it the key" : "On when WiFi is up")
                                 : "HA voice off");
-            requestRedraw();
+        } else if (idx == 1) {
+            startEntry(Entry::HaKey, g_cfg.haKey);
+            g_entryReplace = true;               // typing starts a new key
+        } else if (idx == 3 || idx == 4) {
+            if (g_cfg.haKey[0] && !twice) {
+                armed = millis(); armedRow = idx;
+                toast(idx == 3 ? "Enter again: new key" : "Enter again: no encryption");
+                break;
+            }
+            armed = 0; armedRow = -1;
+            if (idx == 3) { haNewKey(); toast("New key: give it to HA"); }
+            else { g_cfg.haKey[0] = 0; toast("No encryption: HA connects without a key"); Serial.println("[HAV] key cleared"); }
+            saveConfig();
         }
+        requestRedraw();
         break;
+    }
 
     case PG_TCP:
         if (idx == 0) {
@@ -9894,6 +9942,17 @@ void commitEntry() {
         endEntry();
         return;
     }
+    case Entry::HaKey: {
+        uint8_t k[32];
+        if (!g_bufLen) { endEntry(); return; }
+        if (!havoice::keyDecode(g_buf, k)) { toast("Key: 44 chars, ends with ="); return; }
+        strlcpy(g_cfg.haKey, g_buf, sizeof(g_cfg.haKey));
+        saveConfig();
+        endEntry();
+        toast("Key saved: use the same in HA");
+        Serial.println("[HAV] key set (typed)");
+        return;
+    }
     case Entry::TcpHost: {
         if (!g_bufLen || g_bufLen >= sizeof(g_tcpCfg.host) || strchr(g_buf, ' ')) { toast("Host: 1-63 chars, no spaces"); return; }
         strlcpy(g_tcpCfg.host, g_buf, sizeof(g_tcpCfg.host));
@@ -10054,6 +10113,7 @@ void entryKey(const KeyEvent& ev) {
     }
     if (g_entry == Entry::WptName && g_bufLen >= 15) { toast("Max 15 chars"); return; }
     if (g_entry == Entry::TcpHost && g_bufLen >= sizeof(g_tcpCfg.host) - 1) { toast("Max 63 chars"); return; }
+    if (g_entry == Entry::HaKey && g_bufLen >= havoice::kKeyB64Len) { toast("Key: 44 chars"); return; }
     if (g_entry == Entry::FoundText && g_bufLen >= sizeof(g_cfg.found[0]) - 1) { toast("Max 40 chars"); return; }
     bufAppend(c);
     if (g_entry == Entry::Search) searchChanged();
@@ -11008,8 +11068,24 @@ void handleSerialLine(char* p) {
                       havoice::busy(), havoice::heard(), havoice::answer());
         return;
     }
+    if (!strcmp(p, "hakey")) { Serial.printf("[HAV] key %s\n", g_cfg.haKey[0] ? g_cfg.haKey : "(none)"); return; }
+    if (!strncmp(p, "hakey ", 6)) {                    // hakey new | none | <44-char base64>
+        uint8_t k[32];
+        if (!strcmp(p + 6, "new")) haNewKey();
+        else if (!strcmp(p + 6, "none")) g_cfg.haKey[0] = 0;
+        else if (havoice::keyDecode(p + 6, k)) strlcpy(g_cfg.haKey, p + 6, sizeof(g_cfg.haKey));
+        else { Serial.println("[HAV] hakey new | none | <44-char base64 key>"); return; }
+        saveConfig();
+        Serial.printf("[HAV] key %s\n", g_cfg.haKey[0] ? g_cfg.haKey : "(none)");
+        return;
+    }
+    if (!strcmp(p, "haselftest")) { havoice::selfTest(); return; }
+    if (!strcmp(p, "apitunnel")) { havoice::tunnelStart(g_cfg.haKey); return; }   // bench test
+    if (!strcmp(p, "apitunnel off")) { havoice::tunnelStop(); return; }
+    if (!strncmp(p, "api ", 4)) { havoice::tunnelFeed(p + 4); return; }
     if (!strncmp(p, "havoice ", 8)) {                  // havoice 0|1
         g_cfg.haVoice = atoi(p + 8) != 0;
+        if (g_cfg.haVoice && !g_cfg.haKey[0]) haNewKey();
         saveConfig();
         Serial.printf("[HAV] voice %s\n", g_cfg.haVoice ? "on" : "off");
         return;
@@ -12248,7 +12324,7 @@ bool begin() {
 // Home Assistant voice: run the satellite, stop talking when MIC is let go, show what
 // HA heard and answered.
 void haVoiceTick() {
-    havoice::tick(wifiConnected() && g_pwEff.wifi, g_cfg.haVoice, g_selfName);
+    havoice::tick(wifiConnected() && g_pwEff.wifi, g_cfg.haVoice, g_selfName, g_cfg.haKey);
     if (g_talkByKey && havoice::talking() && !g_kb.micHeld()) havoice::stopTalk("MIC released");
     if (!havoice::talking()) g_talkByKey = false;
     static uint32_t shown = 0;

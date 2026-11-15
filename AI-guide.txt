@@ -198,14 +198,19 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        Loop profiler: SLOW_STEP logs any loop step over 200 ms ("[SLOW] name ms"), the last 12 in
        Settings S.10 Diagnostics and console "slow". Console "k <keys>" presses keys (^ back, ~ Enter);
        "[UI] frame" says how long after the key the panel finished.
-[DONE 2026-11-14] Home Assistant voice satellite (src/boards/tdeck_Pro/voice/HaVoice.*): Wyoming
-       protocol server on TCP 10700 + mDNS "_wyoming._tcp" while WiFi is up and S.3 row 7 is on.
-       HA connects (Wyoming integration), describe -> info (satellite), run-satellite; MIC held ->
-       run-pipeline (asr..tts, snd_format 16 kHz mono) + audio-start/chunk/stop from the PDM mic
-       (I2S0, MIC_CLOCK 18 / MIC_DATA 17, DC block + micgain); HA audio-start/chunk/stop plays on
-       the speaker, now on I2S1 (PDM RX only works on I2S0). Sleep is blocked while HA is
-       connected. Console: hav, havoice 0|1, micgain N, talk / talkstop, mictest (2 s + playback).
-       Untested against a real HA so far (no WiFi on the bench units); mic + playback tested.
+[DONE 2026-11-14] Home Assistant voice: ESPHome native API server (voice/HaVoice.cpp; replaced the
+       first Wyoming version the same day). TCP 6053 + mDNS "_esphomelib._tcp" (TXT mac, version,
+       api_encryption) while WiFi is up and S.3.7 row 1 is on. Noise_NNpsk0_25519_ChaChaPoly_SHA256
+       with the 32-byte key (NVS haKey, base64; made on first enable; S.3.7 rows 2-5, console hakey),
+       "" = plaintext API. X25519/SHA-256/HMAC from mbedTLS; ChaCha20-Poly1305 own (voice/ChaChaPoly,
+       the framework mbedTLS has CHACHA20/POLY1305 off): RFC vectors in tools/test/chachapoly_test.cpp
+       and console haselftest. Messages: Hello, DeviceInfo (voice flags VOICE_ASSISTANT|SPEAKER|
+       API_AUDIO = 7), ListEntitiesDone, Ping, SubscribeVoiceAssistant; MIC held -> VoiceAssistantRequest
+       start, after VoiceAssistantResponse the mic goes out as VoiceAssistantAudio; release -> start=false.
+       HA events: STT_END text = heard, TTS_START text = answer, TTS audio as VoiceAssistantAudio
+       (16 kHz mono) -> speaker (I2S1; PDM mic on I2S0, DC block + micgain), RUN_END. Bench test with
+       no WiFi: console apitunnel + tools/test/esphome_api_test.py COM6 <key> (own Python Noise /
+       X25519 / ChaChaPoly): PASS on COM6. Not yet run against a real Home Assistant.
 [DONE] LoRa delivery to a SLEEPING receiver: 14/14 at 1.3 frames/msg. Fixes: stay
        awake while LoRaInterface has TX queued, 3 s after a LoRa wake, while message
        writes are pending (proof is sent after the write), wake for scheduled path
