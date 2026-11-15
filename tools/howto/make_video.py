@@ -16,7 +16,7 @@ This script:
     a held SYM / Alt gets the other hand (the key further right gets the right hand),
   * a badge with the key's name ("1 (SYM + W)"), captions, note boxes,
   * click sounds: a full click per tap, a half click when a modifier goes down and up,
-  * one device, or two side by side (--rec2, --labels Jack Jill),
+  * one device, or two side by side (--rec2, --labels Jack Jill: a coloured name tag above each),
   * encodes with ffmpeg (found on PATH, or set FFMPEG=...).
 
   python tools/howto/make_video.py <rec dir> <out.mp4> [--title "Send a message"]
@@ -133,6 +133,9 @@ SYM_OF = {"Q": "#", "W": "1", "E": "2", "R": "3", "T": "(", "Y": ")", "U": "-", 
           "A": "*", "S": "4", "D": "5", "F": "6", "G": "/", "H": ":", "J": ";", "K": "'", "L": '"', "Z": "7",
           "X": "8", "C": "9", "V": "?", "B": "!", "N": "'", "M": "`", "MIC": "0"}
 LETTER_OF = {v: k for k, v in SYM_OF.items() if k not in ("N",)}
+
+
+LABEL_COLOURS = [(30, 90, 170), (170, 40, 110)]     # name tags: blue, then magenta
 
 
 def key_label(spec):
@@ -386,7 +389,7 @@ def main():
 
     dw = recs[0].w
     gap = 40
-    label_h = 34 if args.labels else 0
+    label_h = 62 if args.labels else 0
     cap_h = 150 + label_h
     W = (max(sum(r.w for r in recs) + gap * (len(recs) - 1) + 120, 600) + 1) // 2 * 2
     H = (max(r.h for r in recs) + cap_h + 16 + 1) // 2 * 2
@@ -401,7 +404,7 @@ def main():
     f_cap = find_font(max(14, 600 // 26))
     f_key = find_font(max(14, 600 // 24), bold=True)
     f_note = find_font(max(14, dw // 19), bold=True)
-    f_label = find_font(24, bold=True)
+    f_label = find_font(34, bold=True)
 
     tmp = tempfile.mkdtemp(prefix="howto_")
     wav = os.path.join(tmp, "clicks.wav")
@@ -432,8 +435,12 @@ def main():
         for n, r in enumerate(recs):
             ox, oy = r.ox, r.oy
             img.paste(r.frame_at(t), (ox, oy), r.mask)
-            if n < len(args.labels):
-                d.text((ox + r.w // 2, oy - 8), args.labels[n], font=f_label, fill=(20, 20, 20), anchor="mb")
+            if n < len(args.labels):                     # name tag above each device: who's who
+                tag, col = args.labels[n].upper(), LABEL_COLOURS[n % len(LABEL_COLOURS)]
+                tw = d.textlength(tag, font=f_label)
+                d.rounded_rectangle((ox + r.w / 2 - tw / 2 - 22, oy - 58, ox + r.w / 2 + tw / 2 + 22, oy - 8),
+                                    radius=12, fill=col)
+                d.text((ox + r.w // 2, oy - 33), tag, font=f_label, fill=(255, 255, 255), anchor="mm")
             badge = None
             for side in ("L", "R"):
                 st = hand_state(r.targets[side], t)
