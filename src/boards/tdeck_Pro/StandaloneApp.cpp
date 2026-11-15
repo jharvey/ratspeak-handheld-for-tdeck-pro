@@ -10420,6 +10420,14 @@ void handleTouch(int16_t x, int16_t y) {
     }
     if (g_menuOpen && (!hit || (hit->act != H_MENU_GO && hit->act != H_MENU))) { closeMenu(); return; }
     if (!hit) return;
+    // Typing (a message, a name, If-found text ...): a thumb brushing the bottom tabs, just
+    // above the keyboard, jumped to Contacts / Inbox and lost the text. While typing, touch
+    // cannot leave the screen (tabs, menu); other touches on settings wait until Enter / ^.
+    if (entryActive() && (hit->act == H_TAB || hit->act == H_MENU || hit->act == H_BACK ||
+                          g_entry != Entry::Message)) {
+        Serial.printf("[TOUCH] %d,%d act=%u ignored while typing\n", x, y, hit->act);
+        return;
+    }
     Serial.printf("[TOUCH] %d,%d act=%u arg=%d\n", x, y, hit->act, hit->arg);
     switch (hit->act) {
         case H_REFRESH:    g_fullRefreshReq = true; requestRedraw(); break;
