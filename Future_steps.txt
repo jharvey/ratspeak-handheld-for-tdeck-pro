@@ -372,6 +372,8 @@ Nice to have
 - 14. Notepad: write notes on the device, saved to the Library folder on SD.
 Also asked 2026-11-13
 - Voice walkie-talkies: see Audio / modes (Codec2 voice messages / push-to-talk).
+  STARTED 2026-11-15: live walkie-talkie over WiFi works (Help-11). To do: LoRa invite sets up a
+  hotspot when the units are close; voice messages as LXMF audio field (needs fields in the engine).
 - USB hard drive / flash drive on the handheld (USB OTG host): read maps or archives from a
   USB drive plugged into the unit. Same blocker as unit-to-unit USB copy above: host mode
   must supply 5 V on VBUS and the USB-C is wired as a charge input; check the schematic.

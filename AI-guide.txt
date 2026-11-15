@@ -211,6 +211,14 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        (16 kHz mono) -> speaker (I2S1; PDM mic on I2S0, DC block + micgain), RUN_END. Bench test with
        no WiFi: console apitunnel + tools/test/esphome_api_test.py COM6 <key> (own Python Noise /
        X25519 / ChaChaPoly): PASS on COM6. Not yet run against a real Home Assistant.
+[DONE 2026-11-15] Mesh over WiFi: RnsAutoInterface on the pump (meshTick, S.3 row 8, console mesh).
+[DONE 2026-11-15] Walkie-talkie v1 (voice/Walkie, VoiceCodec, lib/esp32_codec2): contact card W sends
+       "[wt] call <ipv4>:4243 <key b64>" as LXMF; the callee (Enter) answers by UDP; Codec2 3200,
+       5 frames per packet, ChaCha20-Poly1305 with a per-call key, nonce = direction + seq. Task
+       "walkie" (20 KB stack: Codec2 encode needs ~14 KB) does mic/encode/send and recv/decode/play.
+       Space talk/listen, ^ hang up; console wt call <hex> | answer | talk | hang. Tested COM5<->COM6.
+       Internal RAM is tight: HA voice buffers moved to PSRAM, mic DMA 4x256, speaker DMA 4x512.
+       Next: LoRa invite + hotspot (no shared WiFi), LXMF audio field (voice messages, Sideband).
 [DONE] LoRa delivery to a SLEEPING receiver: 14/14 at 1.3 frames/msg. Fixes: stay
        awake while LoRaInterface has TX queued, 3 s after a LoRa wake, while message
        writes are pending (proof is sent after the write), wake for scheduled path

@@ -53,7 +53,13 @@ bool g_encrypted = false;
 // Connection state.
 enum class Conn { None, NoiseHello, NoiseHandshake, Ready, Plain };
 Conn g_conn = Conn::None;
-uint8_t g_rx[kRxMax + 8];
+// Big buffers live in PSRAM (allocated in begin()): internal RAM is needed for DMA (mic,
+// speaker) and task stacks (the walkie-talkie's Codec2 needs 20 KB).
+constexpr size_t kRxBuf = kRxMax + 8;
+uint8_t* g_rx = nullptr;
+uint8_t* g_txBuf = nullptr;    // sendMessage: the frame
+uint8_t* g_txPlain = nullptr;  // sendMessage: before encryption
+uint8_t* g_rxPlain = nullptr;  // onNoiseFrame: after decryption
 size_t g_rxLen = 0;
 bool g_vaSubscribed = false;
 
@@ -195,7 +201,7 @@ bool writeNoiseFrame(const uint8_t* d, size_t n) {
 void closeConn(const char* why);
 
 bool sendMessage(uint16_t type, const uint8_t* data, size_t n) {
-    static uint8_t buf[kTxMax + 32];
+    uint8_t* buf = g_txBuf;
     if (n + 4 + 16 > kTxMax) { Serial.printf("[HAV] message %u too big (%u)\n", type, (unsigned)n); return false; }
     if (g_conn == Conn::Plain) {
         size_t o = 0;
@@ -206,7 +212,7 @@ bool sendMessage(uint16_t type, const uint8_t* data, size_t n) {
         return writeRaw(buf, o + n);
     }
     if (g_conn != Conn::Ready) return false;
-    uint8_t plain[kTxMax];
+    uint8_t* plain = g_txPlain;
     plain[0] = (uint8_t)(type >> 8); plain[1] = (uint8_t)type;
     plain[2] = (uint8_t)(n >> 8);    plain[3] = (uint8_t)n;
     memcpy(plain + 4, data, n);
@@ -475,7 +481,7 @@ void onNoiseFrame(const uint8_t* d, size_t n) {
         case Conn::NoiseHello: onClientHello(d, n); break;
         case Conn::NoiseHandshake: onHandshake(d, n); break;
         case Conn::Ready: {
-            static uint8_t plain[kRxMax];
+            uint8_t* plain = g_rxPlain;
             if (n < 16 + 4) { closeConn("bad frame"); return; }
             uint8_t nonce[12];
             chachapoly::noiseNonce(g_nRecv++, nonce);
@@ -582,7 +588,13 @@ void makeNodeName(const char* deviceName) {
 
 }  // namespace
 
-void begin(AudioNotify* audio) { g_audio = audio; }
+void begin(AudioNotify* audio) {
+    g_audio = audio;
+    if (!g_rx) g_rx = (uint8_t*)ps_malloc(kRxBuf);
+    if (!g_txBuf) g_txBuf = (uint8_t*)ps_malloc(kTxMax + 32);
+    if (!g_txPlain) g_txPlain = (uint8_t*)ps_malloc(kTxMax);
+    if (!g_rxPlain) g_rxPlain = (uint8_t*)ps_malloc(kRxMax);
+}
 
 void tunnelStart(const char* keyB64) {
     strlcpy(g_keyB64, keyB64 ? keyB64 : "", sizeof(g_keyB64));
@@ -597,13 +609,13 @@ void tunnelStart(const char* keyB64) {
 void tunnelFeed(const char* hex) {
     if (!g_tunnel) return;
     auto v = [](char c) { return c <= '9' ? c - '0' : (c | 0x20) - 'a' + 10; };
-    for (; hex[0] && hex[1] && g_rxLen < sizeof(g_rx); hex += 2) g_rx[g_rxLen++] = (uint8_t)(v(hex[0]) << 4 | v(hex[1]));
+    for (; hex[0] && hex[1] && g_rxLen < kRxBuf; hex += 2) g_rx[g_rxLen++] = (uint8_t)(v(hex[0]) << 4 | v(hex[1]));
     processRx();
 }
 void tunnelStop() { if (g_tunnel) { closeConn("tunnel off"); g_tunnel = false; } }
 
 void tick(bool wifiUp, bool enabled, const char* deviceName, const char* keyB64) {
-    if (!g_audio) return;
+    if (!g_audio || !g_rx || !g_txBuf || !g_txPlain || !g_rxPlain) return;
     if (g_tunnel) {
         if (g_talking) streamMic();
         return;
@@ -658,7 +670,7 @@ void tick(bool wifiUp, bool enabled, const char* deviceName, const char* keyB64)
 
     // Read what has arrived (bounded per call).
     for (int k = 0; k < 8 && g_client.available() && g_conn != Conn::None; k++) {
-        const int room = (int)(sizeof(g_rx) - g_rxLen);
+        const int room = (int)(kRxBuf - g_rxLen);
         if (room <= 0) { closeConn("receive overflow"); return; }
         const int got = g_client.read(g_rx + g_rxLen, room);
         if (got <= 0) break;

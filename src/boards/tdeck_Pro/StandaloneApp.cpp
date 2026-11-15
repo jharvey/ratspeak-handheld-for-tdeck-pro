@@ -52,6 +52,10 @@
 #include "audio/AudioNotify.h"
 #include "voice/HaVoice.h"
 #include "voice/VoiceCodec.h"
+#include "voice/Walkie.h"
+
+// Shown on the boot screen and in Settings (bump with each release to the units).
+#define RATSPEAK_FW_VERSION "v0.1"
 #include "hal/Keyboard.h"
 #include "hal/UsbDrive.h"
 #include "hal/SysImage.h"
@@ -2053,7 +2057,10 @@ void loadHistory(const uint8_t peer[16]) {
             if (h.incoming) cposNote(peer, la, lo, msgEpoch(hdr.timestamp));   // map marker
         }
         if (clen >= sizeof(h.text)) clen = sizeof(h.text) - 1;
-        if (clen && !isCard && !isLoc) {
+        const size_t wtLen = strlen(walkie::kInvitePrefix);   // walkie-talkie invite: not its key
+        const bool isWt = !isCard && !isLoc && clen >= wtLen && !memcmp(buf + off, walkie::kInvitePrefix, wtLen);
+        if (isWt) snprintf(h.text, sizeof(h.text), "[walkie-talkie call]");
+        if (clen && !isCard && !isLoc && !isWt) {
             memcpy(h.text, buf + off, clen);
             h.text[clen] = 0;
             for (size_t k = 0; k < clen; k++)
@@ -4780,8 +4787,8 @@ void renderList() {
         snprintf(title, sizeof(title), "%d : %s%s", rowNumber(g_screen, i), r.name,
                  (g_screen == SCR_PEERS && r.saved) ? " *" : "");
         char right[12] = "";
-        if (g_screen == SCR_INBOX && r.unread)
-            snprintf(right, sizeof(right), "unrd %02u", r.unread > 99 ? 99u : (unsigned)r.unread);
+        if (g_screen == SCR_INBOX && !r.self)        // every chat: "0 new" .. "9 new", "+9 new"
+            snprintf(right, sizeof(right), r.unread > 9 ? "+9 new" : "%u new", (unsigned)r.unread);
         listRow(y, title, r.sub, i == g_listSel, right);
         addHit(2, y, W - 4, ROW_H, H_ROW, i);
     }
@@ -5859,9 +5866,9 @@ void drawNavKeys(int y0, const NavCard& card = kAtlasKeys) {
     auto w12 = [](const char* s) {
         return (int)lv_txt_get_width(s, strlen(s), &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
     };
-    smallText(4, y0 + 3, card.title, true);
+    smallText(4, y0 + 3, card.title, false);
     smallText(W - 4 - w12("K hide") - 1, y0 + 3, "K hide", false);
-    smallText(4, y0 + 3 + kNavRowH, card.moves, true);
+    smallText(4, y0 + 3 + kNavRowH, card.moves, false);
     const NavKeyRow* rows = card.rows;
     const int top = y0 + 3 + 2 * kNavRowH;
     int keyW[2] = {16, 16}, colEnd = 0;
@@ -5882,7 +5889,7 @@ void drawNavKeys(int y0, const NavCard& card = kAtlasKeys) {
     for (int i = 0; i < 2 * kNavRows; i++) {
         if (!rows[i].keys || !rows[i].keys[0]) continue;
         const int c = i / kNavRows, x = c ? x1 : 4, y = top + (i % kNavRows) * kNavRowH;
-        smallText(x, y, rows[i].keys, true);
+        smallText(x, y, rows[i].keys, false);
         const int dx = c == 0 || aligned ? keyW[c] + 6 : std::max(w12(rows[i].keys) + 7, 22);
         smallText(x + dx, y, rows[i].what, false);
         if (x + dx + w12(rows[i].what) > W - 2)
@@ -6826,6 +6833,101 @@ uint32_t msgEpoch(double ts) {
 }
 
 // Called by the protocol (inside g_proto.loop()): only queue the key.
+void noteInput();
+
+// ---- Walkie-talkie (contact card W; voice/Walkie) ----------------------------------------
+bool     g_wtOpen = false;            // the walkie-talkie screen is up
+uint8_t  g_wtPeer[16];
+bool     g_wtIncoming = false;        // an invite waits for Enter / ^
+uint32_t g_wtIp = 0;
+uint16_t g_wtPort = 0;
+uint8_t  g_wtKey[32];
+uint32_t g_wtInviteAt = 0;
+
+void wtClose() {
+    if (walkie::state() != walkie::State::Idle) walkie::hangUp("hung up");
+    g_wtOpen = false;
+    g_wtIncoming = false;
+    g_fullRefreshReq = true;
+    requestRedraw();
+}
+
+void wtCall(const uint8_t peer[16]) {
+    if (!wifiConnected()) { toast("Walkie-talkie: join WiFi first (S.3)"); return; }
+    if (walkie::state() != walkie::State::Idle) { toast("A call is already open"); return; }
+    char invite[120];
+    if (!walkie::startCall(invite, sizeof(invite))) { toast("Walkie-talkie: %s", walkie::status()); return; }
+    if (!sendMessage(peer, invite)) { walkie::hangUp("invite not sent"); toast("Not sent: %s", g_txStr); return; }
+    memcpy(g_wtPeer, peer, 16);
+    g_wtOpen = true;
+    g_wtIncoming = false;
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.println("[WT] invite sent");
+}
+
+// An incoming "[wt] call ..." message (inboundTick).
+void wtInvite(const uint8_t peer[16], const char* text) {
+    uint32_t ip; uint16_t port; uint8_t key[32];
+    if (!walkie::parseInvite(text, ip, port, key)) return;
+    if (walkie::state() != walkie::State::Idle) return;     // busy: ignore
+    memcpy(g_wtPeer, peer, 16);
+    g_wtIp = ip; g_wtPort = port; memcpy(g_wtKey, key, 32);
+    g_wtInviteAt = millis();
+    g_wtIncoming = true;
+    g_wtOpen = true;
+    if (g_idleActive) { g_idleActive = false; noteInput(); }
+    if (g_cfg.beep) g_audio.playAnnounce();
+    g_fullRefreshReq = true;
+    requestRedraw();
+    Serial.println("[WT] incoming call");
+}
+
+void wtKey(const KeyEvent& ev) {
+    if (g_wtIncoming) {
+        if (ev.enter) {
+            g_wtIncoming = false;
+            if (!wifiConnected()) { toast("Join WiFi first (S.3)"); g_wtOpen = false; requestRedraw(); return; }
+            if (!walkie::answer(g_wtIp, g_wtPort, g_wtKey)) toast("Walkie-talkie: %s", walkie::status());
+            requestRedraw();
+        } else if (ev.up) {
+            Serial.println("[WT] declined");
+            wtClose();
+        }
+        return;
+    }
+    if (ev.up) { wtClose(); return; }
+    if (ev.space || ev.character == ' ' || ev.enter) {
+        walkie::setTalking(!walkie::talking());
+        requestRedraw();
+    }
+}
+
+void renderWalkie() {
+    char nm[24], line[48];
+    peerName(g_wtPeer, nm, sizeof(nm));
+    drawHeader("Walkie-talkie", false);
+    int y = LIST_TOP + 6;
+    label(0, y, W, 22, nm, true); y += 34;
+    const walkie::State st = walkie::state();
+    if (g_wtIncoming) {
+        label(0, y, W, 22, "is calling you", true); y += 40;
+        label(0, y, W, 20, "Enter = answer"); y += 24;
+        label(0, y, W, 20, "^ = decline");
+    } else if (st == walkie::State::Connected) {
+        const char* big = walkie::talking() ? "TALKING" : walkie::peerTalking() ? "THEY TALK" : "LISTENING";
+        label(0, y, W, 30, big, true); y += 50;
+        label(0, y, W, 20, walkie::talking() ? "Space = stop, listen" : "Space = talk"); y += 24;
+        label(0, y, W, 20, "^ = hang up");
+    } else {
+        snprintf(line, sizeof(line), "%s", walkie::status());
+        label(0, y, W, 22, line, true); y += 40;
+        label(0, y, W, 20, st == walkie::State::Calling ? "^ = cancel" : "^ = close");
+    }
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "Codec2 3200, encrypted, WiFi");
+}
+
 void onCommittedMessage(const LXMFManager::CommittedMessage& m) {
     if (!m.key.incoming || g_inQn >= (int)(sizeof(g_inQ) / sizeof(g_inQ[0]))) return;
     g_inQ[g_inQn++] = m.key;
@@ -6844,6 +6946,7 @@ void inboundTick() {
         double la, lo;
         if (locParse(text, strlen(text), la, lo)) cposNote(key.peer, la, lo, msgEpoch(ts));
         wizCardIn(text);
+        if (!strncmp(text, walkie::kInvitePrefix, strlen(walkie::kInvitePrefix))) wtInvite(key.peer, text);
     }
     for (int k = 1; k < g_inQn; k++) g_inQ[k - 1] = g_inQ[k];
     g_inQn--;
@@ -8456,7 +8559,7 @@ void renderCard() {
         y += ROW_H;
     }
     box(0, FOOT_Y, W, FOOT_H, 1);
-    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4  T up  V dn  Ent  ^ back");
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4  T/V  Ent  W talk  ^ back");
 }
 
 void startNameEntry(const uint8_t peer[16]);
@@ -8504,6 +8607,14 @@ void cardKey(const KeyEvent& ev) {
         case 'T': if (g_cardSel > 0) g_cardSel--; requestRedraw(); break;
         case 'V': if (g_cardSel < 3) g_cardSel++; requestRedraw(); break;
         case 'M': closeCard(); openMenu(); break;
+        case 'W': {                               // walkie-talkie call (WiFi)
+            uint8_t peer[16];
+            memcpy(peer, g_cardPeer, 16);
+            if (isSelf(peer)) { toast("That is this radio"); break; }
+            closeCard();
+            wtCall(peer);
+            break;
+        }
         default: break;
     }
 }
@@ -9394,6 +9505,7 @@ void render() {
         return;
     }
     if (g_usbDrive)                    renderUsbDrive();
+    else if (g_wtOpen)                 renderWalkie();
     else if (g_threadOpen)             renderThread();
     else if (g_entry == Entry::Name)   renderRename();
     else if (g_wizOpen)                renderWizard();
@@ -9692,6 +9804,7 @@ void drawBootSplash() {
     label(0, 130, W, 22, "RatSpeak", true);
     label(0, 160, W, 18, "T-Deck Pro");
     label(0, 184, W, 18, "LoRa / LXMF mesh");
+    label(0, 208, W, 18, RATSPEAK_FW_VERSION);
     label(0, 240, W, 18, "BOOTING...", true);
     lv_refr_now(nullptr);
     drawLogo(W / 2, 64);
@@ -10310,6 +10423,7 @@ void handleKey(const KeyEvent& ev) {
     noteInput();
     if (g_locked) { lockKey(ev); return; }
     if (g_usbDrive) { usbDriveKey(ev); return; }
+    if (g_wtOpen) { wtKey(ev); return; }
     if (g_threadOpen && g_tmenuOpen) { tmenuKey(ev); return; }
     if (g_wizOpen && !entryActive()) { wizKey(ev); return; }   // setup wizard (^ = step back)
     if (ev.up) { goBack(); return; }                          // lone Shift = ^
@@ -10801,6 +10915,7 @@ const char* powerSleepBlocker() {
     if (now - g_lastInputMs < (uint32_t)g_pwEff.awakeSecs * 1000UL) return "recent input";
     if (g_usbDrive) return "USB drive";
     if (havoice::busy()) return "HA voice";
+    if (walkie::state() != walkie::State::Idle || g_wtOpen) return "walkie-talkie";
     if (g_cfg.haVoice && havoice::connected()) return "HA connected";   // must answer HA
     if (g_cThinking) return "chess engine";
     // While the idle splash shows, loop() does not render, so a pending redraw waits for the wake
@@ -11177,6 +11292,17 @@ void handleSerialLine(char* p) {
                       havoice::busy(), havoice::heard(), havoice::answer());
         return;
     }
+    if (!strncmp(p, "wt ", 3)) {                       // wt call <32 hex> | wt answer | wt talk | wt hang
+        if (!strncmp(p + 3, "call ", 5) && strlen(p + 8) >= 32) {
+            uint8_t d[16];
+            for (int i = 0; i < 16; i++) { char h[3] = {p[8 + 2 * i], p[9 + 2 * i], 0}; d[i] = (uint8_t)strtoul(h, nullptr, 16); }
+            wtCall(d);
+        } else if (!strcmp(p + 3, "answer")) { KeyEvent e{}; e.enter = true; if (g_wtOpen) wtKey(e); }
+        else if (!strcmp(p + 3, "talk")) { walkie::setTalking(!walkie::talking()); requestRedraw(); }
+        else if (!strcmp(p + 3, "hang")) { wtClose(); }
+        Serial.printf("[WT] state %d: %s\n", (int)walkie::state(), walkie::status());
+        return;
+    }
     if (!strcmp(p, "mesh")) {                          // mesh: Reticulum over WiFi state
 #if !defined(SIMULATOR)
         {
@@ -11220,6 +11346,7 @@ void handleSerialLine(char* p) {
     if (!strncmp(p, "micgain ", 8)) {                  // micgain 1-32
         g_cfg.micGain = (uint8_t)constrain(atoi(p + 8), 1, 32);
         havoice::setMicGain(g_cfg.micGain);
+    walkie::begin(&g_audio);
         saveConfig();
         Serial.printf("[HAV] mic gain %u\n", (unsigned)g_cfg.micGain);
         return;
@@ -12439,6 +12566,7 @@ bool begin() {
     g_audio.begin();
     havoice::begin(&g_audio);
     havoice::setMicGain(g_cfg.micGain);
+    walkie::begin(&g_audio);
     g_audio.setEnabled(g_cfg.beep);
     g_audio.setVolume(g_cfg.volume);
 #if defined(BOARD_MOTOR_PIN) && (BOARD_MOTOR_PIN >= 0)
@@ -12500,6 +12628,13 @@ void haVoiceTick() {
     }
 }
 
+void walkieTick() {
+    walkie::tick();
+    static uint32_t shown = 0;
+    if (walkie::changedAt() != shown) { shown = walkie::changedAt(); if (g_wtOpen) requestRedraw(); }
+    if (g_wtIncoming && millis() - g_wtInviteAt > 60000) { g_wtIncoming = false; g_wtOpen = false; requestRedraw(); }
+}
+
 // Loop profiler: a step that holds the loop over 200 ms is logged ("[SLOW] watchPeers 850 ms"),
 // so a 2-3 s pause between a key and the screen can be traced to its cause.
 void slowNote(const char* name, uint32_t ms) {
@@ -12517,6 +12652,7 @@ void loop() {
     SLOW_STEP("g_announceMgr.loop", g_announceMgr.loop());
     SLOW_STEP("g_audio.loop", g_audio.loop());
     SLOW_STEP("havoice", haVoiceTick());
+    SLOW_STEP("walkie", walkieTick());
     SLOW_STEP("gpsPoll", gpsPoll());
     SLOW_STEP("gpsWatchLink", gpsWatchLink());
 

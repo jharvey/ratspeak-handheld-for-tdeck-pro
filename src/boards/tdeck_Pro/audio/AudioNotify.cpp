@@ -33,7 +33,7 @@ void AudioNotify::begin() {
     i2s_config.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
     i2s_config.communication_format = I2S_COMM_FORMAT_STAND_I2S;
     i2s_config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-    i2s_config.dma_buf_count = 8;      // 256 ms queued: HA speech plays smoothly
+    i2s_config.dma_buf_count = 4;      // 128 ms queued (internal DMA RAM is tight: the mic needs some too)
     i2s_config.dma_buf_len = 512;
     i2s_config.use_apll = false;
     i2s_config.tx_desc_auto_clear = true;
@@ -362,8 +362,8 @@ bool AudioNotify::micStart() {
     c.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
     c.communication_format = I2S_COMM_FORMAT_STAND_I2S;
     c.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-    c.dma_buf_count = 8;               // 256 ms: the loop may be busy (a screen refresh)
-    c.dma_buf_len = 512;
+    c.dma_buf_count = 4;               // 64 ms: the mic task drains it at once (internal RAM is tight)
+    c.dma_buf_len = 256;
     i2s_pin_config_t p = {};
     p.mck_io_num = I2S_PIN_NO_CHANGE;
     p.bck_io_num = I2S_PIN_NO_CHANGE;

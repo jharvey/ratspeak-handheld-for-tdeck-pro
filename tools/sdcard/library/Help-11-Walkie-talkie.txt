@@ -1,0 +1,25 @@
+WALKIE-TALKIE
+
+Talk live with another RatSpeak unit, over WiFi. Both units must be on the same WiFi
+(Settings S.3); "Mesh over WiFi" (S.3 row 8) lets them find each other.
+
+CALL
+1. Contacts (C) or Inbox (I): pick the person, Enter for their card.
+2. Press W. The unit sends a call invite (an encrypted message) and shows "calling...".
+
+ANSWER
+- The other unit shows "<name> is calling you": Enter = answer, ^ = decline.
+- An unanswered call ends after 60 s.
+
+TALK
+- Space = talk. The screen says TALKING. Space again = stop and listen.
+- Only one side talks at a time (like a radio): the screen shows LISTENING, or
+  THEY TALK while the other side speaks.
+- ^ = hang up. The other side sees "the other side hung up".
+
+GOOD TO KNOW
+- Speech is Codec2 at 3200 bit/s, encrypted with a key made for each call.
+- If nothing is heard for 10 s (WiFi lost), the call ends.
+- The chat shows "[walkie-talkie call]" for each invite.
+- Coming next: the call set up over LoRa, with one unit as a WiFi hotspot, so no home
+  WiFi is needed when the units are close.
