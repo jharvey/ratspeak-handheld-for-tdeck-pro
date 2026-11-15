@@ -68,18 +68,22 @@ New radios are not saved by themselves: you save one by giving it a name.
 
 To name your own radio: **C**, row 0 (MyID), **Enter**, **2**, type, **Enter**.
 
-## Send (share) a contact
+## Swap contacts (send a contact card)
 
-Video: [share_contact.mp4](videos/share_contact.mp4)
+Video: [contact_exchange.mp4](videos/contact_exchange.mp4) (Jack and Jill, side by side)
 
-Send someone's address to another person so they can message them.
+Send your own address (or a contact's) to another radio so they can message you.
 
-1. Press **C** for Contacts, pick the contact, **Enter**. (Row 0 MyID sends your own.)
+1. Press **C** for Contacts. Row 0 (MyID) is your own card: **Enter**.
+   (Any other contact sends theirs.)
 2. Press **3** (Share): hold **SYM**, press **R**.
-3. The list reads "Send *name* to:". Pick who gets it and press **Enter**. **^** cancels.
+3. The list reads "Send *name* to:". Pick who gets it and press **Enter**. Someone who is
+   not a contact yet: **P** switches to Peers, where every radio that announced is listed.
+   **^** cancels.
 
 The other radio shows **[card] name** in the chat; **Enter** on the empty message line
-saves it as a contact. Other LXMF apps see "Contact card: name" and the address.
+saves it as a contact. They can send their card back the same way. Other LXMF apps see
+"Contact card: name" and the address.
 
 ## Connect to WiFi
 
@@ -93,6 +97,10 @@ Video: [wifi.mp4](videos/wifi.mp4)
 5. "connected" shows on the WiFi page. The radio joins this network again by itself.
 
 WiFi is optional: messages go over LoRa radio without it. Saved networks: WiFi page, row 4.
+
+Second video: [add_wifi.mp4](videos/add_wifi.mp4): a radio in Typical mode (WiFi settings on;
+Minimal mode has no WiFi page) joins "ARRL-HQ" with the password Hiram1914, which shows a
+held **Alt** for the small letters and a held **SYM** for the digits.
 
 ## Set the If-found details
 
@@ -114,11 +122,13 @@ When the radio goes to sleep, the If found screen shows. With a password lock
 Video: [mode_touch.mp4](videos/mode_touch.mp4)
 
 1. **M**, **S**, **1** (Mode).
-2. Pick: **1** Minimal (only Inbox, Contacts and Settings: the radio wakes to the Inbox),
-   **2** Normal, **3** Advanced (everything).
+2. Pick: **1** Minimal (only Inbox, Contacts, Settings row 1 and the walkie-talkie: the
+   radio wakes to the Inbox), **2** Typical (the features picked on row 5), **3** Everything.
 3. **4** turns the touch screen off (keys only); **4** again turns it on.
+4. **5** Typical features: turn each one on or off (walkie-talkie, voice messages, Home
+   Assistant voice, WiFi settings, Atlas, Library & games, Peers & announce, Advanced).
 
-In Minimal, Settings shows only row 1, so you can always get back: **M**, **S**, **1**, **3**.
+In Minimal, Settings shows only row 1, so you can always get back: **M**, **S**, **1**, **2**.
 
 ## Open the Atlas (offline map)
 

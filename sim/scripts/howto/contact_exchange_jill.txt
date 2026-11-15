@@ -1,0 +1,48 @@
+# Companion for contact_exchange.txt: Jill's radio (recorded too).
+expect 60000 [BOOT] ready
+serial wiz skip
+serial idlescr 1
+wait 6000
+serial a
+expect 60000 {JACK16}
+wait 2000
+key M
+key H
+wait 1500
+serial idle now
+wait 1500
+rec contact_exchange
+expect 180000 [MSG] inbound
+wait 3000
+note 5500 Jill receives his contact and sends her contact to Jack.
+wait 6000
+caption Jill: any key, I (Inbox), open the new chat: [card] Jack. Enter on the empty line saves him.
+wait 1500
+key SPACE
+wait 1500
+key I
+wait 1500
+key ENTER
+wait 2500
+key ENTER
+wait 2500
+caption Then her own card: ^ back, C, row 0 (MyID), Enter, 3 (Share), pick Jack, Enter.
+wait 1500
+key BACK
+wait 1200
+key C
+wait 1200
+key 0
+wait 800
+key ENTER
+wait 1500
+key 3
+wait 1800
+key 1
+wait 1000
+key ENTER
+expect 20000 [CARD] sent
+wait 25000
+rec off
+wait 2000
+quit

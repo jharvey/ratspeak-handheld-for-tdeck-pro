@@ -1,0 +1,78 @@
+# How-to video: add a WiFi network. Device hv_w1aw in Typical mode, If-found idle screen with the
+# ARRL / W1AW return address. Networks in range come from its sim.ini (make_videos.ps1).
+expect 60000 [BOOT] ready
+serial wiz skip
+serial found 1 ARRL Headquarters
+serial found 2 Station W1AW
+serial found 3 225 Main Street
+serial found 5 Newington
+serial found 6 CT
+serial found 7 06111
+serial found 8 USA
+serial found 9 Please return - 73!
+serial idlescr 3
+wait 1000
+key M
+key S
+wait 800
+key 4
+wait 800
+key 2
+wait 800
+key 0
+wait 1000
+key BACK
+wait 600
+key BACK
+wait 600
+key BACK
+wait 800
+serial opmode 1
+wait 1000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec add_wifi
+caption The radio sleeps and shows where to return it: ARRL Headquarters, station W1AW.
+wait 3500
+caption Any key wakes it, back on the Inbox. (Typical mode: WiFi settings are on.)
+wait 1200
+key SPACE
+wait 2000
+caption Settings: M, then S. Then 3 (WiFi): hold SYM, press R.
+wait 1200
+key M
+wait 900
+key S
+wait 1500
+key 3
+wait 2000
+caption 3 again: Scan networks. The routers in range are listed, strongest first.
+wait 1200
+key 3
+expect 8000 Async scan
+wait 3000
+caption Pick ARRL-HQ by its number: 3.
+wait 1500
+key 3
+wait 2000
+caption Type its password: Hiram1914 (Alt for small letters, SYM for digits). MIC shows / hides it.
+wait 1200
+type Hiram1914
+wait 800
+caption Enter joins. The radio remembers it and joins again by itself.
+wait 1000
+key ENTER
+expect 10000 [WIFI] connected
+wait 3000
+caption Connected. ^ (Shift) goes back; after a while the radio sleeps again.
+wait 1200
+key BACK
+wait 900
+key BACK
+wait 1500
+serial idle now
+wait 3500
+rec off
+quit

@@ -1,0 +1,57 @@
+# How-to video: Jack and Jill swap contact cards. Device hv_jack (recorded), companion
+# contact_exchange_jill.txt (hv_jill, recorded too: the video shows both side by side).
+# Idle screen: the map (tiles around the Alamo on both cards), no password.
+expect 60000 [BOOT] ready
+serial wiz skip
+serial idlescr 1
+wait 2000
+serial a
+expect 60000 {JILL16}
+wait 3000
+key M
+key H
+wait 1500
+serial idle now
+wait 2500
+rec contact_exchange
+note 5500 Jack meets Jill, and is going to send his contact to her.
+wait 6000
+caption Jack wakes his radio (any key) and opens Contacts (C). Row 0 is his own card, MyID: Enter.
+wait 1500
+key SPACE
+wait 1500
+key C
+wait 1500
+key 0
+wait 800
+key ENTER
+wait 2000
+caption 3 (Share). The list asks who gets it: P switches to Peers, where Jill's radio is. Enter sends.
+wait 1500
+key 3
+wait 1800
+key P
+wait 1800
+key ENTER
+expect 20000 [CARD] sent
+wait 2500
+expect 120000 [MSG] inbound
+wait 3000
+caption Jack gets Jill's card: any key wakes his radio, I (Inbox), open her chat, Enter on the empty line saves it.
+wait 1500
+key SPACE
+wait 1500
+key I
+wait 1500
+key ENTER
+wait 2500
+key ENTER
+wait 2500
+caption C: Jill is in Jack's contacts now. They can message each other.
+wait 1200
+key BACK
+wait 1200
+key C
+wait 4000
+rec off
+quit
