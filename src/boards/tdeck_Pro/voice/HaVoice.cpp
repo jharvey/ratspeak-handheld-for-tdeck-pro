@@ -543,7 +543,7 @@ void closeConn(const char* why) {
 
 void streamMic() {
   // Drain what the mic DMA holds (the loop may have been away longer than one 32 ms block).
-  for (int round = 0; round < 8; round++) {
+  for (int round = 0; round < 16; round++) {
     static int16_t buf[512];
     const size_t n = g_audio->micRead(buf, 512, g_micGain);
     if (!n) return;

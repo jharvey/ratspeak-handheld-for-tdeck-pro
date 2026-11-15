@@ -2,6 +2,9 @@
 #include "config/BoardConfig.h"
 #include "AudioNotify.h"
 #include <driver/i2s.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/stream_buffer.h>
+#include <freertos/task.h>
 #include <math.h>
 #include <string.h>
 
@@ -322,6 +325,33 @@ void AudioNotify::writePcm(const int16_t* pcm, size_t n) {
 }
 
 // ---- PDM microphone (MIC_DATA / MIC_CLOCK) ---------------------------------------------
+// A small task reads the I2S DMA into a 2 s ring (PSRAM), so a busy main loop (an e-ink
+// refresh holds it ~0.85 s) loses no audio; micRead() takes from the ring.
+namespace {
+constexpr size_t kMicRingBytes = 2 * 16000 * 2;   // 2 s of 16 kHz 16-bit
+StaticStreamBuffer_t g_micSbStruct;
+uint8_t* g_micRing = nullptr;
+StreamBufferHandle_t g_micSb = nullptr;
+TaskHandle_t g_micTask = nullptr;
+volatile bool g_micRun = false;
+volatile uint32_t g_micDropped = 0;
+
+void micTaskFn(void*) {
+    static int16_t buf[512];
+    size_t skip = 16000 / 10 * 2;            // the first 100 ms: the PDM start-up click (full scale)
+    while (g_micRun) {
+        size_t got = 0;
+        if (i2s_read(MIC_PORT, buf, sizeof(buf), &got, pdMS_TO_TICKS(100)) == ESP_OK && got) {
+            if (skip) { skip = got >= skip ? 0 : skip - got; continue; }
+            const size_t sent = xStreamBufferSend(g_micSb, buf, got, 0);
+            if (sent < got) g_micDropped += (uint32_t)(got - sent);
+        }
+    }
+    g_micTask = nullptr;
+    vTaskDelete(nullptr);
+}
+}  // namespace
+
 bool AudioNotify::micStart() {
     if (_micOn) return true;
     if (MIC_DATA < 0 || MIC_CLOCK < 0) return false;
@@ -345,6 +375,19 @@ bool AudioNotify::micStart() {
     err = i2s_set_pin(MIC_PORT, &p);
     if (err != ESP_OK) { Serial.printf("[MIC] pins failed %d\n", (int)err); i2s_driver_uninstall(MIC_PORT); return false; }
     i2s_zero_dma_buffer(MIC_PORT);
+    if (!g_micRing) g_micRing = (uint8_t*)ps_malloc(kMicRingBytes + 1);
+    if (!g_micSb && g_micRing)
+        g_micSb = xStreamBufferCreateStatic(kMicRingBytes, 1, g_micRing, &g_micSbStruct);
+    if (!g_micSb) { Serial.println("[MIC] no ring buffer"); i2s_driver_uninstall(MIC_PORT); return false; }
+    xStreamBufferReset(g_micSb);
+    g_micDropped = 0;
+    g_micRun = true;
+    if (xTaskCreatePinnedToCore(micTaskFn, "mic", 3072, nullptr, 5, &g_micTask, 0) != pdPASS) {
+        g_micRun = false;
+        Serial.println("[MIC] task failed");
+        i2s_driver_uninstall(MIC_PORT);
+        return false;
+    }
     _micX = 0;
     _micY = 0;
     _micOn = true;
@@ -354,16 +397,18 @@ bool AudioNotify::micStart() {
 
 void AudioNotify::micStop() {
     if (!_micOn) return;
+    g_micRun = false;
+    for (int i = 0; i < 30 && g_micTask; i++) delay(10);   // the task ends within one read (<=100 ms)
+    if (g_micDropped) Serial.printf("[MIC] ring full: %lu bytes dropped\n", (unsigned long)g_micDropped);
     i2s_driver_uninstall(MIC_PORT);
     _micOn = false;
     Serial.println("[MIC] off");
 }
 
-// Non-blocking: whatever samples the DMA holds (up to maxSamples), times the gain.
+// Non-blocking: whatever samples the ring holds (up to maxSamples), times the gain.
 size_t AudioNotify::micRead(int16_t* out, size_t maxSamples, uint8_t gain) {
-    if (!_micOn) return 0;
-    size_t got = 0;
-    if (i2s_read(MIC_PORT, out, maxSamples * sizeof(int16_t), &got, 0) != ESP_OK) return 0;
+    if (!_micOn || !g_micSb) return 0;
+    const size_t got = xStreamBufferReceive(g_micSb, out, maxSamples * sizeof(int16_t), 0);
     const size_t n = got / sizeof(int16_t);
     // DC block (the PDM output sits ~-1400 off zero), then the gain:
     // y = x - x1 + 0.995 * y1, in Q15.
