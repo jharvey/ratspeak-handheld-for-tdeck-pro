@@ -542,9 +542,12 @@ void closeConn(const char* why) {
 }
 
 void streamMic() {
+  // Drain what the mic DMA holds (the loop may have been away longer than one 32 ms block).
+  for (int round = 0; round < 8; round++) {
     static int16_t buf[512];
     const size_t n = g_audio->micRead(buf, 512, g_micGain);
-    if (!n || !g_streaming) return;              // before HA answers the start: dropped
+    if (!n) return;
+    if (!g_streaming) continue;                  // before HA answers the start: dropped
     for (size_t i = 0; i < n; i++) {
         const int32_t a = buf[i] < 0 ? -buf[i] : buf[i];
         if (a > g_micPeak) g_micPeak = a;
@@ -552,7 +555,8 @@ void streamMic() {
     g_micSamples += n;
     PbOut o;
     o.bytes(1, buf, n * 2);
-    if (!sendMessage(VA_AUDIO, o.b, o.n)) stopTalk("connection lost");
+    if (!sendMessage(VA_AUDIO, o.b, o.n)) { stopTalk("connection lost"); return; }
+  }
 }
 
 void serverStop() {
@@ -704,8 +708,9 @@ void stopTalk(const char* why) {
     PbOut o;                                     // VoiceAssistantRequest start=false: end of audio
     sendMessage(VA_REQUEST, o.b, o.n);
     g_runAt = millis();
-    Serial.printf("[HAV] mic stopped (%s): %lu ms sent, peak %ld\n", why,
-                  (unsigned long)(g_micSamples * 1000ULL / kRate), (long)g_micPeak);
+    Serial.printf("[HAV] mic stopped (%s): %lu ms of audio sent in %lu ms, peak %ld\n", why,
+                  (unsigned long)(g_micSamples * 1000ULL / kRate), (unsigned long)(millis() - g_talkStart),
+                  (long)g_micPeak);
     setStatus("thinking...");
 }
 

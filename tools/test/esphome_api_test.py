@@ -9,6 +9,7 @@ The crypto here is written from the specs (RFC 7748, RFC 8439, the Noise spec) i
 Python, independent of the firmware's code, so the two are checked against each other.
 
   python tools/test/esphome_api_test.py COM6 <44-char key>       (key: console "hakey")
+  python tools/test/esphome_api_test.py COM9 <key> 192.168.0.11  (over WiFi, TCP 6053)
 """
 import base64
 import hashlib
@@ -216,6 +217,47 @@ def pb_fields(d):
 
 
 # ---- the tunnel ----------------------------------------------------------------------------------
+class TcpLink:
+    """The real thing: the API over WiFi (TCP 6053); the serial port only for console commands."""
+
+    def __init__(self, port, host):
+        import socket
+        self.s = serial.Serial(port, 115200, timeout=0.1)
+        self.s.dtr, self.s.rts = True, False
+        self.sock = socket.create_connection((host, 6053), timeout=5)
+        self.buf = b""
+
+    def cmd(self, c):
+        if c.startswith("apitunnel"):
+            return
+        self.s.write((c + "\r\n").encode())
+        time.sleep(0.05)
+
+    def send(self, data: bytes):
+        self.sock.sendall(data)
+
+    def read_bytes(self, n, timeout=5.0):
+        end = time.time() + timeout
+        while len(self.buf) < n and time.time() < end:
+            self.sock.settimeout(max(0.05, end - time.time()))
+            try:
+                d = self.sock.recv(65536)
+            except OSError:
+                continue
+            if not d:
+                raise TimeoutError("connection closed")
+            self.buf += d
+        if len(self.buf) < n:
+            raise TimeoutError("waited for %d bytes, have %d" % (n, len(self.buf)))
+        d, self.buf = self.buf[:n], self.buf[n:]
+        return d
+
+    def read_frame(self):
+        hdr = self.read_bytes(3)
+        assert hdr[0] == 0x01, "indicator %02x" % hdr[0]
+        return self.read_bytes((hdr[1] << 8) | hdr[2])
+
+
 class Tunnel:
     def __init__(self, port):
         self.s = serial.Serial(port, 115200, timeout=0.1)
@@ -265,7 +307,7 @@ def main():
     port, key = sys.argv[1], sys.argv[2]
     psk = base64.b64decode(key)
     assert len(psk) == 32
-    t = Tunnel(port)
+    t = TcpLink(port, sys.argv[3]) if len(sys.argv) > 3 else Tunnel(port)
     t.cmd("apitunnel off")
     time.sleep(0.3)
     t.s.reset_input_buffer()
@@ -330,7 +372,7 @@ def main():
     print("VoiceAssistantRequest:", pb_fields(d))
     send(91, b"")                                                     # VoiceAssistantResponse port 0
     got = 0
-    end = time.time() + 2.0
+    end = time.time() + 3.0
     while time.time() < end:
         try:
             mt, d = recv(timeout=1.0)
@@ -342,6 +384,11 @@ def main():
                     got += len(v)
     print("mic audio received: %d bytes (%.2f s at 16 kHz)" % (got, got / 32000))
     t.cmd("talkstop")
+    if isinstance(t, TcpLink):                   # the unit's own count of what it sent
+        time.sleep(0.5)
+        for line in t.s.read(65536).decode(errors="replace").splitlines():
+            if "mic stopped" in line:
+                print("   unit:", line.strip())
     mt, d = recv()
     print("stop: message %d %r" % (mt, pb_fields(d)))
 

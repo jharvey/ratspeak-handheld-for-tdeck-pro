@@ -332,8 +332,8 @@ bool AudioNotify::micStart() {
     c.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;
     c.communication_format = I2S_COMM_FORMAT_STAND_I2S;
     c.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-    c.dma_buf_count = 6;
-    c.dma_buf_len = 256;
+    c.dma_buf_count = 8;               // 256 ms: the loop may be busy (a screen refresh)
+    c.dma_buf_len = 512;
     i2s_pin_config_t p = {};
     p.mck_io_num = I2S_PIN_NO_CHANGE;
     p.bck_io_num = I2S_PIN_NO_CHANGE;
