@@ -70,7 +70,7 @@ key ENTER
 wait 2000
 key 2
 wait 1500
-type Ken Franklin
+type KEN FRANKLIN
 wait 600
 key ENTER
 wait 2500
@@ -82,7 +82,7 @@ wait 1500
 key 1
 wait 2000
 caption Type, Enter sends.
-type Just one more thing - Columbo
+type JUST ONE MORE THING
 wait 600
 key ENTER
 wait 6000

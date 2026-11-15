@@ -25,9 +25,9 @@ caption Pick your network by its number. Here HomeNet is 2 (SYM + E).
 wait 1500
 key 2
 wait 2000
-caption Type the WiFi password. Alt gives small letters, SYM digits. MIC shows / hides it.
+caption Type the WiFi password (here TOWELDAY). MIC shows / hides it.
 wait 1000
-type password123
+type TOWELDAY
 wait 800
 caption Press Enter to join.
 wait 1000

@@ -57,9 +57,9 @@ caption Pick ARRL-HQ by its number: 3.
 wait 1500
 key 3
 wait 2000
-caption Type its password: Hiram1914 (Alt for small letters, SYM for digits). MIC shows / hides it.
+caption Type its password: HIRAMMAXIM. MIC shows / hides it.
 wait 1200
-type Hiram1914
+type HIRAMMAXIM
 wait 800
 caption Enter joins. The radio remembers it and joins again by itself.
 wait 1000

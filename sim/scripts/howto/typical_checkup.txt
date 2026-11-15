@@ -18,7 +18,7 @@ key 1
 wait 600
 key ENTER
 wait 2000
-type On it.
+type ON IT
 key ENTER
 wait 2500
 key BACK
@@ -27,7 +27,7 @@ key 2
 wait 600
 key ENTER
 wait 2000
-type On it too.
+type ON IT TOO
 key ENTER
 wait 2500
 key BACK
@@ -42,10 +42,10 @@ key 2
 wait 800
 key 3
 wait 800
-type Arthor
+type ARTHOR
 key ENTER
 wait 800
-type Arthor
+type ARTHOR
 key ENTER
 wait 1500
 shot pre-lock.png
@@ -66,11 +66,11 @@ shot idle-new.png
 caption A new message: see the count at the top of the idle screen.
 point 205 21 3800
 wait 4200
-caption Any key wakes it. It is locked: type the password (Arthor) and press Enter.
+caption Any key wakes it. It is locked: type the password (ARTHOR) and press Enter.
 wait 1500
 key SPACE
 wait 1800
-type Arthor
+type ARTHOR
 wait 600
 key ENTER
 wait 2500

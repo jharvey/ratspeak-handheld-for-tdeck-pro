@@ -35,7 +35,8 @@ Video: [send_message.mp4](videos/send_message.mp4)
 1. Press **I** to open the Inbox. Your chats are at the top.
 2. Pick the chat: **T** / **V**, or hold **SYM** and type its number.
 3. Press **Enter** to open the chat.
-4. Type your message. **Alt** + key gives small letters, **SYM** + key digits and symbols.
+4. Type your message. The keyboard types capitals, which is fine; **Alt** + key gives a
+   small letter, **SYM** + key digits and symbols.
 5. Press **Enter** to send. "delivered" shows when the other radio got it.
 6. **^** goes back to the list.
 
@@ -99,8 +100,7 @@ Video: [wifi.mp4](videos/wifi.mp4)
 WiFi is optional: messages go over LoRa radio without it. Saved networks: WiFi page, row 4.
 
 Second video: [add_wifi.mp4](videos/add_wifi.mp4): a radio in Typical mode (WiFi settings on;
-Minimal mode has no WiFi page) joins "ARRL-HQ" with the password Hiram1914, which shows a
-held **Alt** for the small letters and a held **SYM** for the digits.
+Minimal mode has no WiFi page) joins "ARRL-HQ" with the password HIRAMMAXIM.
 
 ## Set the If-found details
 

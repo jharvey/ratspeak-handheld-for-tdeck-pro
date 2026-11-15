@@ -24,9 +24,9 @@ caption Press Enter to open the chat.
 wait 900
 key ENTER
 wait 1800
-caption Type your message. Hold Alt for small letters, SYM for digits and symbols.
+caption Type your message. Capitals are fine (Alt + key gives a small letter).
 wait 1000
-type On my way
+type ON MY WAY
 wait 600
 caption Press Enter to send it.
 wait 900

@@ -33,11 +33,11 @@ key 2
 wait 1800
 caption Type a name and press Enter.
 wait 800
-type Sam
+type SAM
 wait 600
 key ENTER
 wait 2200
-caption Saved. C opens Contacts: Sam is there now.
+caption Saved. C opens Contacts: SAM is there now.
 wait 1200
 key C
 wait 3500

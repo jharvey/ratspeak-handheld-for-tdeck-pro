@@ -49,7 +49,8 @@ $videos = @(
     @{ name = "add_contact"; title = "Add a contact"; main = "ht_new"
        devices = [ordered]@{ ht_new = ""; ht_sam = "SAM" }
        comps = @("companion_sam_announce.txt@ht_sam") },
-    @{ name = "wifi"; title = "Connect to WiFi"; main = "ht_alex"; devices = [ordered]@{ ht_alex = "ALEX" } },
+    @{ name = "wifi"; title = "Connect to WiFi"; main = "ht_alex"; devices = [ordered]@{ ht_alex = "ALEX" }
+       ini = @{ ht_alex = @("wifi = HomeNet/-48/TOWELDAY; Coffee-Shop/-67; Neighbour_5G/-79/SECRETPASS") } },
     @{ name = "if_found"; title = "Set the If-found details"; main = "ht_alex"; devices = [ordered]@{ ht_alex = "ALEX" } },
     @{ name = "mode_touch"; title = "Operator mode and touch"; main = "ht_alex"; devices = [ordered]@{ ht_alex = "ALEX" } },
     @{ name = "atlas"; title = "The Atlas: map, places, contacts"; main = "hv_davy"
@@ -69,7 +70,7 @@ $videos = @(
        seed = @{ hv_jack = "atlas"; hv_jill = "atlas" } },
     @{ name = "add_wifi"; title = "Add a WiFi network"; main = "hv_w1aw"
        devices = [ordered]@{ hv_w1aw = "W1AW" }
-       ini = @{ hv_w1aw = @("wifi = W1AW-Guest/-52; ARRL-HQ/-58/Hiram1914; QRZ-Home/-71/cq-dx-73; Hiram-Net/-80/maxim1914") } }
+       ini = @{ hv_w1aw = @("wifi = W1AW-Guest/-52; ARRL-HQ/-58/HIRAMMAXIM; QRZ-Home/-71/CQDX; Hiram-Net/-80/SPARKGAP") } }
 )
 
 function Start-Sim([string]$script, [string]$device, [int]$delay = 0) {
