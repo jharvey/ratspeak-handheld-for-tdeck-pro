@@ -22,11 +22,13 @@ Status words used below: **Works** (in the firmware and checked on hardware),
 
 ## 1. How to
 
+Plain step-by-step guides with short videos for each: `docs/HowTo.md` (videos in `docs/videos/`).
+
 ### 1.1 Send a message
 
 1. Wake if idle → any key.  
 2. **I** → Inbox *(skip if already on Inbox or in the right thread)*.  
-3. Select the contact by **touch** or **number**, then **Enter**.  
+3. Select the contact by **touch**, **T**/**V** or **SYM** + number, then **Enter**.  
 4. Type the message (**Alt** for case). Nav underlines go off while typing.  
 5. **Enter** to send.  
 6. Optional **^** back to the list.
@@ -37,11 +39,11 @@ I  →  select  →  type  →  Enter  →  ^ (optional)
 
 ### 1.2 Add / name a contact
 
-**Discover first (two radios):** on each device, Home → **Announce ID**, then open
+**Discover first (two radios):** on each device, Home (**M** then **H**) → **N** Announce ID (or Peers → **R**), then open
 **Peers** (**P**) and confirm the other appears.
 
 1. **C** → Contacts *(or **P** Peers if they are not saved yet)*.
-2. Select the device (touch, **V**/**G**, or digit).
+2. Select the device (touch, **T**/**V**, or **SYM** + digit).
 3. **Enter** opens the contact page: **1 Message · 2 Rename · 3 Share · 4 Map number**.
 4. **2** (Rename), type the name (**Alt** for case), **Enter** to save.
 

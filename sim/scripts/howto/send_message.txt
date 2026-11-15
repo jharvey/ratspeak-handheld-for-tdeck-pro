@@ -1,0 +1,40 @@
+# How-to video: send a message. Device ht_alex (contacts SAM, JO), with ht_sam running
+# (companion_sam.txt) so the message is delivered. tools/howto/make_videos.ps1 runs it.
+expect 60000 [BOOT] ready
+serial wiz skip
+serial contact {SAM} SAM
+serial contact {JO} JO
+wait 15000
+key M
+key H
+wait 1500
+rec send_message
+wait 1200
+caption Press I to open the Inbox. Your chats are at the top.
+wait 1200
+key I
+wait 1800
+caption Pick the chat with T (up) and V (down), or hold SYM and type its number. Here: SAM is row 1.
+wait 1500
+key V
+wait 900
+key T
+wait 1000
+caption Press Enter to open the chat.
+wait 900
+key ENTER
+wait 1800
+caption Type your message. Hold Alt for small letters, SYM for digits and symbols.
+wait 1000
+type On my way
+wait 600
+caption Press Enter to send it.
+wait 900
+key ENTER
+wait 4000
+caption Sent. If SAM is out of range it waits in a queue and goes out by itself. ^ (Shift) goes back.
+wait 3000
+key BACK
+wait 2200
+rec off
+quit

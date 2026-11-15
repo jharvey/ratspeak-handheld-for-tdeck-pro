@@ -1,0 +1,45 @@
+# How-to video: add a contact. Fresh device ht_new; companion_sam_announce.txt (ht_sam).
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 3000
+key M
+key H
+wait 1500
+rec add_contact
+caption Both radios must announce once. Open Home: M, then H.
+wait 1500
+key M
+wait 1000
+key H
+wait 1800
+caption Press N (Announce ID). Do the same on the other radio.
+wait 1200
+key N
+wait 3000
+caption Press P for Peers: every radio heard, with its signal and when it was heard.
+wait 1200
+key P
+expect 40000 {SAM16}
+wait 3000
+key P
+wait 2000
+caption Pick the new radio (T / V) and press Enter. Its contact page opens.
+wait 1200
+key ENTER
+wait 2500
+caption Press 2 (Rename): hold SYM and press E.
+wait 1500
+key 2
+wait 1800
+caption Type a name and press Enter.
+wait 800
+type Sam
+wait 600
+key ENTER
+wait 2200
+caption Saved. C opens Contacts: Sam is there now.
+wait 1200
+key C
+wait 3500
+rec off
+quit

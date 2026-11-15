@@ -2,6 +2,7 @@
 // Draws the T-Deck Pro (body, bezel, e-ink screen, keyboard) and turns mouse /
 // PC-keyboard input into touch points and TCA8418 key-matrix events.
 #include <QImage>
+#include <QList>
 #include <QRectF>
 #include <QWidget>
 #include <vector>
@@ -24,6 +25,7 @@ public:
     void tapKey(const QString& name);            // "Q", "ENTER", "SYM+W", "SHIFT"...
     void pressKey(const QString& name, bool down);
     void touch(int x, int y);                    // tap at panel coordinates
+    QList<QRectF> keyRectsPx(const QString& spec);   // key caps of a tap spec, in deviceImage() pixels
     QSize sizeHint() const override;
     void setFooter(const QString& text) { footer_ = text; update(); }   // replaces the panel timing line
 

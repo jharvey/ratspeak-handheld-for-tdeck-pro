@@ -1,0 +1,44 @@
+# How-to video: connect to WiFi. Device ht_alex. The simulator lists HomeNet (password password123).
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 3000
+key M
+key H
+wait 1500
+rec wifi
+caption Open Settings: M, then S.
+wait 1200
+key M
+wait 900
+key S
+wait 1800
+caption Press 3 for WiFi (hold SYM and press R).
+wait 1200
+key 3
+wait 2000
+caption Press 3 again: Scan networks.
+wait 1200
+key 3
+expect 8000 Async scan
+wait 2500
+caption Pick your network by its number. Here HomeNet is 2 (SYM + E).
+wait 1500
+key 2
+wait 2000
+caption Type the WiFi password. Alt gives small letters, SYM digits. MIC shows / hides it.
+wait 1000
+type password123
+wait 800
+caption Press Enter to join.
+wait 1000
+key ENTER
+expect 10000 [WIFI] connected
+wait 2500
+caption Connected. It joins this network again by itself.
+wait 1500
+key BACK
+wait 1200
+key BACK
+wait 2500
+rec off
+quit

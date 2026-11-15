@@ -1,5 +1,6 @@
 #pragma once
 #include <QMainWindow>
+#include <QImage>
 #include <QStringList>
 
 class DeviceWidget;
@@ -9,6 +10,7 @@ class QLabel;
 class QSlider;
 class QCheckBox;
 class QTimer;
+class QFile;
 class QGroupBox;
 class LiveLink;
 
@@ -40,6 +42,12 @@ private:
     // Script runner
     void loadScript(const QString& path);
     void stepScript();
+    // Frame recorder for how-to videos ("rec <dir>" ... "rec off", see sim/README.md)
+    void recStart(const QString& dir);
+    void recStop();
+    void recFrame();
+    void recLog(const QString& line);
+    void recKey(const QString& what, const QString& spec);
 
     SimOptions opt_;
     DeviceWidget* device_ = nullptr;
@@ -65,4 +73,12 @@ private:
     QTimer* scriptTimer_ = nullptr;
     QStringList waitPattern_;   // "expect" serial text
     QString lastLines_;
+
+    QTimer* recTimer_ = nullptr;
+    QString recDir_;
+    QFile* recLogFile_ = nullptr;
+    qint64 recT0_ = 0;
+    int recFrames_ = 0;
+    QImage recLast_;
+    int recTypeMs_ = 280;       // "type" while recording: one key every N ms
 };

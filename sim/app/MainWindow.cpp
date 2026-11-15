@@ -467,6 +467,70 @@ void MainWindow::saveShot(const QString& file, bool wholeDevice, bool window) {
     fflush(stdout);
 }
 
+// ---- Frame recorder (how-to videos) --------------------------------------------------
+// "rec <dir>" saves the whole device drawing as <dir>/fNNNNN.png each time it changes
+// (checked every 40 ms) and writes <dir>/rec.txt: "F <ms> <file>" per frame, "K <ms> <spec>
+// x,y,w,h ..." per key tap (cap rectangles in frame pixels, modifiers first), "D"/"U" for
+// down/up, "C <ms> <text>" for captions, "E <ms>" at the end.
+// tools/howto/make_video.py turns it into an MP4.
+void MainWindow::recStart(const QString& dirIn) {
+    recStop();
+    const QString base = opt_.shotDir.isEmpty() ? QDir(opt_.dataDir).filePath("shots") : opt_.shotDir;
+    recDir_ = QDir(dirIn).isAbsolute() ? dirIn : QDir(base).filePath(dirIn);
+    QDir d(recDir_);
+    if (d.exists()) for (const QString& f : d.entryList({"f*.png", "rec.txt"}, QDir::Files)) d.remove(f);
+    QDir().mkpath(recDir_);
+    recLogFile_ = new QFile(QDir(recDir_).filePath("rec.txt"));
+    recLogFile_->open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate);
+    recT0_ = QDateTime::currentMSecsSinceEpoch();
+    recFrames_ = 0;
+    recLast_ = QImage();
+    if (!recTimer_) {
+        recTimer_ = new QTimer(this);
+        connect(recTimer_, &QTimer::timeout, this, &MainWindow::recFrame);
+    }
+    recTimer_->start(40);
+    recFrame();
+    fprintf(stdout, "[SIM] recording to %s\n", recDir_.toLocal8Bit().constData());
+    fflush(stdout);
+}
+
+void MainWindow::recStop() {
+    if (!recLogFile_) return;
+    recFrame();
+    recTimer_->stop();
+    recLog(QString("E %1").arg(QDateTime::currentMSecsSinceEpoch() - recT0_));
+    recLogFile_->close();
+    delete recLogFile_;
+    recLogFile_ = nullptr;
+    fprintf(stdout, "[SIM] recording stopped, %d frames\n", recFrames_);
+    fflush(stdout);
+}
+
+void MainWindow::recLog(const QString& line) {
+    if (!recLogFile_) return;
+    recLogFile_->write((line + "\n").toUtf8());
+    recLogFile_->flush();
+}
+
+void MainWindow::recFrame() {
+    if (!recLogFile_) return;
+    const QImage img = device_->deviceImage().convertToFormat(QImage::Format_RGB32);
+    if (!recLast_.isNull() && img == recLast_) return;
+    recLast_ = img;
+    const QString file = QString("f%1.png").arg(recFrames_++, 5, 10, QChar('0'));
+    img.save(QDir(recDir_).filePath(file));
+    recLog(QString("F %1 %2").arg(QDateTime::currentMSecsSinceEpoch() - recT0_).arg(file));
+}
+
+void MainWindow::recKey(const QString& what, const QString& spec) {
+    if (!recLogFile_) return;
+    QString line = QString("%1 %2 %3").arg(what).arg(QDateTime::currentMSecsSinceEpoch() - recT0_).arg(spec);
+    for (const QRectF& r : device_->keyRectsPx(spec))
+        line += QString(" %1,%2,%3,%4").arg(qRound(r.x())).arg(qRound(r.y())).arg(qRound(r.width())).arg(qRound(r.height()));
+    recLog(line);
+}
+
 // ---- Script runner -------------------------------------------------------------------
 // One command per line (see sim/README.md): wait, key, down, up, type, touch, shot,
 // devshot, winshot, battery, usb, full, gps, serial, expect, quit. '#' starts a comment.
@@ -518,9 +582,31 @@ void MainWindow::stepScript() {
         fprintf(stdout, "[SCRIPT] %s\n", line.toLocal8Bit().constData());
         fflush(stdout);
         if (cmd == "wait") { next(arg.toInt()); return; }
-        if (cmd == "key") { device_->tapKey(arg); next(80); return; }
-        if (cmd == "down") { device_->pressKey(arg, true); next(30); return; }
-        if (cmd == "up") { device_->pressKey(arg, false); next(30); return; }
+        if (cmd == "key") { recKey("K", arg); device_->tapKey(arg); next(80); return; }
+        if (cmd == "down") { recKey("D", arg); device_->pressKey(arg, true); next(30); return; }
+        if (cmd == "up") { recKey("U", arg); device_->pressKey(arg, false); next(30); return; }
+        if (cmd == "rec") {   // rec <dir> [ms per typed key] | rec off
+            if (arg.isEmpty() || arg.toLower() == "off") recStop();
+            else {
+                recTypeMs_ = arg.section(' ', 1, 1).isEmpty() ? 280 : arg.section(' ', 1, 1).toInt();
+                recStart(arg.section(' ', 0, 0));
+            }
+            next(20); return;
+        }
+        if (cmd == "caption") {   // caption <text>: shown on the video from now on (empty = none)
+            recLog(QString("C %1 %2").arg(QDateTime::currentMSecsSinceEpoch() - recT0_).arg(arg));
+            next(5); return;
+        }
+        if (cmd == "type" && recLogFile_) {
+            // Recording: one key at a time, so the video shows each press.
+            QStringList keys;
+            for (QChar c : arg) {
+                const QString k = c == ' ' ? QString("SPACE") : c.isLower() ? "ALT+" + QString(c.toUpper()) : QString(c);
+                keys << "key " + k << QString("wait %1").arg(recTypeMs_);
+            }
+            for (int i = keys.size() - 1; i >= 0; i--) script_.insert(scriptPos_, keys[i]);
+            next(5); return;
+        }
         if (cmd == "type") {
             // Keyboard boots in caps lock: upper-case letters are plain taps, lower-case
             // letters are sent as ALT+letter (ALT flips case), digits/symbols via SYM.
@@ -582,6 +668,7 @@ void MainWindow::stepScript() {
             return;
         }
         if (cmd == "quit") {
+            recStop();
             fprintf(stdout, "[SCRIPT] PASS\n");
             fflush(stdout);
             QApplication::exit(0);
@@ -590,6 +677,7 @@ void MainWindow::stepScript() {
         fail("unknown command: " + cmd);
         return;
     }
+    recStop();
     fprintf(stdout, "[SCRIPT] PASS (end of script)\n");
     fflush(stdout);
     if (opt_.quitAfterScript) QApplication::exit(0);

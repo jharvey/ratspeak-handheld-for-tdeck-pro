@@ -3,7 +3,7 @@ HELP: SHARE A CONTACT
 Send someone's address to another person so they can message them.
 
 1. C, pick the contact, Enter. (Row 0 MyID shares this radio.)
-2. Press 3 (Share).
+2. Press 3 (Share): hold SYM and press R.
 3. The list says "Send <name> to:". Pick who gets it, Enter. ^ cancels.
 
 It goes as a normal message any LXMF app can read: "Contact card: Alice" and the address.

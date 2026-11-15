@@ -199,6 +199,10 @@ the size fails, like the real flash. `scripts/fullflash.txt` (`--flashkb 2048`) 
 | `serial <text>` | send a line to the firmware's USB serial |
 | `expect <ms> <text>` | wait until the serial log shows `<text>`, else FAIL |
 | `quit` | stop with PASS |
+| `rec <dir> [ms]` / `rec off` | record a how-to video: the whole device drawing as `<dir>/fNNNNN.png` each time it changes, plus `rec.txt` (frame times, key taps with the cap rectangles, captions). While recording, `type` presses one key every `ms` (default 280). `tools/howto/make_video.py` makes the MP4 |
+| `caption <text>` | while recording: the text shown above the device from now on |
+
+How-to videos: `scripts/howto/*.txt` (send / read a message, add / share a contact, WiFi, If found, mode, Atlas), run by `tools\howto\make_videos.ps1`, which writes `docsideos\*.mp4` (guide: `docs/HowTo.md`).
 
 Included: `scripts/smoke.txt` (boot and menus), `scripts/wifi.txt` (scan, join with
 password, saved + encrypted), `scripts/announce_a.txt` + `announce_b.txt` (two devices

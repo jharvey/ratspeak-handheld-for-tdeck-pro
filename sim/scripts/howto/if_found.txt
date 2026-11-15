@@ -1,0 +1,56 @@
+# How-to video: set the If-found details. Device ht_alex.
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 3000
+key M
+key H
+wait 1500
+rec if_found
+caption Open Settings (M, then S), then 4 Screen & I/O.
+wait 1200
+key M
+wait 800
+key S
+wait 1200
+key 4
+wait 1800
+caption Press 2: Idle splash.
+wait 1000
+key 2
+wait 1800
+caption Press 9: If-found details.
+wait 1000
+key 9
+wait 1800
+caption Press 1 (Name), type your name, Enter.
+wait 1000
+key 1
+wait 1000
+type Alex Smith
+key ENTER
+wait 1500
+caption Press 2 (Phone), type a number, Enter. Fill in only what you want shown.
+wait 1000
+key 2
+wait 1000
+type 555 0100
+key ENTER
+wait 2000
+caption Press ^ (Shift) to go back. Row 8 picks the idle screen: press 8 until it says If found.
+wait 1500
+key BACK
+wait 1500
+key 8
+wait 1200
+key 8
+wait 1200
+key 8
+wait 1200
+shot found-pick.png
+wait 1500
+caption When the radio sleeps, the e-ink screen keeps showing this, even with a flat battery.
+wait 500
+serial idle now
+wait 5000
+rec off
+quit

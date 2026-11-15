@@ -6,7 +6,7 @@ Underlined letters jump there.
 M = Menu
 I = Inbox
 C = Contacts
-P = Peers (also M then P)
+P = Peers (also M then P). R on Peers = Announce ID
 A = Atlas, the offline map (its own keys: K on the map)
 M then H = Home
 R = Library (in the Menu)
@@ -15,9 +15,9 @@ N / B = next / previous page
 L = locate: find in a list, a place on the map, text in a Library file
 N on Home = Announce ID
 K = the keys card on the Atlas and in the Library (also the Nav keys tab)
-0-9 = pick a row by its number
+0-9 = pick a row by its number. Digits need SYM held: W E R = 1 2 3, S D F = 4 5 6, Z X C = 7 8 9, MIC = 0
 Enter = open, send, save
-MIC = full screen refresh
+MIC = full screen refresh (with Home Assistant voice on: talk to Home Assistant, see Help-10)
 
 Reading a Library file: Space or N next page, B back a page, T / V half a page up / down, W wrap on/off (tables open with wrap off), F / H move left / right when wrap is off, D back to the left edge, L find, ^ back to the list.
 
@@ -28,3 +28,5 @@ While typing: Alt + key changes case, SYM gives digits and symbols. Hotkeys do n
 Settings is M then S. There is no S hotkey on its own.
 
 On the idle screen any key wakes the radio.
+
+Mode (M, S, 1): 1 Minimal (only Inbox, Contacts, Settings), 2 Normal, 3 Advanced (everything). 4 turns the touch screen off (keys only) or on again.

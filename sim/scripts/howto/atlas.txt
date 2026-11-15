@@ -1,0 +1,47 @@
+# How-to video: open the Atlas (offline map). Device ht_map (map tiles on its SD card,
+# copied from the map master copy around the simulator's default GPS fix).
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 4000
+key M
+key H
+wait 1500
+rec atlas
+caption Press A on any screen to open the Atlas, the offline map. (Also M, then A.)
+wait 1500
+key A
+wait 3000
+caption W zooms out (wider), Z zooms in.
+wait 1000
+key W
+wait 1500
+key W
+wait 1500
+key Z
+wait 2000
+caption T F V H move the map up, left, down, right.
+wait 1000
+key T
+wait 1000
+key F
+wait 1000
+key V
+wait 1000
+key H
+wait 1200
+caption D (or Enter) centres the map on you again.
+wait 1000
+key D
+wait 2000
+caption K shows the keys card with all map keys. K again hides it.
+wait 1000
+key K
+wait 3500
+key K
+wait 1500
+caption ^ (Shift) closes the map.
+wait 1000
+key BACK
+wait 2200
+rec off
+quit

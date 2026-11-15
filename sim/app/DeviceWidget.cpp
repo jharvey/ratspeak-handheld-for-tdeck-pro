@@ -280,6 +280,24 @@ void DeviceWidget::tapKey(const QString& specIn) {
     for (auto it = mods.rbegin(); it != mods.rend(); ++it) q.push_back({(*it)->row, (*it)->col, false});
 }
 
+QList<QRectF> DeviceWidget::keyRectsPx(const QString& specIn) {
+    // Same parsing as tapKey: modifiers first, the key last.
+    QString spec = specIn;
+    if (spec.size() == 1) {
+        const QString letter = symLetterFor(spec[0]);
+        if (!letter.isEmpty()) spec = "SYM+" + letter;
+    }
+    QList<QRectF> out;
+    const QTransform t = devToWidget();
+    const double dpr = devicePixelRatioF();
+    for (const QString& part : spec.split('+', Qt::SkipEmptyParts))
+        if (SimKey* k = keyByName(part)) {
+            const QRectF r = t.mapRect(k->rect);
+            out << QRectF(r.x() * dpr, r.y() * dpr, r.width() * dpr, r.height() * dpr);
+        }
+    return out;
+}
+
 void DeviceWidget::touch(int x, int y) {
     {
         std::lock_guard<std::mutex> l(sim::hw().mu);

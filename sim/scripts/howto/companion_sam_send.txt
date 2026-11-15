@@ -1,0 +1,12 @@
+# Companion for read_message.txt: SAM announces, then sends ALEX a message.
+expect 60000 [BOOT] ready
+serial wiz skip
+serial contact {ALEX} ALEX
+wait 4000
+key P
+wait 1000
+key R
+wait 33000
+serial msg {ALEX} Lunch at noon? I will bring sandwiches.
+wait 60000
+quit

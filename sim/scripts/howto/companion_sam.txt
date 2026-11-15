@@ -1,0 +1,12 @@
+# Companion for the how-to videos: SAM boots, knows ALEX, announces from Peers (R), stays on.
+expect 60000 [BOOT] ready
+serial wiz skip
+serial contact {ALEX} ALEX
+wait 4000
+key P
+wait 1000
+key R
+wait 20000
+key R
+wait 70000
+quit

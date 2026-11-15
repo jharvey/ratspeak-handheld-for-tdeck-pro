@@ -1,0 +1,19 @@
+# Companion for add_contact.txt: SAM announces every 12 s from Peers (R).
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 3000
+key P
+wait 1000
+key R
+wait 12000
+key R
+wait 12000
+key R
+wait 12000
+key R
+wait 12000
+key R
+wait 12000
+key R
+wait 40000
+quit

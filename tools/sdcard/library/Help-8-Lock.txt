@@ -1,6 +1,6 @@
 HELP: PASSWORD LOCK
 
-M, S, 3, 2 (Idle splash), then:
+M, S, 4 (Screen & I/O), 2 (Idle splash), then:
 3 On + password: type a new password (4-32 characters), Enter, then the same again. The lock turns on only when both match.
 5 Set / Change password
 6 Remove password
@@ -12,6 +12,6 @@ When locked, any key shows the password prompt. Messages still arrive. 3 wrong t
 
 With a password set, the radio also locks at every power-on.
 
-The locked screen is the idle screen you picked (M, S, 3, 2, row 8). Pick "If found" and type your name, address or phone in row 9 (SYM J = new line): whoever finds the radio sees it, even with a flat battery. Map and Library page show the plain splash while locked.
+The locked screen is the idle screen you picked (M, S, 4, 2, row 8). Pick "If found" and fill in row 9 (If-found details: Name, Phone, Address, Town, State, ZIP, Country, two free lines): whoever finds the radio sees it, even with a flat battery. Row 10 hides or shows the address lines. Map and Library page show the plain splash while locked.
 
 Write the password down: the radio cannot be unlocked without it.
