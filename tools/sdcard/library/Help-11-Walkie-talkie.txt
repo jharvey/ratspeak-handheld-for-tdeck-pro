@@ -1,7 +1,11 @@
 WALKIE-TALKIE
 
-Talk live with another RatSpeak unit, over WiFi. Both units must be on the same WiFi
-(Settings S.3); "Mesh over WiFi" (S.3 row 8) lets them find each other.
+Talk live with another RatSpeak unit, over WiFi.
+- Both on the same WiFi (Settings S.3): the call uses it.
+- No WiFi: your unit makes its own hotspot for the call and the invite goes over LoRa.
+  The other unit joins the hotspot by itself when you answer, so the two units must be
+  close (WiFi range, roughly 50-100 m in the open). After the call both go back to their
+  usual WiFi.
 
 CALL
 1. Contacts (C) or Inbox (I): pick the person, Enter for their card.
@@ -21,5 +25,5 @@ GOOD TO KNOW
 - Speech is Codec2 at 3200 bit/s, encrypted with a key made for each call.
 - If nothing is heard for 10 s (WiFi lost), the call ends.
 - The chat shows "[walkie-talkie call]" for each invite.
-- Coming next: the call set up over LoRa, with one unit as a WiFi hotspot, so no home
-  WiFi is needed when the units are close.
+- "Too far for WiFi: come closer" = the other unit could not reach the hotspot in 20 s.
+- In Typical mode the walkie-talkie can be turned off (S.1.5).

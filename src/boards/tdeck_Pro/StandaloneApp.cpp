@@ -2806,10 +2806,13 @@ void wifiFinishScan() {
     wifiUiChanged();
 }
 
+bool g_wtWifiOwned = false;   // a walkie-talkie call runs its own hotspot / join (watchWifi stands aside)
+
 void watchWifi() {
     static uint32_t last = 0;
     if (millis() - last < 250) return;
     last = millis();
+    if (g_wtWifiOwned) return;
 
     if (g_wifiScanning && WiFiInterface::isScanComplete()) wifiFinishScan();
 
@@ -6904,9 +6907,27 @@ uint32_t g_wtIp = 0;
 uint16_t g_wtPort = 0;
 uint8_t  g_wtKey[32];
 uint32_t g_wtInviteAt = 0;
+char     g_wtSsid[33] = "";           // the caller's hotspot for this call ("" = shared WiFi)
+char     g_wtPass[33] = "";
+bool     g_wtJoining = false;         // callee: joining the caller's hotspot
+uint32_t g_wtJoinAt = 0;
+
+// After a hotspot call: hotspot off / leave it, and let the normal WiFi logic take over.
+void wtReleaseWifi() {
+    if (!g_wtWifiOwned) return;
+    WiFi.softAPdisconnect(true);
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    g_wtWifiOwned = false;
+    g_wtJoining = false;
+    g_wifiSt = WifiSt::Off;
+    g_wifiNextAuto = millis() + 2000;           // back on the usual network soon
+    Serial.println("[WT] hotspot / call WiFi released");
+}
 
 void wtClose() {
     if (walkie::state() != walkie::State::Idle) walkie::hangUp("hung up");
+    wtReleaseWifi();
     g_wtOpen = false;
     g_wtIncoming = false;
     g_fullRefreshReq = true;
@@ -6914,11 +6935,33 @@ void wtClose() {
 }
 
 void wtCall(const uint8_t peer[16]) {
-    if (!wifiConnected()) { toast("Walkie-talkie: join WiFi first (S.3)"); return; }
     if (walkie::state() != walkie::State::Idle) { toast("A call is already open"); return; }
-    char invite[120];
-    if (!walkie::startCall(invite, sizeof(invite))) { toast("Walkie-talkie: %s", walkie::status()); return; }
-    if (!sendMessage(peer, invite)) { walkie::hangUp("invite not sent"); toast("Not sent: %s", g_txStr); return; }
+    char invite[160];
+    uint32_t myIp;
+    const char* apSsid = nullptr;
+    if (wifiConnected()) {                       // both on the same WiFi: use it
+        myIp = (uint32_t)WiFi.localIP();
+        myIp = __builtin_bswap32(myIp);          // IPAddress -> host order (a.b.c.d = a<<24 ...)
+    } else {                                     // no WiFi: this unit becomes a hotspot for the call
+        static const char* kAlnum = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        snprintf(g_wtSsid, sizeof(g_wtSsid), "RatSpeak-%04X", (unsigned)(esp_random() & 0xFFFF));
+        for (int i = 0; i < 16; i++) g_wtPass[i] = kAlnum[esp_random() % strlen(kAlnum)];
+        g_wtPass[16] = 0;
+        g_wtWifiOwned = true;
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_AP);
+        if (!WiFi.softAP(g_wtSsid, g_wtPass, 6, 0, 1)) { wtReleaseWifi(); toast("Hotspot failed"); return; }
+        delay(100);
+        myIp = __builtin_bswap32((uint32_t)WiFi.softAPIP());
+        apSsid = g_wtSsid;
+        Serial.printf("[WT] hotspot %s up at %s\n", g_wtSsid, WiFi.softAPIP().toString().c_str());
+    }
+    if (!walkie::startCall(invite, sizeof(invite), myIp, apSsid, g_wtPass)) {
+        wtReleaseWifi();
+        toast("Walkie-talkie: %s", walkie::status());
+        return;
+    }
+    if (!sendMessage(peer, invite)) { walkie::hangUp("invite not sent"); wtReleaseWifi(); toast("Not sent: %s", g_txStr); return; }
     memcpy(g_wtPeer, peer, 16);
     g_wtOpen = true;
     g_wtIncoming = false;
@@ -6930,7 +6973,7 @@ void wtCall(const uint8_t peer[16]) {
 // An incoming "[wt] call ..." message (inboundTick).
 void wtInvite(const uint8_t peer[16], const char* text) {
     uint32_t ip; uint16_t port; uint8_t key[32];
-    if (!walkie::parseInvite(text, ip, port, key)) return;
+    if (!walkie::parseInvite(text, ip, port, key, g_wtSsid, sizeof(g_wtSsid), g_wtPass, sizeof(g_wtPass))) return;
     if (walkie::state() != walkie::State::Idle) return;     // busy: ignore
     memcpy(g_wtPeer, peer, 16);
     g_wtIp = ip; g_wtPort = port; memcpy(g_wtKey, key, 32);
@@ -6948,6 +6991,17 @@ void wtKey(const KeyEvent& ev) {
     if (g_wtIncoming) {
         if (ev.enter) {
             g_wtIncoming = false;
+            if (g_wtSsid[0]) {                       // the caller's hotspot: join it, answer when on
+                g_wtWifiOwned = true;
+                WiFi.disconnect(true);
+                WiFi.mode(WIFI_STA);
+                WiFi.begin(g_wtSsid, g_wtPass);
+                g_wtJoining = true;
+                g_wtJoinAt = millis();
+                Serial.printf("[WT] joining hotspot %s\n", g_wtSsid);
+                requestRedraw();
+                return;
+            }
             if (!wifiConnected()) { toast("Join WiFi first (S.3)"); g_wtOpen = false; requestRedraw(); return; }
             if (!walkie::answer(g_wtIp, g_wtPort, g_wtKey)) toast("Walkie-talkie: %s", walkie::status());
             requestRedraw();
@@ -6975,6 +7029,9 @@ void renderWalkie() {
         label(0, y, W, 22, "is calling you", true); y += 40;
         label(0, y, W, 20, "Enter = answer"); y += 24;
         label(0, y, W, 20, "^ = decline");
+    } else if (g_wtJoining) {
+        label(0, y, W, 22, "joining the hotspot...", true); y += 40;
+        label(0, y, W, 20, "^ = cancel");
     } else if (st == walkie::State::Connected) {
         const char* big = walkie::talking() ? "TALKING" : walkie::peerTalking() ? "THEY TALK" : "LISTENING";
         label(0, y, W, 30, big, true); y += 50;
@@ -6986,7 +7043,8 @@ void renderWalkie() {
         label(0, y, W, 20, st == walkie::State::Calling ? "^ = cancel" : "^ = close");
     }
     box(0, FOOT_Y, W, FOOT_H, 1);
-    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "Codec2 3200, encrypted, WiFi");
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : g_wtSsid[0] ? "Codec2 3200, encrypted, hotspot"
+                                                                       : "Codec2 3200, encrypted, WiFi");
 }
 
 void onCommittedMessage(const LXMFManager::CommittedMessage& m) {
@@ -6997,7 +7055,7 @@ void onCommittedMessage(const LXMFManager::CommittedMessage& m) {
 void inboundTick() {
     if (!g_inQn || !g_storeReady) return;
     const handheld::storage::RecordKey key = g_inQ[0];
-    char text[96];
+    char text[176];                          // a hotspot walkie-talkie invite is ~110 characters
     double ts = 0;
     if (!readRecordText(key, text, sizeof(text), &ts)) {
         static uint8_t tries = 0;
@@ -11357,7 +11415,10 @@ void handleSerialLine(char* p) {
         return;
     }
     if (!strncmp(p, "wt ", 3)) {                       // wt call <32 hex> | wt answer | wt talk | wt hang
-        if (!strncmp(p + 3, "call ", 5) && strlen(p + 8) >= 32) {
+        if (!strncmp(p + 3, "hotspot", 7)) {     // wt hotspot: leave the WiFi so the next call makes a hotspot
+            g_wifiUserOff = true;
+            wifiDisconnect();
+        } else if (!strncmp(p + 3, "call ", 5) && strlen(p + 8) >= 32) {
             uint8_t d[16];
             for (int i = 0; i < 16; i++) { char h[3] = {p[8 + 2 * i], p[9 + 2 * i], 0}; d[i] = (uint8_t)strtoul(h, nullptr, 16); }
             wtCall(d);
@@ -12694,6 +12755,23 @@ void haVoiceTick() {
 
 void walkieTick() {
     walkie::tick();
+    if (g_wtJoining) {                           // callee: on the caller's hotspot yet?
+        if (WiFi.status() == WL_CONNECTED) {
+            g_wtJoining = false;
+            Serial.printf("[WT] on the hotspot as %s\n", WiFi.localIP().toString().c_str());
+            if (!walkie::answer(g_wtIp, g_wtPort, g_wtKey)) toast("Walkie-talkie: %s", walkie::status());
+            requestRedraw();
+        } else if (millis() - g_wtJoinAt > 20000) {
+            Serial.println("[WT] hotspot not reached");
+            wtReleaseWifi();
+            toast("Too far for WiFi: come closer");
+            g_wtOpen = false;
+            requestRedraw();
+        }
+    }
+    // A call that ended (hung up here or there) gives the WiFi back.
+    if (g_wtWifiOwned && !g_wtJoining && !g_wtIncoming && walkie::state() == walkie::State::Idle &&
+        (!g_wtOpen || millis() - walkie::changedAt() > 3000)) wtReleaseWifi();
     static uint32_t shown = 0;
     if (walkie::changedAt() != shown) { shown = walkie::changedAt(); if (g_wtOpen) requestRedraw(); }
     if (g_wtIncoming && millis() - g_wtInviteAt > 60000) { g_wtIncoming = false; g_wtOpen = false; requestRedraw(); }

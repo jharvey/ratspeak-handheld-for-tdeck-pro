@@ -180,7 +180,7 @@ void taskFn(void*) {
 
 bool openCall(bool caller, const uint8_t key[32]) {
     if (g_task) return false;
-    if (WiFi.status() != WL_CONNECTED) { setStatus("needs WiFi"); return false; }
+    if (WiFi.status() != WL_CONNECTED && !(WiFi.getMode() & WIFI_MODE_AP)) { setStatus("needs WiFi"); return false; }
     g_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (g_sock < 0) { setStatus("no socket"); return false; }
     sockaddr_in a = {};
@@ -212,24 +212,30 @@ bool openCall(bool caller, const uint8_t key[32]) {
 
 void begin(AudioNotify* audio) { g_audio = audio; }
 
-bool startCall(char* invite, size_t cap) {
+bool startCall(char* invite, size_t cap, uint32_t myIp, const char* apSsid, const char* apPass) {
     uint8_t key[32];
     esp_fill_random(key, sizeof(key));
     g_havePeer = false;
     if (!openCall(true, key)) return false;
     char k64[havoice::kKeyB64Len + 1];
     havoice::keyEncode(key, k64);
-    snprintf(invite, cap, "%s%s:%u %s", kInvitePrefix, WiFi.localIP().toString().c_str(), (unsigned)kPort, k64);
+    int n = snprintf(invite, cap, "%s%u.%u.%u.%u:%u %s", kInvitePrefix, (unsigned)(myIp >> 24), (unsigned)(myIp >> 16 & 255),
+                     (unsigned)(myIp >> 8 & 255), (unsigned)(myIp & 255), (unsigned)kPort, k64);
+    if (apSsid && apSsid[0] && n > 0 && (size_t)n < cap)
+        snprintf(invite + n, cap - n, " ap=%s %s", apSsid, apPass ? apPass : "");
     setStatus("calling...");
     return true;
 }
 
-bool parseInvite(const char* text, uint32_t& ip, uint16_t& port, uint8_t key[32]) {
+bool parseInvite(const char* text, uint32_t& ip, uint16_t& port, uint8_t key[32], char* ssid, size_t ssidCap,
+                 char* pass, size_t passCap) {
     if (strncmp(text, kInvitePrefix, strlen(kInvitePrefix)) != 0) return false;
     const char* p = text + strlen(kInvitePrefix);
     unsigned a, b, c, d, pt;
-    char k64[64];
-    if (sscanf(p, "%u.%u.%u.%u:%u %63s", &a, &b, &c, &d, &pt, k64) != 6) return false;
+    char k64[64], s[40] = "", w[40] = "";
+    if (sscanf(p, "%u.%u.%u.%u:%u %63s ap=%39s %39s", &a, &b, &c, &d, &pt, k64, s, w) < 6) return false;
+    if (ssid && ssidCap) strlcpy(ssid, s, ssidCap);
+    if (pass && passCap) strlcpy(pass, w, passCap);
     if (a > 255 || b > 255 || c > 255 || d > 255 || !pt || pt > 65535) return false;
     if (!havoice::keyDecode(k64, key)) return false;
     ip = (uint32_t)a << 24 | b << 16 | c << 8 | d;
