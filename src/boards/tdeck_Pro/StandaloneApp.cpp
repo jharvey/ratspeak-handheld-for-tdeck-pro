@@ -162,7 +162,8 @@ struct Config {
     uint8_t  lowBatPct   = 0;       // low-battery notice at this % (0 = off)
     uint8_t  lowBatTo[16] = {};     // ... sent to this contact
     bool     lowBatSent  = false;   // sent in this discharge (reset when charging)
-    uint8_t  opMode      = 2;       // S.1 operator mode: 0 Minimal, 1 Normal, 2 Advanced (default)
+    uint8_t  opMode      = 2;       // S.1 operator mode: 0 Minimal, 1 Typical, 2 Everything (default)
+    uint16_t typFeat     = 0x79;    // S.1.5 features Typical shows (Feature bits; kTypicalDefault)
     bool     wizDone     = true;    // setup wizard finished or skipped
     bool     trackOn     = false;   // breadcrumb track recording (S.2.10)
     uint8_t  coordFmt    = 0;       // 0 decimal degrees, 1 deg-min-sec, 2 MGRS (S.2.12)
@@ -176,9 +177,33 @@ struct Config {
 Config g_cfg;
 // Operator modes (S.1). Minimal: Inbox, Contacts and Settings S.1 only (no Home, Peers, Atlas,
 // Library); waking goes to the Inbox. Normal is Advanced for now.
-constexpr uint8_t OP_MINIMAL = 0, OP_NORMAL = 1, OP_ADVANCED = 2;
-const char* const kOpModeName[3] = {"Minimal", "Normal", "Advanced"};
+// Operator modes (S.1): Minimal (Inbox, Contacts, S.1, walkie-talkie), Typical (the features
+// picked on S.1.5, most on by default), Everything (all). Same NVS values as before.
+constexpr uint8_t OP_MINIMAL = 0, OP_NORMAL = 1, OP_ADVANCED = 2;   // NORMAL = Typical, ADVANCED = Everything
+const char* const kOpModeName[3] = {"Minimal", "Typical", "Everything"};
 bool minimalMode() { return g_cfg.opMode == OP_MINIMAL; }
+
+// Features Typical mode can show or hide (S.1.5). Everything shows all; Minimal only F_WALKIE.
+enum Feature : uint16_t {
+    F_WALKIE = 1 << 0,     // walkie-talkie (contact card W)
+    F_VOICEMSG = 1 << 1,   // voice messages and other voice options
+    F_HAVOICE = 1 << 2,    // Home Assistant voice (S.3.7, MIC)
+    F_WIFI = 1 << 3,       // WiFi settings (S.3)
+    F_ATLAS = 1 << 4,      // Atlas (maps)
+    F_LIBRARY = 1 << 5,    // Library and games
+    F_PEERS = 1 << 6,      // Peers list and announce
+    F_ADVANCED = 1 << 7,   // LoRa page, Diagnostics, TCP hub
+};
+constexpr int kFeatureCount = 8;
+const char* const kFeatureName[kFeatureCount] = {"Walkie-talkie", "Voice messages", "Home Assistant voice",
+                                                 "WiFi settings", "Atlas (maps)", "Library & games",
+                                                 "Peers & announce", "Advanced: LoRa, diag."};
+constexpr uint16_t kTypicalDefault = F_WALKIE | F_WIFI | F_ATLAS | F_LIBRARY | F_PEERS;   // 0x79
+bool feature(uint16_t f) {
+    if (g_cfg.opMode == OP_ADVANCED) return true;
+    if (g_cfg.opMode == OP_MINIMAL) return (f & F_WALKIE) != 0;
+    return (g_cfg.typFeat & f) != 0;
+}
 bool g_haveLib = false;           // the card's library folder has files (else the menu says Games)
 
 // ---- Energy modes (Settings > Power; power/PowerModes.h) ----------------------
@@ -311,6 +336,7 @@ void loadConfig() {
     g_cfg.lowBatSent  = p.getBool("lbSent", false);
     g_cfg.opMode      = p.getUChar("opMode", 2);
     if (g_cfg.opMode > 2) g_cfg.opMode = 2;
+    g_cfg.typFeat     = p.getUShort("typFeat", 0x79);
     // Units that had settings before the wizard existed never see it (flag absent = done).
     g_cfg.wizDone     = p.isKey("wizDone") ? p.getBool("wizDone", true) : true;
     g_wizNeeded       = !g_cfg.wizDone;
@@ -372,6 +398,7 @@ void saveConfig() {
     p.putBytes("lbTo", g_cfg.lowBatTo, 16);
     p.putBool("lbSent", g_cfg.lowBatSent);
     p.putUChar("opMode", g_cfg.opMode);
+    p.putUShort("typFeat", g_cfg.typFeat);
     p.putBool("wizDone", g_cfg.wizDone);
     p.putBool("trackOn", g_cfg.trackOn);
     p.putUChar("coordFmt", g_cfg.coordFmt);
@@ -2452,7 +2479,7 @@ enum Page : uint8_t {
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
     PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW, PG_LOWBAT,
-    PG_BACKUPS, PG_FOUND, PG_MODE, PG_HAVOICE
+    PG_BACKUPS, PG_FOUND, PG_MODE, PG_HAVOICE, PG_FEATURES
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -3429,17 +3456,20 @@ void renderLock() {
 enum RowKind : uint8_t { RK_MENU, RK_TOGGLE, RK_INFO, RK_ACTION, RK_ENTRY, RK_PICK };
 const char* kKindName[] = {"Menu", "Toggle", "Info", "Action", "Entry", "Pick"};
 
-struct SetRow { char title[40]; char sub[34]; uint8_t kind; };
+struct SetRow { char title[40]; char sub[34]; uint8_t kind; uint8_t num; };   // num: 0-based, as in Everything
 constexpr int MAX_SET_ROWS = kTzCount > 12 ? kTzCount : 12;
 SetRow g_srows[MAX_SET_ROWS];
 int g_srowCount = 0;
+int g_srowNext = 0;                  // the next row number (hidden rows skip theirs)
+void srowSkip() { g_srowNext++; }      // a row this mode does not show
 
 void srow(uint8_t kind, const char* name, const char* subFmt, ...) {
     if (g_srowCount >= MAX_SET_ROWS) return;
     SetRow& r = g_srows[g_srowCount];
-    snprintf(r.title, sizeof(r.title), "%d : %s : %s", g_srowCount + 1, kKindName[kind], name);
+    r.num = (uint8_t)g_srowNext++;
+    snprintf(r.title, sizeof(r.title), "%d : %s : %s", r.num + 1, kKindName[kind], name);
     if (textW(r.title) > W - 16)              // too long for one line: the kind word goes
-        snprintf(r.title, sizeof(r.title), "%d : %s", g_srowCount + 1, name);
+        snprintf(r.title, sizeof(r.title), "%d : %s", r.num + 1, name);
     va_list ap;
     va_start(ap, subFmt);
     vsnprintf(r.sub, sizeof(r.sub), subFmt ? subFmt : "", ap);
@@ -3486,6 +3516,7 @@ const char* pageTitle(Page p) {
         case PG_BACKUPS:      return "Restore backup";
         case PG_FOUND:        return "If found";
         case PG_HAVOICE:      return "Home Assistant voice";
+        case PG_FEATURES:     return "Typical features";
         case PG_MODE:         return "Mode";
     }
     return "";
@@ -3516,6 +3547,7 @@ void checkinEveryText(char* out, size_t n) {
 
 void buildSettingsRows(Page p) {
     g_srowCount = 0;
+    g_srowNext = 0;
     char a[34], b[16];
     const char* e;
     switch (p) {
@@ -3525,18 +3557,21 @@ void buildSettingsRows(Page p) {
         fmtTime(a, sizeof(a));
         srow(RK_MENU, "Time & Location", "%s %s", a, tzCur().name);
         wifiStatusLine(a, sizeof(a));
-        srow(RK_MENU, "WiFi", "%s", a);
+        if (feature(F_WIFI)) srow(RK_MENU, "WiFi", "%s", a); else srowSkip();
         srow(RK_MENU, "Screen & I/O", "%s, keys %s", g_cfg.dark ? "Black ink" : "White paper",
              g_cfg.kbLight ? "lit" : "dark");
         srow(RK_MENU, "Power", "%s%s", power::modeName(g_pw.mode), g_pwOnUsb ? " (USB: Full)" : "");
         if (g_bat.valid) srow(RK_MENU, "Battery", "%.2f V  %d%%", g_bat.volts, g_bat.pct);
         else             srow(RK_MENU, "Battery", "gauge n/a");
         srow(RK_MENU, "Identity", "%s", g_selfName);
-        srow(RK_MENU, "LoRa", "%.0f MHz %s", LORA_DEFAULT_FREQ / 1e6, loraOnline() ? "online" : "offline");
+        if (feature(F_ADVANCED)) srow(RK_MENU, "LoRa", "%.0f MHz %s", LORA_DEFAULT_FREQ / 1e6, loraOnline() ? "online" : "offline");
+        else srowSkip();
         srow(RK_MENU, "Alerts", "beep %s  vibe %s", g_cfg.beep ? "on" : "off", g_cfg.vibe ? "on" : "off");
-        srow(RK_MENU, "Diagnostics", "paths %u  links %u",
-             g_protoReady ? (unsigned)g_proto.pathCount() : 0u,
-             g_protoReady ? (unsigned)g_proto.linkCount() : 0u);
+        if (feature(F_ADVANCED))
+            srow(RK_MENU, "Diagnostics", "paths %u  links %u",
+                 g_protoReady ? (unsigned)g_proto.pathCount() : 0u,
+                 g_protoReady ? (unsigned)g_proto.linkCount() : 0u);
+        else srowSkip();
         srow(RK_MENU, "Storage", "heap %u KB", (unsigned)(ESP.getFreeHeap() / 1024));
         break;
 
@@ -3633,8 +3668,9 @@ void buildSettingsRows(Page p) {
         srow(RK_MENU, "Saved networks", "%d saved, encrypted%s", g_wifiSavedCount,
              wifiHasAutoCreds() ? ", auto" : "");
         srow(RK_ACTION, "Disconnect", g_wifiSt == WifiSt::Off ? "-" : "Enter = off (pause auto)");
-        srow(RK_MENU, "TCP hub", "%s", tcpStatus());
-        srow(RK_MENU, "Home Assistant voice", "%s", g_cfg.haVoice ? havoice::status() : "OFF");
+        if (feature(F_ADVANCED)) srow(RK_MENU, "TCP hub", "%s", tcpStatus()); else srowSkip();
+        if (feature(F_HAVOICE)) srow(RK_MENU, "Home Assistant voice", "%s", g_cfg.haVoice ? havoice::status() : "OFF");
+        else srowSkip();
         if (!g_cfg.meshWifi) srow(RK_TOGGLE, "Mesh over WiFi", "OFF");
         else if (meshPeers() < 0) srow(RK_TOGGLE, "Mesh over WiFi", "ON (starts with WiFi)");
         else srow(RK_TOGGLE, "Mesh over WiFi", "ON, %d unit%s seen", meshPeers(), meshPeers() == 1 ? "" : "s");
@@ -3876,10 +3912,21 @@ void buildSettingsRows(Page p) {
     }
 
     case PG_MODE:
-        srow(RK_PICK, "Minimal", "%sInbox, Contacts, Settings", g_cfg.opMode == OP_MINIMAL ? "(current) " : "");
-        srow(RK_PICK, "Normal", "%severything (for now)", g_cfg.opMode == OP_NORMAL ? "(current) " : "");
-        srow(RK_PICK, "Advanced", "%severything", g_cfg.opMode == OP_ADVANCED ? "(current) " : "");
+        srow(RK_PICK, "Minimal", "%sInbox, Contacts, talk", g_cfg.opMode == OP_MINIMAL ? "(current) " : "");
+        srow(RK_PICK, "Typical", "%sthe features on S.1.5", g_cfg.opMode == OP_NORMAL ? "(current) " : "");
+        srow(RK_PICK, "Everything", "%sall features", g_cfg.opMode == OP_ADVANCED ? "(current) " : "");
         srow(RK_TOGGLE, "Touch screen", "%s", g_cfg.touchOff ? "OFF (keys only)" : "ON");
+        if (!minimalMode()) {
+            int on = 0;
+            for (int i = 0; i < kFeatureCount; i++) on += (g_cfg.typFeat >> i) & 1;
+            srow(RK_MENU, "Typical features", "%d of %d on", on, kFeatureCount);
+        }
+        break;
+
+    case PG_FEATURES:                                // S.1.5: what Typical shows
+        for (int i = 0; i < kFeatureCount; i++)
+            srow(RK_TOGGLE, kFeatureName[i], "%s", (g_cfg.typFeat >> i) & 1 ? "ON" : "off");
+        srow(RK_ACTION, "Back to the defaults", "Enter");
         break;
 
     case PG_FOUND:                                   // S.4.2.9: what the If found idle screen shows
@@ -4151,7 +4198,18 @@ void activateSetting(int idx) {
             saveConfig();
             Serial.printf("[TOUCH] screen %s\n", g_cfg.touchOff ? "off (keys only)" : "on");
             requestRedraw();
+        } else if (idx == 4 && !minimalMode()) {
+            pushPage(PG_FEATURES);
         }
+        break;
+    case PG_FEATURES:
+        if (idx >= 0 && idx < kFeatureCount) g_cfg.typFeat ^= (uint16_t)(1u << idx);
+        else if (idx == kFeatureCount) g_cfg.typFeat = kTypicalDefault;
+        else break;
+        saveConfig();
+        Serial.printf("[MODE] Typical features 0x%02x\n", (unsigned)g_cfg.typFeat);
+        if (g_cfg.opMode != OP_NORMAL) toast("Used in Typical mode (S.1.2)");
+        requestRedraw();
         break;
     case PG_TIME:
         if (idx == 0) { loadRtcStaging(); pushPage(PG_RTC); }
@@ -5037,6 +5095,7 @@ void stampGraphLabels() {
 // progress. Below: the largest consumers over the shown periods.
 void renderEnergyGraph() {
     g_srowCount = 0;
+    g_srowNext = 0;
     char path[24], hdr[48];
     settingsPath(path, sizeof(path));
     snprintf(hdr, sizeof(hdr), "%s %s", path, pageTitle(g_page));
@@ -5926,10 +5985,10 @@ void drawBottomBar() {
         label(BOT_C_W, BOT_TOP + 2, BOT_A_W, 16, where, true);
         label(BOT_C_W, BOT_TOP + 19, BOT_A_W, 16, g_navKeysOpen ? "K hide" : "K keys", g_navKeysOpen, kKeyNav);
         addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_NAVKEYS);
-    } else if (minimalMode()) {
+    } else if (minimalMode() || (!(g_haveMaps && feature(F_ATLAS)) && !feature(F_PEERS))) {
         navBox(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, "Menu", g_menuOpen, hk ? 'M' : 0);
         if (hk) addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_MENU);
-    } else if (g_haveMaps) {
+    } else if (g_haveMaps && feature(F_ATLAS)) {
         navBox(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, "Atlas", false, hk ? 'A' : 0);
         if (hk) addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_MENU_GO, kMenuMap);
     } else {
@@ -5947,7 +6006,9 @@ void drawBottomBar() {
 // card. Library reads "Games" when the card has no library files (Rat Trap, Chess live there).
 bool menuShown(int i) {
     if (minimalMode()) return kMenuKeys[i] == 'S' || kMenuKeys[i] == 'C' || kMenuKeys[i] == 'I';
-    if (i == kMenuMap) return g_haveMaps;
+    if (i == kMenuMap) return g_haveMaps && feature(F_ATLAS);
+    if (i == kMenuLib) return feature(F_LIBRARY);
+    if (kMenuKeys[i] == 'P') return feature(F_PEERS);
     return true;
 }
 const char* menuLabel(int i) { return i == kMenuLib && !g_haveLib ? "Games" : kMenuLabels[i]; }
@@ -8611,6 +8672,7 @@ void cardKey(const KeyEvent& ev) {
             uint8_t peer[16];
             memcpy(peer, g_cardPeer, 16);
             if (isSelf(peer)) { toast("That is this radio"); break; }
+            if (!feature(F_WALKIE)) { toast("Walkie-talkie is off (S.1.5)"); break; }
             closeCard();
             wtCall(peer);
             break;
@@ -8974,9 +9036,9 @@ void renderWizard() {
             if (g_entry == Entry::FoundText) { snprintf(b, sizeof(b), "%s_", g_buf); line(b, false); }
             break;
         case WZ_MODE:
-            row("1 Minimal", "Inbox, Contacts, Settings", g_cfg.opMode == OP_MINIMAL);
-            row("2 Normal", "everything (for now)", g_cfg.opMode == OP_NORMAL);
-            row("3 Advanced", "everything", g_cfg.opMode == OP_ADVANCED);
+            row("1 Minimal", "Inbox, Contacts, talk", g_cfg.opMode == OP_MINIMAL);
+            row("2 Typical", "most features (pick: S.1.5)", g_cfg.opMode == OP_NORMAL);
+            row("3 Everything", "all features", g_cfg.opMode == OP_ADVANCED);
             y += 6;
             line("Change later: Settings S.1", false);
             break;
@@ -9937,7 +9999,7 @@ void activateCurrent() {
             requestRedraw();
             break;
         case SCR_SETTINGS:
-            if (settingsRowCount()) activateSetting(g_sel);
+            if (settingsRowCount() && g_sel < g_srowCount) activateSetting(g_srows[g_sel].num);
             break;
         default:
             activateListRow(g_listSel);
@@ -9950,8 +10012,10 @@ void digitPressed(int d) {
     if (g_screen == SCR_SETTINGS) {
         int idx = d == 0 ? 9 : d - 1;           // 1..9 = rows 1..9, 0 = row 10
         int n = settingsRowCount();
-        if (idx < 0 || idx >= n) return;           // no clamping to "nearest" row
-        g_sel = idx;
+        int row = -1;                              // the shown row with that number (hidden: none)
+        for (int i = 0; i < g_srowCount; i++) if (g_srows[i].num == idx) { row = i; break; }
+        if (row < 0 || row >= n) return;           // no clamping to "nearest" row
+        g_sel = row;
         clampScroll(g_sel, g_scroll, n);
         activateSetting(idx);
         requestRedraw();
@@ -10370,10 +10434,10 @@ void browseKey(const KeyEvent& ev) {
         // No global Home key: Home is M then H.
         // 'S' is intentionally absent: Settings is reached only via M -> S (guide §7).
         case 'C': goScreen(SCR_CONTACTS); break;
-        case 'P': if (!minimalMode()) goScreen(SCR_PEERS); break;
+        case 'P': if (feature(F_PEERS)) goScreen(SCR_PEERS); break;
         case 'I': goScreen(SCR_INBOX); break;
         case 'A':                                   // Atlas; on a list row with a known position: there
-            if (minimalMode()) break;
+            if (!feature(F_ATLAS)) break;
             if (isListScreen(g_screen) && g_listSel < g_rowCount && cposFind(g_rows[g_listSel].peer) >= 0 &&
                 g_cpos[cposFind(g_rows[g_listSel].peer)].hasPos)
                 mapShowContact(g_rows[g_listSel].peer);
@@ -10432,7 +10496,7 @@ void handleKey(const KeyEvent& ev) {
     if (g_libOpen) { libKey(ev); return; }
     if (g_gameOpen) { gameKey(ev); return; }
     if (g_chessOpen) { chessKey(ev); return; }
-    if (ev.fn && g_cfg.haVoice && havoice::connected()) {   // MIC = talk to Home Assistant
+    if (ev.fn && g_cfg.haVoice && feature(F_HAVOICE) && havoice::connected()) {   // MIC = talk to Home Assistant
         // Tap to talk (as ESPHome voice devices): MIC starts listening, Home Assistant stops it
         // when you pause, MIC again stops it at once. (Holding MIC was cut short on COM9.)
         if (havoice::talking()) havoice::stopTalk("MIC pressed");
@@ -10565,7 +10629,7 @@ void handleTouch(int16_t x, int16_t y) {
         case H_ROW:
             if (g_screen == SCR_SETTINGS) {          // settings: tap = activate
                 g_sel = hit->arg;
-                activateSetting(hit->arg);
+                activateSetting(hit->arg < g_srowCount ? g_srows[hit->arg].num : hit->arg);
                 requestRedraw();
             } else if (hit->arg == g_listSel) {      // lists: tap selected row = Enter
                 activateListRow(hit->arg);
@@ -12617,7 +12681,7 @@ bool begin() {
 // Home Assistant voice: run the satellite, stop talking when MIC is let go, show what
 // HA heard and answered.
 void haVoiceTick() {
-    havoice::tick(wifiConnected() && g_pwEff.wifi, g_cfg.haVoice, g_selfName, g_cfg.haKey);
+    havoice::tick(wifiConnected() && g_pwEff.wifi, g_cfg.haVoice && feature(F_HAVOICE), g_selfName, g_cfg.haKey);
     static uint32_t shown = 0;
     if (havoice::changedAt() != shown) {
         shown = havoice::changedAt();

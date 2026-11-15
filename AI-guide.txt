@@ -219,6 +219,12 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        Space talk/listen, ^ hang up; console wt call <hex> | answer | talk | hang. Tested COM5<->COM6.
        Internal RAM is tight: HA voice buffers moved to PSRAM, mic DMA 4x256, speaker DMA 4x512.
        Next: LoRa invite + hotspot (no shared WiFi), LXMF audio field (voice messages, Sideband).
+[DONE 2026-11-15] Operator modes: S.1 Minimal / Typical / Everything (NVS opMode 0/1/2 as before).
+       feature(F_*) gates: Typical = g_cfg.typFeat (NVS typFeat, S.1.5 toggles, default 0x79 =
+       walkie, WiFi, Atlas, Library, Peers; off: voice messages, HA voice, Advanced = LoRa page,
+       Diagnostics, TCP hub); Everything = all; Minimal = walkie only. Settings rows keep their
+       number when hidden (SetRow.num, srowSkip()): digits find the row by number; activateSetting
+       gets the number. Gated: menu (Atlas, Library, Peers), A / P keys, middle tab, card W, MIC.
 [DONE 2026-11-15] LXMF fields / voice-message engine API (src/core/protocol/LxmfFields.h; UI not done).
        Send: backend.lxmfSubmitAudio(dest16, lxmf::AudioCodec2_700C|_1600|_3200, audio, len[, text,
        textLen]) -> same ticket/poll/acknowledge flow as lxmfSubmit (generic: lxmfSubmitFields with a
