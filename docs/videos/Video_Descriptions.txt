@@ -1,0 +1,49 @@
+video descriptions
+
+-- atlas.mp4 
+- Start on idle screen, press a button have it go to inbox as most people that last thing they did ws the inbox. So come off idle screen to inbox. 
+- Then press A, then K to show show naviggation keys. Navigate around showing how it works similar to what you did. 
+- GPS position is "The Alamo". Show pan, scroll, zoom, locate Mount Rushmore. Get the heading and distance from your current position. 
+- Go through contacts, happen to find one at these locations vacation spots. Vietnam wall in DC, remote mountain hiker in Montana, and ULF radio station in Maine. Once done return to inbox. 
+- When done it goes back to idle screen. 
+
+-- Common_checkup.mp4 
+- show 2 deivces Author on left and Jillian on thee right.
+- Emphizie on Authors device the new message some how, Perhaps wave hand near it, or use an arrow to call attention to the new message part of the idle screen. 
+- use ratspeak idle screen. Use password "42" to unlock author. 
+- Press a button, goes to inbox. 
+- you see 3rd of inbox list has new message from Jillian. 
+- You go to it and read "what's the answer to the universe live everything?". Author replies "42". 
+- Jillian replies "calculating complete" Author ACK with OK. screen goes back to idle. If I have not done this hitchiner guide reference quite correct, embelish it a bit. When done it goes back to idle screen. 
+- When done it goes back to idle screen. 
+
+-- Contact_exchange.mp4 
+- idle screen is maps, press a key goes to Inbox. No password. 
+- Show it send a contact to Jill, via M P R.
+- After Jack sends his contact to Jill, Jill then replies and it show Jack receiving a contact. Perhaps put a tempoary over lay box to explain what's happening. 
+- On idle screen start with overlay box which says "Jack meets Jill, and is going to send his contact to her" 
+- Then after he sends, overlay says "Jill recieves his contact and sends her contact to Jack". Then Jack recieves her contact and show it's been add it to his contacts. 
+- Make the video something like that. Perhaps add additional details if I missed something. 
+- When done it goes back to idle screen. 
+
+-- Search_for_others.mp4
+- Idle screen is if found contact. Use dective Columbo address etc. Show 2 screens. 
+- press a key goes to inbox, 
+- nav M P to peers. Ovelay box briefly explains purpose of announce. Then press Announce to show how you do that to others can find you. 
+- Then overlay box brielfy explains peers are people who have announced or how people get in the peers list. 
+- Then we see new ID shows up, wich we know is a person of interest. pick a character from one of his movies. 
+- Overlay box says we know xyz just announced and we know who this is, lets add to contacts. 
+- He then turns that peer contact into a contact. 
+- Then overlay notes he'll now send an confirmation message, and he then sends a confiramtion message. 
+- When done it goes back to idle screen. 
+
+-- Add_wifi_in_minimal_mode.mp4
+- start in minimal mode no password, idle screen is the "return to" vairnat. Use W1AW in CT is as the address. pres sa button goes to inbox, 
+- then M S, etc to find and configure a wifi router. 
+- Pick routers which are likely found near that ham station. Perhaps existing names with ham radio themes. 
+- When done it goes back to idle screen. 
+
+
+misc notes
+- In file names use _ instead of space, to prevent %20 issues in web pages etc.
+- when showing press a number in vidoes, show hand press and hold "sym" with half click sound. Then other hand press button button with full click sound. Then release with 2nd half click sound. 
