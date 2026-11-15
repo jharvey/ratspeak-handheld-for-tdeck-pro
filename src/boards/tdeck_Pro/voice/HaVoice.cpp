@@ -324,7 +324,7 @@ void handleEvent(const uint8_t* d, size_t n) {
             break;
         case EV_TTS_STREAM_START: g_playing = true; g_runAt = millis(); setStatus("speaking"); break;
         case EV_TTS_STREAM_END: g_playing = false; break;
-        case EV_RUN_END: endRun("ready: hold MIC to talk"); break;
+        case EV_RUN_END: endRun("ready: press MIC to talk"); break;
         case EV_ERROR: {
             char e[48];
             snprintf(e, sizeof(e), "HA: %.40s", msg[0] ? msg : "error");
@@ -364,7 +364,7 @@ void handleMessage(uint16_t type, const uint8_t* d, size_t n) {
             bool sub = false;
             while (in.next(f, wt, v, s, len)) if (f == 1 && wt == 0) sub = v != 0;
             g_vaSubscribed = sub;
-            setStatus(sub ? "ready: hold MIC to talk" : "HA connected (voice off)");
+            setStatus(sub ? "ready: press MIC to talk" : "HA connected (voice off)");
             break;
         }
         case VA_RESPONSE: {
@@ -680,6 +680,7 @@ bool busy() { return g_talking || g_runActive || g_playing; }
 bool startTalk() {
     if (!connected()) { setStatus(g_client ? "HA has not turned voice on" : "Home Assistant not connected"); return false; }
     if (g_talking) return true;
+    if (g_runActive) { setStatus("busy: HA is still answering"); return false; }   // one run at a time
     if (!g_audio->micStart()) { setStatus("microphone failed"); return false; }
     PbOut o;
     o.boolean(1, true);                          // start
@@ -705,8 +706,11 @@ void stopTalk(const char* why) {
     g_talking = false;
     g_streaming = false;
     g_audio->micStop();
-    PbOut o;                                     // VoiceAssistantRequest start=false: end of audio
-    sendMessage(VA_REQUEST, o.b, o.n);
+    // End of speech: the last VoiceAssistantAudio with end=true, so HA finishes the run (as an
+    // ESPHome device does). VoiceAssistantRequest start=false would abort it (nothing heard).
+    PbOut o;
+    o.boolean(2, true);
+    sendMessage(VA_AUDIO, o.b, o.n);
     g_runAt = millis();
     Serial.printf("[HAV] mic stopped (%s): %lu ms of audio sent in %lu ms, peak %ld\n", why,
                   (unsigned long)(g_micSamples * 1000ULL / kRate), (unsigned long)(millis() - g_talkStart),

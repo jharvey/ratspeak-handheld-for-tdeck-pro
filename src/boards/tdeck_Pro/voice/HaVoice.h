@@ -5,7 +5,7 @@
 // it as an Assist satellite. With an encryption key set (the usual case) the connection is
 // encrypted with Noise_NNpsk0_25519_ChaChaPoly_SHA256, the same as an ESPHome device with
 // "api: encryption: key: ...": Home Assistant asks for that key when it adds the device.
-// Holding MIC streams the microphone (16 kHz mono) to Assist; Home Assistant's spoken answer
+// Pressing MIC streams the microphone (16 kHz mono) to Assist; Home Assistant's spoken answer
 // is streamed back over the same connection and plays on the speaker.
 
 #include <Arduino.h>

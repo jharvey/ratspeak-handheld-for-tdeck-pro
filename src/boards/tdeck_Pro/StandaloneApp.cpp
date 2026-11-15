@@ -10197,8 +10197,6 @@ void minimalToInbox() {
     if (g_screen != SCR_INBOX) goScreen(SCR_INBOX);
 }
 
-bool g_talkByKey = false;        // HA voice started by MIC: stops when MIC is let go
-
 void handleKey(const KeyEvent& ev) {
     if (g_idleActive) {                 // any key wakes; the key itself is consumed
         g_idleActive = false;
@@ -10220,8 +10218,11 @@ void handleKey(const KeyEvent& ev) {
     if (g_libOpen) { libKey(ev); return; }
     if (g_gameOpen) { gameKey(ev); return; }
     if (g_chessOpen) { chessKey(ev); return; }
-    if (ev.fn && g_cfg.haVoice && havoice::connected()) {   // MIC held = talk to Home Assistant
-        if (havoice::startTalk()) { g_talkByKey = true; toast("HA: listening, release MIC to send"); }
+    if (ev.fn && g_cfg.haVoice && havoice::connected()) {   // MIC = talk to Home Assistant
+        // Tap to talk (as ESPHome voice devices): MIC starts listening, Home Assistant stops it
+        // when you pause, MIC again stops it at once. (Holding MIC was cut short on COM9.)
+        if (havoice::talking()) havoice::stopTalk("MIC pressed");
+        else if (havoice::startTalk()) toast("HA: listening, speak now");
         return;
     }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
@@ -12325,8 +12326,6 @@ bool begin() {
 // HA heard and answered.
 void haVoiceTick() {
     havoice::tick(wifiConnected() && g_pwEff.wifi, g_cfg.haVoice, g_selfName, g_cfg.haKey);
-    if (g_talkByKey && havoice::talking() && !g_kb.micHeld()) havoice::stopTalk("MIC released");
-    if (!havoice::talking()) g_talkByKey = false;
     static uint32_t shown = 0;
     if (havoice::changedAt() != shown) {
         shown = havoice::changedAt();

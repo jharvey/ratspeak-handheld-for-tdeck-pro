@@ -1,7 +1,7 @@
 HOME ASSISTANT VOICE
 
 The unit can be a voice device for Home Assistant (HA) over WiFi. To HA it looks like an
-ESPHome voice device. Hold MIC, speak, let go: HA hears it, runs the command and its spoken
+ESPHome voice device. Press MIC, speak, pause: HA hears it, runs the command and its spoken
 answer plays on the speaker.
 
 ON THE UNIT
@@ -14,7 +14,7 @@ ON THE UNIT
    4 New random key (Enter twice). HA then needs the new key.
    5 No encryption (Enter twice): HA connects without a key. Not recommended.
    6 Name in Home Assistant: the device name HA shows, port 6053.
-   Row 1 then shows what it is doing: waiting for Home Assistant, ready: hold MIC
+   Row 1 then shows what it is doing: waiting for Home Assistant, ready: press MIC
    to talk, listening, thinking, speaking.
 
 IN HOME ASSISTANT (once)
@@ -27,8 +27,9 @@ IN HOME ASSISTANT (once)
    text-to-speech) it should use.
 
 TALKING
-- Hold MIC on any screen (not while typing a message), say the command, let go.
-- Up to 15 s per command; HA may also end it when you stop talking.
+- Press MIC on any screen (not while typing a message) and say the command. There is no
+  wake word: "OK Nabu" alone does nothing.
+- HA stops listening when you pause; MIC again stops it at once. Up to 15 s per command.
 - A message at the bottom shows what HA heard and answered.
 - MIC alone still does a full screen refresh when HA voice is off or not connected.
 
