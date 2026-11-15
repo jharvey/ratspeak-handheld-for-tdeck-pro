@@ -1,8 +1,8 @@
 env tdeck_pro_standalone
-source 28b8ff572bafb94abd203374daee1b703c5ca863 + uncommitted changes
-built 2026-11-14 20:48 on debian-build (tools/vm_build.py)
-size 2017616
-sha256 c82a641f8e55cf77b552fee3567a1af4adf9e95cd3e92cbfa1c47a2d5aee5ee1
+source 93eb575c8f34f91f660ca5ca24000ef717f24a87 + uncommitted changes
+built 2026-11-14 21:04 on debian-build (tools/vm_build.py)
+size 2017680
+sha256 42a9e544855b45a202b9d008047633c65e6067ea49d0a2801e10b2e610db75b0
 uncommitted changes in the build:
    M platformio.ini
    M tools/check_build_identity.py
