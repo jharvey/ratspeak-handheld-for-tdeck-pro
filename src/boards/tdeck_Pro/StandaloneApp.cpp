@@ -1986,7 +1986,7 @@ bool locOffered() { return g_threadLoc.valid && (!cardOffered() || g_threadLoc.c
 
 // ---- Thread history ------------------------------------------------------------
 constexpr int HIST_ROWS = 6;
-struct HistRow { char text[96]; char status[12]; bool incoming; bool autoLoc; bool voice; uint32_t counter; };   // text wraps to 3 lines
+struct HistRow { char text[96]; char status[12]; bool incoming; bool autoLoc; bool voice; uint32_t counter; };   // text wraps (bubbleWrap)
 HistRow g_hist[HIST_ROWS];
 int  g_histCount = 0;
 char g_histNote[24] = "";
@@ -4864,8 +4864,8 @@ void renderList() {
 }
 
 // ---- Thread (entry mode: typing goes to compose) ---------------------------------
-// A message in up to 3 lines (word wrap, the last line cut with ".."), each <= maxW pixels.
-constexpr int kBubbleLines = 3, kBubbleLineH = 18;
+// A message in up to 6 lines (word wrap; the last line ends ".." only if still longer), each <= maxW px.
+constexpr int kBubbleLines = 6, kBubbleLineH = 18;   // 6: a 95-character message never needs ".."
 int bubbleWrap(const char* s, int maxW, char out[kBubbleLines][48]) {
     int n = 0;
     const char* p = s;
@@ -4952,6 +4952,7 @@ void renderThread() {
         };
         int start = g_histCount, used = 0;
         while (start > 0 && y + used + hOf(start - 1) <= yMax) { used += hOf(start - 1); start--; }
+        if (start == g_histCount) start = g_histCount - 1;   // the newest always shows (taller: clipped)
         for (int i = start; i < g_histCount; i++) {
             drawBubble(y, g_hist[i].text, g_hist[i].incoming, g_hist[i].incoming ? nullptr : g_hist[i].status);
             y += hOf(i);
