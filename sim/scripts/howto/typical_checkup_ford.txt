@@ -1,0 +1,10 @@
+# Companion for typical_checkup.txt: an earlier chat.
+expect 60000 [BOOT] ready
+serial wiz skip
+serial contact {DEEP} Deep Thought
+wait 3000
+serial a
+wait 20000
+serial msg {DEEP} Don't panic. And bring a towel.
+wait 300000
+quit

@@ -1,0 +1,94 @@
+# How-to video: announce, Peers, save a new peer, message him. Device hv_columbo; companion
+# peer_search_franklin.txt (hv_franklin) starts later and announces while Columbo watches Peers.
+expect 60000 [BOOT] ready
+serial wiz skip
+serial found 1 Lt. Columbo
+serial found 2 (213) 555-0147
+serial found 3 LAPD Homicide Division
+serial found 4 150 N. Los Angeles St.
+serial found 5 Los Angeles
+serial found 6 CA
+serial found 7 90012
+serial found 8 USA
+serial found 9 Ask for the Lieutenant.
+serial found 10 Raincoat, cigar, dog.
+serial idlescr 3
+wait 1000
+key M
+key S
+wait 800
+key 4
+wait 800
+key 2
+wait 800
+shot pre-idle-page.png
+key 0
+wait 800
+shot pre-found-addr.png
+key BACK
+wait 600
+key BACK
+wait 600
+key BACK
+wait 800
+key I
+wait 1500
+serial idle now
+wait 2500
+rec peer_search
+caption Lt. Columbo is looking for someone. His radio sleeps and shows his If-found details.
+wait 3500
+caption Any key wakes it: the Inbox.
+wait 1200
+key SPACE
+wait 2000
+caption M, then P: Peers.
+wait 1000
+key M
+wait 900
+key P
+wait 2000
+note 4800 Announce: the radio tells others nearby who it is, so they can find it and message it.
+caption R on Peers announces this radio.
+wait 4800
+key R
+wait 2500
+note 4800 Peers lists every radio that announced and was heard: its signal and how long ago.
+wait 5000
+caption Waiting ... someone announces.
+expect 120000 {FRANKLIN16}
+wait 2000
+key P
+wait 2500
+caption A new radio: Ken Franklin, a person of interest.
+wait 2000
+note 5000 We know who just announced. Let's add him to Contacts.
+wait 5000
+caption Enter opens its contact page. 2 (Rename) gives it a name.
+wait 1000
+key ENTER
+wait 2000
+key 2
+wait 1500
+type Ken Franklin
+wait 600
+key ENTER
+wait 2500
+note 4500 Now he sends a confirmation message.
+caption Enter, then 1 (Message) opens the chat.
+wait 4500
+key ENTER
+wait 1500
+key 1
+wait 2000
+caption Type, Enter sends.
+type Just one more thing - Columbo
+wait 600
+key ENTER
+wait 6000
+caption Delivered. Later the radio goes back to sleep.
+wait 3000
+serial idle now
+wait 3500
+rec off
+quit

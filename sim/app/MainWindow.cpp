@@ -490,6 +490,7 @@ void MainWindow::recStart(const QString& dirIn) {
         connect(recTimer_, &QTimer::timeout, this, &MainWindow::recFrame);
     }
     recTimer_->start(40);
+    recLog(QString("T0 %1").arg(recT0_));     // wall clock: lines up two devices' recordings
     recFrame();
     fprintf(stdout, "[SIM] recording to %s\n", recDir_.toLocal8Bit().constData());
     fflush(stdout);
@@ -582,7 +583,28 @@ void MainWindow::stepScript() {
         fprintf(stdout, "[SCRIPT] %s\n", line.toLocal8Bit().constData());
         fflush(stdout);
         if (cmd == "wait") { next(arg.toInt()); return; }
+        if (cmd == "key" && recLogFile_) {
+            // Recording: SYM / ALT combinations as a real hand does them: hold the modifier,
+            // press the key, release the modifier (the video shows two hands).
+            const QStringList parts = device_->specParts(arg);
+            if (parts.size() == 2 && (parts[0] == "SYM" || parts[0] == "ALT")) {
+                const QStringList seq = {"down " + parts[0], "wait 380", "key " + parts[1], "wait 330",
+                                         "up " + parts[0], "wait 150"};
+                for (int i = seq.size() - 1; i >= 0; i--) script_.insert(scriptPos_, seq[i]);
+                next(5); return;
+            }
+        }
         if (cmd == "key") { recKey("K", arg); device_->tapKey(arg); next(80); return; }
+        if (cmd == "note") {      // note <ms> <text>: a box over the screen in the video
+            recLog(QString("N %1 %2").arg(QDateTime::currentMSecsSinceEpoch() - recT0_).arg(arg));
+            next(5); return;
+        }
+        if (cmd == "point") {     // point <x> <y> <ms>: a hand points at panel x,y in the video
+            const QPointF p = device_->panelToPx(arg.section(' ', 0, 0).toDouble(), arg.section(' ', 1, 1).toDouble());
+            recLog(QString("P %1 %2 %3 %4").arg(QDateTime::currentMSecsSinceEpoch() - recT0_)
+                       .arg(arg.section(' ', 2, 2).toInt()).arg(qRound(p.x())).arg(qRound(p.y())));
+            next(5); return;
+        }
         if (cmd == "down") { recKey("D", arg); device_->pressKey(arg, true); next(30); return; }
         if (cmd == "up") { recKey("U", arg); device_->pressKey(arg, false); next(30); return; }
         if (cmd == "rec") {   // rec <dir> [ms per typed key] | rec off
@@ -598,12 +620,26 @@ void MainWindow::stepScript() {
             next(5); return;
         }
         if (cmd == "type" && recLogFile_) {
-            // Recording: one key at a time, so the video shows each press.
+            // Recording: one key at a time, so the video shows each press. A run of characters
+            // that need the same modifier (small letters: ALT, digits: SYM) holds it once.
             QStringList keys;
+            QString held;
             for (QChar c : arg) {
-                const QString k = c == ' ' ? QString("SPACE") : c.isLower() ? "ALT+" + QString(c.toUpper()) : QString(c);
+                QString mod, k;
+                if (c == ' ') k = "SPACE";
+                else if (c.isLower()) { mod = "ALT"; k = QString(c.toUpper()); }
+                else {
+                    const QStringList parts = device_->specParts(QString(c));
+                    if (parts.size() == 2) { mod = parts[0]; k = parts[1]; } else k = QString(c);
+                }
+                if (mod != held) {
+                    if (!held.isEmpty()) keys << "up " + held << "wait 200";
+                    if (!mod.isEmpty()) keys << "down " + mod << "wait 380";
+                    held = mod;
+                }
                 keys << "key " + k << QString("wait %1").arg(recTypeMs_);
             }
+            if (!held.isEmpty()) keys << "up " + held << "wait 200";
             for (int i = keys.size() - 1; i >= 0; i--) script_.insert(scriptPos_, keys[i]);
             next(5); return;
         }

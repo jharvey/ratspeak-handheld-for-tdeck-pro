@@ -1,47 +1,91 @@
-# How-to video: open the Atlas (offline map). Device ht_map (map tiles on its SD card,
-# copied from the map master copy around the simulator's default GPS fix).
+# How-to video: the Atlas. Device hv_davy at the Alamo (sim.ini gps), map tiles + place names on
+# its SD card (howto_seed\atlas), three contacts with last positions far away.
 expect 60000 [BOOT] ready
 serial wiz skip
+serial contact 1a2b3c4d5e6f70819a2b3c4d5e6f7081 Jim Bowie
+serial contact 5e1a7c3b9d2f40a18c6e2b7d4f9a0c31 Ray at The Wall
+serial cpos 5e1a7c3b9d2f40a18c6e2b7d4f9a0c31 38.8913 -77.0477 6
+serial contact 9b4d2e7f1a6c38b05d2e9f7a3c1b6e48 Dale hiking MT
+serial cpos 9b4d2e7f1a6c38b05d2e9f7a3c1b6e48 47.5500 -113.0200 22
+serial contact 2c8f6a1d4b9e7035a1f2c8d6e4b9a7f2 NAA Cutler VLF
+serial cpos 2c8f6a1d4b9e7035a1f2c8d6e4b9a7f2 44.6447 -67.2817 41
 wait 4000
-key M
-key H
+key I
 wait 1500
+serial idle now
+wait 2500
 rec atlas
-caption Press A on any screen to open the Atlas, the offline map. (Also M, then A.)
+caption The radio is asleep. Any key wakes it, back where you were: the Inbox.
+wait 2500
+key SPACE
+wait 2000
+caption A opens the Atlas, the offline map, on your own position: the Alamo, San Antonio.
 wait 1500
 key A
 wait 3000
+caption K shows the map keys. K again hides them.
+wait 1200
+key K
+wait 3800
+key K
+wait 1500
+caption T F V H move the map up, left, down, right.
+wait 1000
+key H
+wait 900
+key V
+wait 900
+key F
+wait 900
+key T
+wait 1000
 caption W zooms out (wider), Z zooms in.
 wait 1000
 key W
-wait 1500
+wait 1000
 key W
-wait 1500
+wait 1000
 key Z
-wait 2000
-caption T F V H move the map up, left, down, right.
-wait 1000
-key T
-wait 1000
-key F
-wait 1000
-key V
-wait 1000
-key H
-wait 1200
+wait 1500
 caption D (or Enter) centres the map on you again.
 wait 1000
 key D
 wait 2000
-caption K shows the keys card with all map keys. K again hides it.
-wait 1000
-key K
-wait 3500
-key K
+caption L locates a place: type the start of its name, then Enter.
+wait 1200
+key L
+wait 800
+type MOUNT RUSHMORE
+wait 600
+key ENTER
+wait 2500
+caption The nearest matches. Pick one by its number: 1 jumps there.
 wait 1500
-caption ^ (Shift) closes the map.
-wait 1000
-key BACK
-wait 2200
+key 1
+wait 2500
+caption Alt + P right away saves it as a waypoint. Enter keeps its name.
+wait 1200
+key ALT+P
+wait 1500
+key ENTER
+wait 2000
+caption G: the heading and distance from you to it.
+wait 1200
+key G
+wait 4500
+key G
+wait 1500
+caption N steps through your contacts' last positions, newest first.
+wait 1500
+key N
+wait 2800
+key N
+wait 2800
+key N
+wait 3500
+caption I leaves the map for the Inbox.
+wait 1200
+key I
+wait 2500
 rec off
 quit

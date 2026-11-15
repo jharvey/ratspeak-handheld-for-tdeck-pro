@@ -1,0 +1,11 @@
+# Companion for peer_search.txt: Ken Franklin's radio (started late) announces a few times.
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 3000
+serial a
+wait 15000
+serial a
+wait 15000
+serial a
+wait 90000
+quit

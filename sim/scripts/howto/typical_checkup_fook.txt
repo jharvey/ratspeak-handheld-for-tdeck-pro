@@ -1,0 +1,13 @@
+# Companion for typical_checkup.txt: Fook asks the Ultimate Question, then thanks Deep Thought.
+expect 60000 [BOOT] ready
+serial wiz skip
+serial contact {DEEP} Deep Thought
+wait 4000
+serial a
+wait 8000
+serial msg {DEEP} What's the answer to the ultimate question of life, the universe and everything?
+expect 300000 [MSG] inbound
+wait 5000
+serial msg {DEEP} Calculation complete. Thank you, Deep Thought.
+wait 60000
+quit

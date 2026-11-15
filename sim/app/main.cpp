@@ -112,10 +112,25 @@ void applyConfig(const QMap<QString, QString>& cfg) {
             const qulonglong kb = v.toULongLong(&ok);
             if (!ok || kb < 64) badConfig(k, v, "at least 64");
             h.flashBytes = kb * 1024;
+        } else if (k == "wifi") {
+            // wifi = NAME/RSSI/PASSWORD; NAME2/RSSI   (no password = open network)
+            std::vector<sim::WifiNet> nets;
+            for (const QString& e : v.split(';', Qt::SkipEmptyParts)) {
+                const QStringList f = e.trimmed().split('/');
+                if (f.size() < 2 || f[0].trimmed().isEmpty()) badConfig(k, v, "NAME/RSSI/PASSWORD; ...");
+                sim::WifiNet n;
+                n.ssid = f[0].trimmed().toStdString();
+                n.rssi = f[1].trimmed().toInt(&ok);
+                if (!ok) badConfig(k, v, "NAME/RSSI/PASSWORD; ...");
+                n.password = f.size() > 2 ? f.mid(2).join('/').trimmed().toStdString() : std::string();
+                n.secure = !n.password.empty();
+                nets.push_back(n);
+            }
+            h.wifiNets = nets;
         } else if (k == "fast") {
             h.realisticPanel = !onOff(k, v);
         } else {
-            fprintf(stderr, "ratspeak-sim: unknown setting \"%s\" (sd battery usb charged gps sats flashkb fast)\n",
+            fprintf(stderr, "ratspeak-sim: unknown setting \"%s\" (sd battery usb charged gps sats flashkb fast wifi)\n",
                     k.toLocal8Bit().constData());
             exit(2);
         }

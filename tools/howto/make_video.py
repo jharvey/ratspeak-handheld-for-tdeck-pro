@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
-"""Turn a simulator recording into a how-to video (MP4, H.264 + AAC).
+"""Turn simulator recordings into a how-to video (MP4, H.264 + AAC).
 
 The simulator script records with "rec <dir>" ... "rec off" (sim/README.md): <dir> holds
-fNNNNN.png (whole device drawing, saved when it changes) and rec.txt with the frame times,
-key taps (cap rectangles) and captions. This script:
+fNNNNN.png (whole device drawing, saved when it changes) and rec.txt:
+  T0 <epoch ms>               start (lines up two devices recorded at the same time)
+  F <ms> <file>               a frame
+  K|D|U <ms> <key> x,y,w,h    key tap / key held down / released (cap rectangle in frame pixels)
+  C <ms> <text>               caption above the device(s) from now on
+  N <ms> <dur> <text>         a note box over the screen for dur ms
+  P <ms> <dur> <x> <y>        a hand points (and wiggles) at x,y for dur ms
+  E <ms>                      end
+This script:
   * plays the frames at their real times, with long quiet gaps shortened,
-  * draws a pointing hand (tools/howto/hand.svg, turned ~45 degrees) on each key pressed,
-    a ring on held modifiers (Alt, SYM) and a badge with the key's name,
-  * shows the current caption above the device,
-  * adds a short click sound on every key press,
+  * draws pointing hands (tools/howto/hand.svg, turned ~40 degrees): a key tap gets one hand;
+    a held SYM / Alt gets the other hand (the key further right gets the right hand),
+  * a badge with the key's name ("1 (SYM + W)"), captions, note boxes,
+  * click sounds: a full click per tap, a half click when a modifier goes down and up,
+  * one device, or two side by side (--rec2, --labels Jack Jill),
   * encodes with ffmpeg (found on PATH, or set FFMPEG=...).
 
   python tools/howto/make_video.py <rec dir> <out.mp4> [--title "Send a message"]
+         [--rec2 <rec dir>] [--labels Jack Jill]
 Needs Pillow.
 """
 import argparse
@@ -26,18 +35,22 @@ import sys
 import tempfile
 import wave
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FPS = 25
 SCALE = 4                 # hand drawn at 4x, then reduced (smooth edges)
 HAND_ANGLE = 40           # degrees, counter-clockwise: finger points up and to the left
-HAND_SIZE = 0.78          # hand height relative to its SVG units (116) -> frame pixels / SVG unit
+HAND_SIZE = 0.78          # frame pixels per SVG unit, for a 410 px wide device
 QUIET_MAX_MS = 2200       # a gap with nothing happening longer than this ...
 QUIET_KEEP_MS = 1300      # ... is shortened to this
 HAND_BEFORE_MS = 220      # hand shows this long before a press
 HAND_AFTER_MS = 650       # and stays this long after it
+HOLD_BEFORE_MS = 250      # a held modifier's hand arrives this long before it goes down
+HOLD_AFTER_MS = 350       # and leaves this long after it is released
 GLIDE_MS = 160            # moves to the next key this fast when presses follow each other
+STAY_MS = 900             # between two presses closer than this the hand stays on screen
+ORANGE = (230, 120, 0)
 
 
 def find_font(size, bold=False):
@@ -79,8 +92,6 @@ def svg_paths(svg_text):
                                 (1 - s) ** 2 * pos[1] + 2 * (1 - s) * s * c[1] + s * s * e[1]))
                 pos = e
                 i += 5
-            elif t == 'Z':
-                i += 1
             else:
                 i += 1
         if cur:
@@ -90,9 +101,8 @@ def svg_paths(svg_text):
 
 
 def make_hand(px_per_unit):
-    """RGBA image of the hand, turned; returns (image, fingertip x, y in that image)."""
+    """Right hand, turned; returns (RGBA image, fingertip x, y in that image)."""
     svg = open(os.path.join(HERE, "hand.svg"), encoding="utf-8").read()
-    paths = svg_paths(svg)
     k = px_per_unit * SCALE
     pad = 6
     w, h = int((84 + 2 * pad) * k), int((116 + 2 * pad) * k)
@@ -100,70 +110,21 @@ def make_hand(px_per_unit):
     d = ImageDraw.Draw(img)
     lw = max(2, int(2.6 * k))
     to = lambda p: ((p[0] + pad) * k, (p[1] + pad) * k)
-    for filled, subs in paths:
+    for filled, subs in svg_paths(svg):
         for sub in subs:
             pts = [to(p) for p in sub]
             if filled:
                 d.polygon(pts, fill=(255, 255, 255, 255))
             d.line(pts + ([pts[0]] if filled else []), fill=(0, 0, 0, 255), width=lw, joint="curve")
     tip = to((30, 1))
-    # rotate around the image centre, then find where the tip went
     cx, cy = w / 2, h / 2
     rot = img.rotate(HAND_ANGLE, resample=Image.BICUBIC, expand=True)
     a = math.radians(HAND_ANGLE)
     dx, dy = tip[0] - cx, tip[1] - cy
-    # PIL rotates counter-clockwise on screen (y down): x' = dx cos + dy sin, y' = -dx sin + dy cos
     rx = dx * math.cos(a) + dy * math.sin(a) + rot.width / 2
     ry = -dx * math.sin(a) + dy * math.cos(a) + rot.height / 2
     small = rot.resize((rot.width // SCALE, rot.height // SCALE), Image.LANCZOS)
     return small, rx / SCALE, ry / SCALE
-
-
-# ---- recording -------------------------------------------------------------------------
-def load_rec(d):
-    frames, keys, caps, end = [], [], [], 0
-    for line in open(os.path.join(d, "rec.txt"), encoding="utf-8"):
-        line = line.rstrip("\n")
-        if not line:
-            continue
-        kind, rest = line[0], line[2:]
-        if kind == "F":
-            t, f = rest.split(" ", 1)
-            frames.append((int(t), f))
-        elif kind in "KDU":
-            parts = rest.split(" ")
-            t, spec = int(parts[0]), parts[1]
-            rects = [tuple(int(v) for v in p.split(",")) for p in parts[2:] if p.count(",") == 3]
-            keys.append((int(t), kind, spec, rects))
-        elif kind == "C":
-            t, _, text = rest.partition(" ")
-            caps.append((int(t), text))
-        elif kind == "E":
-            end = int(rest)
-    end = max(end, frames[-1][0] if frames else 0, keys[-1][0] + 1000 if keys else 0)
-    return frames, keys, caps, end
-
-
-def time_map(points, end):
-    """Piecewise map recording ms -> video ms, shortening quiet gaps."""
-    pts = sorted(set([0] + points + [end]))
-    segs, vt = [], 0
-    for a, b in zip(pts, pts[1:]):
-        gap = b - a
-        out = gap if gap <= QUIET_MAX_MS else QUIET_KEEP_MS
-        segs.append((a, b, vt, vt + out))
-        vt += out
-    def fwd(t):
-        for a, b, va, vb in segs:
-            if a <= t <= b:
-                return va + (t - a) * (vb - va) / max(1, b - a)
-        return vt
-    def back(v):
-        for a, b, va, vb in segs:
-            if va <= v <= vb:
-                return a + (v - va) * (b - a) / max(1, vb - va)
-        return end
-    return fwd, back, vt
 
 
 KEY_NAMES = {"ENTER": "Enter", "RETURN": "Enter", "BKSP": "Backspace", "SPACE": "Space", "SHIFT": "^ (Shift)",
@@ -177,14 +138,14 @@ LETTER_OF = {v: k for k, v in SYM_OF.items() if k not in ("N",)}
 def key_label(spec):
     if len(spec) == 1 and not spec.isalpha():
         if spec in LETTER_OF:
-            return "%s  (SYM + %s)" % (spec, LETTER_OF[spec].replace("MIC", "MIC"))
+            return "%s  (SYM + %s)" % (spec, LETTER_OF[spec])
         return spec
-    parts = spec.split("+")
-    if len(parts) == 2 and parts[0].upper() == "ALT" and len(parts[1]) == 1:
+    parts = [p.upper() for p in spec.split("+")]
+    if len(parts) == 2 and parts[0] == "ALT" and len(parts[1]) == 1:
         return "%s  (Alt + %s)" % (parts[1].lower(), parts[1])
-    if len(parts) == 2 and parts[0].upper() == "SYM" and parts[1].upper() in SYM_OF:
-        return "%s  (SYM + %s)" % (SYM_OF[parts[1].upper()], parts[1].upper())
-    return " + ".join(KEY_NAMES.get(p.upper(), p) for p in parts)
+    if len(parts) == 2 and parts[0] == "SYM" and parts[1] in SYM_OF:
+        return "%s  (SYM + %s)" % (SYM_OF[parts[1]], parts[1])
+    return " + ".join(KEY_NAMES.get(p, p) for p in parts)
 
 
 def wrap(draw, text, font, width):
@@ -201,19 +162,24 @@ def wrap(draw, text, font, width):
     return lines
 
 
-def click_wav(path, times_ms, total_ms, rate=44100):
+def click_wav(path, clicks, total_ms, rate=44100):
+    """clicks: (ms, kind) with kind 'full' or 'half'."""
     n = int(total_ms * rate / 1000) + rate // 2
     buf = [0.0] * n
     rnd = random.Random(7)
-    click = []
-    for i in range(int(0.018 * rate)):
-        t = i / rate
-        env = math.exp(-t * 420)
-        click.append(env * (0.55 * math.sin(2 * math.pi * 2900 * t) + 0.25 * math.sin(2 * math.pi * 1300 * t)
-                            + 0.35 * (rnd.random() * 2 - 1)))
-    for tm in times_ms:
+    def make(length, decay, f1, f2, gain):
+        out = []
+        for i in range(int(length * rate)):
+            t = i / rate
+            env = math.exp(-t * decay)
+            out.append(gain * env * (0.55 * math.sin(2 * math.pi * f1 * t) + 0.25 * math.sin(2 * math.pi * f2 * t)
+                                     + 0.35 * (rnd.random() * 2 - 1)))
+        return out
+    full = make(0.018, 420, 2900, 1300, 1.0)
+    half = make(0.010, 650, 3600, 1900, 0.45)
+    for tm, kind in clicks:
         s = int(tm * rate / 1000)
-        for i, v in enumerate(click):
+        for i, v in enumerate(full if kind == "full" else half):
             if 0 <= s + i < n:
                 buf[s + i] += v
     with wave.open(path, "wb") as w:
@@ -223,88 +189,235 @@ def click_wav(path, times_ms, total_ms, rate=44100):
         w.writeframes(b"".join(struct.pack("<h", max(-32767, min(32767, int(v * 0.6 * 32767)))) for v in buf))
 
 
+# ---- one recording ---------------------------------------------------------------------
+class Rec:
+    def __init__(self, d, crop_bottom=0):
+        self.dir = d
+        self.frames, self.keys, self.caps, self.notes, self.points = [], [], [], [], []
+        self.t0, end = None, 0
+        for line in open(os.path.join(d, "rec.txt"), encoding="utf-8"):
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            kind, _, rest = line.partition(" ")
+            if kind == "T0":
+                self.t0 = int(rest)
+            elif kind == "F":
+                t, f = rest.split(" ", 1)
+                self.frames.append((int(t), f))
+            elif kind in ("K", "D", "U"):
+                parts = rest.split(" ")
+                rects = [tuple(int(v) for v in p.split(",")) for p in parts[2:] if p.count(",") == 3]
+                self.keys.append((int(parts[0]), kind, parts[1].upper(), rects))
+            elif kind == "C":
+                t, _, text = rest.partition(" ")
+                self.caps.append((int(t), text))
+            elif kind == "N":
+                t, dur, text = (rest.split(" ", 2) + ["", ""])[:3]
+                self.notes.append((int(t), int(dur), text))
+            elif kind == "P":
+                t, dur, x, y = rest.split(" ")[:4]
+                self.points.append((int(t), int(dur), int(x), int(y)))
+            elif kind == "E":
+                end = int(rest)
+        if not self.frames:
+            sys.exit("no frames in " + d)
+        self.end = max(end, self.frames[-1][0], self.keys[-1][0] + 1000 if self.keys else 0)
+
+        first = Image.open(os.path.join(d, self.frames[0][1])).convert("RGB")
+        # The device drawing sits on a black (formerly transparent) background: crop to it
+        # and use the background as a mask, so the rounded corners show the page colour.
+        dark = first.convert("L").point(lambda v: 255 if v > 3 else 0)
+        bx0, by0, bx1, by1 = dark.getbbox()
+        by1 -= crop_bottom
+        self.crop = (bx0, by0, bx1, by1)
+        self.mask = dark.crop(self.crop)
+        self.w, self.h = bx1 - bx0, by1 - by0
+        # the simulator's "panel partial 0 ms" line: painted over with the body colour
+        self.foot = (int(self.w * 0.25), int(self.h * 0.925), int(self.w * 0.75), int(self.h * 0.965))
+        self.body = first.getpixel((bx0 + int(self.w * 0.22), by0 + int(self.h * 0.945)))
+        sh = lambda r: (r[0] - bx0, r[1] - by0, r[2], r[3])
+        self.keys = [(t, k, s, [sh(r) for r in rs]) for t, k, s, rs in self.keys]
+        self.points = [(t, dur, x - bx0, y - by0) for t, dur, x, y in self.points]
+        self.cache = {}
+        self.build_targets()
+
+    def shift(self, off):
+        """Move every time by off ms (two devices on one clock)."""
+        self.frames = [(t + off, f) for t, f in self.frames]
+        self.keys = [(t + off, k, s, r) for t, k, s, r in self.keys]
+        self.caps = [(t + off, c) for t, c in self.caps]
+        self.notes = [(t + off, d, n) for t, d, n in self.notes]
+        self.points = [(t + off, d, x, y) for t, d, x, y in self.points]
+        self.end += off
+        self.build_targets()
+
+    def build_targets(self):
+        """Per hand ('L', 'R'): what it points at and when.
+        target = (show from, show to, rect, press from, press to, label, kind)"""
+        holds = []                      # (down, up, name, rect)
+        open_ = {}
+        for t, kind, spec, rects in self.keys:
+            if kind == "D" and rects:
+                open_[spec] = (t, rects[-1])
+            elif kind == "U" and spec in open_:
+                d, r = open_.pop(spec)
+                holds.append([d, t, spec, r, None])
+        for spec, (d, r) in open_.items():
+            holds.append([d, self.end, spec, r, None])
+        cx = lambda r: r[0] + r[2] / 2
+        taps = []
+        for t, kind, spec, rects in self.keys:
+            if kind != "K" or not rects:
+                continue
+            held = [h for h in holds if h[0] <= t <= h[1]]
+            hand, label = "R", key_label(spec)
+            if held:
+                h = held[-1]
+                label = key_label(h[2] + "+" + spec)
+                hand = "R" if cx(rects[-1]) >= cx(h[3]) else "L"
+                if h[4] is None:
+                    h[4] = "L" if hand == "R" else "R"
+            taps.append((t - HAND_BEFORE_MS, t + HAND_AFTER_MS, rects[-1], t, t + 140, label, "tap", rects[:-1], hand))
+        self.targets = {"L": [], "R": []}
+        for t0, t1, r, p0, p1, label, kind, mods, hand in taps:
+            self.targets[hand].append((t0, t1, r, p0, p1, label, kind, mods))
+        for d, u, name, r, hand in holds:
+            if hand is None:
+                hand = "L" if name == "ALT" else "R"
+            self.targets[hand].append((d - HOLD_BEFORE_MS, u + HOLD_AFTER_MS, r, d, u, KEY_NAMES.get(name, name) + " (hold)",
+                                       "hold", []))
+        for k in self.targets:
+            self.targets[k].sort(key=lambda x: x[0])
+        self.clicks = [(t, "full" if k == "K" else "half") for t, k, s, r in self.keys if k in ("K", "D", "U")]
+
+    def frame_at(self, t):
+        lo, hi = 0, len(self.frames) - 1
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if self.frames[mid][0] <= t:
+                lo = mid
+            else:
+                hi = mid - 1
+        f = self.frames[lo][1]
+        if f not in self.cache:
+            if len(self.cache) > 8:
+                self.cache.clear()
+            im = Image.open(os.path.join(self.dir, f)).convert("RGB").crop(self.crop)
+            ImageDraw.Draw(im).rectangle(self.foot, fill=self.body)
+            self.cache[f] = im
+        return self.cache[f]
+
+
+def centre(r):
+    return (r[0] + r[2] / 2 + r[2] * 0.12, r[1] + r[3] / 2 + r[3] * 0.18)
+
+
+def hand_state(targets, t):
+    """(position, target) of one hand at time t, or None."""
+    i = -1
+    for j, tg in enumerate(targets):
+        if tg[0] <= t:
+            i = j
+    if i < 0:
+        return None
+    tg = targets[i]
+    pos = centre(tg[2])
+    if t <= tg[1]:
+        # just arrived from the previous key: glide
+        if i > 0 and targets[i - 1][1] + STAY_MS >= tg[0] and t - tg[0] < GLIDE_MS:
+            a = (t - tg[0]) / GLIDE_MS
+            a = a * a * (3 - 2 * a)
+            p0 = centre(targets[i - 1][2])
+            pos = (p0[0] + (pos[0] - p0[0]) * a, p0[1] + (pos[1] - p0[1]) * a)
+        return pos, tg
+    nxt = targets[i + 1] if i + 1 < len(targets) else None
+    if nxt and nxt[0] - tg[1] < STAY_MS:
+        return pos, None                  # waiting for the next key
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("rec")
     ap.add_argument("out")
     ap.add_argument("--title", default="")
+    ap.add_argument("--rec2", default="")
+    ap.add_argument("--labels", nargs="*", default=[])
     ap.add_argument("--crop-bottom", type=int, default=0, help="pixels to cut off the device drawing's bottom")
     args = ap.parse_args()
 
     ffmpeg = os.environ.get("FFMPEG") or shutil.which("ffmpeg")
     if not ffmpeg:
         sys.exit("ffmpeg not found (PATH or FFMPEG=...)")
-    frames, keys, caps, end = load_rec(args.rec)
-    if not frames:
-        sys.exit("no frames in " + args.rec)
-    taps = [k for k in keys if k[1] in "KD"]
-    fwd, back, vend = time_map([t for t, _ in frames] + [k[0] for k in keys] +
-                               [k[0] + HAND_AFTER_MS for k in keys] + [k[0] - HAND_BEFORE_MS for k in keys if k[0] > HAND_BEFORE_MS] +
-                               [c[0] for c in caps], end)
+    recs = [Rec(args.rec, args.crop_bottom)] + ([Rec(args.rec2, args.crop_bottom)] if args.rec2 else [])
+    if len(recs) == 2 and recs[0].t0 and recs[1].t0:
+        base = min(r.t0 for r in recs)
+        for r in recs:
+            r.shift(r.t0 - base)
+    end = max(r.end for r in recs)
+    pts = []
+    for r in recs:
+        pts += [t for t, _ in r.frames] + [c[0] for c in r.caps]
+        for k in r.keys:
+            pts += [k[0], k[0] + HAND_AFTER_MS, max(0, k[0] - HAND_BEFORE_MS)]
+        for n in r.notes:
+            pts += [n[0], n[0] + n[1]]
+        for p in r.points:
+            pts += [p[0], p[0] + p[1]]
+    # time map: recording ms -> video ms, quiet gaps shortened
+    pts = sorted(set([0, end] + [p for p in pts if 0 <= p <= end]))
+    segs, vend = [], 0
+    for a, b in zip(pts, pts[1:]):
+        out = b - a if b - a <= QUIET_MAX_MS else QUIET_KEEP_MS
+        segs.append((a, b, vend, vend + out))
+        vend += out
+    def fwd(t):
+        for a, b, va, vb in segs:
+            if a <= t <= b:
+                return va + (t - a) * (vb - va) / max(1, b - a)
+        return vend
+    def back(v):
+        for a, b, va, vb in segs:
+            if va <= v <= vb:
+                return a + (v - va) * (b - a) / max(1, vb - va)
+        return end
     vend += 600
 
-    first = Image.open(os.path.join(args.rec, frames[0][1])).convert("RGB")
-    # The device drawing sits on a black (formerly transparent) background: crop to it and
-    # use the background as a mask, so the rounded corners show the page colour.
-    dark = first.convert("L").point(lambda v: 255 if v > 3 else 0)
-    bx0, by0, bx1, by1 = dark.getbbox()
-    by1 -= args.crop_bottom
-    crop = (bx0, by0, bx1, by1)
-    mask = dark.crop(crop)
-    dw, dh = bx1 - bx0, by1 - by0
-    # the simulator's "panel partial 0 ms" line near the bottom: paint it over with the body colour
-    foot = (int(dw * 0.25), int(dh * 0.925), int(dw * 0.75), int(dh * 0.965))
-    body = first.getpixel((bx0 + int(dw * 0.22), by0 + int(dh * 0.945)))
-    cap_h = 150
-    W = (max(dw + 120, 600) + 1) // 2 * 2
-    H = (dh + cap_h + 16 + 1) // 2 * 2
-    ox, oy = (W - dw) // 2, cap_h
-    hand, tipx, tipy = make_hand(HAND_SIZE * dw / 410)
-    f_title = find_font(max(16, W // 22), bold=True)
-    f_cap = find_font(max(14, W // 26))
-    f_key = find_font(max(14, W // 24), bold=True)
+    dw = recs[0].w
+    gap = 40
+    label_h = 34 if args.labels else 0
+    cap_h = 150 + label_h
+    W = (max(sum(r.w for r in recs) + gap * (len(recs) - 1) + 120, 600) + 1) // 2 * 2
+    H = (max(r.h for r in recs) + cap_h + 16 + 1) // 2 * 2
+    x = (W - (sum(r.w for r in recs) + gap * (len(recs) - 1))) // 2
+    for r in recs:
+        r.ox, r.oy = x, cap_h
+        x += r.w + gap
+    hand_r, tipx_r, tipy_r = make_hand(HAND_SIZE * dw / 410)
+    hand_l = ImageOps.mirror(hand_r)
+    tipx_l, tipy_l = hand_l.width - tipx_r, tipy_r
+    f_title = find_font(max(16, 600 // 22), bold=True)
+    f_cap = find_font(max(14, 600 // 26))
+    f_key = find_font(max(14, 600 // 24), bold=True)
+    f_note = find_font(max(14, dw // 19), bold=True)
+    f_label = find_font(24, bold=True)
 
     tmp = tempfile.mkdtemp(prefix="howto_")
     wav = os.path.join(tmp, "clicks.wav")
-    click_wav(wav, [fwd(k[0]) for k in taps], vend)
+    click_wav(wav, [(fwd(t), k) for r in recs for t, k in r.clicks], vend)
     cmd = [ffmpeg, "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "%dx%d" % (W, H),
            "-r", str(FPS), "-i", "-", "-i", wav, "-c:v", "libx264", "-preset", "slow", "-crf", "24",
            "-pix_fmt", "yuv420p", "-tune", "animation", "-c:a", "aac", "-b:a", "96k", "-shortest",
            "-movflags", "+faststart", args.out]
     enc = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+    caps = sorted(c for r in recs for c in r.caps)
+    presses = 0
 
-    cache = {}
-    def frame_at(t):
-        lo, hi = 0, len(frames) - 1
-        while lo < hi:
-            mid = (lo + hi + 1) // 2
-            if frames[mid][0] <= t:
-                lo = mid
-            else:
-                hi = mid - 1
-        f = frames[lo][1]
-        if f not in cache:
-            if len(cache) > 8:
-                cache.clear()
-            im = Image.open(os.path.join(args.rec, f)).convert("RGB").crop(crop)
-            ImageDraw.Draw(im).rectangle(foot, fill=body)
-            cache[f] = im
-        return cache[f]
-
-    # key rectangles are in full-frame pixels: move them by the crop
-    taps[:] = [(t, kind, spec, [(r[0] - bx0, r[1] - by0, r[2], r[3]) for r in rects]) for t, kind, spec, rects in taps]
-
-    def centre(r):
-        return (ox + r[0] + r[2] / 2 + r[2] * 0.12, oy + r[1] + r[3] / 2 + r[3] * 0.18)
-
-    nfr = int(vend * FPS / 1000)
-    for i in range(nfr):
-        vt = i * 1000 / FPS
-        t = back(vt)
+    for i in range(int(vend * FPS / 1000)):
+        t = back(i * 1000 / FPS)
         img = Image.new("RGB", (W, H), (250, 250, 248))
-        img.paste(frame_at(t), (ox, oy), mask)
         d = ImageDraw.Draw(img)
-        # caption band
         y = 10
         if args.title:
             d.text((W // 2, y), args.title, font=f_title, fill=(20, 20, 20), anchor="mt")
@@ -316,55 +429,70 @@ def main():
         for line in wrap(d, cap, f_cap, W - 30)[:3]:
             d.text((W // 2, y), line, font=f_cap, fill=(60, 60, 60), anchor="mt")
             y += f_cap.size + 6
-        # hand: the press that is current (shown from HAND_BEFORE_MS before to HAND_AFTER_MS after)
-        cur = None
-        for j, k in enumerate(taps):
-            if k[0] - HAND_BEFORE_MS <= t <= k[0] + HAND_AFTER_MS and k[3]:
-                cur = j
-        if cur is None:
-            for j, k in enumerate(taps):          # between two close presses: stay
-                nk = taps[j + 1] if j + 1 < len(taps) else None
-                if nk and k[3] and nk[3] and k[0] <= t <= nk[0] and nk[0] - k[0] < 1400:
-                    cur = j
-        if cur is not None:
-            k = taps[cur]
-            pos = centre(k[3][-1])
-            nk = taps[cur + 1] if cur + 1 < len(taps) else None
-            if nk and nk[3] and nk[0] - k[0] < 1400 and nk[0] - GLIDE_MS < t < nk[0]:
-                a = (t - (nk[0] - GLIDE_MS)) / GLIDE_MS
-                a = max(0.0, min(1.0, a))
-                a = a * a * (3 - 2 * a)
-                p2 = centre(nk[3][-1])
-                pos = (pos[0] + (p2[0] - pos[0]) * a, pos[1] + (p2[1] - pos[1]) * a)
-                if a > 0.5:
-                    k = nk
-            pressed = 0 <= t - k[0] <= 140
-            for r in k[3][:-1]:           # modifiers held: a ring
-                cx, cy = ox + r[0] + r[2] / 2, oy + r[1] + r[3] / 2
-                rr = max(r[2], r[3]) * 0.62
-                d.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), outline=(230, 120, 0), width=3)
-            if pressed:
-                r = k[3][-1]
-                d.rounded_rectangle((ox + r[0] - 2, oy + r[1] - 2, ox + r[0] + r[2] + 2, oy + r[1] + r[3] + 2),
-                                    radius=6, outline=(230, 120, 0), width=3)
-            push = 3 if pressed else 0
-            hx = int(pos[0] - tipx + push)
-            hy = int(pos[1] - tipy + push)
-            img.paste(hand, (hx, hy), hand)
-            # key name badge: above the keyboard, on the screen's lower edge
-            label = key_label(k[2])
-            tw = d.textlength(label, font=f_key)
-            bx, by = W // 2, oy + int(dh * 0.615)
-            d.rounded_rectangle((bx - tw / 2 - 14, by - 4, bx + tw / 2 + 14, by + f_key.size + 12), radius=10,
-                                fill=(30, 30, 30))
-            d.text((bx, by + 2), label, font=f_key, fill=(255, 255, 255), anchor="mt")
+        for n, r in enumerate(recs):
+            ox, oy = r.ox, r.oy
+            img.paste(r.frame_at(t), (ox, oy), r.mask)
+            if n < len(args.labels):
+                d.text((ox + r.w // 2, oy - 8), args.labels[n], font=f_label, fill=(20, 20, 20), anchor="mb")
+            badge = None
+            for side in ("L", "R"):
+                st = hand_state(r.targets[side], t)
+                if not st:
+                    continue
+                pos, tg = st
+                pressed = bool(tg) and tg[3] <= t <= tg[4]
+                if tg:
+                    for mr in tg[7]:                    # old-style combo: a ring on the modifier
+                        cx, cy = ox + mr[0] + mr[2] / 2, oy + mr[1] + mr[3] / 2
+                        rr = max(mr[2], mr[3]) * 0.62
+                        d.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), outline=ORANGE, width=3)
+                    if pressed:
+                        kr = tg[2]
+                        d.rounded_rectangle((ox + kr[0] - 2, oy + kr[1] - 2, ox + kr[0] + kr[2] + 2, oy + kr[1] + kr[3] + 2),
+                                            radius=6, outline=ORANGE, width=3)
+                    if badge is None or tg[6] == "tap":
+                        badge = tg[5]
+                push = 3 if pressed else 0
+                hand, tx, ty = (hand_r, tipx_r, tipy_r) if side == "R" else (hand_l, tipx_l, tipy_l)
+                px = ox + pos[0] + (push if side == "R" else -push)
+                img.paste(hand, (int(px - tx), int(oy + pos[1] - ty + push)), hand)
+            for pt, dur, px, py in r.points:            # a hand points (wiggling) at something
+                if pt <= t <= pt + dur:
+                    wig = 7 * math.sin((t - pt) / 1000 * 2 * math.pi * 2.2)
+                    rr = 24 + 4 * math.sin((t - pt) / 1000 * 2 * math.pi * 1.5)
+                    d.ellipse((ox + px - rr, oy + py - rr, ox + px + rr, oy + py + rr), outline=ORANGE, width=4)
+                    img.paste(hand_r, (int(ox + px + 6 + wig - tipx_r), int(oy + py + 6 + wig - tipy_r)), hand_r)
+            if badge:
+                tw = d.textlength(badge, font=f_key)
+                bx, by = ox + r.w // 2, oy + int(r.h * 0.615)
+                d.rounded_rectangle((bx - tw / 2 - 14, by - 4, bx + tw / 2 + 14, by + f_key.size + 12), radius=10,
+                                    fill=(30, 30, 30))
+                d.text((bx, by + 2), badge, font=f_key, fill=(255, 255, 255), anchor="mt")
+            for nt, dur, text in r.notes:               # note box over the screen
+                if nt <= t <= nt + dur and text:
+                    sx0, sx1 = ox + r.w * 0.09, ox + r.w * 0.91
+                    lines = wrap(d, text, f_note, sx1 - sx0 - 28)
+                    lh = f_note.size + 7
+                    bh = lh * len(lines) + 24
+                    cy = oy + r.h * 0.30
+                    over = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                    od = ImageDraw.Draw(over)
+                    od.rounded_rectangle((sx0, cy - bh / 2, sx1, cy + bh / 2), radius=14, fill=(255, 248, 225, 245),
+                                         outline=ORANGE, width=4)
+                    img.paste(over, (0, 0), over)
+                    d = ImageDraw.Draw(img)
+                    yy = cy - bh / 2 + 12
+                    for line in lines:
+                        d.text(((sx0 + sx1) / 2, yy), line, font=f_note, fill=(30, 30, 30), anchor="mt")
+                        yy += lh
         enc.stdin.write(img.tobytes())
     enc.stdin.close()
     rc = enc.wait()
     shutil.rmtree(tmp, ignore_errors=True)
     if rc:
         sys.exit("ffmpeg failed (%d)" % rc)
-    print("%s: %.1f s, %d presses" % (args.out, vend / 1000, len(taps)))
+    presses = sum(1 for r in recs for k in r.keys if k[1] == "K")
+    print("%s: %.1f s, %d presses" % (args.out, vend / 1000, presses))
 
 
 if __name__ == "__main__":

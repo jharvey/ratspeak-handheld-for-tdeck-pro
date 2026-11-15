@@ -127,13 +127,46 @@ Video: [atlas.mp4](videos/atlas.mp4)
 The Atlas needs map files on the SD card; without them the menu has no Atlas.
 
 1. Press **A** on any screen (or **M**, then **A**). The map opens on your position.
-2. **W** zooms out (wider), **Z** zooms in.
-3. **T F V H** move the map up, left, down, right.
+   (On a list row of someone with a known position, **A** opens the map at that person.)
+2. **K** shows the card with all map keys; **K** again hides it.
+3. **T F V H** move the map up, left, down, right. **W** zooms out (wider), **Z** zooms in.
 4. **D** (or **Enter**) centres it on you again.
-5. **K** shows the card with all map keys (waypoints, contacts, find a place ...).
-6. **^** closes the map.
+5. **L** locates a place: type the start of its name, **Enter**, then its number
+   (**SYM** + **W** = 1) jumps there. **Alt** + **P** right away saves it as a waypoint.
+6. **G** shows the heading and distance from you to it (or to the selected contact);
+   **G** again goes back to the map.
+7. **N** steps through your contacts' last shared positions, newest first.
+8. **I** (Inbox), **C** (Contacts) or **^** leave the map.
+
+In the video the radio is at the Alamo in San Antonio; it finds Mount Rushmore (1667 km,
+heading 346) and steps through three contacts: at the Vietnam Veterans Memorial in
+Washington, hiking in Montana, and at the Cutler VLF station in Maine.
 
 More: the help files on the SD card (Library): Help-6 Map, Help-7 Waypoints.
+
+## Find someone: announce and Peers
+
+Video: [peer_search.mp4](videos/peer_search.mp4)
+
+Announce tells radios nearby who you are, so they can find you and message you. Every radio
+that announced and was heard shows in **Peers**, with its signal and how long ago.
+
+1. **M**, then **P**: Peers. **R** announces this radio.
+2. When a new radio announces, it shows in the list (press **P** again to refresh).
+3. Pick it and press **Enter**: its contact page. **2** (Rename), type a name, **Enter**:
+   it is now a contact.
+4. **Enter** again, **1** (Message): type and **Enter** to send.
+
+## A typical check-up
+
+Video: [typical_checkup.mp4](videos/typical_checkup.mp4)
+
+1. The idle screen shows the number of new messages at the top.
+2. Any key wakes the radio. With a password lock, type the password and **Enter**.
+3. The Inbox shows "1 new" on the chat with the new message: its number (here **3**:
+   **SYM** + **R**), then **Enter** opens it.
+4. Type the answer (digits: hold **SYM**) and **Enter**.
+5. **^** back. After a while the radio sleeps (and locks) by itself.
 
 ---
 
@@ -141,4 +174,6 @@ More: the help files on the SD card (Library): Help-6 Map, Help-7 Waypoints.
 
 `tools/howto/make_videos.ps1` runs the scripts in `sim/scripts/howto/` on the simulator
 and turns each recording into an MP4 with `tools/howto/make_video.py` (hand pointer,
-key names, captions, click sounds). See the top of both files.
+key names, captions, note boxes, click sounds). Digits and small letters are shown the way a
+hand types them: one hand holds **SYM** or **Alt** (half click down, half click up), the
+other presses the key (full click). See the top of both files.

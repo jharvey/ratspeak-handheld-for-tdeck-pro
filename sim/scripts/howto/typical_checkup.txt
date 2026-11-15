@@ -1,0 +1,105 @@
+# How-to video: a typical check-up. Device hv_deep (Deep Thought), locked with password Arthor.
+# Companions: typical_checkup_ford.txt / _trillian.txt (earlier chats), typical_checkup_fook.txt
+# (asks the question, answers the reply).
+expect 60000 [BOOT] ready
+serial wiz skip
+serial contact {FORD} Ford Prefect
+serial contact {TRILLIAN} Trillian
+serial contact {FOOK} Fook
+serial opmode 1
+expect 60000 [MSG] inbound
+expect 60000 [MSG] inbound
+expect 60000 [MSG] inbound
+wait 3000
+# answer Ford and Trillian (rows 1 and 2, newest first), leave Fook's question unread: row 3
+key I
+wait 1500
+key 1
+wait 600
+key ENTER
+wait 2000
+type On it.
+key ENTER
+wait 2500
+key BACK
+wait 1500
+key 2
+wait 600
+key ENTER
+wait 2000
+type On it too.
+key ENTER
+wait 2500
+key BACK
+wait 1500
+shot pre-inbox.png
+key M
+key S
+wait 800
+key 4
+wait 800
+key 2
+wait 800
+key 3
+wait 800
+type Arthor
+key ENTER
+wait 800
+type Arthor
+key ENTER
+wait 1500
+shot pre-lock.png
+key BACK
+wait 600
+key BACK
+wait 600
+key BACK
+wait 800
+key I
+wait 1500
+serial lock now
+wait 2500
+rec typical_checkup
+caption Deep Thought's radio is locked and asleep.
+wait 3000
+shot idle-new.png
+caption A new message: see the count at the top of the idle screen.
+point 205 21 3800
+wait 4200
+caption Any key wakes it. It is locked: type the password (Arthor) and press Enter.
+wait 1500
+key SPACE
+wait 1800
+type Arthor
+wait 600
+key ENTER
+wait 2500
+caption Unlocked, back on the Inbox. The third chat, Fook, has a new message: 3 (SYM + R), then Enter.
+wait 2500
+key 3
+wait 1200
+key ENTER
+wait 3000
+caption Fook asks the Ultimate Question.
+wait 4000
+caption After seven and a half million years of thinking: type 42 (hold SYM, press S and E), Enter.
+wait 2000
+type 42
+wait 600
+key ENTER
+expect 60000 [MSG] inbound
+wait 3500
+caption Fook replies. Acknowledge with OK and Enter.
+wait 2500
+type OK
+wait 600
+key ENTER
+wait 3500
+caption Done. A while later the radio sleeps and locks again.
+wait 1500
+key BACK
+wait 1000
+serial lock now
+wait 3500
+rec off
+quit

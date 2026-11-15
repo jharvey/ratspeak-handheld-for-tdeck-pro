@@ -298,6 +298,22 @@ QList<QRectF> DeviceWidget::keyRectsPx(const QString& specIn) {
     return out;
 }
 
+QStringList DeviceWidget::specParts(const QString& specIn) {
+    QString spec = specIn;
+    if (spec.size() == 1) {
+        const QString letter = symLetterFor(spec[0]);
+        if (!letter.isEmpty()) spec = "SYM+" + letter;
+    }
+    QStringList out;
+    for (const QString& part : spec.split('+', Qt::SkipEmptyParts)) out << part.toUpper();
+    return out;
+}
+
+QPointF DeviceWidget::panelToPx(double x, double y) const {
+    const QPointF p = devToWidget().map(QPointF(kScreen.x() + x, kScreen.y() + y));
+    return p * devicePixelRatioF();
+}
+
 void DeviceWidget::touch(int x, int y) {
     {
         std::lock_guard<std::mutex> l(sim::hw().mu);

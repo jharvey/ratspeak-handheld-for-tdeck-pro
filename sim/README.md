@@ -70,6 +70,7 @@ Pick how the simulated unit is equipped when it starts:
 | `--sats 9` | `sats = 9` | satellites in the fix. Default 7 |
 | `--flashkb 2048` | `flashkb = 2048` | internal flash size (see below) |
 | `--fast` | `fast = on` | instant e-ink refresh |
+| | `wifi = NAME/RSSI/PASSWORD; NAME2/RSSI` | the WiFi networks in range (no password = open). Default: HomeNet, Coffee-Shop, Neighbour_5G |
 
 Settings are read from `build\simdata\<name>\sim.ini` (that device's own setup, if the file
 exists), then `--config <file>`, then the options, each overriding the one before. Example file:
@@ -199,8 +200,10 @@ the size fails, like the real flash. `scripts/fullflash.txt` (`--flashkb 2048`) 
 | `serial <text>` | send a line to the firmware's USB serial |
 | `expect <ms> <text>` | wait until the serial log shows `<text>`, else FAIL |
 | `quit` | stop with PASS |
-| `rec <dir> [ms]` / `rec off` | record a how-to video: the whole device drawing as `<dir>/fNNNNN.png` each time it changes, plus `rec.txt` (frame times, key taps with the cap rectangles, captions). While recording, `type` presses one key every `ms` (default 280). `tools/howto/make_video.py` makes the MP4 |
+| `rec <dir> [ms]` / `rec off` | record a how-to video: the whole device drawing as `<dir>/fNNNNN.png` each time it changes, plus `rec.txt` (frame times, key taps with the cap rectangles, captions). While recording, `type` presses one key every `ms` (default 280), and SYM / Alt combinations (also in `key`) are pressed the way a hand does it: modifier down, key, modifier up. `tools/howto/make_video.py` makes the MP4 |
 | `caption <text>` | while recording: the text shown above the device from now on |
+| `note <ms> <text>` | while recording: a box with the text over the screen for `ms` |
+| `point <x> <y> <ms>` | while recording: a hand points at panel x,y (and wiggles) for `ms` |
 
 How-to videos: `scripts/howto/*.txt` (send / read a message, add / share a contact, WiFi, If found, mode, Atlas), run by `tools\howto\make_videos.ps1`, which writes `docsideos\*.mp4` (guide: `docs/HowTo.md`).
 
