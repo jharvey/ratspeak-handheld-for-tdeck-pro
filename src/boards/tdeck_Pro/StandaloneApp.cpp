@@ -51,6 +51,7 @@
 #include "Chess.h"
 #include "audio/AudioNotify.h"
 #include "voice/HaVoice.h"
+#include "voice/VoiceCodec.h"
 #include "hal/Keyboard.h"
 #include "hal/UsbDrive.h"
 #include "hal/SysImage.h"
@@ -11221,6 +11222,44 @@ void handleSerialLine(char* p) {
         havoice::setMicGain(g_cfg.micGain);
         saveConfig();
         Serial.printf("[HAV] mic gain %u\n", (unsigned)g_cfg.micGain);
+        return;
+    }
+    if (!strncmp(p, "c2test", 6)) {                    // c2test [3200|1600|700]: record 3 s, Codec2, play
+#if !defined(SIMULATOR)
+        const int b = p[6] ? atoi(p + 7) : 3200;
+        if (!voicecodec::begin(b)) { Serial.println("[C2] c2test 3200|1600|700"); return; }
+        const int fs = voicecodec::frameSamples16k(), fb = voicecodec::frameBytes();
+        const int frames = 3000 / voicecodec::frameMs();
+        int16_t* rec = (int16_t*)ps_malloc(sizeof(int16_t) * fs * frames);
+        uint8_t* bits = (uint8_t*)ps_malloc(fb * frames);
+        if (!rec || !bits || !g_audio.micStart()) { free(rec); free(bits); Serial.println("[C2] no memory / mic"); return; }
+        Serial.println("[C2] recording 3 s: speak now");
+        int got = 0;
+        const uint32_t t0 = millis();
+        while (got < fs * frames && millis() - t0 < 4000) {
+            got += (int)g_audio.micRead(rec + got, fs * frames - got, g_cfg.micGain);
+            delay(5);
+        }
+        g_audio.micStop();
+        uint32_t enc = 0, dec = 0, worst = 0;
+        for (int i = 0; i < frames; i++) {
+            const uint32_t a = micros();
+            voicecodec::encode(rec + i * fs, bits + i * fb);
+            const uint32_t d = micros() - a;
+            enc += d; if (d > worst) worst = d;
+        }
+        for (int i = 0; i < frames; i++) {
+            const uint32_t a = micros();
+            voicecodec::decode(bits + i * fb, rec + i * fs);
+            dec += micros() - a;
+        }
+        Serial.printf("[C2] %d bps: %d frames, %d bytes for 3 s; encode %lu us/frame (worst %lu), decode %lu us/frame, frame %d ms\n",
+                      b, frames, fb * frames, (unsigned long)(enc / frames), (unsigned long)worst,
+                      (unsigned long)(dec / frames), voicecodec::frameMs());
+        Serial.println("[C2] playing the decoded speech");
+        g_audio.writePcm(rec, fs * frames);
+        free(rec); free(bits);
+#endif
         return;
     }
     if (!strcmp(p, "mictest")) {                       // mictest: record 2 s (with micgain), print the level, play it back
