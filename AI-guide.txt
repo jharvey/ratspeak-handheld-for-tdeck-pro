@@ -230,16 +230,27 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        + title||content||fields; header.fieldsLength 0 = none; lxmf::findAudio(fields, n, mode, ptr, len).
        Store: record JSON "fields" = raw msgpack (binary string like content); incoming keeps only
        the audio field. Rust: protocol/src/fields.rs (+fields_tests.rs, hand-built msgpack vectors;
-       no Python LXMF installed). Old archives: LxmfFields.h declares the new Rust functions weak,
-       lxmf::available() false -> audio submit Rejection::Invalid, incoming audio dropped.
+       no Python LXMF installed). Archives rebuilt 2026-11-15 with it (all 5 symbols resolve in
+       firmware.elf). LxmfFields.h still declares them weak: an older archive -> lxmf::available()
+       false, audio submit Rejection::Invalid, incoming audio dropped. Not yet tested on units.
 - Rust protocol library (protocol/): the firmware links the PREBUILT
        protocol/prebuilt/xtensa-esp32s3/{small,micro}/libratspeak_protocol.a (platformio.ini -L);
        nothing builds Rust during pio run. Any protocol/src change needs the archives rebuilt with
        protocol/build-xtensa.sh (espup "esp" toolchain = tools/release_identity.json
-       archive_toolchain, -Zbuild-std, --offline) with rsReticulumLite + rsLXMFLite checked out as
-       siblings of the repo (../../ from protocol/; today only C:/Users/MyPC/Desktop/rs*Lite, at the
-       PROVENANCE.txt commits). Host tests on the PC: copy protocol/ next to those two (scratch dir
-       with junctions) and cargo test --offline (Rust 1.87 gnu is installed; crates in ~/.cargo).
+       archive_toolchain, -Zbuild-std) with rsReticulumLite + rsLXMFLite checked out as siblings of
+       the repo (../../ from protocol/). VM100 has it all since 2026-11-15 (user OK'd): rustup +
+       espup 0.19, `espup install --toolchain-version 1.95.0.0 --targets esp32s3`, ~/rsLXMFLite +
+       ~/rsReticulumLite at the PROVENANCE commits (copied from C:/Users/MyPC/Desktop). Rebuild:
+       python tools/vm_build.py --sync-only; ssh debian-build '. ~/export-esp.sh; cd ~/ratspeak/protocol;
+       for p in small micro; do cargo +esp build -p ratspeak-handheld-protocol --profile xtensa
+       --target xtensa-esp32s3-none-elf --no-default-features --features profile-$p
+       -Zbuild-std=core,alloc --locked && cp target/xtensa-esp32s3-none-elf/xtensa/libratspeak_protocol.a
+       /tmp/xt/$p/; done' then scp both back, update PROVENANCE.txt (build-xtensa.sh itself needs a
+       .git checkout and no untracked files, which neither copy has). ~25 s cold. Same source in a
+       different folder is not byte-identical (paths are embedded); check exports instead
+       (xtensa-esp-elf-nm under ~/.rustup/toolchains/esp). Host tests on the PC: copy protocol/
+       next to the two Lite repos (scratch dir with junctions), cargo test --offline (Rust 1.87 gnu).
+       The sim's host lib (protocol/target/release) is NOT rebuilt yet (cargo build --release).
        tools/check_prebuilt.py checks the archives export exactly the header's 104 functions.
 [DONE] LoRa delivery to a SLEEPING receiver: 14/14 at 1.3 frames/msg. Fixes: stay
        awake while LoRaInterface has TX queued, 3 s after a LoRa wake, while message
