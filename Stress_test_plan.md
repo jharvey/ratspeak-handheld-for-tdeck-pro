@@ -260,3 +260,17 @@ Open findings:
   names (Description §8.4). On COM3 (212 messages) message start went 11.3 s -> 0.58 s.
 - Under load, retried messages arrive late and the thread shows them in arrival order
   (e.g. "8" below "40"). Consider ordering threads by the sender's timestamp.
+
+| 2026-11-16 | 70f9d47 | 4 units, group chat (`tools/stress/chat4.py`, COM3/5/6/9), half typed with keys, UI tours | 2.5 | PASS | 621 msgs, 620 arrived, 1 failed after its link request was lost (shown failed, not stuck); 305 typed messages all exact; 213 screen checks ok; no restart, crash or hang; internal heap -1.5..2.5 KB over 2.5 h (levelling; 24 h run to confirm) |
+
+Fixed findings (2026-11-15/16, 4-unit soak):
+- Mark read of a 100+ message backlog was one store job (~1 s per record): the store was held
+  for minutes, every send froze 8-12 s and threads opened empty. Now 2 records per job.
+- An open thread reloaded its history and marked read every 2.5 s (each mark-read bumped the
+  store revision, which reloaded the thread): ~330 ms of loop time every 2.5 s. Now mark read
+  only when a new message came in.
+- The idle timer could fire while typed keys were still queued; the first key became the wake
+  key and was swallowed (a lost letter). No idle now while keys wait.
+Open: processKeys / watchBattery sometimes take exactly 1000 ms with no key pressed (an I2C
+wait; COM5 71 times in 2.5 h). Logging of slow keyboard / gauge reads is in the next build.
+A send holds the loop ~2.5-5 s while the record is saved.

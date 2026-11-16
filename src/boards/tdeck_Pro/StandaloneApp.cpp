@@ -517,10 +517,14 @@ int lipoPctFromVolts(float v) {
 }
 
 bool bqReadU16(uint8_t reg, uint16_t& out) {
+    const uint32_t t0 = millis();
     Wire.beginTransmission(BQ27220_I2C_ADDR);
     Wire.write(reg);
-    if (Wire.endTransmission(false) != 0) return false;
-    if (Wire.requestFrom((int)BQ27220_I2C_ADDR, 2) != 2) return false;
+    const uint8_t e = Wire.endTransmission(false);
+    const int got = e == 0 ? Wire.requestFrom((int)BQ27220_I2C_ADDR, 2) : 0;
+    if (millis() - t0 > 100)                 // see readKeyboardIntoQueue: the 1 s I2C waits
+        Serial.printf("[I2C] gauge reg 0x%02x %lu ms, end %u got %d\n", reg, (unsigned long)(millis() - t0), e, got);
+    if (e != 0 || got != 2) return false;
     out = (uint16_t)(Wire.read() | (Wire.read() << 8));
     return true;
 }
@@ -11010,7 +11014,13 @@ uint8_t  g_keyqHead = 0, g_keyqTail = 0;
 void readKeyboardIntoQueue() {
     if (!g_kbOk) return;
     for (int n = 0; n < 10; n++) {
+        const uint32_t t0 = millis();
         g_kb.update();
+        // Stress test 2026-11-16: processKeys / watchBattery took exactly 1000 ms now and then
+        // with no key pressed - an I2C wait. Say which read and the bus error when it happens.
+        if (millis() - t0 > 100)
+            Serial.printf("[I2C] keyboard read %lu ms (Wire timeout %u ms)\n", (unsigned long)(millis() - t0),
+                          (unsigned)Wire.getTimeOut());
         if (!g_kb.hasEvent()) break;
         uint8_t next = (uint8_t)((g_keyqHead + 1) % KEYQ_CAP);
         if (next == g_keyqTail) break;                  // queue full: leave rest in FIFO
