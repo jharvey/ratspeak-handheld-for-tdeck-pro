@@ -34,10 +34,16 @@ static int64_t wallMs() {
                std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-static void logAudio(int64_t atWallMs, const int16_t* pcm, size_t n) {
+// mic = true: the microphone's file (mic.pcm beside audio.pcm), so a video can leave the
+// clean voice out (the walkie-talkie: only what the other radio's speaker plays, no echo).
+static void logAudio(int64_t atWallMs, const int16_t* pcm, size_t n, bool mic = false) {
     std::string path;
     { std::lock_guard<std::mutex> l(sim::hw().mu); path = sim::hw().audioLog; }
     if (path.empty() || !n) return;
+    if (mic) {
+        const size_t slash = path.find_last_of("/\\");
+        path = (slash == std::string::npos ? std::string() : path.substr(0, slash + 1)) + "mic.pcm";
+    }
     if (FILE* f = fopen(path.c_str(), "ab")) {
         const uint32_t cnt = (uint32_t)n;
         fwrite(&atWallMs, sizeof(atWallMs), 1, f);
@@ -87,7 +93,7 @@ size_t AudioNotify::micRead(int16_t* out, size_t maxSamples, uint8_t) {
         const auto& clip = sim::hw().micClip;
         for (size_t i = 0; i < n; i++) out[i] = g_micFed + i < clip.size() ? clip[g_micFed + i] : 0;
     }
-    logAudio(g_micStartWall + (int64_t)(g_micFed / 16), out, n);
+    logAudio(g_micStartWall + (int64_t)(g_micFed / 16), out, n, true);
     g_micFed += n;
     return n;
 }

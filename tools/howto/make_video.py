@@ -219,7 +219,7 @@ def click_wav(path, clicks, total_ms, rate=44100, audio=()):
 
 # ---- one recording ---------------------------------------------------------------------
 class Rec:
-    def __init__(self, d, crop_bottom=0):
+    def __init__(self, d, crop_bottom=0, mic=False):
         self.dir = d
         self.frames, self.keys, self.caps, self.notes, self.points = [], [], [], [], []
         self.t0, end = None, 0
@@ -251,9 +251,11 @@ class Rec:
         if not self.frames:
             sys.exit("no frames in " + d)
         # audio.pcm (simulator speaker + microphone): int64 wall ms, uint32 n, n x int16 16 kHz
+        # mic.pcm: what the microphone heard (the clean voice), only with --mic
         self.audio = []
-        ap = os.path.join(d, "audio.pcm")
-        if os.path.exists(ap) and self.t0:
+        for ap in [os.path.join(d, "audio.pcm")] + ([os.path.join(d, "mic.pcm")] if mic else []):
+            if not (os.path.exists(ap) and self.t0):
+                continue
             raw = open(ap, "rb").read()
             i = 0
             while i + 12 <= len(raw):
@@ -388,12 +390,13 @@ def main():
     ap.add_argument("--rec2", default="")
     ap.add_argument("--labels", nargs="*", default=[])
     ap.add_argument("--crop-bottom", type=int, default=0, help="pixels to cut off the device drawing's bottom")
+    ap.add_argument("--mic", action="store_true", help="also the microphone's sound (the clean voice)")
     args = ap.parse_args()
 
     ffmpeg = os.environ.get("FFMPEG") or shutil.which("ffmpeg")
     if not ffmpeg:
         sys.exit("ffmpeg not found (PATH or FFMPEG=...)")
-    recs = [Rec(args.rec, args.crop_bottom)] + ([Rec(args.rec2, args.crop_bottom)] if args.rec2 else [])
+    recs = [Rec(args.rec, args.crop_bottom, args.mic)] + ([Rec(args.rec2, args.crop_bottom, args.mic)] if args.rec2 else [])
     if len(recs) == 2 and recs[0].t0 and recs[1].t0:
         base = min(r.t0 for r in recs)
         for r in recs:

@@ -495,6 +495,7 @@ void MainWindow::recStart(const QString& dirIn) {
     {                                          // what the speaker plays / the mic hears
         const QString audio = QDir(recDir_).filePath("audio.pcm");
         QFile::remove(audio);
+        QFile::remove(QDir(recDir_).filePath("mic.pcm"));
         std::lock_guard<std::mutex> l(sim::hw().mu);
         sim::hw().audioLog = QDir::toNativeSeparators(audio).toStdString();
     }

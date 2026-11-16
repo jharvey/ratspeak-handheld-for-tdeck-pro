@@ -70,7 +70,7 @@ $videos = @(
        seed = @{ hv_jack = "atlas"; hv_jill = "atlas" } },
     @{ name = "voice_message"; title = "Send a voice message"; main = "hv_jack"
        devices = [ordered]@{ hv_jack = "Jack"; hv_jill = "Jill" }
-       comps = @("voice_message_jill.txt@hv_jill"); rec2 = "hv_jill"; labels = @("Jack", "Jill") },
+       comps = @("voice_message_jill.txt@hv_jill"); rec2 = "hv_jill"; labels = @("Jack", "Jill"); mic = $true },
     @{ name = "walkie_talkie"; title = "Walkie-talkie: talk live"; main = "hv_jack"
        devices = [ordered]@{ hv_jack = "Jack"; hv_jill = "Jill" }
        comps = @("walkie_talkie_jill.txt@hv_jill"); rec2 = "hv_jill"; labels = @("Jack", "Jill") },
@@ -146,6 +146,7 @@ foreach ($v in $videos) {
     Write-Host ("   script: " + $(if ($res) { $res.Line } else { "no result" }))
     if (-not $res -or $res.Line -notmatch 'PASS') { $failed += $name; continue }
     $pyArgs = @("$PSScriptRoot\make_video.py", "$simData\$($v.main)\shots\$name", "$Out\$name.mp4", "--title", $v.title)
+    if ($v.mic) { $pyArgs += "--mic" }      # the clean voice too (not on calls: it echoes)
     if ($v.rec2) { $pyArgs += @("--rec2", "$simData\$($v.rec2)\shots\$name", "--labels") + $v.labels }
     & python @pyArgs
     if ($LASTEXITCODE) { $failed += $name }
