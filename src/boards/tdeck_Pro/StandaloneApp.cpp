@@ -108,6 +108,12 @@ namespace sim { size_t processBytes(); void wearDump(); }   // sim/shim: process
 
 namespace standalone {
 namespace {
+// Soak test (see "Soak test" below): hooks called from earlier code.
+void soakLog(const char* fmt, ...);
+void soakIncoming(const uint8_t peer[16], const char* text);
+void soakSent(const char* body);
+void soakNoteSlow(const char* name, uint32_t ms);
+uint32_t g_i2cSlowCount = 0;              // slow keyboard / gauge reads (the 1 s I2C waits)
 
 // =============================================================================
 // 1. Services & persisted config
@@ -522,6 +528,7 @@ bool bqReadU16(uint8_t reg, uint16_t& out) {
     Wire.write(reg);
     const uint8_t e = Wire.endTransmission(false);
     const int got = e == 0 ? Wire.requestFrom((int)BQ27220_I2C_ADDR, 2) : 0;
+    if (millis() - t0 > 100) g_i2cSlowCount++;
     if (millis() - t0 > 100)                 // see readKeyboardIntoQueue: the 1 s I2C waits
         Serial.printf("[I2C] gauge reg 0x%02x %lu ms, end %u got %d\n", reg, (unsigned long)(millis() - t0), e, got);
     if (e != 0 || got != 2) return false;
@@ -2283,6 +2290,7 @@ bool sendMessage(const uint8_t dest[16], const char* text) {
             lastTx = millis();
             snprintf(g_txStr, sizeof(g_txStr), "saving");
             Serial.printf("[TX] saving (slow store) \"%s\"\n", body);
+            soakSent(body);
             return true;
         }
         if (st == TxStep::Invalid) { snprintf(g_txStr, sizeof(g_txStr), "invalid"); return false; }
@@ -2290,6 +2298,7 @@ bool sendMessage(const uint8_t dest[16], const char* text) {
             lastTx = millis();
             snprintf(g_txStr, sizeof(g_txStr), "%s", ir.txSuppressed ? "saved" : "sent");
             Serial.printf("[TX] %s \"%s\"\n", g_txStr, body);
+            soakSent(body);
             return true;
         }
         if (ir.error == handheld::storage::Error::Allocation && !allocRetried) {
@@ -7151,6 +7160,7 @@ void inboundTick() {
         char from[33];
         hashToHex(key.peer, from);
         Serial.printf("[MSG] in from %s: \"%.80s\"\n", from, text);   // stress tests match on this
+        soakIncoming(key.peer, text);
         double la, lo;
         if (locParse(text, strlen(text), la, lo)) cposNote(key.peer, la, lo, msgEpoch(ts));
         wizCardIn(text);
@@ -10263,6 +10273,7 @@ void drawBootSplash() {
 [[noreturn]] void batteryShutdown(bool redraw, bool early) {
     Serial.printf("[BAT] empty (%.2f V, no USB): %s, switching off until USB\n", g_bat.volts,
                   redraw ? "drawing the idle screen" : "the panel already shows it");
+    soakLog("EMPTY %.3fV %d%%: switching off until USB", g_bat.volts, g_bat.pct);
     Serial.flush();
     bootNvsSetU8("empty", 1);
     if (redraw) {
@@ -11018,9 +11029,9 @@ void readKeyboardIntoQueue() {
         g_kb.update();
         // Stress test 2026-11-16: processKeys / watchBattery took exactly 1000 ms now and then
         // with no key pressed - an I2C wait. Say which read and the bus error when it happens.
+        if (millis() - t0 > 100) g_i2cSlowCount++;
         if (millis() - t0 > 100)
-            Serial.printf("[I2C] keyboard read %lu ms (Wire timeout %u ms)\n", (unsigned long)(millis() - t0),
-                          (unsigned)Wire.getTimeOut());
+            Serial.printf("[I2C] keyboard read %lu ms\n", (unsigned long)(millis() - t0));
         if (!g_kb.hasEvent()) break;
         uint8_t next = (uint8_t)((g_keyqHead + 1) % KEYQ_CAP);
         if (next == g_keyqTail) break;                  // queue full: leave rest in FIFO
@@ -11497,6 +11508,274 @@ const char* powerSleepBlocker() {
 
 // End of each loop pass: either a short idle delay or a light sleep until the next
 // wake-up (timer, key, touch or LoRa packet).
+// ---- Soak test (unplugged group chat) ------------------------------------------------
+// "soak on <mean min> <hex> [<hex> ...]": this unit chats with those radios by itself until
+// "soak off" (kept in NVS, so it carries on after a restart): a new message to a random one
+// about every <mean min>, and an answer to most "PP" messages it gets (10-60 s later). Half
+// are typed through the key queue into the thread (the real UI path, checked against what
+// went out), half sent directly. Everything goes to <SD>/ratdeckpro/soak.log: a STAT line
+// a minute (battery, heap, counts, pauses) and a line per event, so a run on battery until
+// it is empty can be read afterwards. tools/stress/soaklog.py sums the logs up.
+constexpr int kSoakPeers = 6;
+struct SoakState {
+    bool on = false;
+    uint8_t meanMin = 5;
+    uint8_t n = 0;
+    uint8_t peer[kSoakPeers][16] = {};
+    uint32_t next = 0;               // millis of the next new message
+    uint32_t replyAt = 0;            // pending answer
+    int replyTo = -1;
+    // typing
+    int typePeer = -1;
+    char typeText[100] = "";
+    size_t typePos = 0;
+    uint32_t typeStep = 0;           // millis of the next typing step
+    uint8_t typePhase = 0;           // 0 none, 1 typing, 2 Enter sent (waiting for the send)
+    // counts (since boot)
+    uint32_t sent = 0, typedOk = 0, typedBad = 0, rx = 0, sendFail = 0;
+    uint32_t slowMax = 0;
+    const char* slowName = "";
+} g_soak;
+
+void soakLog(const char* fmt, ...) {
+    if (!g_soak.on) return;
+    char line[200];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof(line), fmt, ap);
+    va_end(ap);
+    char ts[24] = "--";
+    struct tm lt;
+    if (localNow(lt)) strftime(ts, sizeof(ts), "%m-%d %H:%M:%S", &lt);
+    Serial.printf("[SOAK] %s\n", line);
+    // SD card if there is one (tried once: a missing card costs a slow mount each time), else
+    // the flash: /soak.log, moved to /soak.old at 600 KB. Console "soakdump" prints it.
+    static int8_t sd = -1;
+    if (sd < 0) sd = (g_sdMounted || sdMount()) ? 1 : 0;
+    if (sd == 1 && g_sdMounted) {
+        File f = g_sdStore.openFile(SD_PATH_ROOT "/soak.log", FILE_APPEND);
+        if (f) { f.printf("%s %lu %s\n", ts, (unsigned long)(millis() / 1000), line); f.close(); }
+        return;
+    }
+    File f = LittleFS.open("/soak.log", FILE_APPEND);
+    if (!f) return;
+    f.printf("%s %lu %s\n", ts, (unsigned long)(millis() / 1000), line);
+    const size_t size = f.size();
+    f.close();
+    if (size > 600000) {
+        LittleFS.remove("/soak.old");
+        LittleFS.rename("/soak.log", "/soak.old");
+    }
+}
+
+int soakPeerIndex(const uint8_t peer[16]) {
+    for (int i = 0; i < g_soak.n; i++) if (!memcmp(g_soak.peer[i], peer, 16)) return i;
+    return -1;
+}
+
+uint32_t soakCounter(int i, bool bump) {            // per-peer message number, kept in NVS
+    char key[8];
+    snprintf(key, sizeof(key), "c%02x%02x", g_soak.peer[i][0], g_soak.peer[i][1]);
+    Preferences p;
+    if (!p.begin("rs_soak", !bump)) return 0;
+    uint32_t v = p.getUInt(key, 0);
+    if (bump) p.putUInt(key, ++v);
+    p.end();
+    return v;
+}
+
+void soakSave() {
+    Preferences p;
+    if (!p.begin("rs_soak", false)) return;
+    p.putBool("on", g_soak.on);
+    p.putUChar("mean", g_soak.meanMin);
+    p.putUChar("n", g_soak.n);
+    p.putBytes("peers", g_soak.peer, sizeof(g_soak.peer));
+    p.end();
+}
+
+uint32_t soakRandMs(uint32_t meanMs) {              // exponential, 10 s .. 4 x mean
+    const float u = (float)(esp_random() % 10000 + 1) / 10001.0f;
+    float ms = -logf(u) * (float)meanMs;
+    if (ms < 10000) ms = 10000;
+    if (ms > 4.0f * meanMs) ms = 4.0f * meanMs;
+    return (uint32_t)ms;
+}
+
+void soakLoad() {
+    Preferences p;
+    if (!p.begin("rs_soak", true)) return;
+    g_soak.on = p.getBool("on", false);
+    g_soak.meanMin = p.getUChar("mean", 5);
+    g_soak.n = p.getUChar("n", 0);
+    if (g_soak.n > kSoakPeers) g_soak.n = kSoakPeers;
+    p.getBytes("peers", g_soak.peer, sizeof(g_soak.peer));
+    p.end();
+    if (!g_soak.on || !g_soak.n) { g_soak.on = false; return; }
+    g_soak.next = millis() + soakRandMs(g_soak.meanMin * 60000UL);
+#if !defined(SIMULATOR)
+    const int rr = (int)esp_reset_reason();
+#else
+    const int rr = 0;
+#endif
+    soakLog("BOOT reset=%d fw=%s peers=%u mean=%umin bat=%.3fV %d%% usb=%d", rr, RATSPEAK_FW_VERSION,
+            (unsigned)g_soak.n, (unsigned)g_soak.meanMin, g_bat.volts, g_bat.pct, g_bat.usb ? 1 : 0);
+}
+
+const char* const kSoakWords[] = {"ok", "on my way", "where are you", "at the camp", "see you soon", "got it",
+                                  "bring water", "the trail is muddy", "heading north", "battery fine",
+                                  "copy that", "meet at the truck", "in ten minutes", "all good here",
+                                  "any news", "signal is weak", "up on the ridge", "check the gate", "back soon"};
+
+void soakSend(int i, bool reply) {
+    const uint32_t num = soakCounter(i, true);
+    char text[100];
+    char tag[5];
+    snprintf(tag, sizeof(tag), "%.4s", g_destHex[0] ? g_destHex : "xxxx");
+    int len = snprintf(text, sizeof(text), "PP %s %lu", tag, (unsigned long)num);
+    const int words = 2 + (int)(esp_random() % 8);
+    for (int w = 0; w < words && len < 80; w++)
+        len += snprintf(text + len, sizeof(text) - len, " %s",
+                        kSoakWords[esp_random() % (sizeof(kSoakWords) / sizeof(kSoakWords[0]))]);
+    char to[9];
+    snprintf(to, sizeof(to), "%02x%02x%02x%02x", g_soak.peer[i][0], g_soak.peer[i][1], g_soak.peer[i][2], g_soak.peer[i][3]);
+    // Typed: only from a plain screen (no menu, entry, game, map ...), like a person would.
+    const bool canType = !g_locked && !g_menuOpen && !entryActive() && !g_wtOpen && !g_vmOpen && !g_libOpen &&
+                         !g_gameOpen && !g_chessOpen && !mapview::isOpen() && !g_usbDrive;
+    if (canType && (esp_random() & 1)) {
+        g_idleActive = false;
+        noteInput();
+        openThread(g_soak.peer[i]);
+        if (g_threadOpen) {
+            strlcpy(g_soak.typeText, text, sizeof(g_soak.typeText));
+            g_soak.typePeer = i;
+            g_soak.typePos = 0;
+            g_soak.typePhase = 1;
+            g_soak.typeStep = millis() + 1500;
+            soakLog("TYPE %s %lu to %s%s", tag, (unsigned long)num, to, reply ? " (reply)" : "");
+            return;
+        }
+    }
+    const SendResult r = sendOrQueue(g_soak.peer[i], text);
+    if (r == SendResult::Failed) g_soak.sendFail++; else g_soak.sent++;
+    soakLog("SEND %s %lu to %s%s: %s (%s)", tag, (unsigned long)num, to, reply ? " (reply)" : "",
+            r == SendResult::Sent ? "sent" : r == SendResult::Queued ? "outbox" : "FAILED", g_txStr);
+}
+
+// sendMessage saw this body go out: was it the typed one, letter for letter?
+void soakSent(const char* body) {
+    if (!g_soak.on || g_soak.typePhase != 2) return;
+    g_soak.typePhase = 0;
+    if (!strcmp(body, g_soak.typeText)) { g_soak.typedOk++; g_soak.sent++; soakLog("TYPED ok"); }
+    else { g_soak.typedBad++; soakLog("TYPED DIFF want \"%s\" got \"%s\"", g_soak.typeText, body); }
+}
+
+void soakIncoming(const uint8_t peer[16], const char* text) {
+    if (!g_soak.on || strncmp(text, "PP ", 3)) return;
+    char tag[16] = "";
+    unsigned long num = 0;
+    sscanf(text, "PP %15s %lu", tag, &num);
+    g_soak.rx++;
+    soakLog("RECV %s %lu", tag, num);
+    const int i = soakPeerIndex(peer);
+    if (i >= 0 && g_soak.replyTo < 0 && esp_random() % 10 < 6) {
+        g_soak.replyTo = i;
+        g_soak.replyAt = millis() + 10000 + esp_random() % 50000;
+    }
+}
+
+void soakNoteSlow(const char* name, uint32_t ms) {
+    if (ms > g_soak.slowMax) { g_soak.slowMax = ms; g_soak.slowName = name; }
+    if (ms >= 3000) soakLog("SLOW %s %lu ms", name, (unsigned long)ms);
+}
+
+void soakTick() {
+    if (!g_soak.on) return;
+    const uint32_t now = millis();
+    static uint32_t lastStat = 0;
+    if (!lastStat || now - lastStat >= 60000) {
+        lastStat = now | 1;
+        soakLog("STAT %.3fV %d%% %dmA usb=%d heap=%u min=%u blk=%u psram=%u q=%d ob=%d sent=%lu ok=%lu bad=%lu "
+                "fail=%lu rx=%lu slow=%lu max=%lu(%s) i2c=%lu unread=%d mode=%s",
+                g_bat.volts, g_bat.pct, g_bat.avgMa, g_bat.usb ? 1 : 0,
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                g_protoReady ? g_proto.lxmfQueuedCount() : -1, g_outboxCount, (unsigned long)g_soak.sent,
+                (unsigned long)g_soak.typedOk, (unsigned long)g_soak.typedBad, (unsigned long)g_soak.sendFail,
+                (unsigned long)g_soak.rx, (unsigned long)g_slowCount, (unsigned long)g_soak.slowMax, g_soak.slowName,
+                (unsigned long)g_i2cSlowCount, g_storeReady ? g_msgStore.totalUnreadCount() : -1, power::modeName(g_pw.mode));
+        g_soak.slowMax = 0;
+        g_soak.slowName = "";
+    }
+    // Typing: 6 keys every 0.8 s (a fast typist), then Enter, then back out of the thread.
+    if (g_soak.typePhase == 1 && (int32_t)(now - g_soak.typeStep) >= 0) {
+        if (!g_threadOpen) {                       // something closed the thread: give up
+            g_soak.typePhase = 0;
+            g_soak.typedBad++;
+            soakLog("TYPED LOST thread closed at %u of %u", (unsigned)g_soak.typePos, (unsigned)strlen(g_soak.typeText));
+            bufClear();
+            return;
+        }
+        const size_t len = strlen(g_soak.typeText);
+        for (int k = 0; k < 6 && g_soak.typePos <= len; k++) {
+            uint8_t next = (uint8_t)((g_keyqHead + 1) % KEYQ_CAP);
+            if (next == g_keyqTail) break;
+            KeyEvent ev{};
+            if (g_soak.typePos == len) ev.enter = true; else ev.character = g_soak.typeText[g_soak.typePos];
+            g_keyq[g_keyqHead] = ev;
+            g_keyqHead = next;
+            g_soak.typePos++;
+        }
+        g_soak.typeStep = now + 800;
+        if (g_soak.typePos > len) { g_soak.typePhase = 2; g_soak.typeStep = now + 30000; }
+        return;
+    }
+    if (g_soak.typePhase == 2) {
+        if ((int32_t)(now - g_soak.typeStep) >= 0) {   // no send seen in 30 s
+            g_soak.typePhase = 0;
+            g_soak.typedBad++;
+            soakLog("TYPED NOT SENT in 30 s: %s", g_txStr);
+            bufClear();
+        }
+        return;
+    }
+    if (g_threadOpen && g_soak.typePeer >= 0) {     // done typing: back to the list after a moment
+        g_soak.typePeer = -1;
+        g_soak.next = g_soak.next < now + 3000 ? now + 3000 : g_soak.next;
+        KeyEvent ev{};
+        ev.up = true;
+        uint8_t next = (uint8_t)((g_keyqHead + 1) % KEYQ_CAP);
+        if (next != g_keyqTail) { g_keyq[g_keyqHead] = ev; g_keyqHead = next; }
+        return;
+    }
+    if (g_soak.replyTo >= 0 && (int32_t)(now - g_soak.replyAt) >= 0) {
+        const int i = g_soak.replyTo;
+        g_soak.replyTo = -1;
+        soakSend(i, true);
+        return;
+    }
+    if ((int32_t)(now - g_soak.next) >= 0) {
+        g_soak.next = now + soakRandMs(g_soak.meanMin * 60000UL);
+        soakSend((int)(esp_random() % g_soak.n), false);
+    }
+}
+
+// Light sleep must wake for the next soak step.
+uint32_t soakMsUntilNext() {
+    if (!g_soak.on) return UINT32_MAX;
+    if (g_soak.typePhase) return 50;
+    const uint32_t now = millis();
+    uint32_t ms = (int32_t)(g_soak.next - now) > 0 ? g_soak.next - now : 1;
+    if (g_soak.replyTo >= 0) {
+        const uint32_t r = (int32_t)(g_soak.replyAt - now) > 0 ? g_soak.replyAt - now : 1;
+        if (r < ms) ms = r;
+    }
+    const uint32_t stat = 60000;                     // the STAT line once a minute
+    return ms < stat ? ms : stat;
+}
+
 void powerIdle() {
     if (g_redraw && !g_idleActive) return;
     static uint32_t accountedAt = 0;
@@ -11528,6 +11807,10 @@ void powerIdle() {
     if (g_toast[0]) {
         const int32_t left = (int32_t)(g_toastUntil - millis());
         ms = left <= 0 ? 1 : ((uint32_t)left < ms ? (uint32_t)left : ms);
+    }
+    {                                                  // soak test: next message / STAT line
+        const uint32_t soak = soakMsUntilNext();
+        if (soak < ms) ms = soak;
     }
     if (g_protoReady) {                                // wake for a scheduled path response
         const uint32_t due = g_proto.msUntilScheduledTx();
@@ -11830,6 +12113,53 @@ void handleSerialLine(char* p) {
         Serial.printf("[HAV] %s, %s, connected %d, busy %d, heard \"%s\", answer \"%s\"\n",
                       g_cfg.haVoice ? "on" : "off", havoice::status(), havoice::connected(),
                       havoice::busy(), havoice::heard(), havoice::answer());
+        return;
+    }
+    if (!strcmp(p, "soak") || !strncmp(p, "soak ", 5)) {   // soak on <mean min> <hex> [...] | soak off
+        const char* q = p[4] ? p + 5 : "";
+        if (!strncmp(q, "on ", 3)) {
+            int mean = atoi(q + 3);
+            const char* h = strchr(q + 3, ' ');
+            uint8_t n = 0;
+            while (h && n < kSoakPeers) {
+                while (*h == ' ') h++;
+                if (strlen(h) < 32) break;
+                for (int i = 0; i < 16; i++) { char b[3] = {h[2 * i], h[2 * i + 1], 0}; g_soak.peer[n][i] = (uint8_t)strtoul(b, nullptr, 16); }
+                n++;
+                h = strchr(h + 32, ' ');
+            }
+            if (mean < 1 || !n) { Serial.println("[SOAK] soak on <mean minutes> <32 hex> [<32 hex> ...]"); return; }
+            g_soak.meanMin = (uint8_t)(mean > 120 ? 120 : mean);
+            g_soak.n = n;
+            g_soak.on = true;
+            soakSave();
+            g_soak.next = millis() + soakRandMs(g_soak.meanMin * 60000UL);
+            soakLog("START peers=%u mean=%umin bat=%.3fV %d%% usb=%d", (unsigned)n, (unsigned)g_soak.meanMin, g_bat.volts,
+                    g_bat.pct, g_bat.usb ? 1 : 0);
+        } else if (!strcmp(q, "dump")) {             // soak dump: the log (card, else flash)
+            File f = (g_sdMounted || sdMount()) ? g_sdStore.openFile(SD_PATH_ROOT "/soak.log", FILE_READ) : File();
+            if (!f) f = LittleFS.open("/soak.log", FILE_READ);
+            if (!f) { Serial.println("[SOAK] no log"); return; }
+            Serial.printf("[SOAK] ---- log %u bytes ----\n", (unsigned)f.size());
+            char buf[256];
+            while (f.available()) { const size_t n = f.read((uint8_t*)buf, sizeof(buf)); Serial.write((const uint8_t*)buf, n); }
+            f.close();
+            Serial.println("[SOAK] ---- end ----");
+        } else if (!strcmp(q, "clear")) {            // soak clear: start a fresh log
+            if (g_sdMounted || sdMount()) g_sdStore.remove(SD_PATH_ROOT "/soak.log");
+            LittleFS.remove("/soak.log");
+            LittleFS.remove("/soak.old");
+            Serial.println("[SOAK] log cleared");
+        } else if (!strcmp(q, "off")) {
+            soakLog("STOP");
+            g_soak.on = false;
+            soakSave();
+            Serial.println("[SOAK] off");
+        } else {
+            Serial.printf("[SOAK] %s, %u peers, mean %u min, sent %lu typed ok %lu bad %lu rx %lu\n", g_soak.on ? "on" : "off",
+                          (unsigned)g_soak.n, (unsigned)g_soak.meanMin, (unsigned long)g_soak.sent,
+                          (unsigned long)g_soak.typedOk, (unsigned long)g_soak.typedBad, (unsigned long)g_soak.rx);
+        }
         return;
     }
     if (!strncmp(p, "chat ", 5) && strlen(p) >= 5 + 32) {   // chat <32 hex>: open that thread (stress tests)
@@ -13190,6 +13520,7 @@ bool begin() {
     g_fullRefreshReq = true;
     requestRedraw();
     render();
+    soakLoad();                           // an unplugged soak test carries on after a restart
     Serial.println("[BOOT] ready");
     restoreReport();
     if (sysimg::pendingVerify()) g_markValidAt = millis() + 10000;   // new firmware: confirm if it keeps running
@@ -13239,6 +13570,7 @@ void walkieTick() {
 // so a 2-3 s pause between a key and the screen can be traced to its cause.
 void slowNote(const char* name, uint32_t ms) {
     Serial.printf("[SLOW] %s %u ms\n", name, (unsigned)ms);
+    soakNoteSlow(name, ms);
     if (!strcmp(name, "render")) return;   // the panel refresh: logged per frame already
     g_slow[g_slowHead] = {name, (uint16_t)(ms > 65535 ? 65535 : ms), millis() / 1000};
     g_slowHead = (uint8_t)((g_slowHead + 1) % 12);
@@ -13248,6 +13580,7 @@ void slowNote(const char* name, uint32_t ms) {
 
 void loop() {
     SLOW_STEP("keys", processKeys());   // input first: lowest latency to the next render
+    SLOW_STEP("soak", soakTick());
     SLOW_STEP("pumpOnce", pumpOnce());
     SLOW_STEP("g_announceMgr.loop", g_announceMgr.loop());
     SLOW_STEP("g_audio.loop", g_audio.loop());
