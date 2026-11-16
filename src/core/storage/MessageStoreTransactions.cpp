@@ -80,8 +80,10 @@ MessageStore::Submission MessageStore::requestStatus(const RecordKey& key, LXMFS
 }
 
 MessageStore::Submission MessageStore::requestMarkRead(const std::string& peer,
-                                                      uint32_t identityGeneration, uint32_t peerGeneration) {
+                                                      uint32_t identityGeneration, uint32_t peerGeneration,
+                                                      uint32_t maxRecords) {
     Request request; request.operation = Operation::MarkRead;
+    request.offset = maxRecords;   // MarkRead: batch limit (0 = all)
     if (!decodeHex(peer.data(), peer.size(), request.key.peer, 16)) return {{}, Rejection::Invalid};
     request.identityGeneration = identityGeneration; request.peerGeneration = peerGeneration;
     return submit(request);

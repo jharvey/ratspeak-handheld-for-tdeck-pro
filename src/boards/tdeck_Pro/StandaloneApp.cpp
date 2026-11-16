@@ -1996,9 +1996,15 @@ char g_histNote[24] = "";
 MessageStore::Ticket g_markReadTicket{};
 bool g_markReadPending = false;
 char g_markReadNext[33] = "";       // a thread opened while another was still being marked
+// Marked read 2 records per store request: one request for a whole backlog (100+ unread, each a
+// ~1 s flash rewrite) held the store for minutes - every send froze ~8-12 s waiting to be saved,
+// threads opened empty and delivery-status updates were refused (stress test 2026-11-15).
+constexpr uint32_t kMarkReadBatch = 2;
+char g_markReadHex[33] = "", g_markReadRetry[33] = "";
 void markReadStart(const char* hex) {
-    auto mr = g_msgStore.requestMarkRead(std::string(hex));
-    if (mr.accepted()) { g_markReadTicket = mr.ticket; g_markReadPending = true; }
+    auto mr = g_msgStore.requestMarkRead(std::string(hex), 0, 0, kMarkReadBatch);
+    if (mr.accepted()) { g_markReadTicket = mr.ticket; g_markReadPending = true; strlcpy(g_markReadHex, hex, 33); }
+    else strlcpy(g_markReadRetry, hex, sizeof(g_markReadRetry));   // slot busy (a status update): next loop
 }
 
 void loadHistory(const uint8_t peer[16]) {
@@ -2140,15 +2146,39 @@ void loadHistory(const uint8_t peer[16]) {
 }
 
 void markReadTick() {
-    if (!g_markReadPending) return;
+    if (!g_markReadPending) {
+        if (g_markReadRetry[0]) {
+            char h[33];
+            strlcpy(h, g_markReadRetry, sizeof(h));
+            g_markReadRetry[0] = 0;
+            markReadStart(h);
+        }
+        return;
+    }
     MessageStore::Result r;
     g_msgStore.poll();
     if (!g_msgStore.peekResult(g_markReadTicket, r)) return;
     g_msgStore.releaseResult(g_markReadTicket);
     g_markReadPending = false;
+    static uint32_t batchTotal = 0;
+    batchTotal += r.total;
+    if (r.total >= kMarkReadBatch && r.outcome == handheld::storage::Outcome::Committed) {
+        // More to mark: the next batch (other store work goes in between). Another thread opened
+        // meanwhile goes first; this one carries on after it.
+        if (g_markReadNext[0]) {
+            char rest[33];
+            strlcpy(rest, g_markReadHex, sizeof(rest));
+            markReadStart(g_markReadNext);
+            strlcpy(g_markReadNext, rest, sizeof(g_markReadNext));
+        } else {
+            markReadStart(g_markReadHex);
+        }
+        return;
+    }
     g_convValid = false;
-    Serial.printf("[HIST] marked read: outcome %u error %u, %lu records, unread %ld\n", (unsigned)r.outcome,
-                  (unsigned)r.error, (unsigned long)r.total, (long)r.unreadDelta);
+    Serial.printf("[HIST] marked read: outcome %u error %u, %lu records\n", (unsigned)r.outcome, (unsigned)r.error,
+                  (unsigned long)batchTotal);
+    batchTotal = 0;
     if (g_markReadNext[0]) { markReadStart(g_markReadNext); g_markReadNext[0] = 0; }
 }
 
@@ -7107,6 +7137,9 @@ void inboundTick() {
         if (++tries < 20) return;            // store busy: try again next loop
         tries = 0;
     } else {
+        char from[33];
+        hashToHex(key.peer, from);
+        Serial.printf("[MSG] in from %s: \"%.80s\"\n", from, text);   // stress tests match on this
         double la, lo;
         if (locParse(text, strlen(text), la, lo)) cposNote(key.peer, la, lo, msgEpoch(ts));
         wizCardIn(text);
@@ -11782,6 +11815,15 @@ void handleSerialLine(char* p) {
                       havoice::busy(), havoice::heard(), havoice::answer());
         return;
     }
+    if (!strncmp(p, "chat ", 5) && strlen(p) >= 5 + 32) {   // chat <32 hex>: open that thread (stress tests)
+        uint8_t d[16];
+        for (int i = 0; i < 16; i++) { char h[3] = {p[5 + 2 * i], p[6 + 2 * i], 0}; d[i] = (uint8_t)strtoul(h, nullptr, 16); }
+        g_menuOpen = false;
+        if (g_idleActive) { g_idleActive = false; noteInput(); }
+        openThread(d);
+        Serial.printf("[UI] chat %.8s %s\n", p + 5, g_threadOpen ? "open" : "NOT open");
+        return;
+    }
     if (!strncmp(p, "vm", 2) && (p[2] == ' ' || !p[2])) {   // vm <32 hex> | vm rec | vm send | vm play | vm close
         const char* q = p[2] ? p + 3 : "";
         if (strlen(q) >= 32) {
@@ -11931,7 +11973,7 @@ void handleSerialLine(char* p) {
     if (!strncmp(p, "k ", 2)) {                        // k <keys>: press keys (bench timing); ^ back, ~ Enter
         for (const char* q = p + 2; *q; q++) {
             uint8_t next = (uint8_t)((g_keyqHead + 1) % KEYQ_CAP);
-            if (next == g_keyqTail) break;
+            if (next == g_keyqTail) { Serial.printf("[KEY] queue full: %u keys dropped\n", (unsigned)strlen(q)); break; }
             KeyEvent ev{};
             if (*q == '^') ev.up = true; else if (*q == '~') ev.enter = true; else ev.character = *q;
             g_keyq[g_keyqHead] = ev;

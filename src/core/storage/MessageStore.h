@@ -41,7 +41,10 @@ public:
     Submission requestSave(const Request&, const void* title, const void* content,
                            const void* fieldsHead, size_t fieldsHeadLength, const void* fieldsTail);
     Submission requestStatus(const RecordKey&, LXMFStatus, uint32_t identityGeneration = 0, uint32_t peerGeneration = 0);
-    Submission requestMarkRead(const std::string& peer, uint32_t identityGeneration = 0, uint32_t peerGeneration = 0);
+    // maxRecords > 0: mark at most that many, so a long backlog does not hold the store (each
+    // record is a flash rewrite, ~0.5-1 s); result.total == maxRecords means "submit again".
+    Submission requestMarkRead(const std::string& peer, uint32_t identityGeneration = 0, uint32_t peerGeneration = 0,
+                               uint32_t maxRecords = 0);
     Submission requestDelete(const std::string& peer, uint32_t identityGeneration = 0, uint32_t peerGeneration = 0);
     // withFields: the payload after the header is title||content||fields (else title||content).
     Submission requestRecord(const RecordKey&, uint32_t offset = 0, uint16_t capacity = 4096,

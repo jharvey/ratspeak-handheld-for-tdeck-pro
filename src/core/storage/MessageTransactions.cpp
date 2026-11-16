@@ -917,6 +917,7 @@ void MessageTransactions::markRead(const Request& request, Result& result) {
             if (item.error != Error::None) aggregate.error = item.error;
         };
         merge(result.flash, changed.flash); merge(result.sd, changed.sd);
+        if (request.offset && result.total >= request.offset) break;   // batch done: caller asks again
     }
     if (cursor.error != Error::None) failure = cursor.error;
     result.error = failure;

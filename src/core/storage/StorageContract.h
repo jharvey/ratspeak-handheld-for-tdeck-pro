@@ -61,7 +61,7 @@ struct Request {
     RecordKey key;
     uint32_t identityGeneration = 0;
     uint32_t peerGeneration = 0;
-    uint32_t offset = 0; // ReadRecord byte offset; not a query cursor
+    uint32_t offset = 0; // ReadRecord byte offset; MarkRead: max records (0 = all); not a query cursor
     uint8_t source[16] = {};
     uint8_t destination[16] = {};
     uint8_t messageId[32] = {};
