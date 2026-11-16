@@ -1,0 +1,151 @@
+RatSpeak T-Deck Pro: instructional videos (the learning series)
+
+What this folder is
+- Longer, guided videos that teach the device from the box to everyday use, one topic per
+  video, in the order a new owner learns it. The short how-to clips stay in docs/videos/
+  (one task each); these videos may reuse them as parts.
+- Each video becomes a text guide later (same name, .md), so every script step must be
+  something a reader can follow without the video.
+- Re-run when features change: each entry lists the firmware areas it shows, so a change
+  there means that video needs a remake.
+- File names: NN_Name.mp4 (NN = order in the series), _ instead of spaces.
+- Same conventions as docs/videos/Video_Descriptions.txt (hand pointer and click sounds,
+  SYM / Alt presses, overlay boxes, start and end on the idle screen, two units side by side
+  with name labels).
+- Status per entry: PLANNED (listed here), SCRIPTED (full steps written), MADE (mp4 here).
+
+
+==========================================================================================
+THE SERIES
+==========================================================================================
+
+-- 01_Unbox_to_first_conversation.mp4                                    PLANNED (long)
+- Purpose: from a new unit in the box to a first two-way conversation.
+- Parts: what is in the box and the keys; charging over USB-C; putting RatSpeak on it (web
+  flasher); first start (BOOTING banner) and the setup wizard; the home screen and your
+  address; swapping contacts with a second unit (Jack and Jill); first message and reply;
+  back to the idle screen. Ends with the battery calibration note: charge full, run it until
+  it switches itself off, charge full again.
+- Reuses: New_out_of_box_unit_first_turn_on, Contact_exchange, send / read message clips.
+- Shows: wizard, Contacts, contact card share, chat, idle screen, battery.
+
+-- 02_Everyday_messaging_Minimal_mode.mp4                                PLANNED
+- Purpose: daily use with the fewest keys: wake, read, reply, back to sleep.
+- Parts: idle screen and the new-message count; any key wakes to the Inbox; open a chat,
+  read, reply; delivered / not yet delivered; a message to someone out of range waits in
+  the outbox; unlock with the password if set.
+- Shows: Minimal mode, Inbox, chat, outbox, lock.
+
+-- 03_Everyday_messaging_Everything_mode.mp4                             PLANNED
+- Purpose: the same day with every feature showing: what each extra menu entry is for.
+- Parts: the full menu (Home, Inbox, Contacts, Peers, Atlas, Library, Settings ...); chat
+  menu (MIC): share location, voice message, contact card; Peers and announce; the home
+  card; where each feature is explained further in this series.
+- Shows: Everything mode, menu, chat menu, Peers.
+
+-- 04_Configure_Typical_mode.mp4                                         PLANNED
+- Purpose: choose what your unit shows: Minimal / Typical / Everything, and pick the Typical
+  features one by one.
+- Parts: Settings 1 Mode; Typical features list (turn each on / off and see the menu
+  change); touch on / off; idle screen choice and timeout.
+- Shows: Settings Mode, Typical features, Screen & I/O.
+
+-- 05_Energy_modes.mp4                                       PLANNED (long: may be 3 parts)
+- Purpose: make the battery last: what each energy mode does and how to pick or tune one.
+- Part A: the modes (Full power, Balanced, Saver, Ultra-low, On demand): what changes
+  (radio listening, GPS, screen, wake time) and the hours each gives on the Power page.
+- Part B: Custom power: each setting and its cost; the energy monitor and the energy trend
+  graph; "time left" and the learned battery capacity.
+- Part C: battery care: charging, the calibration cycle, the low-battery notice, the
+  BATTERY EMPTY banner and why it switches itself off, BOOTING when USB comes back.
+- Shows: Settings 5 Power, Custom power, Energy monitor / trend, 6 Battery, Low-battery.
+
+-- 06_Home_Assistant_mode.mp4                                            PLANNED
+- Purpose: use the handheld with Home Assistant: alerts from the house, commands to it,
+  voice.
+- Parts: what is needed at home (the bridge); Settings Home Assistant voice; sending a
+  command; receiving an alert; presence (home / away). Only what is built at recording
+  time; the rest is said as "coming".
+- Shows: HA voice page, chat with the house, alerts.
+
+-- 07_Atlas_maps_and_navigation.mp4                                      PLANNED (long)
+- Purpose: the offline map: move around, find places, mark and go to them.
+- Parts: open the Atlas, pan / zoom / keys (K), places search, your GPS position; contacts
+  on the map; waypoints (save, step through); breadcrumb track (record, show, track back,
+  GPX on SD); navigate to a contact or waypoint (arrow + distance); arrival alerts; map
+  layers. Reuses atlas.mp4.
+- Shows: Atlas, waypoints, track, navigate, arrival alerts, map packs on SD.
+
+-- 08_Finding_people_and_contacts.mp4                                    PLANNED
+- Purpose: get people into your contacts and keep them tidy.
+- Parts: announce and what it does; Peers (who has announced); peer to contact; naming a
+  contact; contact cards (send / receive); removing a contact; your own identity card and
+  address. Reuses peer_search, add_contact, contact_exchange.
+
+-- 09_Voice_messages_and_walkie_talkie.mp4                               PLANNED
+- Purpose: talk instead of type. Needs two real units (sound).
+- Parts: record and send a voice message, play one; walkie-talkie call: call, answer, talk
+  / listen with Space, hang up; same WiFi or the unit's own hotspot; range and battery
+  notes.
+- Shows: chat MIC 5, contact card W, walkie screen.
+
+-- 10_Location_sharing_and_team_awareness.mp4                            PLANNED
+- Purpose: let your group see where you are, safely.
+- Parts: share my location once; auto-share and the "sharing on" sign; seeing a contact's
+  last position and its age; navigate to them; check-in schedule; low-battery notice with
+  position; privacy: nothing is shared unless you turn it on.
+- Shows: chat MIC 1 / 2, Atlas contacts, Check-in, Low-battery notice.
+
+-- 11_Lock_If_found_and_privacy.mp4                                      PLANNED
+- Purpose: protect the unit and get it back if lost.
+- Parts: set a password, lock, unlock; the If-found idle screen and its details; what a
+  finder sees; what the lock protects (and what not yet).
+- Shows: Screen & I/O idle splash, If found page, lock.
+
+-- 12_WiFi_and_internet_links.mp4                                        PLANNED
+- Purpose: connect over WiFi as well as LoRa.
+- Parts: scan and join a network, saved networks, auto-connect; the TCP hub (reach other
+  Reticulum users over the internet); WiFi and battery.
+- Shows: Settings WiFi, Networks, Saved WiFi, TCP hub. Reuses wifi / add_wifi.
+
+-- 13_SD_card_backup_and_updates.mp4                                     PLANNED
+- Purpose: keep your unit safe and up to date with the SD card.
+- Parts: what lives on the card (maps, archive, logs, library); Back up now and Restore;
+  firmware update from /firmware; message archive on / off; USB drive mode (card on the PC);
+  eject before removing.
+- Shows: Settings Storage, SD card, Restore backup.
+
+-- 14_Library_help_and_games.mp4                                         PLANNED (short)
+- Purpose: the built-in help pages and the games.
+- Parts: Library, reading a help file, bookmarks / pages; Rat Trap, chess (levels, take back).
+
+-- 15_Radio_range_test_and_antennas.mp4                                  PLANNED
+- Purpose: see how far you can reach and check an antenna.
+- Parts: LoRa settings (presets, TX power) and what they trade; range test with two units
+  (RSSI / SNR, CSV on SD); what a bad or missing antenna looks like.
+- Shows: Settings 8 LoRa, Range test.
+
+-- 16_When_something_is_wrong.mp4                                        PLANNED
+- Purpose: troubleshooting a new owner can do alone.
+- Parts: will not turn on (empty battery banner, charge, BOOTING); message not delivered
+  (outbox, range, announce); no GPS fix (sky view, Settings GPS); battery % looks wrong
+  (calibration cycle); Check this unit (self-test: PASS / WARN / FAIL and what each line
+  means, the report on SD); restore a backup; where to ask for help.
+- Shows: Diagnostics, Check this unit, Battery, GPS, outbox.
+
+-- 17_Multiple_identities.mp4                                            PLANNED (Advanced)
+- Purpose: more than one identity on one unit (e.g. personal / team).
+- Parts: Identities list, add / switch / remove, which address others see.
+- Shows: Settings Identities.
+
+
+==========================================================================================
+ALSO (text only, no video needed)
+==========================================================================================
+- Quick reference card: one page with every key, SYM digits, and the main menu letters
+  (printable, to keep with the unit).
+- Settings map: every Settings row with its number and one line on what it does.
+- Glossary: announce, peer, contact, LXMF address, propagation, outbox, RSSI / SNR,
+  energy mode, idle screen.
+- For testers: the stress test (Settings Diagnostics, Stress test on / off) and the soak
+  logs; how to send a self-test report.

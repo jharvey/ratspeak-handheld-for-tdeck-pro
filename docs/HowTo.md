@@ -210,3 +210,11 @@ and turns each recording into an MP4 with `tools/howto/make_video.py` (hand poin
 key names, captions, note boxes, click sounds). Digits and small letters are shown the way a
 hand types them: one hand holds **SYM** or **Alt** (half click down, half click up), the
 other presses the key (full click). See the top of both files.
+
+Captions above the device sit on a deep-blue banner (white bold text) that flashes orange and
+grows in whenever the caption changes; note boxes over the screen pop in the same way.
+
+With the repo on the NAS (M:), Windows will not run the simulator from the share ("Access is
+denied"): build it to C: (`C:\Users\MyPC\simrun\build_simb.bat`), put Qt's `mingw_64\bin` and
+`Tools\mingw1310_64\bin` on PATH, and pass `-SimExe C:\Users\MyPC\simrun\simb\ratspeak-sim.exe
+-Seed C:\Users\MyPC\simrun\sim2\build\howto_seed`.

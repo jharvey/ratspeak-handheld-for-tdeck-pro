@@ -9,11 +9,13 @@
 #include "hw/SimHw.h"
 
 namespace {
-// Device drawing units: 1 unit = 1 panel pixel.
-constexpr double kDevW = 280, kDevH = 600;
-const QRectF kScreen(20, 40, 240, 320);
-const QRectF kBezel(10, 28, 260, 344);
-constexpr double kKbY = 390, kKeyW = 23, kKeyH = 30, kGap = 3, kPitch = 36;
+// Device drawing units: 1 unit = 1 panel pixel. The body has the real unit's proportions
+// (LilyGO: 120 x 66 mm, 1.82 : 1), so 330 x 600; the 240 px screen then covers the same
+// share of the width as the real one (~48 of 66 mm).
+constexpr double kDevW = 330, kDevH = 600;
+const QRectF kScreen(45, 40, 240, 320);
+const QRectF kBezel(35, 28, 260, 344);
+constexpr double kKbY = 390, kKeyW = 28, kKeyH = 30, kGap = 3, kPitch = 36;
 
 // Colours from the device photo: frosted light-grey case, light screen surround,
 // black keys with white legends.
@@ -47,7 +49,7 @@ QString symLetterFor(QChar c) {
 
 DeviceWidget::DeviceWidget(QWidget* parent) : QWidget(parent) {
     setFocusPolicy(Qt::StrongFocus);
-    setMinimumSize(280, 600);
+    setMinimumSize(330, 600);
     auto addRow = [&](const KeyDef* defs, int row, double y) {
         const double x0 = (kDevW - (10 * kKeyW + 9 * kGap)) / 2;
         for (int i = 0; i < 10; i++)
@@ -59,7 +61,7 @@ DeviceWidget::DeviceWidget(QWidget* parent) : QWidget(parent) {
     addRow(kRow2, 2, kKbY + 2 * kPitch);
     // Bottom row: LSHIFT(col4) MIC(col3) SPACE(col2) SYM(col1) RSHIFT(col0)
     const double y3 = kKbY + 3 * kPitch, x0 = (kDevW - (10 * kKeyW + 9 * kGap)) / 2;
-    const double mod = 36, space = (10 * kKeyW + 9 * kGap) - 4 * mod - 4 * kGap;
+    const double mod = 42, space = (10 * kKeyW + 9 * kGap) - 4 * mod - 4 * kGap;
     double x = x0;
     auto add3 = [&](uint8_t col, const char* label, double w, const char* sym = "") {
         keys_.push_back({3, col, QString::fromUtf8(label), QString::fromUtf8(sym), QRectF(x, y3, w, kKeyH)});
@@ -75,7 +77,7 @@ DeviceWidget::DeviceWidget(QWidget* parent) : QWidget(parent) {
     startTimer(30);
 }
 
-QSize DeviceWidget::sizeHint() const { return QSize(448, 960); }
+QSize DeviceWidget::sizeHint() const { return QSize(528, 960); }
 
 QTransform DeviceWidget::devToWidget() const {
     const double s = std::min(width() / kDevW, height() / kDevH);
