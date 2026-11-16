@@ -58,5 +58,9 @@ misc notes
 - The setup wizard opens: Welcome, then step by step with Enter to go on: Device name (type a name, e.g. "TRAILHEAD"), Time zone (pick yours), Clock, Energy mode (Balanced), Idle screen (pick If found; its name / phone lines are filled in later in Settings), Simple / Advanced (Typical), Password lock (skip for now), Import contacts (skip). Use the hand pointer with click sounds on each key, ALL CAPS typing.
 - Overlay box at the last step: "0 finishes the wizard at any step; everything can be changed later in Settings".
 - The home screen appears: the identity card with the new name and address. Overlay box: "This is your address: others add you with it, or you announce so they find you (see Search_for_others.mp4)".
-- Unplug the USB cable: overlay box "Charge it full the first time; the battery % settles after a full charge".
+- Battery calibration (first full cycle). The battery % is only a rough guess on a new unit (one unit showed 62% when it was really full). Show it in three short scenes:
+  - Charge to full: leave it on USB until the battery icon / battery page says full or charged (a few hours; a wall charger or a PC port that really charges, not a data-only port or hub). Overlay box: "Step 1: charge it full. The unit learns what full looks like".
+  - Run it down: unplug and use it normally (or leave it on) until it switches itself off with the "plug in USB charger" banner on the idle screen. Time-lapse with a clock in the corner. Overlay box: "Step 2: use it until it switches itself off. Do not top it up part way".
+  - Charge to full again without using it. Overlay box: "Step 3: charge it full again. From now on the % and time left are much more accurate".
+  - Closing overlay box: "Do this once with a new unit, and again if the % starts to look wrong".
 - When done it goes to the idle screen (the If found screen just set up).
