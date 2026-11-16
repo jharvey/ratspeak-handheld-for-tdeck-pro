@@ -114,6 +114,9 @@ void soakIncoming(const uint8_t peer[16], const char* text);
 void soakSent(const char* body);
 void soakNoteSlow(const char* name, uint32_t ms);
 uint32_t soakGoingDark();
+bool soakIsOn();
+uint8_t soakPeerCount();
+void soakToggle();
 uint32_t g_i2cSlowCount = 0;              // slow keyboard / gauge reads (the 1 s I2C waits)
 
 // =============================================================================
@@ -4143,6 +4146,8 @@ void buildSettingsRows(Page p) {
         }
         srow(RK_INFO, "Uptime", "%lud %02lu:%02lu", (unsigned long)(s / 86400),
              (unsigned long)((s / 3600) % 24), (unsigned long)((s / 60) % 60));
+        if (soakIsOn()) srow(RK_TOGGLE, "Stress test", "ON  %u peers, Enter = off", (unsigned)soakPeerCount());
+        else            srow(RK_TOGGLE, "Stress test", "OFF");
         break;
     }
 
@@ -4736,6 +4741,10 @@ void activateSetting(int idx) {
             else toast("List full (8)");
         }
         requestRedraw();
+        break;
+
+    case PG_DIAG:
+        if (idx == 6) soakToggle();
         break;
 
     case PG_STORAGE:
@@ -11530,6 +11539,17 @@ const char* powerSleepBlocker() {
 // report every <min> (default 5), at boot, at the first low battery, and "dark" just before
 // the empty-battery switch-off. It does not answer (it ignores "PS").
 constexpr int kSoakPeers = 6;
+// TEST FIRMWARE: a unit with no soak setting yet starts with the soak ON, chatting with the
+// test units below (all but itself). Settings > Diagnostics > Stress test turns it off (kept).
+// Set kSoakDefaultOn = false before a release.
+constexpr bool kSoakDefaultOn = true;
+constexpr uint8_t kSoakDefaultMean = 2;
+const char* const kSoakFleet[] = {
+    "67a79f234db89b27e96310e3b3b25aa1",   // COM3
+    "39543b0f5fb5a72a2cb23b3014bd650a",   // COM5
+    "b5302a609fcd930edd82108f32b468ff",   // COM6
+    "3bb4b09700e7c1d5a7c50111caf10175",   // COM9
+};
 struct SoakState {
     bool on = false;
     uint8_t meanMin = 5;
@@ -11643,9 +11663,60 @@ void soakSetup() {
     g_soak.nextIdleSwap = millis() + 30UL * 60000UL;
 }
 
+// The test units (all but this one) as soak peers. Returns how many.
+uint8_t soakFleetPeers() {
+    uint8_t n = 0;
+    for (const char* h : kSoakFleet) {
+        if (n >= kSoakPeers) break;
+        uint8_t d[16];
+        for (int i = 0; i < 16; i++) { char b[3] = {h[2 * i], h[2 * i + 1], 0}; d[i] = (uint8_t)strtoul(b, nullptr, 16); }
+        if (isSelf(d)) continue;
+        memcpy(g_soak.peer[n++], d, 16);
+    }
+    return n;
+}
+
+bool soakIsOn() { return g_soak.on; }
+uint8_t soakPeerCount() { return g_soak.n; }
+
+// Settings > Diagnostics > Stress test: Enter turns it off / on (on again with the old peers,
+// or the test units when there are none).
+void soakToggle() {
+    if (g_soak.on) {
+        soakLog("STOP (Settings)");
+        g_soak.on = false;
+        g_soak.typePhase = 0;
+        g_soak.tourKeys[0] = 0;
+        g_soak.replyTo = -1;
+        soakSave();
+        toast("Stress test off");
+        return;
+    }
+    if (!g_soak.n) { g_soak.n = soakFleetPeers(); g_soak.meanMin = kSoakDefaultMean; }
+    if (!g_soak.n) { toast("No peers for the stress test"); return; }
+    g_soak.on = true;
+    soakSave();
+    g_soak.next = millis() + soakRandMs(g_soak.meanMin * 60000UL);
+    soakLog("START (Settings) peers=%u mean=%umin bat=%.3fV %d%% usb=%d", (unsigned)g_soak.n, (unsigned)g_soak.meanMin,
+            g_bat.volts, g_bat.pct, g_bat.usb ? 1 : 0);
+    soakSetup();
+    toast("Stress test on");
+}
+
 void soakLoad() {
     Preferences p;
-    if (!p.begin("rs_soak", true)) return;
+    if (!p.begin("rs_soak", true)) {      // never set on this unit: the test-firmware default
+        if (!kSoakDefaultOn) return;
+        g_soak.n = soakFleetPeers();
+        g_soak.meanMin = kSoakDefaultMean;
+        g_soak.on = g_soak.n > 0;
+        if (!g_soak.on) return;
+        soakSave();
+        g_soak.next = millis() + soakRandMs(g_soak.meanMin * 60000UL);
+        soakLog("START default (test firmware) peers=%u mean=%umin", (unsigned)g_soak.n, (unsigned)g_soak.meanMin);
+        soakSetup();
+        return;
+    }
     g_soak.on = p.getBool("on", false);
     g_soak.meanMin = p.getUChar("mean", 5);
     g_soak.n = p.getUChar("n", 0);
