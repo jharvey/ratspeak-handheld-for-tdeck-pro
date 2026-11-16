@@ -11919,7 +11919,11 @@ constexpr int kSoakPeers = 6;
 // TEST FIRMWARE: a unit with no soak setting yet starts with the soak ON, chatting with the
 // test units below (all but itself). Settings > Diagnostics > Stress test turns it off (kept).
 // Set kSoakDefaultOn = false before a release.
+#if defined(SIMULATOR)
+constexpr bool kSoakDefaultOn = false;   // simulated radios (how-to videos, tests) never chat by themselves
+#else
 constexpr bool kSoakDefaultOn = true;
+#endif
 constexpr uint8_t kSoakDefaultMean = 2;
 const char* const kSoakFleet[] = {
     "67a79f234db89b27e96310e3b3b25aa1",   // COM3

@@ -51,6 +51,15 @@ HOLD_AFTER_MS = 350       # and leaves this long after it is released
 GLIDE_MS = 160            # moves to the next key this fast when presses follow each other
 STAY_MS = 900             # between two presses closer than this the hand stays on screen
 ORANGE = (230, 120, 0)
+CAP_BG = (22, 58, 110)         # caption banner: deep blue, white bold text
+CAP_POP = (240, 140, 20)       # ... flashes orange when the caption changes, then fades back
+CAP_POP_MS = 900               # how long the change flash takes to fade
+CAP_GROW_MS = 220              # the banner grows in from 92 % over this time
+NOTE_POP_MS = 200              # note boxes grow in from 85 % over this time
+
+
+def mix(a, b, k):
+    return tuple(int(round(x + (y - x) * k)) for x, y in zip(a, b))
 
 
 def find_font(size, bold=False):
@@ -390,7 +399,7 @@ def main():
     dw = recs[0].w
     gap = 40
     label_h = 62 if args.labels else 0
-    cap_h = 150 + label_h
+    cap_h = 178 + label_h
     W = (max(sum(r.w for r in recs) + gap * (len(recs) - 1) + 120, 600) + 1) // 2 * 2
     H = (max(r.h for r in recs) + cap_h + 16 + 1) // 2 * 2
     x = (W - (sum(r.w for r in recs) + gap * (len(recs) - 1))) // 2
@@ -401,7 +410,7 @@ def main():
     hand_l = ImageOps.mirror(hand_r)
     tipx_l, tipy_l = hand_l.width - tipx_r, tipy_r
     f_title = find_font(max(16, 600 // 22), bold=True)
-    f_cap = find_font(max(14, 600 // 26))
+    f_cap = find_font(max(16, 600 // 25), bold=True)
     f_key = find_font(max(14, 600 // 24), bold=True)
     f_note = find_font(max(14, dw // 19), bold=True)
     f_label = find_font(34, bold=True)
@@ -418,20 +427,38 @@ def main():
     presses = 0
 
     for i in range(int(vend * FPS / 1000)):
-        t = back(i * 1000 / FPS)
+        v = i * 1000 / FPS
+        t = back(v)
         img = Image.new("RGB", (W, H), (250, 250, 248))
         d = ImageDraw.Draw(img)
         y = 10
         if args.title:
             d.text((W // 2, y), args.title, font=f_title, fill=(20, 20, 20), anchor="mt")
             y += f_title.size + 10
-        cap = ""
+        cap, cap_t = "", 0
         for ct, text in caps:
             if ct <= t:
-                cap = text
-        for line in wrap(d, cap, f_cap, W - 30)[:3]:
-            d.text((W // 2, y), line, font=f_cap, fill=(60, 60, 60), anchor="mt")
-            y += f_cap.size + 6
+                cap, cap_t = text, ct
+        if cap:
+            # A banner that stands out: deep blue with white bold text. When the caption changes
+            # it flashes orange and grows in, then settles, so the eye catches the new text.
+            lines = wrap(d, cap, f_cap, W - 90)[:3]
+            lh = f_cap.size + 8
+            age = v - fwd(cap_t)
+            k = max(0.0, 1.0 - age / CAP_POP_MS) ** 1.5
+            grow = min(1.0, age / CAP_GROW_MS)
+            bw = (W - 40) * (0.92 + 0.08 * grow)
+            bh = lh * len(lines) + 20
+            cx = W / 2
+            top = y + 2
+            d.rounded_rectangle((cx - bw / 2 + 3, top + 4, cx + bw / 2 + 3, top + bh + 4), radius=14,
+                                fill=(205, 205, 200))                       # soft shadow
+            d.rounded_rectangle((cx - bw / 2, top, cx + bw / 2, top + bh), radius=14, fill=mix(CAP_BG, CAP_POP, k),
+                                outline=mix((10, 30, 60), (255, 220, 120), k), width=3)
+            yy = top + 11
+            for line in lines:
+                d.text((cx, yy), line, font=f_cap, fill=(255, 255, 255), anchor="mt")
+                yy += lh
         for n, r in enumerate(recs):
             ox, oy = r.ox, r.oy
             img.paste(r.frame_at(t), (ox, oy), r.mask)
@@ -482,14 +509,19 @@ def main():
                     lh = f_note.size + 7
                     bh = lh * len(lines) + 24
                     cy = oy + r.h * 0.30
+                    g = 0.85 + 0.15 * min(1.0, (v - fwd(nt)) / NOTE_POP_MS)   # pops in
+                    mx = (sx0 + sx1) / 2
+                    bx0, bx1 = mx - (sx1 - sx0) / 2 * g, mx + (sx1 - sx0) / 2 * g
+                    bhh = bh / 2 * g
                     over = Image.new("RGBA", img.size, (0, 0, 0, 0))
                     od = ImageDraw.Draw(over)
-                    od.rounded_rectangle((sx0, cy - bh / 2, sx1, cy + bh / 2), radius=14, fill=(255, 248, 225, 245),
-                                         outline=ORANGE, width=4)
+                    od.rounded_rectangle((bx0 + 4, cy - bhh + 5, bx1 + 4, cy + bhh + 5), radius=14, fill=(0, 0, 0, 70))
+                    od.rounded_rectangle((bx0, cy - bhh, bx1, cy + bhh), radius=14, fill=(255, 248, 225, 245),
+                                         outline=ORANGE, width=5)
                     img.paste(over, (0, 0), over)
                     d = ImageDraw.Draw(img)
                     yy = cy - bh / 2 + 12
-                    for line in lines:
+                    for line in (lines if g >= 1.0 else []):    # text once the box is full size
                         d.text(((sx0 + sx1) / 2, yy), line, font=f_note, fill=(30, 30, 30), anchor="mt")
                         yy += lh
         enc.stdin.write(img.tobytes())
