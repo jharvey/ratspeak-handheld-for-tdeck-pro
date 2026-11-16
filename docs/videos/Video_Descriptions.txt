@@ -1,66 +1,344 @@
-video descriptions
+RatSpeak T-Deck Pro: video descriptions
 
--- atlas.mp4 
-- Start on idle screen, press a button have it go to inbox as most people that last thing they did ws the inbox. So come off idle screen to inbox. 
-- Then press A, then K to show show naviggation keys. Navigate around showing how it works similar to what you did. 
-- GPS position is "The Alamo". Show pan, scroll, zoom, locate Mount Rushmore. Get the heading and distance from your current position. 
-- Go through contacts, happen to find one at these locations vacation spots. Vietnam wall in DC, remote mountain hiker in Montana, and ULF radio station in Maine. Once done return to inbox. 
-- When done it goes back to idle screen. 
-
--- Common_checkup.mp4 
-- show 2 deivces Author on left and Jillian on thee right.
-- Emphizie on Authors device the new message some how, Perhaps wave hand near it, or use an arrow to call attention to the new message part of the idle screen. 
-- use ratspeak idle screen. Use password "42" to unlock author. 
-- Press a button, goes to inbox. 
-- you see 3rd of inbox list has new message from Jillian. 
-- You go to it and read "what's the answer to the universe live everything?". Author replies "42". 
-- Jillian replies "calculating complete" Author ACK with OK. screen goes back to idle. If I have not done this hitchiner guide reference quite correct, embelish it a bit. When done it goes back to idle screen. 
-- When done it goes back to idle screen. 
-
--- Contact_exchange.mp4 
-- idle screen is maps, press a key goes to Inbox. No password. 
-- Show it send a contact to Jill, via M P R.
-- After Jack sends his contact to Jill, Jill then replies and it show Jack receiving a contact. Perhaps put a tempoary over lay box to explain what's happening. 
-- On idle screen start with overlay box which says "Jack meets Jill, and is going to send his contact to her" 
-- Then after he sends, overlay says "Jill recieves his contact and sends her contact to Jack". Then Jack recieves her contact and show it's been add it to his contacts. 
-- Make the video something like that. Perhaps add additional details if I missed something. 
-- When done it goes back to idle screen. 
-
--- Search_for_others.mp4
-- Idle screen is if found contact. Use dective Columbo address etc. Show 2 screens. 
-- press a key goes to inbox, 
-- nav M P to peers. Ovelay box briefly explains purpose of announce. Then press Announce to show how you do that to others can find you. 
-- Then overlay box brielfy explains peers are people who have announced or how people get in the peers list. 
-- Then we see new ID shows up, wich we know is a person of interest. pick a character from one of his movies. 
-- Overlay box says we know xyz just announced and we know who this is, lets add to contacts. 
-- He then turns that peer contact into a contact. 
-- Then overlay notes he'll now send an confirmation message, and he then sends a confiramtion message. 
-- When done it goes back to idle screen. 
-
--- Add_wifi_in_minimal_mode.mp4
-- start in minimal mode no password, idle screen is the "return to" vairnat. Use W1AW in CT is as the address. pres sa button goes to inbox, 
-- then M S, etc to find and configure a wifi router. 
-- Pick routers which are likely found near that ham station. Perhaps existing names with ham radio themes. 
-- When done it goes back to idle screen. 
+Scripts for the how-to videos. Each entry is one video. The videos are made by someone else
+from these scripts, are later turned into text how-to documents for new users, and the
+scripts are re-run whenever a feature changes, so every step must be clear and repeatable.
+Keys checked against docs/HowTo.md, AI-guide.txt and the firmware menus on 16 Nov 2026.
+A step marked "(check keys before recording)" could not be confirmed from the docs.
 
 
-misc notes
-- In file names use _ instead of space, to prevent %20 issues in web pages etc.
-- when showing press a number in vidoes, show hand press and hold "sym" with half click sound. Then other hand press button button with full click sound. Then release with 2nd half click sound. 
+==========================================================================================
+CONVENTIONS FOR EVERY VIDEO
+==========================================================================================
+
+- File names: use _ instead of a space, to prevent %20 issues in web pages etc.
+- Every entry has the same parts: the file name line ("-- Name.mp4"), Purpose (what the
+  viewer learns), Setup (units, names, idle screen, password, location / GPS, contacts
+  already loaded), Steps (numbered, keys named exactly), Overlays (when not given inline in
+  the steps) and End.
+- Start on the idle screen and end on the idle screen. Any key wakes the unit. A unit wakes
+  to the screen used last (in these videos usually the Inbox, because that is what most
+  people used last); in Minimal mode it always wakes to the Inbox.
+- Units on screen: either one unit, shown large, or two units side by side, each with a
+  label above it showing its name (for example "JACK" left, "JILL" right).
+- Hand pointer with click sounds on every key press; the key's name shows above the
+  keyboard as it is pressed.
+- Typing is shown in ALL CAPS (the keyboard types capitals). Alt + key gives a small letter.
+- Digits: when showing a number being pressed, show one hand press and hold "SYM" with a half
+  click sound. Then the other hand presses the key with a full click sound. Then SYM is
+  released with the 2nd half click sound. Alt + key (small letters) is shown the same way.
+  The digit keys with SYM held: W E R = 1 2 3, S D F = 4 5 6, Z X C = 7 8 9, MIC = 0.
+- Other keys used in the scripts: ^ (Shift tapped alone) = Back, Enter = open / send / save,
+  T / V = up / down in lists, M = Menu, I = Inbox, C = Contacts, P = Peers, A = Atlas.
+  In Settings a row's number opens that row at once; in lists the number selects the row
+  and Enter opens it. While typing a message the letter keys type letters: press ^ first
+  to use them as keys again.
+- Overlay boxes: short (one or two lines), shown long enough to read twice, placed where
+  they do not hide the part of the screen being explained. An arrow or a hand wave may point
+  at the part of the screen being talked about.
+- The names, places and messages in Setup must match what is on the screen, so the same
+  video can be made again after a firmware change.
+
+
+==========================================================================================
+SCRIPTED VIDEOS (in the order a new owner needs them)
+==========================================================================================
 
 -- New_out_of_box_unit_first_turn_on.mp4
-- Purpose: show a new owner what to expect, from the box to the home screen. Show one unit, large, with a PC (or laptop) on the left of the frame.
-- Start with the unit fresh out of the box, screen blank or showing the LilyGO factory demo. Overlay box: "A new T-Deck Pro: first we put RatSpeak on it".
-- Plug the USB-C cable into the unit and the PC. Close-up of the side of the unit.
-- Show the hand press and hold the BOOT button on the side, tap the RESET button, then let go of BOOT (half click sounds as in the SYM presses). Overlay box: "Hold BOOT, tap RESET, let go of BOOT: the unit is now ready to receive firmware". Check the button names / positions against the LilyGO T-Deck Pro guide before recording.
-- Cut to the PC: the Ratspeak web flasher in the browser (ratspeak.org/download.html), pick "T-Deck Pro", pick the serial port, Flash. Show the progress bar filling, then "Done". Overlay box: "About 1 minute. Keep the cable in until it says done".
-- Back to the unit: tap RESET (or unplug and plug in again). The screen shows the idle screen with the "BOOTING v0.1" banner at the bottom. Overlay box: "First start takes a few seconds".
-- The setup wizard opens: Welcome, then step by step with Enter to go on: Device name (type a name, e.g. "TRAILHEAD"), Time zone (pick yours), Clock, Energy mode (Balanced), Idle screen (pick If found; its name / phone lines are filled in later in Settings), Simple / Advanced (Typical), Password lock (skip for now), Import contacts (skip). Use the hand pointer with click sounds on each key, ALL CAPS typing.
-- Overlay box at the last step: "0 finishes the wizard at any step; everything can be changed later in Settings".
-- The home screen appears: the identity card with the new name and address. Overlay box: "This is your address: others add you with it, or you announce so they find you (see Search_for_others.mp4)".
-- Battery calibration (first full cycle). The battery % is only a rough guess on a new unit (one unit showed 62% when it was really full). Show it in three short scenes:
-  - Charge to full: leave it on USB until the battery icon / battery page says full or charged (a few hours; a wall charger or a PC port that really charges, not a data-only port or hub). Overlay box: "Step 1: charge it full. The unit learns what full looks like".
-  - Run it down: unplug and use it normally (or leave it on) until it switches itself off with the "plug in USB charger" banner on the idle screen. Time-lapse with a clock in the corner. Overlay box: "Step 2: use it until it switches itself off. Do not top it up part way".
-  - Charge to full again without using it. Overlay box: "Step 3: charge it full again. From now on the % and time left are much more accurate".
-  - Closing overlay box: "Do this once with a new unit, and again if the % starts to look wrong".
-- When done it goes to the idle screen (the If found screen just set up).
+
+Purpose: show a new owner what to expect, from the box to the home screen, plus the first
+battery calibration.
+
+Setup:
+- One unit, shown large, with a PC (or laptop) on the left of the frame.
+- The unit is fresh out of the box: screen blank or showing the LilyGO factory demo.
+- No SD card needed. No contacts. No password.
+
+Steps:
+1. Overlay box: "A new T-Deck Pro: first we put RatSpeak on it".
+2. Plug the USB-C cable into the unit and the PC. Close-up of the side of the unit.
+3. Show the hand press and hold the BOOT button on the side, tap the RESET button, then let
+   go of BOOT (half click sounds as in the SYM presses). Overlay box: "Hold BOOT, tap RESET,
+   let go of BOOT: the unit is now ready to receive firmware". (Check the button names and
+   positions against the LilyGO T-Deck Pro guide before recording.)
+4. Cut to the PC: the RatSpeak web flasher in the browser (ratspeak.org/download.html).
+   Pick "T-Deck Pro", pick the serial port, Flash. Show the progress bar filling, then
+   "Done". Overlay box: "About 1 minute. Keep the cable in until it says done".
+5. Back to the unit: tap RESET (or unplug and plug in again). The screen shows the idle
+   screen with the "BOOTING v0.1" banner at the bottom. Overlay box: "First start takes a
+   few seconds".
+6. The setup wizard opens: Welcome, then one step at a time, Enter to go on:
+   - Device name: type a name, e.g. "TRAILHEAD".
+   - Time zone: pick yours.
+   - Clock.
+   - Energy mode: Balanced.
+   - Idle screen: pick If found (its name / phone lines are filled in later in Settings).
+   - Simple / Advanced: Typical.
+   - Password lock: skip for now.
+   - Import contacts: skip.
+   Hand pointer with click sounds on each key, ALL CAPS typing.
+7. At the last step, overlay box: "0 (SYM + MIC) finishes the wizard at any step;
+   everything can be changed later in Settings".
+8. The home screen appears: the identity card with the new name and address. Overlay box:
+   "This is your address: others add you with it, or you announce so they find you (see
+   Search_for_others.mp4)".
+9. Battery calibration (first full cycle). The battery % is only a rough guess on a new
+   unit (one unit showed 62% when it was really full). Show it in three short scenes:
+   a. Charge to full: leave it on USB until the battery icon / battery page (Settings, 6
+      Battery) says full or charged. This takes a few hours; use a wall charger or a PC port
+      that really charges, not a data-only port or hub. Overlay box: "Step 1: charge it
+      full. The unit learns what full looks like".
+   b. Run it down: unplug and use it normally (or leave it on) until it switches itself off
+      with the "BATTERY EMPTY / PLUG IN A USB CHARGER" banner on the idle screen. Time-lapse
+      with a clock in the corner. Overlay box: "Step 2: use it until it switches itself off.
+      Do not top it up part way".
+   c. Charge it to full again without using it. Overlay box: "Step 3: charge it full again.
+      From now on the % and time left are much more accurate".
+   d. Closing overlay box: "Do this once with a new unit, and again if the % starts to look
+      wrong".
+
+Overlays: inline in the steps.
+
+End: the unit goes to the idle screen (the If found screen just picked in the wizard).
+
+
+-- Common_checkup.mp4
+
+Purpose: the everyday check-up: wake the unit, unlock it, read a new message and answer it.
+
+Setup:
+- Two units side by side: "AUTHOR" on the left, "JILLIAN" on the right, each labeled.
+- Both on the RatSpeak (Splash) idle screen. Author has a password lock with the password
+  "42". Author and Jillian are already contacts of each other.
+- Author's Inbox has at least 3 chats; Jillian's chat is the 3rd row and has one new
+  message from Jillian: "WHAT IS THE ANSWER TO THE ULTIMATE QUESTION OF LIFE, THE UNIVERSE
+  AND EVERYTHING?"
+
+Steps:
+1. Emphasize the new message on Author's idle screen somehow: wave a hand near it, or use an
+   arrow pointing at the new-message count at the top of the idle screen.
+2. Author presses a key. The unit asks for the password: type 4 (SYM + S), 2 (SYM + E),
+   then Enter.
+3. The Inbox opens. The 3rd row, Jillian's chat, is marked "1 new".
+4. Press 3 (SYM + R) to select it, then Enter to open it. Show Jillian's question.
+5. Author types the reply "42" (SYM + S, SYM + E) and presses Enter. "delivered" shows.
+6. On Jillian's unit the answer arrives. Jillian replies: "DEEP THOUGHT HERE: CALCULATION
+   COMPLETE. 7.5 MILLION YEARS WELL SPENT." (Embellish the Hitchhiker's Guide reference a
+   bit if wanted, e.g. "NOW WHAT WAS THE QUESTION?")
+7. The reply shows on Author's unit. Author acknowledges with "OK" and Enter.
+8. Author presses ^ to go back to the Inbox.
+
+Overlays:
+- At step 1: "A new message is waiting".
+- At step 8: "After a while the unit sleeps, and locks again, by itself".
+
+End: Author's unit goes back to the idle screen by itself (locked).
+
+
+-- Contact_exchange.mp4
+
+Purpose: two people who meet swap contact cards, so they can message each other.
+
+Setup:
+- Side-by-side video: two units, "JACK" on the left and "JILL" on the right, each labeled.
+- Both idle screens are the Map, at Cave Spring Hollow in Lynchburg, Tennessee.
+- No password on either unit. Both wake to the Inbox, as the Inbox is what they probably
+  used last.
+- Jack and Jill are not contacts yet, but both have announced, so each is in the other's
+  Peers list.
+
+Steps:
+1. Start on both idle screens with the overlay box: "Jack meets Jill, and is going to send
+   his contact to her".
+2. Jack presses a key: it goes to the Inbox.
+3. Jack presses C (Contacts). Row 0 at the top, MyID, is his own card: press Enter on it.
+4. Jack presses 3 (SYM + R) = Share. The list reads "Send JACK to:".
+5. Jill is not a contact yet, so Jack presses P to switch to Peers, picks Jill (T / V) and
+   presses Enter. His card goes out.
+6. Overlay box: "Jill receives his contact and sends her contact to Jack".
+7. Jill presses a key: the Inbox shows a new chat from Jack. She opens it (its number, then
+   Enter): it shows "[card] JACK". She presses Enter on the empty message line: Jack is
+   saved as a contact.
+8. Jill presses ^, then C: Jack is in her Contacts. She opens MyID (row 0) with Enter,
+   presses 3 (SYM + R) = Share, picks Jack (now a contact) and presses Enter.
+9. On Jack's unit: the Inbox shows a new chat from Jill with "[card] JILL". He opens it and
+   presses Enter on the empty message line. Then ^ and C: show that Jill has been added to
+   his contacts.
+
+Overlays:
+- At steps 1 and 6 as given above.
+- At step 7: "Enter on the empty message line saves the card as a contact".
+- At the end: "Jack and Jill can now message each other. Other LXMF apps see 'Contact card:
+  name' and the address".
+
+End: both units go back to the idle screen (the Map at Cave Spring Hollow).
+
+(Note: an earlier version of this script used M P R to send the contact. M P R opens Peers
+and announces the unit; it does not send a contact card. Sharing is C, MyID, Enter, 3.)
+
+
+-- Search_for_others.mp4
+
+Purpose: announce your unit so others can find you, find a new person in Peers, save them as
+a contact and send a first message.
+
+Setup:
+- Two units side by side, each labeled: "COLUMBO" on the left, the person of interest on the
+  right. Pick a character from one of the Columbo movies, e.g. "DR FLEMMING" (Dr. Ray
+  Flemming, from "Prescription: Murder").
+- Columbo's idle screen is If found, filled in with detective Columbo's details (e.g. LT.
+  COLUMBO, LAPD HOMICIDE, LOS ANGELES, CA, plus a phone number).
+- No password. Columbo's unit wakes to the Inbox. The two are not contacts yet.
+
+Steps:
+1. Columbo presses a key: it goes to the Inbox.
+2. M, then P: Peers.
+3. Overlay box briefly explains the purpose of announce (see Overlays). Columbo presses R to
+   announce, so others can find him.
+4. Overlay box briefly explains how people get into the Peers list.
+5. On the right, Dr. Flemming's unit announces (P, then R).
+6. On Columbo's unit a new ID shows up in Peers (press P again to refresh the list), which we
+   know is a person of interest.
+7. Overlay box: "Dr. Flemming just announced, and we know who this is: let's add him to
+   the contacts".
+8. Columbo picks the new row (T / V) and presses Enter: its contact page opens (1 Message,
+   2 Rename, 3 Share, 4 Map number).
+9. He presses 2 (SYM + E) = Rename, types "DR FLEMMING" and presses Enter. The peer is now a
+   contact (Peers marks saved radios with *).
+10. Overlay box: he will now send a confirmation message.
+11. Enter again on the row, then 1 (SYM + W) = Message. He types "JUST ONE MORE THING..." and
+    presses Enter. "delivered" shows; the message arrives on Dr. Flemming's unit.
+
+Overlays:
+- Step 3: "Announce tells radios nearby who you are, so they can find you and message you".
+- Step 4: "Peers lists every radio that announced and was heard, with its signal and how
+  long ago".
+- Steps 7 and 10 as given above.
+
+End: Columbo's unit goes back to the idle screen (If found).
+
+
+-- Add_wifi_in_minimal_mode.mp4
+
+Purpose: a unit in Minimal mode joins a WiFi network (Minimal hides the WiFi settings, so
+the unit is switched to Typical first).
+
+Setup:
+- One unit, shown large. Minimal mode, no password.
+- Idle screen: If found (the "return to" variant), with W1AW in CT as the address
+  (ARRL HQ, 225 Main Street, Newington, CT 06111).
+- Routers in range likely found near that ham station, with ham radio themed names, e.g.
+  "ARRL-HQ" (the one to join, password HIRAMMAXIM), "W1AW-SHACK", "QST-GUEST",
+  "NEWINGTON-73".
+
+Steps:
+1. Press a key: it goes to the Inbox (Minimal always wakes to the Inbox).
+2. M, then S: Settings. In Minimal it shows only row 1, Mode.
+3. Press 1 (SYM + W) = Mode, then 2 (SYM + E) = Typical. (WiFi settings are on in the
+   Typical features, row 5, by default.)
+4. Press ^ to go back to Settings: it now shows all rows.
+5. Press 3 (SYM + R) = WiFi, then 3 again = Scan networks. The routers are listed.
+6. Press the number of "ARRL-HQ".
+7. Type the password HIRAMMAXIM (MIC shows or hides it) and press Enter. (Check keys
+   before recording: the join page has Network / Password / Auto-connect / Join rows.)
+8. "connected" shows on the WiFi page. The unit joins this network again by itself.
+9. Optional: switch back to Minimal with M, S, 1, 1 (SYM + W twice). (Check before
+   recording that WiFi stays connected in Minimal.)
+
+Overlays:
+- Step 2: "Minimal mode shows only the Mode row. Switch to Typical to see WiFi".
+- Step 8: "WiFi is optional: messages go over LoRa radio without it".
+
+End: the unit goes back to the idle screen (If found, W1AW).
+
+
+-- atlas.mp4
+
+Purpose: open the Atlas (offline map), move around, find a place, get the heading and
+distance to it, and step through the contacts' last positions.
+
+Setup:
+- One unit, shown large. The SD card holds the maps (without them the menu has no Atlas).
+- GPS position is "The Alamo" in San Antonio, Texas.
+- Contacts already loaded with last shared positions at vacation spots: one at the Vietnam
+  Veterans Memorial ("Vietnam wall") in Washington DC, a remote mountain hiker in Montana,
+  and one at the Cutler VLF radio station in Maine.
+- Unit wakes to the Inbox, as for most people the last thing they did was the Inbox.
+
+Steps:
+1. Start on the idle screen. Press a key: it comes off the idle screen to the Inbox.
+2. Press A: the Atlas opens on your position (the Alamo).
+3. Press K to show the card with the navigation keys. K again hides it.
+4. Navigate around to show how it works: T F V H move the map up, left, down, right; W zooms
+   out (wider), Z zooms in; D (or Enter) centres it on you again.
+5. Locate Mount Rushmore: press L, type "MOUNT RUSH", Enter, then its number (1 = SYM + W)
+   jumps there.
+6. Press G: the heading and distance from your current position (about 1667 km, heading
+   346). G again goes back to the map.
+7. Press N to go through the contacts, newest first: the Vietnam wall in DC, the remote
+   mountain hiker in Montana, and the VLF radio station in Maine.
+8. Once done, press I to return to the Inbox.
+
+Overlays:
+- Step 3: "K shows all the map keys".
+- Step 5: "L finds a place by name".
+- Step 6: "G: heading and distance from you".
+- Step 7: "N steps through your contacts' last shared positions".
+
+End: the unit goes back to the idle screen.
+
+
+==========================================================================================
+PROPOSED VIDEOS (not scripted yet)
+==========================================================================================
+
+In the order a new user would need them. Keys from docs/HowTo.md and the firmware menus;
+write the full script (Purpose / Setup / Steps / Overlays / End) before recording.
+
+-- Charging_and_battery.mp4: charging over USB-C, the battery icon, Settings 6 Battery
+   (charge %, full-charge calibration, time left), and when to redo the calibration.
+-- Password_lock_and_unlock.mp4: set a password (M, S, 4 Screen & I/O, 2 Idle splash,
+   3 On + password), Lock now, unlock with the password, what happens after wrong tries.
+-- Read_a_message.mp4: the new-message count on the idle screen, I (Inbox), open the chat,
+   T / V to scroll older messages.
+-- Send_a_message.mp4: open a chat, type, Enter, "delivered"; a message to an out-of-range
+   radio waits in the queue and goes out by itself later.
+-- First_message_to_a_new_contact.mp4: save a radio from Peers as a contact (Enter, 2
+   Rename) and send it its first message (1 Message).
+-- Announce_your_unit.mp4: M, H, N (Announce ID on Home) or P then R, and what announce does.
+-- If_found_idle_screen.mp4: fill in the If-found details (M, S, 4, 2, 9), pick the If
+   found idle screen (row 8), show or hide the address (row 10); also the other idle
+   screens (Splash, Map, Library page).
+-- Mode_and_touch.mp4: Settings 1 Mode: Minimal / Typical / Everything, Typical features
+   (row 5), touch screen on / off (row 4).
+-- Energy_modes.mp4: Settings 5 Power: Full, Balanced, Saver, Ultra-low, On demand,
+   Check-in, Custom; Full power on USB; the Energy monitor.
+-- Low_battery_notice.mp4: Settings 6 Battery, Low-battery notice: the % to send at and
+   the contact who gets the message (battery % and last position).
+-- Battery_empty_wont_turn_on.mp4: the "BATTERY EMPTY / PLUG IN A USB CHARGER" banner, why
+   it stays off, plug in USB, the "BOOTING v0.1" banner.
+-- Settings_tour.mp4: one pass through every Settings row (Mode, Time & Location, WiFi,
+   Screen & I/O, Power, Battery, Identity, LoRa, Alerts, Diagnostics, Storage) and what
+   each is for.
+-- Voice_message.mp4: in a chat MIC, 5 Voice message, Space to record, Space to stop and
+   send (up to 20 s), P to play the newest one.
+-- Walkie_talkie.mp4: C, pick the person, Enter, W to call; the other answers with Enter;
+   Space talk / listen, ^ hang up; same WiFi or the unit's own hotspot.
+-- Share_your_location.mp4: in a chat MIC, 1 Share my location, 2 Auto-share location,
+   4 Show them on the map.
+-- Atlas_waypoints.mp4: Alt + P saves a place as a waypoint, P steps through waypoints,
+   the Waypoints list in Settings 2 Time & Location.
+-- Atlas_breadcrumb_track.mp4: record a track (Settings 2 Time & Location, Track), B on the
+   Atlas to track back, export as GPX to the SD card, clear the track.
+-- Navigate_to_a_contact.mp4: on the Atlas N selects a contact's last position, G opens the
+   heading and distance screen to walk to them.
+-- Arrival_alerts.mp4: Settings 9 Alerts, Arrival alerts, New alert: contact, place,
+   distance, once or every time.
+-- SD_backup_and_restore.mp4: Settings, Storage (last row): Back up now, Restore backup
+   (Enter twice); also Export / Import contacts (Settings 7 Identity).
+-- Firmware_update_from_SD.mp4: put the .bin in /firmware on the SD card, Settings,
+   Storage, Update firmware.
+-- Range_test.mp4: two units, Settings 8 LoRa (Advanced feature on), Range test: ping the
+   other radio and log the results to the SD card.
+-- Library_and_games.mp4: M, R (Library, or "Games" without library files): reading a help
+   file, Rat Trap and Chess.
