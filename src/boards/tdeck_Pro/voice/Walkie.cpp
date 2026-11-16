@@ -1,5 +1,5 @@
 // Live walkie-talkie over WiFi. See Walkie.h.
-#if !defined(SIMULATOR)
+#if !defined(SIMULATOR) || defined(SIM_HAS_WALKIE)
 
 #include "Walkie.h"
 
@@ -294,4 +294,4 @@ void tick() {
 
 }  // namespace walkie
 
-#endif  // !SIMULATOR
+#endif  // !SIMULATOR || SIM_HAS_WALKIE

@@ -20,7 +20,7 @@ constexpr const char* kInvitePrefix = "[wt] call ";
 
 enum class State : uint8_t { Idle, Calling, Connected, Ended };
 
-#if !defined(SIMULATOR)
+#if !defined(SIMULATOR) || defined(SIM_HAS_WALKIE)   // the simulator: sim/hw/WifiNet.h
 void begin(AudioNotify* audio);
 // Caller: opens the call on this unit's address myIp; writes the invite text. apSsid/apPass:
 // this unit runs a hotspot for the call (the invite then says "ap=<ssid> <pass>"), else nullptr.

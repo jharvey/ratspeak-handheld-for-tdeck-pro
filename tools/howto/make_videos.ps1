@@ -71,6 +71,9 @@ $videos = @(
     @{ name = "voice_message"; title = "Send a voice message"; main = "hv_jack"
        devices = [ordered]@{ hv_jack = "Jack"; hv_jill = "Jill" }
        comps = @("voice_message_jill.txt@hv_jill"); rec2 = "hv_jill"; labels = @("Jack", "Jill") },
+    @{ name = "walkie_talkie"; title = "Walkie-talkie: talk live"; main = "hv_jack"
+       devices = [ordered]@{ hv_jack = "Jack"; hv_jill = "Jill" }
+       comps = @("walkie_talkie_jill.txt@hv_jill"); rec2 = "hv_jill"; labels = @("Jack", "Jill") },
     @{ name = "add_wifi"; title = "Add a WiFi network"; main = "hv_w1aw"
        devices = [ordered]@{ hv_w1aw = "W1AW" }
        ini = @{ hv_w1aw = @("wifi = W1AW-Guest/-52; ARRL-HQ/-58/HIRAMMAXIM; QRZ-Home/-71/CQDX; Hiram-Net/-80/SPARKGAP") } }

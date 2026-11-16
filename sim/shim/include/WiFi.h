@@ -6,6 +6,10 @@
 #include "WiFiServer.h"
 
 typedef enum { WIFI_OFF = 0, WIFI_STA = 1, WIFI_AP = 2, WIFI_AP_STA = 3 } wifi_mode_t;
+#define WIFI_MODE_NULL WIFI_OFF
+#define WIFI_MODE_STA WIFI_STA
+#define WIFI_MODE_AP WIFI_AP
+#define WIFI_MODE_APSTA WIFI_AP_STA
 typedef enum { WIFI_AUTH_OPEN = 0, WIFI_AUTH_WEP, WIFI_AUTH_WPA_PSK, WIFI_AUTH_WPA2_PSK,
                WIFI_AUTH_WPA_WPA2_PSK, WIFI_AUTH_WPA2_ENTERPRISE, WIFI_AUTH_WPA3_PSK } wifi_auth_mode_t;
 typedef enum { WL_NO_SHIELD = 255, WL_IDLE_STATUS = 0, WL_NO_SSID_AVAIL = 1, WL_SCAN_COMPLETED = 2,
@@ -59,7 +63,7 @@ public:
     bool softAP(const char* ssid, const char* pass = nullptr, int channel = 1, int hidden = 0,
                 int maxConn = 4);
     bool softAPdisconnect(bool wifiOff = false);
-    IPAddress softAPIP() { return IPAddress(192, 168, 4, 1); }
+    IPAddress softAPIP();
     uint8_t softAPgetStationNum() { return 0; }
 private:
     bool autoReconnect_ = true;

@@ -38,6 +38,7 @@ endif()
 set(FW_DEFS
     SIMULATOR=1
     SIM_HAS_CODEC2=1
+    SIM_HAS_WALKIE=1
     TDECK_PRO_BUILD=1
     DISPLAY_WIDTH=240
     DISPLAY_HEIGHT=320
@@ -81,7 +82,9 @@ set(FW_SRCS
     ${BOARD}/power/EnergyMonitor.cpp
     ${BOARD}/MapView.cpp
     ${BOARD}/Chess.cpp
-    ${BOARD}/voice/VoiceCodec.cpp)
+    ${BOARD}/voice/VoiceCodec.cpp
+    ${BOARD}/voice/Walkie.cpp
+    ${BOARD}/voice/ChaChaPoly.cpp)
 file(GLOB CORE_SRCS CONFIGURE_DEPENDS
     ${SRC}/core/storage/*.cpp
     ${SRC}/core/reticulum/*.cpp

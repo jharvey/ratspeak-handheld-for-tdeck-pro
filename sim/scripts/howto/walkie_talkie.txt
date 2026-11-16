@@ -1,0 +1,55 @@
+# How-to video: Jack calls Jill on the walkie-talkie. Device hv_jack (recorded), companion
+# walkie_talkie_jill.txt (hv_jill, recorded too: both side by side). Neither is on a WiFi
+# network, so Jack's radio makes its own hotspot and Jill's joins it (simulated WiFi,
+# sim/hw/WifiNet.h). The simulated microphones play audio/wt_*.wav (Windows voices David =
+# Jack, Zira = Jill); the video's sound has each voice and the Codec2 copy the other hears.
+# Turn timing is shared with the companion: both count from "[WT] connected".
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 2000
+serial a
+expect 60000 {JILL16}
+serial contact {JILL} Jill
+wait 3000
+key M
+key H
+wait 1500
+serial idle now
+wait 2500
+rec walkie_talkie
+note 6000 Jack wants to talk with Jill live. There is no WiFi out here: his radio makes its own.
+wait 6500
+caption Jack: any key wakes the radio, C (Contacts), pick Jill (1), Enter opens her card.
+wait 1500
+key SPACE
+wait 1500
+key C
+wait 1500
+key 1
+wait 1000
+key ENTER
+wait 2500
+caption W calls her. The invite goes over LoRa, and Jack's radio starts a small WiFi hotspot for the call.
+wait 1500
+key W
+expect 60000 [WT] invite sent
+expect 180000 [WT] connected
+caption Connected. Space = talk, Space again = listen (one talks at a time). Jack talks first.
+wait 1500
+mic wt_jack1.wav
+key SPACE
+wait 5800
+key SPACE
+wait 9000
+mic wt_jack2.wav
+key SPACE
+wait 5000
+key SPACE
+wait 8500
+caption ^ hangs up. The hotspot closes and both radios go back to normal.
+wait 1500
+key BACK
+expect 20000 [WT] hotspot / call WiFi released
+wait 5000
+rec off
+quit

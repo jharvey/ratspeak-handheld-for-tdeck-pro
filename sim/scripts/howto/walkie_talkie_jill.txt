@@ -1,0 +1,34 @@
+# Companion for walkie_talkie.txt: Jill's radio (recorded too). She answers, her radio joins
+# Jack's hotspot, and they take turns talking (timing counted from "[WT] connected").
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 6000
+serial a
+expect 60000 {JACK16}
+serial contact {JACK} Jack
+wait 2000
+key M
+key H
+wait 1500
+serial idle now
+wait 1500
+rec walkie_talkie
+expect 240000 [WT] incoming call
+wait 2500
+caption Jill's radio shows the call: Enter answers. It joins Jack's hotspot by itself.
+wait 1500
+key ENTER
+expect 60000 [WT] connected
+wait 9000
+mic wt_jill1.wav
+key SPACE
+wait 5800
+key SPACE
+wait 8000
+mic wt_jill2.wav
+key SPACE
+wait 5000
+key SPACE
+wait 12000
+rec off
+quit
