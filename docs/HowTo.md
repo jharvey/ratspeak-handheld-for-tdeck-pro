@@ -180,6 +180,29 @@ Video: [typical_checkup.mp4](videos/typical_checkup.mp4)
 
 ---
 
+## Walkie-talkie (live talk)
+
+1. **C**, pick the person, **Enter** (their card), **W** = call.
+2. On the same WiFi the call starts at once; with no shared WiFi the invite goes over LoRa and
+   your unit opens a small hotspot the other one joins.
+3. **Space** = talk / listen, **^** = hang up. The other person answers with **Enter**.
+
+More on the card: `library/Help-11-Walkie-talkie.txt`.
+
+## Voice message
+
+1. Open the chat, **MIC**, **5** (Voice message).
+2. **Space** = start recording, **Space** again = stop and send (up to 20 s). **^** = cancel.
+3. To listen: **MIC**, **5**, **P** plays the newest one.
+
+More on the card: `library/Help-12-Voice-messages.txt`.
+
+## Battery empty
+
+When the battery runs out the unit shows its idle screen (If found ...) with
+**BATTERY EMPTY / PLUG IN A USB CHARGER** and switches itself off. It stays off until USB
+is plugged in; then it starts with **BOOTING v0.1** at the bottom of the idle screen.
+
 ## Making the videos again
 
 `tools/howto/make_videos.ps1` runs the scripts in `sim/scripts/howto/` on the simulator

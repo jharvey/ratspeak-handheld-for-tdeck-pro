@@ -60,7 +60,11 @@ Hardware / platform
   Needs LXMF propagation client support (rsLXMFLite has none yet): pick a node from
   announces, send via the node when direct delivery fails, sync (link + message list +
   resource downloads). Also removes the "sleeping receiver misses messages" problem.
-- GPS power-save (u-blox M10 cyclic tracking) instead of full off/on visits
+- PARTLY DONE 2026-11-14 - GPS power-save: Balanced keeps the receiver on in PSMCT (VALSET
+  CFG-PM-OPERATEMODE=2) and the CPU sleeps. To do: measure outdoors with a fix (~20 mA expected).
+- DONE 2026-11-15 - Empty battery: idle screen + "BATTERY EMPTY / PLUG IN A USB CHARGER", charger
+  ship mode until USB; boot check keeps an emptied unit off until USB (no surface-charge reboots).
+  To do: confirm on a drained unit.
 - Deep sleep 'storage' mode: conflicts with light sleep today (the vendored deep-sleep
   backports break light sleep); needs a backport that keeps both working
 - DONE - Battery model accuracy + charge UI (per-device full-charge calibration)
@@ -121,6 +125,9 @@ UI / UX
   ROM tinfl still read; loose .rmt fallback) + 160-tile PSRAM cache.
   push_files.py --root copies a pack tree. Still to do: copy packs to the units (user: maps
   stay on the NAS for now), measure render time / current with packs on hardware.
+  2026-11-15: contiguous-US USGS download at z13 nearly done (ui-features session, M:\ratspeak-maps);
+  next: re-fetch tiles skipped by write races, build the card pack, on-device layer switching
+  (base map + RLE overlay packs).
 - All zoom levels everywhere (user asked 2026-11-12): fetching raster tiles from USGS/NRCan
   tops out at ~4.5 tiles/s per polite single connection (~390k tiles/day); the US at z14 is
   3.8M tiles, z15 15M, z16 60M - weeks to months, and heavy on public servers. For deep
@@ -205,7 +212,7 @@ Robustness to verify (before the stress-test pass)
 
 Audio / modes
 -------------
-- Voice / walkie-talkie mode (user asked again 2026-11-13): push-to-talk style over LoRa (or related path),
+- BUILT 2026-11-15 (see "Voice walkie-talkies" below) - Voice / walkie-talkie mode (user asked again 2026-11-13): push-to-talk style over LoRa (or related path),
   separate from text LXMF and from simple beep/vibrate alerts. User asked again 2026-11-12:
   voice messages over Reticulum (record, Codec2 at 700-3200 bps, send as an LXMF audio
   field like Sideband's FIELD_AUDIO so other clients can play it; LoRa airtime limits
@@ -287,8 +294,9 @@ Home Assistant integration (user asked 2026-11-12)
   off-grid via the LoRa gateway, e.g. doorbell, water leak, alarm armed).
 - Optional: report battery / GPS position to HA as sensors (opt-in, privacy).
 - Voice (user asked 2026-11-14): make the unit an HA audio / voice device.
-  STARTED 2026-11-14: WiFi push-to-talk satellite (Wyoming) + HA replies on the speaker; see
-  Help-10-Home-Assistant.txt. Still to do: test with HA, wake word, LoRa text-to-speech, settings.
+  DONE 2026-11-15: ESPHome native API voice satellite (encrypted, S.3.7, tap MIC to talk, HA
+  answers on the speaker); works with the user's HA (Help-10). Still to do: wake word, HA
+  announcements / notifications read aloud, LoRa text-to-speech, quiet hours.
   - Speak to HA: hold MIC, talk, release -> HA Assist pipeline (wake word optional later).
     On home WiFi: stream audio as an ESPHome-style voice satellite (HA Assist API) or the
     Wyoming protocol; HA does speech-to-text, runs the intent, answers with text-to-speech.

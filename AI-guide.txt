@@ -39,7 +39,12 @@ START HERE (handoff 2026-11-11)
   sleep 30 min if that fails). Boot check before the display: no USB and (switched off empty,
   or brownout reset under 3.8 V, or under 3.5 V) -> straight back off; the panel is not
   redrawn when it already shows the empty screen. NVS rs_boot: empty, lock, dest (the boot
-  screen's LOCKED and If found address). Console "batempty" previews the screen.
+  screen's LOCKED and If found address). Console "batempty" previews the screen. Not yet seen on
+  a really drained unit (does BATFET_DIS cut the board here?).
+- UI details 2026-11-15: Inbox rows "N new" (0-9, "+9 new"); chat bubbles wrap to 6 lines of 18 px
+  (bubbleWrap, HistRow text[96]; the newest message always shows); key cards (drawNavKeys) title +
+  moves line, not bold; boot version RATSPEAK_FW_VERSION "v0.1"; idle date has the year; own name
+  limited to fit beside "999 NEW".
 - Floor tool: tools/sleepcheck ("floor d <n> <secs>", "floor", "floor x", "bhi").
 - Commit only our files; never stage platformio.ini port lines,
   tools/check_build_identity.py, putty*.log, backups/, Video/, lilygo-tdeck-pro/,
@@ -56,11 +61,11 @@ START HERE (handoff 2026-11-11)
   test rt* (raw frames 0xFF'RT1' via LoRaInterface::setRxTap, CSV rangetest/, tools/rangetest/rangetest_map.py).
   batHoursLeft10/batLeftText (energy monitor measured drain), lowBatTick (g_cfg.lowBat*). Console: track gpx|back,
   geof, wpt add, rt, batleft, lowbat. sim: track_nav, geofence, rangetest_screen, battery_left, rt_pair.py.
-- Operator mode (2026-11-14, user): S.1 = Mode (g_cfg.opMode, NVS opMode; 0 Minimal, 1 Normal,
-  2 Advanced = default) + Touch screen on/off (g_cfg.touchOff: CST328 held in reset, handleTouch
+- Operator mode (2026-11-14, user; renamed 2026-11-15): S.1 = Mode (g_cfg.opMode, NVS opMode; 0 Minimal,
+  1 Typical, 2 Everything = default; see the [DONE 2026-11-15] Operator modes entry) + Touch screen on/off (g_cfg.touchOff: CST328 held in reset, handleTouch
   ignores). All other settings moved down one (Time S.2 ... Diagnostics S.10 = key 0, Storage S.11 by
   scrolling). Minimal: menuShown() = Settings/Contacts/Inbox, PG_ROOT shows S.1 only, P/A off, middle
-  tab Menu, minimalToInbox() on wake/unlock, boots to Inbox. Normal = Advanced for now. Menu: Atlas only
+  tab Menu, minimalToInbox() on wake/unlock, boots to Inbox. Typical = feature picker S.1.5. Menu: Atlas only
   if g_haveMaps; Library row reads "Games" when the card has no library files (g_haveLib). SD mounted
   at boot (maps/library known at once). Console: opmode 0|1|2, touchscreen 0|1, found <1-10> <text>.
 - If found (S.4.2.9 submenu PG_FOUND): g_cfg.found[10][41] (NVS fnd0..9; old foundTxt moved: line 1 ->
@@ -213,12 +218,16 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        "" = plaintext API. X25519/SHA-256/HMAC from mbedTLS; ChaCha20-Poly1305 own (voice/ChaChaPoly,
        the framework mbedTLS has CHACHA20/POLY1305 off): RFC vectors in tools/test/chachapoly_test.cpp
        and console haselftest. Messages: Hello, DeviceInfo (voice flags VOICE_ASSISTANT|SPEAKER|
-       API_AUDIO = 7), ListEntitiesDone, Ping, SubscribeVoiceAssistant; MIC held -> VoiceAssistantRequest
-       start, after VoiceAssistantResponse the mic goes out as VoiceAssistantAudio; release -> start=false.
+       API_AUDIO = 7), ListEntitiesDone, Ping, SubscribeVoiceAssistant; MIC TAP -> VoiceAssistantRequest
+       start, after VoiceAssistantResponse the mic goes out as VoiceAssistantAudio; end of speech =
+       VoiceAssistantAudio end=true (start=false ABORTS the HA run); no new run while one is active
+       (an old RUN_END killed the new run). Hold-to-talk was cut at 0.9 s -> tap-to-talk.
        HA events: STT_END text = heard, TTS_START text = answer, TTS audio as VoiceAssistantAudio
        (16 kHz mono) -> speaker (I2S1; PDM mic on I2S0, DC block + micgain), RUN_END. Bench test with
        no WiFi: console apitunnel + tools/test/esphome_api_test.py COM6 <key> (own Python Noise /
-       X25519 / ChaChaPoly): PASS on COM6. Not yet run against a real Home Assistant.
+       X25519 / ChaChaPoly): PASS on COM6. Works with the user's Home Assistant (2026-11-15: lights
+       on / off by voice). Mic: task + 2 s PSRAM ring (no drops during e-ink refreshes), first 100 ms
+       dropped (start-up click), DC block with +16384 rounding. Console havoice, hakey, micgain, mictest.
 [DONE 2026-11-15] Mesh over WiFi: RnsAutoInterface on the pump (meshTick, S.3 row 8, console mesh).
 [DONE 2026-11-15] Walkie-talkie v1 (voice/Walkie, VoiceCodec, lib/esp32_codec2): contact card W sends
        "[wt] call <ipv4>:4243 <key b64>" as LXMF; the callee (Enter) answers by UDP; Codec2 3200,
@@ -226,14 +235,18 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        "walkie" (20 KB stack: Codec2 encode needs ~14 KB) does mic/encode/send and recv/decode/play.
        Space talk/listen, ^ hang up; console wt call <hex> | answer | talk | hang. Tested COM5<->COM6.
        Internal RAM is tight: HA voice buffers moved to PSRAM, mic DMA 4x256, speaker DMA 4x512.
-       Next: LoRa invite + hotspot (no shared WiFi), LXMF audio field (voice messages, Sideband).
+       Hotspot (2026-11-15): no shared WiFi -> the caller opens "RatSpeak-XXXX" (random 16-char
+       password, 1 client) and the invite carries "ap=<ssid> <pass>"; watchWifi stands aside while
+       g_wtWifiOwned; wtReleaseWifi after the call. Tested both ways over LAN and hotspot (345 frames
+       each way, 0 bad). A unit must have announced over WiFi first (an invite right after reboot is
+       lost). Not yet: a person listening in the field, range, battery per call.
 [DONE 2026-11-15] Operator modes: S.1 Minimal / Typical / Everything (NVS opMode 0/1/2 as before).
        feature(F_*) gates: Typical = g_cfg.typFeat (NVS typFeat, S.1.5 toggles, default 0x79 =
        walkie, WiFi, Atlas, Library, Peers; off: voice messages, HA voice, Advanced = LoRa page,
        Diagnostics, TCP hub); Everything = all; Minimal = walkie only. Settings rows keep their
        number when hidden (SetRow.num, srowSkip()): digits find the row by number; activateSetting
        gets the number. Gated: menu (Atlas, Library, Peers), A / P keys, middle tab, card W, MIC.
-[DONE 2026-11-15] LXMF fields / voice-message engine API (src/core/protocol/LxmfFields.h; UI not done).
+[DONE 2026-11-15] LXMF fields / voice-message engine API (src/core/protocol/LxmfFields.h; UI below).
        Send: backend.lxmfSubmitAudio(dest16, lxmf::AudioCodec2_700C|_1600|_3200, audio, len[, text,
        textLen]) -> same ticket/poll/acknowledge flow as lxmfSubmit (generic: lxmfSubmitFields with a
        raw msgpack map). Wire = LXMF FIELD_AUDIO 0x07: [mode, raw Codec2 frames], 8 kHz codec, no
@@ -246,7 +259,7 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        the audio field. Rust: protocol/src/fields.rs (+fields_tests.rs, hand-built msgpack vectors;
        no Python LXMF installed). Archives rebuilt 2026-11-15 with it (all 5 symbols resolve in
        firmware.elf). LxmfFields.h still declares them weak: an older archive -> lxmf::available()
-       false, audio submit Rejection::Invalid, incoming audio dropped. Not yet tested on units.
+       false, audio submit Rejection::Invalid, incoming audio dropped. Tested COM5 -> COM6 (below).
        UI 2026-11-15: chat menu 5 Voice message (vmOpen/vmStartRec/vmTick/vmSend/vmPlayLast):
        Codec2 700C, max 20 s, encoded on the main loop from the mic ring, lxmfSubmitAudio; history
        rows mark voice (header.fieldsLength > 0) "[voice ~N s]"; P plays (requestRecord withFields,
@@ -269,7 +282,8 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        different folder is not byte-identical (paths are embedded); check exports instead
        (xtensa-esp-elf-nm under ~/.rustup/toolchains/esp). Host tests on the PC: copy protocol/
        next to the two Lite repos (scratch dir with junctions), cargo test --offline (Rust 1.87 gnu).
-       The sim's host lib (protocol/target/release) is NOT rebuilt yet (cargo build --release).
+       The sim's host lib (protocol/target/release, git-ignored) was rebuilt 2026-11-15 (mingw has no
+       weak symbols: an old host lib fails to link the sim).
        tools/check_prebuilt.py checks the archives export exactly the header's 104 functions.
 [DONE] LoRa delivery to a SLEEPING receiver: 14/14 at 1.3 frames/msg. Fixes: stay
        awake while LoRaInterface has TX queued, 3 s after a LoRa wake, while message
