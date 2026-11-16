@@ -32,6 +32,14 @@ START HERE (handoff 2026-11-11)
 - Boot: console "boottime" prints the boot phase marks kept in RAM (the PC misses the first
   seconds after a reset). COM6 2026-11-13: screen starts drawing 1.5 s, boot screen done
   3.4 s, ready 7.8 s (was 8.5 s / 10.6 s). Vault PBKDF2 runs on core 0 meanwhile.
+- Boot screen = the idle screen (Map / Library fall back to If found or the splash: no SD yet)
+  with a banner "BOOTING v0.1 / on battery, NN%". Empty battery (2026-11-15, StandaloneApp
+  "Boot screen and empty battery"): on battery under 3.40 V for ~8 s -> idle screen + "BATTERY
+  EMPTY / PLUG IN A USB CHARGER", then BQ25896 ship mode (REG09 BATFET_DIS) until USB (deep
+  sleep 30 min if that fails). Boot check before the display: no USB and (switched off empty,
+  or brownout reset under 3.8 V, or under 3.5 V) -> straight back off; the panel is not
+  redrawn when it already shows the empty screen. NVS rs_boot: empty, lock, dest (the boot
+  screen's LOCKED and If found address). Console "batempty" previews the screen.
 - Floor tool: tools/sleepcheck ("floor d <n> <secs>", "floor", "floor x", "bhi").
 - Commit only our files; never stage platformio.ini port lines,
   tools/check_build_identity.py, putty*.log, backups/, Video/, lilygo-tdeck-pro/,

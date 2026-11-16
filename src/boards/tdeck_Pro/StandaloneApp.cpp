@@ -476,10 +476,12 @@ bool isSelf(const uint8_t h[16]) {
     return g_haveSelf && h && memcmp(h, g_selfHash, 16) == 0;
 }
 
+void bootCacheDest();
 void setSelfHash(const uint8_t h[16]) {
     memcpy(g_selfHash, h, 16);
     g_haveSelf = true;
     hashToHex(h, g_destHex);
+    bootCacheDest();
 }
 
 // ---- Battery (BQ27220 @0x55) -------------------------------------------------
@@ -10134,18 +10136,157 @@ void updateIdle() {
     g_display.refreshIfDirty();
 }
 
-void drawBootSplash() {
-    clearRoot();
-    label(0, 130, W, 22, "RatSpeak", true);
-    label(0, 160, W, 18, "T-Deck Pro");
-    label(0, 184, W, 18, "LoRa / LXMF mesh");
-    label(0, 208, W, 18, RATSPEAK_FW_VERSION);
-    label(0, 240, W, 18, "BOOTING...", true);
+// ---- Boot screen and empty battery ---------------------------------------------------
+// E-ink keeps its last image with no power at all, so what is drawn last before the battery
+// gives out stays on the panel for days. That must be the idle screen (If found ...), not a
+// boot screen. So:
+//  - the boot screen IS the idle screen, with a banner over its bottom ("BOOTING v0.1");
+//  - on battery under kBatEmptyV the unit draws the idle screen with "BATTERY EMPTY / PLUG IN
+//    A USB CHARGER" and switches itself off (charger ship mode: the battery is disconnected
+//    until USB is plugged in), before the chip browns out;
+//  - after that (or after a brownout reset) only USB starts it again: a rested empty cell
+//    climbs back over 3.5 V (surface charge), boots, and dies again under load. Without USB the
+//    boot check goes straight back to off without touching the panel.
+bool chargerUpdateReg(uint8_t reg, uint8_t mask, uint8_t value);
+constexpr float kBatEmptyV = 3.40f;      // running on battery: switch off under this (sustained)
+constexpr float kBatBootV  = 3.50f;      // starting on battery needs at least this
+constexpr float kBatBrownoutOkV = 3.80f; // a brownout reset with this much is not an empty cell
+
+// NVS "rs_boot": what the boot screen needs before the protocol and vault are up, and the
+// empty-battery state. empty: 0 = no, 1 = switched off empty, 2 = and the panel shows it.
+uint8_t bootNvsGetU8(const char* k) {
+    Preferences p;
+    if (!p.begin("rs_boot", true)) return 0;
+    const uint8_t v = p.getUChar(k, 0);
+    p.end();
+    return v;
+}
+void bootNvsSetU8(const char* k, uint8_t v) {
+    if (bootNvsGetU8(k) == v) return;
+    Preferences p;
+    if (p.begin("rs_boot", false)) { p.putUChar(k, v); p.end(); }
+}
+void bootCacheDest() {                       // this radio's address, for If found at boot
+    if (!g_destHex[0]) return;
+    Preferences p;
+    if (!p.begin("rs_boot", false)) return;
+    if (p.getString("dest", "") != g_destHex) p.putString("dest", g_destHex);
+    p.end();
+}
+
+// The idle screen as it can be drawn at boot: no SD card yet, so Map and Library page show
+// If found (when filled in) or the splash; a password lock is taken from the last run.
+void paintIdleEarly() {
+    const uint8_t keepSc = g_cfg.idleScreen;
+    const bool keepLock = g_locked;
+    const bool noDest = !g_destHex[0];
+    if (noDest) {
+        Preferences p;
+        if (p.begin("rs_boot", true)) { strlcpy(g_destHex, p.getString("dest", "").c_str(), sizeof(g_destHex)); p.end(); }
+    }
+    g_locked = bootNvsGetU8("lock") != 0;
+    if (keepSc == IDLE_MAP || keepSc == IDLE_LIBRARY) g_cfg.idleScreen = foundCount() ? IDLE_FOUND : IDLE_SPLASH;
+    paintIdle();
+    g_cfg.idleScreen = keepSc;
+    g_locked = keepLock;
+    if (noDest) g_destHex[0] = 0;
+}
+
+// A two-line banner over the bottom of the idle screen (on top of its wake / LOCKED line).
+void idleBanner(const char* line1, const char* line2) {
+    constexpr int bh = 44;                   // clear of If found's last line (ends at y 276)
+    box(0, H - bh, W, bh, 3);
+    label(0, H - bh + 2, W, 20, line1, true);
+    label(0, H - bh + 22, W, 18, line2);
     lv_refr_now(nullptr);
-    drawLogo(W / 2, 64);
+}
+
+void drawBootSplash() {
+    char l2[40];
+    if (g_bat.valid && g_bat.usb) snprintf(l2, sizeof(l2), "USB power, battery %d%%", g_bat.pct);
+    else if (g_bat.valid)         snprintf(l2, sizeof(l2), "on battery, %d%%", g_bat.pct);
+    else                          snprintf(l2, sizeof(l2), "starting up");
+    paintIdleEarly();
+    idleBanner("BOOTING " RATSPEAK_FW_VERSION, l2);
     // Full refresh: after a reset (side button) the panel's previous-image RAM is cleared, so a
     // partial update showed nothing (white). Full is also quicker here (1.1 s vs 1.9 s).
     g_display.fullRefresh();
+}
+
+// Switch off for an empty battery: the idle screen + "plug in" banner (unless the panel shows
+// it already), everything powered down, then the charger's ship mode cuts the battery off
+// until USB is plugged in. If that does not take, deep sleep and look again in 30 min.
+[[noreturn]] void batteryShutdown(bool redraw, bool early) {
+    Serial.printf("[BAT] empty (%.2f V, no USB): %s, switching off until USB\n", g_bat.volts,
+                  redraw ? "drawing the idle screen" : "the panel already shows it");
+    Serial.flush();
+    bootNvsSetU8("empty", 1);
+    if (redraw) {
+        if (early) paintIdleEarly(); else paintIdle();
+        idleBanner("BATTERY EMPTY", "PLUG IN A USB CHARGER");
+        g_display.fullRefresh();
+        bootNvsSetU8("empty", 2);
+    }
+    g_display.hibernate();
+#if !defined(SIMULATOR)
+    static const int kOff[] = {BOARD_LORA_EN, BOARD_GPS_EN, BOARD_6609_EN, BOARD_EPD_BACKLIGHT, BOARD_KEYBOARD_LED,
+                               BOARD_MOTOR_PIN};
+    for (int p : kOff) { pinMode(p, OUTPUT); digitalWrite(p, LOW); gpio_hold_en((gpio_num_t)p); }
+    gpio_deep_sleep_hold_en();
+    // BQ25896 REG09: BATFET_DIS (bit 5) = 1, BATFET_DLY (bit 3) = 0 -> battery off now; plugging
+    // in USB turns it back on.
+    chargerUpdateReg(0x09, 0x28, 0x20);
+    delay(1000);
+    Serial.println("[BAT] still on (ship mode refused or USB): deep sleep, check again in 30 min");
+    Serial.flush();
+    esp_sleep_enable_timer_wakeup(30ULL * 60ULL * 1000000ULL);
+    esp_deep_sleep_start();
+#endif
+    for (;;) delay(1000);
+}
+
+// Boot check, before anything is drawn: true = start; false = switch straight off.
+bool bootBatteryOk(bool& panelShowsEmpty) {
+#if !defined(SIMULATOR)
+    chargerUpdateReg(0x09, 0x20, 0x00);   // battery back on (a switch-off on USB left it off)
+#endif
+    readBattery();
+    const uint8_t empty = bootNvsGetU8("empty");
+    panelShowsEmpty = empty == 2;
+#if defined(SIMULATOR)
+    return true;
+#else
+    const bool brownout = esp_reset_reason() == ESP_RST_BROWNOUT;
+    if (g_bat.usb) {
+        if (empty) Serial.println("[BAT] USB power: starting (was switched off empty)");
+        bootNvsSetU8("empty", 0);
+        return true;
+    }
+    if (!g_bat.valid) return !empty;                       // no gauge reading: only the flag
+    if (empty) {
+        Serial.printf("[BAT] %.2f V after an empty switch-off: waiting for USB\n", g_bat.volts);
+        return false;
+    }
+    if (brownout && g_bat.volts < kBatBrownoutOkV) {
+        Serial.printf("[BAT] brownout reset at %.2f V: waiting for USB\n", g_bat.volts);
+        return false;
+    }
+    if (g_bat.volts < kBatBootV) {
+        Serial.printf("[BAT] %.2f V is too low to start on battery: waiting for USB\n", g_bat.volts);
+        return false;
+    }
+    return true;
+#endif
+}
+
+// While running on battery: under kBatEmptyV for ~8 s in a row -> switch off cleanly.
+void emptyBatteryTick() {
+#if !defined(SIMULATOR)
+    static uint8_t low = 0;
+    if (!g_bat.valid || g_bat.usb || g_bat.volts >= kBatEmptyV) { low = 0; return; }
+    if (++low < 10) return;
+    batteryShutdown(true, false);
+#endif
 }
 
 // =============================================================================
@@ -12531,6 +12672,11 @@ void handleSerialLine(char* p) {
             Serial.printf("[ID] slot %u %s %s%s\n", (unsigned)i, v[i].hash.c_str(), v[i].displayName.c_str(),
                           v[i].active ? " (active)" : "");
         Serial.printf("[ID] %u identities, tcp %s\n", (unsigned)v.size(), tcpStatus());
+    } else if (!strcmp(p, "batempty")) {     // preview the empty-battery screen (does not switch off)
+        paintIdle();
+        idleBanner("BATTERY EMPTY", "PLUG IN A USB CHARGER");
+        g_display.fullRefresh();
+        Serial.println("[BAT] empty screen shown (preview; a key wakes)");
     } else if (!strcmp(p, "id")) {
         Serial.printf("[ID] dest=%s name=%s\n", g_destHex, g_selfName);
     } else if (!strncmp(p, "txp", 3) && (p[3] == ' ' || p[3] == 0)) {
@@ -12713,6 +12859,7 @@ void watchBattery() {
     readBattery();
     capTick();
     lowBatTick();
+    emptyBatteryTick();
     if (g_idleActive) return;
     const bool changed = chg != g_bat.charging || usb != g_bat.usb || wasValid != g_bat.valid ||
                          (g_screen == SCR_HOME && pct != g_bat.pct);
@@ -12894,11 +13041,18 @@ bool begin() {
     logPsram();
     bootMark("config, power, I2C");
 
+    // Empty battery and no USB: do not start (and do not draw "BOOTING" over the idle screen).
+    loadBatteryCal();
+    bool panelShowsEmpty = false;
+    const bool batOk = bootBatteryOk(panelShowsEmpty);
+
     // Boot screen first, so the unit shows it is starting (~1 s after power-on). The radio
     // shares this SPI bus; its own SPI.begin() later is then a no-op.
     SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
+    if (!batOk && panelShowsEmpty) batteryShutdown(false, true);   // the panel already says it
     if (!g_display.begin()) { Serial.println("[BOOT] display failed"); return false; }
     if (!LvglPort::begin(g_display)) { Serial.println("[BOOT] LVGL failed"); return false; }
+    if (!batOk) batteryShutdown(true, true);
     drawBootSplash();
     bootMark("display, splash");
 
@@ -12946,7 +13100,6 @@ bool begin() {
 
     bootMark("keyboard, audio, touch");
     pinMode(KB_INT, INPUT_PULLUP);
-    loadBatteryCal();
     capLoad();
     readBattery();
     powerApply(true);                     // CPU clock, LoRa, WiFi, key light for the mode
@@ -12955,6 +13108,7 @@ bool begin() {
     vaultWait();                          // custom password -> stays locked until typed
     lockLoadFails();
     if (lockHasPassword()) { g_locked = true; Serial.println("[LOCK] boot locked (password set)"); }
+    bootNvsSetU8("lock", lockHasPassword() ? 1 : 0);   // the next boot screen shows LOCKED too
     if (vault::unlocked()) wifiLoad();    // else after unlock (lockTry)
     tcpLoad();
     ashareLoad();
