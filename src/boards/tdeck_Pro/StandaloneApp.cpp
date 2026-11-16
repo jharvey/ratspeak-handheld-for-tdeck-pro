@@ -2007,7 +2007,11 @@ void markReadStart(const char* hex) {
     else strlcpy(g_markReadRetry, hex, sizeof(g_markReadRetry));   // slot busy (a status update): next loop
 }
 
-void loadHistory(const uint8_t peer[16]) {
+// markRead false: a refresh (the store changed) with no new incoming message - marking read again
+// finished with a store revision bump, which reloaded the thread, which marked read again: a
+// 330 ms loop every 2.5 s for as long as a thread was open (stress test 2026-11-16).
+uint32_t g_histMarkedAt = UINT32_MAX;   // incomingCommitted() when the open thread was last marked read
+void loadHistory(const uint8_t peer[16], bool markRead = true) {
     using namespace handheld::storage;
     g_histCount = 0;
     g_histNote[0] = 0;
@@ -2137,8 +2141,11 @@ void loadHistory(const uint8_t peer[16]) {
     // Mark read after the page is on hand, without waiting: with 100+ unread the store took
     // over 2 s, the wait gave up while it was still busy, the history request was turned
     // away and the thread showed nothing. markReadTick() collects the result.
-    if (g_markReadPending) strlcpy(g_markReadNext, hex, sizeof(g_markReadNext));   // after the one running
-    else markReadStart(hex);
+    if (markRead) {
+        g_histMarkedAt = g_msgStore.incomingCommitted();
+        if (g_markReadPending) strlcpy(g_markReadNext, hex, sizeof(g_markReadNext));   // after the one running
+        else markReadStart(hex);
+    }
     int ri = findRow(peer);
     if (ri >= 0) g_rows[ri].unread = 0;
     g_convValid = false;
@@ -11819,7 +11826,8 @@ void handleSerialLine(char* p) {
         uint8_t d[16];
         for (int i = 0; i < 16; i++) { char h[3] = {p[5 + 2 * i], p[6 + 2 * i], 0}; d[i] = (uint8_t)strtoul(h, nullptr, 16); }
         g_menuOpen = false;
-        if (g_idleActive) { g_idleActive = false; noteInput(); }
+        g_idleActive = false;
+        noteInput();                        // counts as input, like opening it with keys
         openThread(d);
         Serial.printf("[UI] chat %.8s %s\n", p + 5, g_threadOpen ? "open" : "NOT open");
         return;
@@ -12926,7 +12934,7 @@ void watchMessages() {
     if (millis() - lastRedraw < 2500) return;
     if (g_threadOpen) {
         if (g_bufLen) return;            // never clobber a draft; retry later
-        loadHistory(g_threadPeer);
+        loadHistory(g_threadPeer, incoming != g_histMarkedAt);   // mark read only for new arrivals
     } else if (g_screen == SCR_INBOX && browseMode()) {
         loadRows(SCR_INBOX);
     } else if (g_screen != SCR_HOME) {
@@ -12975,6 +12983,9 @@ void watchIdle() {
         return;
     }
     if (g_cfg.idleMode == 0) return;
+    // Keys still waiting (the loop was busy drawing): the user is typing. Going idle here made
+    // the first of them the wake key, which is swallowed - a lost letter (stress test 2026-11-16).
+    if (g_keyqTail != g_keyqHead) return;
     const bool lockIt = lockOnIdle();                  // the draft stays in its buffer
     if (g_bufLen && !lockIt) return;                   // never hide an unsent draft
     if (millis() - g_lastInputMs >= g_cfg.idleSecs * 1000UL) {

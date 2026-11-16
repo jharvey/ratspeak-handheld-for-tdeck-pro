@@ -170,7 +170,9 @@ def main():
     by_hex = {}
     time.sleep(1)
     for i, u in enumerate(units):
-        m = u.cmd("id", r"\[ID\] dest=([0-9a-f]{32}) name=(.*)", 15)
+        m = None
+        for _ in range(4):                   # a unit still booting or busy: ask again
+            m = m or u.cmd("id", r"\[ID\] dest=([0-9a-f]{32}) name=(.*)", 15)
         if not m:
             print("%s: no answer to id" % u.port)
             sys.exit(1)
@@ -226,13 +228,14 @@ def main():
                 u.send("k ^^")                   # clear what is left in the compose line
             time.sleep(1.5)
             u.send("k ^")
+            time.sleep(2.5)                      # let Back run before the next console "chat"
         else:
             if not u.cmd("msg %s %s" % (v.hex, text), r"\[MSG\] send (queued|outboxed|failed)", 15):
                 u.note("msg %d to %s: no answer" % (n, v.tag))
 
     def tour_once(u):
         u.send("k ^")
-        time.sleep(1.5)
+        time.sleep(2.5)
         steps = [("I", "Inbox"), ("C", "Contacts"), ("P", "Peers"), ("A", "MAP")]
         random.shuffle(steps)
         for key, want in steps[:random.randint(2, 4)]:
@@ -247,8 +250,11 @@ def main():
                 for k in random.sample(["TT", "FF", "VV", "HH", "Z", "W"], 3):
                     u.send("k " + k)
                     time.sleep(1.5)
+                u.send("k ^")                    # close the Atlas (P there = next waypoint)
+                time.sleep(2)
             time.sleep(random.uniform(1, 4))
         u.send("k ^")
+        time.sleep(2.5)
 
     def health():
         now = time.time()
@@ -279,10 +285,12 @@ def main():
                     s[0] += 1
                     s[1] = max(s[1], int(m.group(2)))
                 m = FRAME.search(line)
-                if m:                            # only frames that follow the script's own key press
+                if m:                            # the first frame after the script's own key press
                     after = int(m.group(2))
                     since = (t - u.last_key) * 1000
-                    if since < 30000 and abs(after - since) < 2000:
+                    first = u.last_key != getattr(u, "framed_key", None)
+                    u.framed_key = u.last_key
+                    if first and since < 30000 and abs(after - since) < 2000:
                         u.frames.append(after)
                         if after > 3000:
                             u.note("slow key response: " + line.strip())
