@@ -32,6 +32,9 @@ videos will be public). Colours are the name tags over each unit: no red or blue
 - Real places with a cheesy or ratty name used as GPS positions: Plymouth, Wisconsin (the
   Cheese Capital of the World), Cheddar Gorge (England), Gouda (Netherlands), Hamelin
   (Germany, the Pied Piper town), Rat Island (Alaska), the Paris Sewer Museum.
+- The original how-to videos (docs/videos: Jack and Jill, Columbo, the 42 check-up, W1AW,
+  the Alamo Atlas tour) keep their own stories and names. The rat cast is for this new
+  series only; where a new video reuses an original clip, the clip stays as it is.
 - Overlay boxes may speak in the cast's voice ("Pip: wait, which key is Back?"), but the
   step itself is always stated plainly, so the text guide made from the video still reads
   as instructions.
@@ -48,7 +51,7 @@ THE SERIES
   "The cheese is always safe."
 - Parts: what is in the box and the keys; charging over USB-C; putting RatSpeak on it (web
   flasher); first start (BOOTING banner) and the setup wizard; the home screen and your
-  address; swapping contacts with a second unit (Pip and Mabel); first message and reply;
+  address; swapping contacts with a second unit (Jack and Jill); first message and reply;
   back to the idle screen. Ends with the battery calibration note: charge full, run it until
   it switches itself off, charge full again.
 - Reuses: New_out_of_box_unit_first_turn_on, Contact_exchange, send / read message clips.
