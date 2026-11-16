@@ -11535,6 +11535,11 @@ struct SoakState {
     uint32_t sent = 0, typedOk = 0, typedBad = 0, rx = 0, sendFail = 0;
     uint32_t slowMax = 0;
     const char* slowName = "";
+    // settings tour: keys pressed one at a time like a person browsing Settings
+    char tourKeys[12] = "";
+    uint8_t tourPos = 0;
+    uint32_t tourStep = 0, nextTour = 0, nextIdleSwap = 0;
+    uint32_t tours = 0;
 } g_soak;
 
 void soakLog(const char* fmt, ...) {
@@ -11602,6 +11607,18 @@ uint32_t soakRandMs(uint32_t meanMs) {              // exponential, 10 s .. 4 x 
     return (uint32_t)ms;
 }
 
+// The soak needs the idle screen (the e-ink sleep a real user sees): on, 30 s, if it was off.
+void soakSetup() {
+    if (!g_cfg.idleMode) {
+        g_cfg.idleMode = 1;
+        g_cfg.idleSecs = 30;
+        saveConfig();
+        soakLog("SETTING idle screen was off: on, 30 s");
+    }
+    g_soak.nextTour = millis() + 120000 + esp_random() % 300000;
+    g_soak.nextIdleSwap = millis() + 30UL * 60000UL;
+}
+
 void soakLoad() {
     Preferences p;
     if (!p.begin("rs_soak", true)) return;
@@ -11620,6 +11637,7 @@ void soakLoad() {
 #endif
     soakLog("BOOT reset=%d fw=%s peers=%u mean=%umin bat=%.3fV %d%% usb=%d", rr, RATSPEAK_FW_VERSION,
             (unsigned)g_soak.n, (unsigned)g_soak.meanMin, g_bat.volts, g_bat.pct, g_bat.usb ? 1 : 0);
+    soakSetup();
 }
 
 const char* const kSoakWords[] = {"ok", "on my way", "where are you", "at the camp", "see you soon", "got it",
@@ -11696,7 +11714,7 @@ void soakTick() {
     if (!lastStat || now - lastStat >= 60000) {
         lastStat = now | 1;
         soakLog("STAT %.3fV %d%% %dmA usb=%d heap=%u min=%u blk=%u psram=%u q=%d ob=%d sent=%lu ok=%lu bad=%lu "
-                "fail=%lu rx=%lu slow=%lu max=%lu(%s) i2c=%lu unread=%d mode=%s",
+                "fail=%lu rx=%lu slow=%lu max=%lu(%s) i2c=%lu unread=%d tours=%lu idle=%s mode=%s",
                 g_bat.volts, g_bat.pct, g_bat.avgMa, g_bat.usb ? 1 : 0,
                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                 (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
@@ -11705,12 +11723,15 @@ void soakTick() {
                 g_protoReady ? g_proto.lxmfQueuedCount() : -1, g_outboxCount, (unsigned long)g_soak.sent,
                 (unsigned long)g_soak.typedOk, (unsigned long)g_soak.typedBad, (unsigned long)g_soak.sendFail,
                 (unsigned long)g_soak.rx, (unsigned long)g_slowCount, (unsigned long)g_soak.slowMax, g_soak.slowName,
-                (unsigned long)g_i2cSlowCount, g_storeReady ? g_msgStore.totalUnreadCount() : -1, power::modeName(g_pw.mode));
+                (unsigned long)g_i2cSlowCount, g_storeReady ? g_msgStore.totalUnreadCount() : -1,
+                (unsigned long)g_soak.tours, kIdleScreenName[g_cfg.idleScreen < IDLE_COUNT ? g_cfg.idleScreen : 0],
+                power::modeName(g_pw.mode));
         g_soak.slowMax = 0;
         g_soak.slowName = "";
     }
     // Typing: 6 keys every 0.8 s (a fast typist), then Enter, then back out of the thread.
-    if (g_soak.typePhase == 1 && (int32_t)(now - g_soak.typeStep) >= 0) {
+    if (g_soak.typePhase == 1 && (int32_t)(now - g_soak.typeStep) < 0) return;   // not yet (fell through to Back)
+    if (g_soak.typePhase == 1) {
         if (!g_threadOpen) {                       // something closed the thread: give up
             g_soak.typePhase = 0;
             g_soak.typedBad++;
@@ -11750,6 +11771,44 @@ void soakTick() {
         if (next != g_keyqTail) { g_keyq[g_keyqHead] = ev; g_keyqHead = next; }
         return;
     }
+    // Settings tour in progress: one key every 1.5 s.
+    if (g_soak.tourKeys[g_soak.tourPos]) {
+        if ((int32_t)(now - g_soak.tourStep) < 0) return;
+        KeyEvent ev{};
+        const char c = g_soak.tourKeys[g_soak.tourPos++];
+        if (c == '^') ev.up = true; else ev.character = c;
+        uint8_t next = (uint8_t)((g_keyqHead + 1) % KEYQ_CAP);
+        if (next != g_keyqTail) { g_keyq[g_keyqHead] = ev; g_keyqHead = next; }
+        g_soak.tourStep = now + 1500;
+        if (!g_soak.tourKeys[g_soak.tourPos]) {   // last key: say where it ended
+            g_soak.tourKeys[0] = 0;
+            g_soak.tourPos = 0;
+        }
+        return;
+    }
+    if ((int32_t)(now - g_soak.nextTour) >= 0) {   // about every 10 min: browse a Settings page
+        g_soak.nextTour = now + soakRandMs(10UL * 60000UL);
+        const bool plain = !g_locked && !g_menuOpen && !entryActive() && !g_threadOpen && !g_wtOpen && !g_vmOpen &&
+                           !g_libOpen && !g_gameOpen && !g_chessOpen && !mapview::isOpen() && !g_usbDrive;
+        if (plain) {
+            static const char kPages[] = "123456789";
+            const char page = kPages[esp_random() % 9];
+            // ^ wakes / clears, M menu, S Settings, a page, look, back out to the list.
+            snprintf(g_soak.tourKeys, sizeof(g_soak.tourKeys), "^MS%c^^^", page);
+            g_soak.tourPos = 0;
+            g_soak.tourStep = now;
+            g_soak.tours++;
+            soakLog("TOUR settings page %c (screen %s)", page, screenName(g_screen));
+            return;
+        }
+    }
+    if ((int32_t)(now - g_soak.nextIdleSwap) >= 0) {   // every 30 min: the next idle screen type
+        g_soak.nextIdleSwap = now + 30UL * 60000UL;
+        g_cfg.idleScreen = (uint8_t)((g_cfg.idleScreen + 1) % IDLE_COUNT);
+        saveConfig();
+        soakLog("SETTING idle screen -> %s", kIdleScreenName[g_cfg.idleScreen]);
+        if (g_idleActive) { paintIdle(); g_display.fullRefresh(); }
+    }
     if (g_soak.replyTo >= 0 && (int32_t)(now - g_soak.replyAt) >= 0) {
         const int i = g_soak.replyTo;
         g_soak.replyTo = -1;
@@ -11765,7 +11824,7 @@ void soakTick() {
 // Light sleep must wake for the next soak step.
 uint32_t soakMsUntilNext() {
     if (!g_soak.on) return UINT32_MAX;
-    if (g_soak.typePhase) return 50;
+    if (g_soak.typePhase || g_soak.tourKeys[0]) return 50;
     const uint32_t now = millis();
     uint32_t ms = (int32_t)(g_soak.next - now) > 0 ? g_soak.next - now : 1;
     if (g_soak.replyTo >= 0) {
@@ -12136,6 +12195,7 @@ void handleSerialLine(char* p) {
             g_soak.next = millis() + soakRandMs(g_soak.meanMin * 60000UL);
             soakLog("START peers=%u mean=%umin bat=%.3fV %d%% usb=%d", (unsigned)n, (unsigned)g_soak.meanMin, g_bat.volts,
                     g_bat.pct, g_bat.usb ? 1 : 0);
+            soakSetup();
         } else if (!strcmp(q, "dump")) {             // soak dump: the log (card, else flash)
             File f = (g_sdMounted || sdMount()) ? g_sdStore.openFile(SD_PATH_ROOT "/soak.log", FILE_READ) : File();
             if (!f) f = LittleFS.open("/soak.log", FILE_READ);
