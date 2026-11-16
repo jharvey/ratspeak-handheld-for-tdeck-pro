@@ -117,6 +117,10 @@ uint32_t soakGoingDark();
 bool soakIsOn();
 uint8_t soakPeerCount();
 void soakToggle();
+// Hardware self-test (Settings > Diagnostics > Check this unit, console "selftest").
+void selftestStart(bool console);
+void selftestRows();
+bool selftestRan();
 uint32_t g_i2cSlowCount = 0;              // slow keyboard / gauge reads (the 1 s I2C waits)
 
 // =============================================================================
@@ -2542,7 +2546,7 @@ enum Page : uint8_t {
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
     PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW, PG_LOWBAT,
-    PG_BACKUPS, PG_FOUND, PG_MODE, PG_HAVOICE, PG_FEATURES
+    PG_BACKUPS, PG_FOUND, PG_MODE, PG_HAVOICE, PG_FEATURES, PG_SELFTEST
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -3584,6 +3588,7 @@ const char* pageTitle(Page p) {
         case PG_HAVOICE:      return "Home Assistant voice";
         case PG_FEATURES:     return "Typical features";
         case PG_MODE:         return "Mode";
+        case PG_SELFTEST:     return "Check this unit";
     }
     return "";
 }
@@ -4148,8 +4153,13 @@ void buildSettingsRows(Page p) {
              (unsigned long)((s / 3600) % 24), (unsigned long)((s / 60) % 60));
         if (soakIsOn()) srow(RK_TOGGLE, "Stress test", "ON  %u peers, Enter = off", (unsigned)soakPeerCount());
         else            srow(RK_TOGGLE, "Stress test", "OFF");
+        srow(RK_MENU, "Check this unit", "hardware self-test");
         break;
     }
+
+    case PG_SELFTEST:
+        selftestRows();
+        break;
 
     case PG_STORAGE:
         srow(RK_INFO, "Free heap", "%u KB (int %u KB)", (unsigned)(ESP.getFreeHeap() / 1024),
@@ -4745,6 +4755,11 @@ void activateSetting(int idx) {
 
     case PG_DIAG:
         if (idx == 6) soakToggle();
+        else if (idx == 7) { pushPage(PG_SELFTEST); if (!selftestRan()) selftestStart(false); }
+        break;
+
+    case PG_SELFTEST:
+        if (idx == 0) selftestStart(false);
         break;
 
     case PG_STORAGE:
@@ -11525,6 +11540,368 @@ const char* powerSleepBlocker() {
 
 // End of each loop pass: either a short idle delay or a light sleep until the next
 // wake-up (timer, key, touch or LoRa packet).
+// ---- Hardware self-test ------------------------------------------------------------
+// Settings > Diagnostics > Check this unit (console "selftest"): checks every part it can
+// without a person and says PASS / WARN / FAIL per line, so a broken unit shows at once
+// (e.g. a GPS that sends nothing or has the backup-cell fault, an I2C bus that stalls,
+// a radio that does not answer). Everything runs at once except the GPS, which is watched
+// for 20 s (powered for the test if the power plan had it resting). The report goes to
+// <SD>/ratdeckpro/selftest/<name>-<date>.txt (no card: /selftest.txt in flash) and to the
+// console. Not covered yet (need a person): screen patterns, every key, audio, touch.
+enum : uint8_t { ST_NONE, ST_PASS, ST_WARN, ST_FAIL };
+enum : uint8_t { STI_RAM, STI_PSRAM, STI_FLASH, STI_NVS, STI_SD, STI_I2C, STI_BAT, STI_CHG, STI_LORA, STI_GPS,
+                 STI_CLOCK, STI_N };
+struct StResult { uint8_t v; char detail[72]; };
+struct {
+    bool running = false, ran = false, console = false, gpsForced = false;
+    uint32_t startMs = 0, gpsBytes0 = 0, gpsGood0 = 0, gpsBad0 = 0;
+    char when[20] = "";
+    StResult r[STI_N] = {};
+} g_st;
+const char* const kStName[STI_N] = {"RAM", "PSRAM", "Flash", "Settings store", "SD card", "I2C bus",
+                                     "Battery gauge", "Charger", "LoRa radio", "GPS", "Clock"};
+const char* const kStVerdict[] = {"...", "PASS", "WARN", "FAIL"};
+constexpr uint32_t kStGpsMs = 20000;
+
+void stSet(int i, uint8_t v, const char* fmt, ...) {
+    g_st.r[i].v = v;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(g_st.r[i].detail, sizeof(g_st.r[i].detail), fmt, ap);
+    va_end(ap);
+    if (g_st.console) Serial.printf("[TEST] %-14s %s  %s\n", kStName[i], kStVerdict[v], g_st.r[i].detail);
+}
+
+// Pattern test of a block: address-mixed words, then their inverse. Returns bad words.
+uint32_t stPattern(uint32_t* p, size_t words) {
+    uint32_t bad = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        const uint32_t inv = pass ? 0xFFFFFFFFu : 0;
+        for (size_t i = 0; i < words; i++) p[i] = ((uint32_t)i * 2654435761u ^ 0xA5A5A5A5u) ^ inv;
+        for (size_t i = 0; i < words; i++)
+            if (p[i] != (((uint32_t)i * 2654435761u ^ 0xA5A5A5A5u) ^ inv)) bad++;
+    }
+    return bad;
+}
+
+void stRam() {
+    const size_t n = 32 * 1024;
+    uint32_t* p = (uint32_t*)heap_caps_malloc(n, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const unsigned freeK = (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
+    const unsigned minK = (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024);
+    const unsigned blkK = (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024);
+    if (!p) { stSet(STI_RAM, ST_FAIL, "no 32 KB block (free %u KB, block %u KB)", freeK, blkK); return; }
+    const uint32_t bad = stPattern(p, n / 4);
+    heap_caps_free(p);
+    if (bad) stSet(STI_RAM, ST_FAIL, "%lu bad words in 32 KB", (unsigned long)bad);
+    else stSet(STI_RAM, freeK < 40 ? ST_WARN : ST_PASS, "free %u KB, lowest %u, block %u", freeK, minK, blkK);
+}
+
+void stPsram() {
+    const size_t total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    if (!total) { stSet(STI_PSRAM, ST_FAIL, "not found"); return; }
+    size_t n = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 2;
+    if (n > 2 * 1024 * 1024) n = 2 * 1024 * 1024;
+    n &= ~(size_t)3;
+    uint32_t* p = n ? (uint32_t*)heap_caps_malloc(n, MALLOC_CAP_SPIRAM) : nullptr;
+    if (!p) { stSet(STI_PSRAM, ST_FAIL, "no free block"); return; }
+    const uint32_t t0 = millis();
+    const uint32_t bad = stPattern(p, n / 4);
+    const uint32_t ms = millis() - t0;
+    heap_caps_free(p);
+    if (bad) stSet(STI_PSRAM, ST_FAIL, "%lu bad words in %u KB", (unsigned long)bad, (unsigned)(n / 1024));
+    else stSet(STI_PSRAM, ST_PASS, "%u KB tested in %lu ms, %u KB free", (unsigned)(n / 1024), (unsigned long)ms,
+               (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+}
+
+void stFlash() {
+    static uint8_t buf[2048];
+    const char* path = "/selftest.tmp";
+    File w = LittleFS.open(path, FILE_WRITE);
+    if (!w) { stSet(STI_FLASH, ST_FAIL, "cannot create a file"); return; }
+    bool ok = true;
+    for (int k = 0; k < 4 && ok; k++) {
+        for (size_t i = 0; i < sizeof(buf); i++) buf[i] = (uint8_t)(i * 7 + k * 31);
+        ok = w.write(buf, sizeof(buf)) == sizeof(buf);
+    }
+    w.close();
+    File r = ok ? LittleFS.open(path, FILE_READ) : File();
+    uint32_t bad = 0;
+    for (int k = 0; k < 4 && r; k++) {
+        if (r.read(buf, sizeof(buf)) != sizeof(buf)) { bad++; break; }
+        for (size_t i = 0; i < sizeof(buf); i++) if (buf[i] != (uint8_t)(i * 7 + k * 31)) bad++;
+    }
+    if (r) r.close();
+    LittleFS.remove(path);
+    const unsigned freeK = (unsigned)((LittleFS.totalBytes() - LittleFS.usedBytes()) / 1024);
+    if (!ok || !r) stSet(STI_FLASH, ST_FAIL, "write / read back failed, %u KB free", freeK);
+    else if (bad) stSet(STI_FLASH, ST_FAIL, "%lu bytes differ on read back", (unsigned long)bad);
+    else stSet(STI_FLASH, freeK < 100 ? ST_WARN : ST_PASS, "8 KB write / read ok, %u KB free", freeK);
+}
+
+void stNvs() {
+    Preferences p;
+    if (!p.begin("rs_selftest", false)) { stSet(STI_NVS, ST_FAIL, "cannot open"); return; }
+    const uint32_t n = p.getUInt("runs", 0) + 1;
+    p.putUInt("runs", n);
+    const uint32_t back = p.getUInt("runs", 0);
+    p.end();
+    if (back != n) stSet(STI_NVS, ST_FAIL, "wrote %lu, read %lu", (unsigned long)n, (unsigned long)back);
+    else stSet(STI_NVS, ST_PASS, "write / read ok (test run %lu)", (unsigned long)n);
+}
+
+void stSd() {
+    if (!(g_sdMounted || sdMount())) { stSet(STI_SD, ST_WARN, "no card (or it does not mount)"); return; }
+    static uint8_t buf[4096];
+    const char* path = SD_PATH_ROOT "/selftest.tmp";
+    const int chunks = 64;                       // 256 KB
+    uint32_t t0 = millis();
+    File w = g_sdStore.openFile(path, FILE_WRITE);
+    bool ok = (bool)w;
+    for (int k = 0; k < chunks && ok; k++) {
+        for (size_t i = 0; i < sizeof(buf); i += 4) *(uint32_t*)(buf + i) = (uint32_t)(k * 4096 + i) * 2654435761u;
+        ok = w.write(buf, sizeof(buf)) == sizeof(buf);
+    }
+    if (w) w.close();
+    const uint32_t wMs = millis() - t0 ? millis() - t0 : 1;
+    uint32_t bad = 0;
+    t0 = millis();
+    File r = ok ? g_sdStore.openFile(path, FILE_READ) : File();
+    for (int k = 0; k < chunks && r; k++) {
+        if (r.read(buf, sizeof(buf)) != sizeof(buf)) { bad++; break; }
+        for (size_t i = 0; i < sizeof(buf); i += 4)
+            if (*(uint32_t*)(buf + i) != (uint32_t)(k * 4096 + i) * 2654435761u) bad++;
+    }
+    const uint32_t rMs = millis() - t0 ? millis() - t0 : 1;
+    const bool rOk = (bool)r;
+    if (r) r.close();
+    g_sdStore.remove(path);
+    const unsigned freeM = (unsigned)((g_sdStore.totalBytes() - g_sdStore.usedBytes()) >> 20);
+    if (!ok || !rOk) stSet(STI_SD, ST_FAIL, "write / read back failed");
+    else if (bad) stSet(STI_SD, ST_FAIL, "%lu words differ on read back", (unsigned long)bad);
+    else stSet(STI_SD, freeM < 50 ? ST_WARN : ST_PASS, "write %lu KB/s read %lu KB/s, %u MB free",
+               (unsigned long)(256000UL / wMs), (unsigned long)(256000UL / rMs), freeM);
+}
+
+bool stProbe(uint8_t addr, uint32_t& ms) {
+    const uint32_t t0 = millis();
+    Wire.beginTransmission(addr);
+    const bool ok = Wire.endTransmission() == 0;
+    ms = millis() - t0;
+    return ok;
+}
+
+void stI2c() {
+    uint32_t ms = 0, worst = 0;
+    const bool kb = stProbe(KB_I2C_ADDR, ms);    if (ms > worst) worst = ms;
+    const bool ga = stProbe(BQ27220_I2C_ADDR, ms); if (ms > worst) worst = ms;
+    const bool ch = stProbe(BQ25896_I2C_ADDR, ms); if (ms > worst) worst = ms;
+    const bool tp = stProbe(TOUCH_I2C_ADDR, ms);   if (ms > worst) worst = ms;
+    // 30 gauge reads in a row: any slow one is the bus stalling (COM5's 1 s waits).
+    uint32_t slow = 0;
+    for (int i = 0; i < 30; i++) {
+        uint16_t v = 0;
+        const uint32_t t0 = millis();
+        bqReadU16(0x08, v);
+        const uint32_t d = millis() - t0;
+        if (d > worst) worst = d;
+        if (d > 50) slow++;
+    }
+    const uint8_t v = (!kb || !ga || !ch) ? ST_FAIL : (slow || worst > 50 || !tp) ? ST_WARN : ST_PASS;
+    stSet(STI_I2C, v, "kbd %s gauge %s chg %s touch %s, max %lu ms, %lu slow", kb ? "ok" : "MISSING",
+          ga ? "ok" : "MISSING", ch ? "ok" : "MISSING", tp ? "ok" : "asleep?", (unsigned long)worst, (unsigned long)slow);
+}
+
+void stBattery() {
+    readBattery();
+    if (!g_bat.valid) { stSet(STI_BAT, ST_FAIL, "gauge gives no voltage"); return; }
+    uint16_t t = 0;
+    const bool tOk = bqReadU16(0x06, t);
+    const int c = tOk ? (int)t / 10 - 273 : -99;
+    uint8_t v = ST_PASS;
+    if (g_bat.volts < 3.0f || g_bat.volts > 4.45f || g_bat.rawSoc < 0) v = ST_FAIL;
+    else if (!tOk || c < 0 || c > 45) v = ST_WARN;
+    stSet(STI_BAT, v, "%.2fV %d%% (gauge %d%%) %dC %dmA fcc %u", g_bat.volts, g_bat.pct, g_bat.rawSoc, c,
+          (int)g_bat.avgMa, (unsigned)g_bat.fccMah);
+}
+
+void stCharger() {
+    uint8_t chrg = 0;
+    bool pg = false;
+    if (!chargerReadStatus(chrg, pg)) { stSet(STI_CHG, ST_FAIL, "does not answer"); return; }
+    static const char* const kChrg[] = {"not charging", "pre-charge", "charging", "charge done"};
+    // On USB but not charging while not full: cable / port that does not charge, or a fault.
+    const bool stuck = pg && chrg == 0 && g_bat.pct < 95;
+    stSet(STI_CHG, stuck ? ST_WARN : ST_PASS, "%s, %s%s", pg ? "USB power" : "no USB power", kChrg[chrg & 3],
+          stuck ? " (port / cable?)" : "");
+}
+
+void stLora() {
+    if (!g_radio || !loraOnline()) { stSet(STI_LORA, ST_FAIL, "radio does not answer"); return; }
+    // Noise floor: the channel with nobody sending. High = interference nearby (or a
+    // transmission in progress: run again).
+    long sum = 0;
+    int n = 0, top = -200;
+    for (int i = 0; i < 10; i++) {
+        const int r = g_radio->currentRssi();
+        if (r < 0 && r > -160) { sum += r; n++; if (r > top) top = r; }
+        delay(15);
+    }
+    if (!n) { stSet(STI_LORA, ST_WARN, "online, no RSSI reading, %d dBm TX", loraTxPower()); return; }
+    const int floor = (int)(sum / n);
+    stSet(STI_LORA, floor > -85 ? ST_WARN : ST_PASS, "online, noise %d dBm (top %d), TX %d dBm", floor, top,
+          loraTxPower());
+}
+
+void stGpsBegin() {
+#if defined(HAS_GPS) && HAS_GPS
+    g_st.gpsForced = false;
+    if (g_cfg.gpsOn && !g_gpsSerial) {          // resting in the power plan: power it for the test
+        g_gpsAllowed = true;
+        gpsApplyPower();
+        g_st.gpsForced = true;
+    }
+    g_st.gpsBytes0 = g_gpsBytes;
+    g_st.gpsGood0 = g_gpsGood;
+    g_st.gpsBad0 = g_gpsBad;
+#endif
+}
+
+void stGpsEnd() {
+#if defined(HAS_GPS) && HAS_GPS
+    if (!g_cfg.gpsOn) { stSet(STI_GPS, ST_WARN, "off in Settings: turn it on to test it"); return; }
+    const uint32_t bytes = g_gpsBytes - g_st.gpsBytes0, good = g_gpsGood - g_st.gpsGood0, bad = g_gpsBad - g_st.gpsBad0;
+    if (g_gpsBbrFault)
+        stSet(STI_GPS, ST_FAIL, "backup cell fault (CANNOT USE BBR), %lu sentences", (unsigned long)good);
+    else if (!bytes)
+        stSet(STI_GPS, ST_FAIL, "silent: no data in %lu s", (unsigned long)(kStGpsMs / 1000));
+    else if (!good)
+        stSet(STI_GPS, ST_FAIL, "%lu bytes but no good sentence (%lu bad)", (unsigned long)bytes, (unsigned long)bad);
+    else if (!g_gpsFix)
+        stSet(STI_GPS, ST_WARN, "talking (%lu ok, %lu bad), %u sats, no fix yet (indoors?)", (unsigned long)good,
+              (unsigned long)bad, (unsigned)g_gpsSats);
+    else
+        stSet(STI_GPS, ST_PASS, "fix, %u sats, HDOP %.1f, %lu ok %lu bad", (unsigned)g_gpsSats, g_gpsHdop,
+              (unsigned long)good, (unsigned long)bad);
+    if (g_st.gpsForced) {                         // back to the power plan
+        g_st.gpsForced = false;
+        powerApply(true);
+    }
+#else
+    stSet(STI_GPS, ST_WARN, "no GPS in this build");
+#endif
+}
+
+void stClock() {
+    const time_t now = time(nullptr);
+    struct tm t;
+    localtime_r(&now, &t);
+    if (now < 1735689600) { stSet(STI_CLOCK, ST_WARN, "not set (no GPS time or WiFi yet)"); return; }
+    stSet(STI_CLOCK, ST_PASS, "%04d-%02d-%02d %02d:%02d%s", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour,
+          t.tm_min, g_gpsSyncedOnce ? ", set from GPS" : "");
+}
+
+void selftestStart(bool console) {
+    if (g_st.running) { if (console) Serial.println("[TEST] already running"); return; }
+    for (auto& r : g_st.r) { r.v = ST_NONE; r.detail[0] = 0; }
+    g_st.console = console;
+    g_st.running = true;
+    g_st.startMs = millis();
+    if (console) Serial.printf("[TEST] self-test %s, GPS watched for %lu s\n", RATSPEAK_FW_VERSION,
+                               (unsigned long)(kStGpsMs / 1000));
+    stGpsBegin();
+    stRam();
+    stPsram();
+    stFlash();
+    stNvs();
+    stSd();
+    stI2c();
+    stBattery();
+    stCharger();
+    stLora();
+    stClock();
+    requestRedraw();
+}
+
+void selftestFinish() {
+    stGpsEnd();
+    g_st.running = false;
+    g_st.ran = true;
+    int cnt[4] = {0, 0, 0, 0};
+    for (auto& r : g_st.r) cnt[r.v & 3]++;
+    const time_t now = time(nullptr);
+    struct tm t;
+    localtime_r(&now, &t);
+    if (now > 1735689600) snprintf(g_st.when, sizeof(g_st.when), "%02d:%02d", t.tm_hour, t.tm_min);
+    else snprintf(g_st.when, sizeof(g_st.when), "up %lum", (unsigned long)(millis() / 60000UL));
+    // The report: one line per part.
+    String rep;
+    rep.reserve(1600);
+    char line[160];
+    snprintf(line, sizeof(line), "RatSpeak self-test  %s  fw %s  %s\n", g_selfName, RATSPEAK_FW_VERSION, g_destHex);
+    rep += line;
+    if (now > 1735689600) {
+        snprintf(line, sizeof(line), "%04d-%02d-%02d %02d:%02d\n", t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min);
+        rep += line;
+    }
+    for (int i = 0; i < STI_N; i++) {
+        snprintf(line, sizeof(line), "%-14s %s  %s\n", kStName[i], kStVerdict[g_st.r[i].v & 3], g_st.r[i].detail);
+        rep += line;
+    }
+    snprintf(line, sizeof(line), "PASS %d  WARN %d  FAIL %d\n", cnt[ST_PASS], cnt[ST_WARN], cnt[ST_FAIL]);
+    rep += line;
+    rep += "Not tested here (needs a person): screen, keys, audio, touch, antenna by ping.\n";
+    bool saved = false;
+    if (g_sdMounted && g_sdStore.ensureDir(SD_PATH_ROOT "/selftest")) {
+        char path[96];
+        char name[24];
+        size_t k = 0;
+        for (const char* c = g_selfName; *c && k < sizeof(name) - 1; c++)
+            name[k++] = isalnum((unsigned char)*c) ? *c : '_';
+        name[k] = 0;
+        if (now > 1735689600)
+            snprintf(path, sizeof(path), SD_PATH_ROOT "/selftest/%s-%04d%02d%02d-%02d%02d.txt", k ? name : "unit",
+                     t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour, t.tm_min);
+        else
+            snprintf(path, sizeof(path), SD_PATH_ROOT "/selftest/%s-up%lu.txt", k ? name : "unit",
+                     (unsigned long)(millis() / 1000));
+        saved = g_sdStore.writeString(path, rep);
+        if (g_st.console) Serial.printf("[TEST] report %s %s\n", saved ? "saved to" : "NOT saved to", path);
+    }
+    if (!saved) {
+        File f = LittleFS.open("/selftest.txt", FILE_WRITE);
+        if (f) { f.print(rep); f.close(); if (g_st.console) Serial.println("[TEST] report saved to flash /selftest.txt"); }
+    }
+    if (g_st.console) {
+        Serial.print(rep);
+        Serial.println("[TEST] done");
+    }
+    if (g_page == PG_SELFTEST) toast("Self-test: %d pass, %d warn, %d fail", cnt[ST_PASS], cnt[ST_WARN], cnt[ST_FAIL]);
+    requestRedraw();
+}
+
+void selftestTick() {
+    if (g_st.running && millis() - g_st.startMs >= kStGpsMs) selftestFinish();
+}
+
+bool selftestRan() { return g_st.ran || g_st.running; }
+
+// Settings > Diagnostics > Check this unit: row 1 runs it again, then a row per part.
+void selftestRows() {
+    if (g_st.running) {
+        srow(RK_ACTION, "Checking...", "GPS for %lu s more",
+             (unsigned long)((kStGpsMs - (millis() - g_st.startMs)) / 1000 + 1));
+    } else if (g_st.ran) {
+        int cnt[4] = {0, 0, 0, 0};
+        for (auto& r : g_st.r) cnt[r.v & 3]++;
+        srow(RK_ACTION, "Run again", "%s: %d pass %d warn %d fail", g_st.when, cnt[ST_PASS], cnt[ST_WARN], cnt[ST_FAIL]);
+    } else {
+        srow(RK_ACTION, "Run the check", "about 20 s");
+    }
+    for (int i = 0; i < STI_N; i++)
+        srow(RK_INFO, kStName[i], "%s %s", kStVerdict[g_st.r[i].v & 3], g_st.r[i].detail);
+}
+
 // ---- Soak test (unplugged group chat) ------------------------------------------------
 // "soak on <mean min> <hex> [<hex> ...]": this unit chats with those radios by itself until
 // "soak off" (kept in NVS, so it carries on after a restart): a new message to a random one
@@ -11960,6 +12337,7 @@ void soakTick() {
 
 // Light sleep must wake for the next soak step.
 uint32_t soakMsUntilNext() {
+    if (g_st.running) return 50;                   // self-test: watching the GPS
     if (!g_soak.on) return UINT32_MAX;
     if (g_soak.typePhase || g_soak.tourKeys[0]) return 50;
     const uint32_t now = millis();
@@ -12315,6 +12693,7 @@ void handleSerialLine(char* p) {
                       havoice::busy(), havoice::heard(), havoice::answer());
         return;
     }
+    if (!strcmp(p, "selftest")) { selftestStart(true); return; }   // hardware self-test, report when done
     if (!strcmp(p, "soak") || !strncmp(p, "soak ", 5)) {   // soak on <mean min> <hex> [...] | soak off
         const char* q = p[4] ? p + 5 : "";
         if (!strncmp(q, "on ", 3)) {
@@ -13799,6 +14178,7 @@ void slowNote(const char* name, uint32_t ms) {
 void loop() {
     SLOW_STEP("keys", processKeys());   // input first: lowest latency to the next render
     SLOW_STEP("soak", soakTick());
+    SLOW_STEP("selftest", selftestTick());
     SLOW_STEP("pumpOnce", pumpOnce());
     SLOW_STEP("g_announceMgr.loop", g_announceMgr.loop());
     SLOW_STEP("g_audio.loop", g_audio.loop());
