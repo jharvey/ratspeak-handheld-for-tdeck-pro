@@ -52,7 +52,8 @@ GLIDE_MS = 160            # moves to the next key this fast when presses follow 
 STAY_MS = 900             # between two presses closer than this the hand stays on screen
 ORANGE = (230, 120, 0)
 CAP_BG = (22, 58, 110)         # caption banner: deep blue, white bold text
-CAP_POP = (240, 140, 20)       # ... flashes orange when the caption changes, then fades back
+CAP_POP = (70, 160, 245)       # ... flashes bright sky blue when the caption changes, then fades back
+                               # (not a person's colour, not the yellow of the note boxes)
 CAP_POP_MS = 900               # how long the change flash takes to fade
 CAP_GROW_MS = 220              # the banner grows in from 92 % over this time
 NOTE_POP_MS = 200              # note boxes grow in from 85 % over this time
@@ -144,7 +145,9 @@ SYM_OF = {"Q": "#", "W": "1", "E": "2", "R": "3", "T": "(", "Y": ")", "U": "-", 
 LETTER_OF = {v: k for k, v in SYM_OF.items() if k not in ("N",)}
 
 
-LABEL_COLOURS = [(30, 90, 170), (170, 40, 110)]     # name tags: blue, then magenta
+# Each person's colour (name tag over the device): 1 green, 2 orange, 3 light purple.
+LABEL_COLOURS = [(40, 150, 70), (235, 125, 20), (155, 115, 215)]
+NOTE_FILL, NOTE_EDGE = (255, 236, 130, 245), (190, 140, 0)   # note boxes: yellow, apart from the banner
 
 
 def key_label(spec):
@@ -516,8 +519,8 @@ def main():
                     over = Image.new("RGBA", img.size, (0, 0, 0, 0))
                     od = ImageDraw.Draw(over)
                     od.rounded_rectangle((bx0 + 4, cy - bhh + 5, bx1 + 4, cy + bhh + 5), radius=14, fill=(0, 0, 0, 70))
-                    od.rounded_rectangle((bx0, cy - bhh, bx1, cy + bhh), radius=14, fill=(255, 248, 225, 245),
-                                         outline=ORANGE, width=5)
+                    od.rounded_rectangle((bx0, cy - bhh, bx1, cy + bhh), radius=14, fill=NOTE_FILL,
+                                         outline=NOTE_EDGE, width=5)
                     img.paste(over, (0, 0), over)
                     d = ImageDraw.Draw(img)
                     yy = cy - bh / 2 + 12
