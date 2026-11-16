@@ -1,6 +1,6 @@
 ================================================================================
 FUTURE STEPS — T-Deck Pro Ratspeak (long-term, update rarely)
-Last revised: 2026-11-13
+Last revised: 2026-11-15
 ================================================================================
 Short-term work stays in AI-guide.txt. This file is the backlog / vision list.
 ================================================================================
@@ -310,9 +310,8 @@ Suggested order: 1, 4, 3 first. Items already elsewhere in this file are cross-r
 Everyday use
 - 1. Quick replies: canned short messages ("OK", "On my way", "Where are you?", "Call me"),
   one key from a thread; user-editable list in Settings. Cheap; also suits Simple mode.
-- 2. Simple mode for real: the Simple/Advanced choice is stored (setup wizard) but does
-  nothing yet. Simple = hide advanced menus, larger text, four main screens (Inbox,
-  Contacts, Atlas, Send).
+- DONE 2026-11-15 (replaced) - 2. Simple mode: now operator modes Minimal / Typical (feature
+  picker S.1.5) / Everything. Still open: larger text in Minimal.
 - 3. SOS / check-in beacon: a held key combination sends my position to chosen contacts and
   repeats every few minutes until cancelled; clear on-screen state; works in every energy
   mode (wakes GPS + radio).
@@ -372,8 +371,9 @@ Nice to have
 - 14. Notepad: write notes on the device, saved to the Library folder on SD.
 Also asked 2026-11-13
 - Voice walkie-talkies: see Audio / modes (Codec2 voice messages / push-to-talk).
-  STARTED 2026-11-15: live walkie-talkie over WiFi works (Help-11). To do: LoRa invite sets up a
-  hotspot when the units are close; voice messages as LXMF audio field (needs fields in the engine).
+  BUILT 2026-11-15: live walkie-talkie over WiFi (Help-11), LoRa invite + hotspot when no
+  shared WiFi, voice messages as the LXMF audio field (Help-12). To do: user field test
+  (range, audio quality, battery), Sideband playback check, group / channel talk.
 - USB hard drive / flash drive on the handheld (USB OTG host): read maps or archives from a
   USB drive plugged into the unit. Same blocker as unit-to-unit USB copy above: host mode
   must supply 5 V on VBUS and the USB-C is wired as a charge input; check the schematic.
