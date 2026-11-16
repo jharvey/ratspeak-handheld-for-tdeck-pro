@@ -345,6 +345,28 @@ Maps / location
   "Navigate to a contact" under Team awareness.)
 - DONE 2026-11-13 (branch claude/features-6-11) - 8. Arrival / geofence alerts: "tell me when <contact> is within 500 m of <waypoint>".
 Field / test tools
+- 16. Hardware self-test (user asked 2026-11-16): one Settings > Diagnostics entry "Check this
+  unit" that runs every part and says PASS / WARN / FAIL per line, saves the report to SD (and
+  shows it), so a broken unit is found at once - e.g. the COM8 GPS backup-cell fault ('CANNOT USE
+  BBR', took a while to find) or COM5's I2C bus stalling 1 s at a time (soak 2026-11-16).
+  - RAM: internal + PSRAM pattern test (walking bits on a free block), free / largest block.
+  - Flash: LittleFS write / read-back / delete of a test file, free space; NVS read / write.
+  - SD: present, mount, write / read speed, free space, FAT cluster size.
+  - I2C: scan (keyboard TCA8418, gauge BQ27220, charger BQ25896, touch CST328, IMU), time each
+    read - any over ~50 ms is a WARN (the COM5 1 s stalls), repeated reads for stuck lines.
+  - Battery / charger: gauge voltage vs charger, current sign on / off USB, SOC sanity, temp.
+  - GPS: UART sentences arrive, receiver version, BBR / backup cell state (tools/gpscheck
+    logic), satellites heard in N minutes, time fix; FAIL on silence or BBR fault.
+  - LoRa: SX1262 found on SPI (version register), TX done IRQ, noise floor (RSSI with no
+    traffic), and with a second unit nearby a ping both ways with RSSI / SNR - a weak or
+    missing antenna shows as a low RSSI at short range (no SWR sensor on the board).
+  - WiFi: scan finds networks, RSSI of the strongest; BLE if used later.
+  - Display: full-screen patterns (black / white / checker) to spot dead rows; front light.
+  - Keyboard: "press every key" screen that ticks keys off; MIC / side keys; touch corners.
+  - Audio: speaker tone + mic loopback level (and DC offset), motor buzz.
+  - Clock: RTC keeps time over the test, time zone.
+  - Output: a short summary line per part, the full report in <SD>/ratdeckpro/selftest/
+    <name>-<date>.txt, and a console "selftest" for the PC (tools/selftest.py for many units).
 - DONE 2026-11-13 (branch claude/features-6-11) - 9. Range-test mode: two units ping each other and log RSSI / SNR / GPS position to a CSV
   on SD -> coverage map (pairs with RF coverage prediction above).
 - DONE 2026-11-13 (branch claude/features-6-11) - 10. Measured battery-life estimate on screen ("about 31 h left in Balanced") from the
