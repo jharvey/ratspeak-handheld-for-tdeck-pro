@@ -44,6 +44,19 @@ video descriptions
 - When done it goes back to idle screen. 
 
 
+-- New_out_of_box_unit_first_turn_on.mp4
+- Purpose: show a new owner what to expect, from the box to the home screen. Show one unit, large, with a PC (or laptop) on the left of the frame.
+- Start with the unit fresh out of the box, screen blank or showing the LilyGO factory demo. Overlay box: "A new T-Deck Pro: first we put RatSpeak on it".
+- Plug the USB-C cable into the unit and the PC. Close-up of the side of the unit.
+- Show the hand press and hold the BOOT button on the side, tap the RESET button, then let go of BOOT (half click sounds as in the SYM presses). Overlay box: "Hold BOOT, tap RESET, let go of BOOT: the unit is now ready to receive firmware". Check the button names / positions against the LilyGO T-Deck Pro guide before recording.
+- Cut to the PC: the Ratspeak web flasher in the browser (ratspeak.org/download.html), pick "T-Deck Pro", pick the serial port, Flash. Show the progress bar filling, then "Done". Overlay box: "About 1 minute. Keep the cable in until it says done".
+- Back to the unit: tap RESET (or unplug and plug in again). The screen shows the idle screen with the "BOOTING v0.1" banner at the bottom. Overlay box: "First start takes a few seconds".
+- The setup wizard opens: Welcome, then step by step with Enter to go on: Device name (type a name, e.g. "TRAILHEAD"), Time zone (pick yours), Clock, Energy mode (Balanced), Idle screen (pick If found; its name / phone lines are filled in later in Settings), Simple / Advanced (Typical), Password lock (skip for now), Import contacts (skip). Use the hand pointer with click sounds on each key, ALL CAPS typing.
+- Overlay box at the last step: "0 finishes the wizard at any step; everything can be changed later in Settings".
+- The home screen appears: the identity card with the new name and address. Overlay box: "This is your address: others add you with it, or you announce so they find you (see Search_for_others.mp4)".
+- Unplug the USB cable: overlay box "Charge it full the first time; the battery % settles after a full charge".
+- When done it goes to the idle screen (the If found screen just set up).
+
 misc notes
 - In file names use _ instead of space, to prevent %20 issues in web pages etc.
 - when showing press a number in vidoes, show hand press and hold "sym" with half click sound. Then other hand press button button with full click sound. Then release with 2nd half click sound. 
