@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <mutex>
 #include <unistd.h>
 
@@ -491,6 +492,12 @@ void MainWindow::recStart(const QString& dirIn) {
     }
     recTimer_->start(40);
     recLog(QString("T0 %1").arg(recT0_));     // wall clock: lines up two devices' recordings
+    {                                          // what the speaker plays / the mic hears
+        const QString audio = QDir(recDir_).filePath("audio.pcm");
+        QFile::remove(audio);
+        std::lock_guard<std::mutex> l(sim::hw().mu);
+        sim::hw().audioLog = QDir::toNativeSeparators(audio).toStdString();
+    }
     recFrame();
     fprintf(stdout, "[SIM] recording to %s\n", recDir_.toLocal8Bit().constData());
     fflush(stdout);
@@ -501,6 +508,10 @@ void MainWindow::recStop() {
     recFrame();
     recTimer_->stop();
     recLog(QString("E %1").arg(QDateTime::currentMSecsSinceEpoch() - recT0_));
+    {
+        std::lock_guard<std::mutex> l(sim::hw().mu);
+        sim::hw().audioLog.clear();
+    }
     recLogFile_->close();
     delete recLogFile_;
     recLogFile_ = nullptr;
@@ -614,6 +625,35 @@ void MainWindow::stepScript() {
                 recStart(arg.section(' ', 0, 0));
             }
             next(20); return;
+        }
+        if (cmd == "mic") {       // mic <file.wav>: what the microphone hears (16 kHz mono 16-bit)
+            QString path = arg.trimmed();
+            if (QDir::isRelativePath(path) && !qEnvironmentVariableIsEmpty("SIM_AUDIO_DIR"))
+                path = QDir(qEnvironmentVariable("SIM_AUDIO_DIR")).filePath(path);
+            std::vector<int16_t> pcm;
+            QFile wf(path);
+            if (wf.open(QIODevice::ReadOnly)) {
+                const QByteArray b = wf.readAll();
+                // RIFF: find the "data" chunk (the clips are written as 16 kHz mono 16-bit)
+                for (int i = 12; i + 8 <= b.size();) {
+                    const quint32 len = (quint8)b[i + 4] | ((quint8)b[i + 5] << 8) | ((quint8)b[i + 6] << 16) |
+                                        ((quint32)(quint8)b[i + 7] << 24);
+                    if (b.mid(i, 4) == "data") {
+                        const int n = (int)std::min<qint64>(len, b.size() - i - 8) / 2;
+                        pcm.resize(n);
+                        memcpy(pcm.data(), b.constData() + i + 8, (size_t)n * 2);
+                        break;
+                    }
+                    i += 8 + (int)len + (len & 1);
+                }
+            }
+            {
+                std::lock_guard<std::mutex> l(sim::hw().mu);
+                sim::hw().micClip = pcm;
+            }
+            fprintf(stdout, "[SIM] mic: %s (%.1f s)\n", path.toLocal8Bit().constData(), pcm.size() / 16000.0);
+            fflush(stdout);
+            next(5); return;
         }
         if (cmd == "caption") {   // caption <text>: shown on the video from now on (empty = none)
             recLog(QString("C %1 %2").arg(QDateTime::currentMSecsSinceEpoch() - recT0_).arg(arg));

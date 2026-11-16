@@ -178,8 +178,9 @@ def wrap(draw, text, font, width):
     return lines
 
 
-def click_wav(path, clicks, total_ms, rate=44100):
-    """clicks: (ms, kind) with kind 'full' or 'half'."""
+def click_wav(path, clicks, total_ms, rate=44100, audio=()):
+    """clicks: (ms, kind) with kind 'full' or 'half'. audio: (ms, samples) with 16 kHz int16
+    samples (what the simulated speaker played and microphone heard), mixed in at ms."""
     n = int(total_ms * rate / 1000) + rate // 2
     buf = [0.0] * n
     rnd = random.Random(7)
@@ -198,6 +199,17 @@ def click_wav(path, clicks, total_ms, rate=44100):
         for i, v in enumerate(full if kind == "full" else half):
             if 0 <= s + i < n:
                 buf[s + i] += v
+    for tm, pcm in audio:                       # 16 kHz -> rate, linear interpolation
+        s = int(tm * rate / 1000)
+        m = int(len(pcm) * rate / 16000)
+        for j in range(m):
+            if not 0 <= s + j < n:
+                continue
+            x = j * 16000 / rate
+            k = int(x)
+            a = pcm[k] if k < len(pcm) else 0
+            b = pcm[k + 1] if k + 1 < len(pcm) else a
+            buf[s + j] += (a + (b - a) * (x - k)) / 32768 * 1.4
     with wave.open(path, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -238,6 +250,20 @@ class Rec:
                 end = int(rest)
         if not self.frames:
             sys.exit("no frames in " + d)
+        # audio.pcm (simulator speaker + microphone): int64 wall ms, uint32 n, n x int16 16 kHz
+        self.audio = []
+        ap = os.path.join(d, "audio.pcm")
+        if os.path.exists(ap) and self.t0:
+            raw = open(ap, "rb").read()
+            i = 0
+            while i + 12 <= len(raw):
+                wall, cnt = struct.unpack_from("<qI", raw, i)
+                i += 12
+                pcm = struct.unpack_from("<%dh" % cnt, raw, i)
+                i += cnt * 2
+                if any(pcm):                      # silence adds nothing
+                    self.audio.append((wall - self.t0, pcm))
+            end = max(end, max((t + len(p) // 16 for t, p in self.audio), default=0))
         self.end = max(end, self.frames[-1][0], self.keys[-1][0] + 1000 if self.keys else 0)
 
         first = Image.open(os.path.join(d, self.frames[0][1])).convert("RGB")
@@ -265,6 +291,7 @@ class Rec:
         self.caps = [(t + off, c) for t, c in self.caps]
         self.notes = [(t + off, d, n) for t, d, n in self.notes]
         self.points = [(t + off, d, x, y) for t, d, x, y in self.points]
+        self.audio = [(t + off, p) for t, p in self.audio]
         self.end += off
         self.build_targets()
 
@@ -381,6 +408,8 @@ def main():
             pts += [n[0], n[0] + n[1]]
         for p in r.points:
             pts += [p[0], p[0] + p[1]]
+        for t, pcm in r.audio:                  # sound plays at its real speed: no shortening
+            pts += list(range(t, t + len(pcm) // 16 + 1, 500)) + [t + len(pcm) // 16]
     # time map: recording ms -> video ms, quiet gaps shortened
     pts = sorted(set([0, end] + [p for p in pts if 0 <= p <= end]))
     segs, vend = [], 0
@@ -421,7 +450,8 @@ def main():
 
     tmp = tempfile.mkdtemp(prefix="howto_")
     wav = os.path.join(tmp, "clicks.wav")
-    click_wav(wav, [(fwd(t), k) for r in recs for t, k in r.clicks], vend)
+    click_wav(wav, [(fwd(t), k) for r in recs for t, k in r.clicks], vend,
+              audio=[(fwd(t), p) for r in recs for t, p in r.audio])
     cmd = [ffmpeg, "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "%dx%d" % (W, H),
            "-r", str(FPS), "-i", "-", "-i", wav, "-c:v", "libx264", "-preset", "slow", "-crf", "24",
            "-pix_fmt", "yuv420p", "-tune", "animation", "-c:a", "aac", "-b:a", "96k", "-shortest",

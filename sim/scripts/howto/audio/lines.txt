@@ -1,0 +1,10 @@
+# Spoken lines for the how-to videos (voice message, walkie-talkie).
+# tools/howto/make_speech.ps1 turns each line into <file>.wav (16 kHz mono 16-bit) here,
+# with the Windows built-in voices: David = Jack, Zira = Jill.
+# A script plays one into the simulated microphone with "mic <file>.wav".
+# file | voice | text
+vm_jack   | David | Hi Jill, it's Jack. I'm at the top of the hill with the water bucket. Meet me here at noon.
+wt_jack1  | David | Jill, this is Jack. Can you hear me? Over.
+wt_jill1  | Zira  | Loud and clear, Jack. Where are you? Over.
+wt_jack2  | David | Halfway up the hill, by the old well. Over.
+wt_jill2  | Zira  | On my way. Don't fall down! Out.

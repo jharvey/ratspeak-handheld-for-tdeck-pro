@@ -37,6 +37,7 @@ endif()
 # ---- Firmware-side compile settings (shared) -------------------------------------
 set(FW_DEFS
     SIMULATOR=1
+    SIM_HAS_CODEC2=1
     TDECK_PRO_BUILD=1
     DISPLAY_WIDTH=240
     DISPLAY_HEIGHT=320
@@ -79,7 +80,8 @@ set(FW_SRCS
     ${BOARD}/power/RtcLog.cpp
     ${BOARD}/power/EnergyMonitor.cpp
     ${BOARD}/MapView.cpp
-    ${BOARD}/Chess.cpp)
+    ${BOARD}/Chess.cpp
+    ${BOARD}/voice/VoiceCodec.cpp)
 file(GLOB CORE_SRCS CONFIGURE_DEPENDS
     ${SRC}/core/storage/*.cpp
     ${SRC}/core/reticulum/*.cpp
@@ -95,13 +97,25 @@ file(GLOB SHIM_SRCS CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/hw/*.cpp)
 
 # Inflate for map pack files (the real unit uses the copy of miniz in the ESP32-S3's ROM).
+# Codec2 (voice messages, walkie-talkie): the speech codec core of lib/esp32_codec2 (the
+# modem / FreeDV parts are not needed).
+set(C2 ${REPO}/lib/esp32_codec2/src)
+set(C2_SRCS codec2.c codec2_fft.c codec2_fifo.c kiss_fft.c kiss_fftr.c interp.c lpc.c lsp.c mbest.c newamp1.c
+    newamp2.c nlp.c pack.c phase.c phi0.c postfilter.c quantise.c sine.c lpcnet_freq.c codebook.c codebookd.c
+    codebookge.c codebookjmv.c codebookjvm.c codebooklspmelvq.c codebookmel.c codebooknewamp1.c
+    codebooknewamp1_energy.c codebooknewamp2.c codebooknewamp2_energy.c memtools.c)
+list(TRANSFORM C2_SRCS PREPEND ${C2}/)
+add_library(sim_codec2 STATIC ${C2_SRCS})
+target_include_directories(sim_codec2 PUBLIC ${C2})
+target_compile_options(sim_codec2 PRIVATE -w)
+
 add_library(sim_miniz STATIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniz/miniz.c)
 target_compile_options(sim_miniz PRIVATE -w)
 target_compile_definitions(sim_miniz PRIVATE MINIZ_NO_ARCHIVE_APIS MINIZ_NO_TIME)
 
 add_library(sim_firmware STATIC ${FW_SRCS} ${CORE_SRCS} ${SHIM_SRCS})
 target_include_directories(sim_firmware PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniz)
-target_link_libraries(sim_firmware PUBLIC sim_miniz)
+target_link_libraries(sim_firmware PUBLIC sim_miniz sim_codec2)
 target_compile_definitions(sim_firmware PRIVATE ${FW_DEFS})
 target_include_directories(sim_firmware PRIVATE ${FW_INCS} ${CMAKE_CURRENT_SOURCE_DIR})
 # newlib/POSIX extras + device clock for every firmware translation unit

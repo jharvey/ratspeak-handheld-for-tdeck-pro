@@ -78,6 +78,15 @@ struct Hw {
     uint32_t vibrateUntil = 0;
     uint32_t beepCount = 0;
 
+    // ---- microphone and speaker (voice messages, walkie-talkie, how-to videos)
+    // The microphone "hears" micClip (16 kHz mono, script "mic <file.wav>"), from its start
+    // each time the firmware opens the mic, then silence. Everything the speaker plays and
+    // the microphone hears is written to audioLog while a recording runs (rec dir/audio.pcm:
+    // chunks of int64 wall-clock ms, uint32 sample count, int16 samples at 16 kHz).
+    std::vector<int16_t> micClip;
+    std::string audioLog;
+    int64_t speakerEndWallMs = 0;      // the speaker is busy until then (chunks queue up)
+
     // ---- serial
     std::deque<char> serialIn;
     std::function<void(const std::string&)> serialOut;   // called with a line (no lock held)

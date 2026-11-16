@@ -1,5 +1,5 @@
 // Codec2 wrapper. See VoiceCodec.h.
-#if !defined(SIMULATOR)
+#if !defined(SIMULATOR) || defined(SIM_HAS_CODEC2)
 
 #include "VoiceCodec.h"
 
@@ -79,4 +79,4 @@ void decode(const uint8_t* bits, int16_t* out) {
 
 }  // namespace voicecodec
 
-#endif  // !SIMULATOR
+#endif  // !SIMULATOR || SIM_HAS_CODEC2

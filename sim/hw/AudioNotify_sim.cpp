@@ -2,6 +2,10 @@
 #include "audio/AudioNotify.h"
 #include "hw/SimHw.h"
 
+#include <chrono>
+#include <cstdio>
+#include <thread>
+
 static void beep(const char* what, bool enabled) {
     if (!enabled) return;
     { std::lock_guard<std::mutex> l(sim::hw().mu); sim::hw().beepCount++; }
@@ -20,7 +24,70 @@ void AudioNotify::writeTone(uint16_t, uint16_t) {}
 void AudioNotify::writeSilence(uint16_t) {}
 void AudioNotify::pause() {}
 void AudioNotify::resume() {}
-void AudioNotify::writePcm(const int16_t*, size_t) {}
-bool AudioNotify::micStart() { return false; }
-void AudioNotify::micStop() {}
-size_t AudioNotify::micRead(int16_t*, size_t, uint8_t) { return 0; }
+// ---- speaker and microphone (voice messages, walkie-talkie) ---------------------------
+// The speaker takes as long as the sound lasts (like the real I2S write) and, while the
+// window records, logs each chunk at the wall-clock time it plays. The microphone hears the
+// clip loaded with "mic <file.wav>", in real time, then silence; what it hears is logged too
+// (the person speaking, for the video).
+static int64_t wallMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+static void logAudio(int64_t atWallMs, const int16_t* pcm, size_t n) {
+    std::string path;
+    { std::lock_guard<std::mutex> l(sim::hw().mu); path = sim::hw().audioLog; }
+    if (path.empty() || !n) return;
+    if (FILE* f = fopen(path.c_str(), "ab")) {
+        const uint32_t cnt = (uint32_t)n;
+        fwrite(&atWallMs, sizeof(atWallMs), 1, f);
+        fwrite(&cnt, sizeof(cnt), 1, f);
+        fwrite(pcm, sizeof(int16_t), n, f);
+        fclose(f);
+    }
+}
+
+void AudioNotify::writePcm(const int16_t* pcm, size_t n) {
+    if (!n) return;
+    const int64_t now = wallMs();
+    int64_t at;
+    {
+        std::lock_guard<std::mutex> l(sim::hw().mu);
+        auto& h = sim::hw();
+        at = h.speakerEndWallMs > now ? h.speakerEndWallMs : now;
+        h.speakerEndWallMs = at + (int64_t)(n / 16);
+    }
+    std::vector<int16_t> v(pcm, pcm + n);
+    const int vol = _volume;
+    for (auto& x : v) x = (int16_t)((int32_t)x * vol / 100);
+    logAudio(at, v.data(), n);
+    const int64_t wait = at + (int64_t)(n / 16) - wallMs() - 20;   // keep ~20 ms queued, as the DMA does
+    if (wait > 0) std::this_thread::sleep_for(std::chrono::milliseconds(wait));
+}
+
+static int64_t g_micStartWall = 0;
+static size_t g_micFed = 0;
+
+bool AudioNotify::micStart() {
+    g_micStartWall = wallMs();
+    g_micFed = 0;
+    _micOn = true;
+    return true;
+}
+
+void AudioNotify::micStop() { _micOn = false; }
+
+size_t AudioNotify::micRead(int16_t* out, size_t maxSamples, uint8_t) {
+    if (!_micOn) return 0;
+    const int64_t due = (wallMs() - g_micStartWall) * 16 - (int64_t)g_micFed;
+    if (due <= 0) return 0;
+    const size_t n = (size_t)due < maxSamples ? (size_t)due : maxSamples;
+    {
+        std::lock_guard<std::mutex> l(sim::hw().mu);
+        const auto& clip = sim::hw().micClip;
+        for (size_t i = 0; i < n; i++) out[i] = g_micFed + i < clip.size() ? clip[g_micFed + i] : 0;
+    }
+    logAudio(g_micStartWall + (int64_t)(g_micFed / 16), out, n);
+    g_micFed += n;
+    return n;
+}

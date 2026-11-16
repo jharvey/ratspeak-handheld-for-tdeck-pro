@@ -68,6 +68,9 @@ $videos = @(
        comps = @("contact_exchange_jill.txt@hv_jill"); rec2 = "hv_jill"; labels = @("Jack", "Jill")
        ini = @{ hv_jack = @($alamo); hv_jill = @("gps = 29.42580,-98.48590") }
        seed = @{ hv_jack = "atlas"; hv_jill = "atlas" } },
+    @{ name = "voice_message"; title = "Send a voice message"; main = "hv_jack"
+       devices = [ordered]@{ hv_jack = "Jack"; hv_jill = "Jill" }
+       comps = @("voice_message_jill.txt@hv_jill"); rec2 = "hv_jill"; labels = @("Jack", "Jill") },
     @{ name = "add_wifi"; title = "Add a WiFi network"; main = "hv_w1aw"
        devices = [ordered]@{ hv_w1aw = "W1AW" }
        ini = @{ hv_w1aw = @("wifi = W1AW-Guest/-52; ARRL-HQ/-58/HIRAMMAXIM; QRZ-Home/-71/CQDX; Hiram-Net/-80/SPARKGAP") } }
@@ -76,7 +79,7 @@ $videos = @(
 function Start-Sim([string]$script, [string]$device, [int]$delay = 0) {
     $log = Join-Path $work "log_$device.txt"
     $wait = if ($delay) { "timeout /t $delay /nobreak > nul&& " } else { "" }
-    $cmd = "$wait" + "set QT_QPA_PLATFORM=offscreen&& set QT_QPA_FONTDIR=%WINDIR%\Fonts&& set RS_SIM_AIR_PORT=48333&& " +
+    $cmd = "$wait" + "set QT_QPA_PLATFORM=offscreen&& set QT_QPA_FONTDIR=%WINDIR%\Fonts&& set RS_SIM_AIR_PORT=48333&& set SIM_AUDIO_DIR=$scripts\audio&& " +
            "`"$SimExe`" --name $device --fast --script `"$script`" --quit > `"$log`" 2>&1"
     return Start-Process cmd.exe -ArgumentList "/c", $cmd -PassThru -WindowStyle Hidden
 }

@@ -12,7 +12,7 @@
 
 namespace voicecodec {
 
-#if !defined(SIMULATOR)
+#if !defined(SIMULATOR) || defined(SIM_HAS_CODEC2)   // the simulator builds Codec2 too
 bool begin(int bps);                 // 3200, 1600 or 700; false: unknown mode / no memory
 void end();
 int bps();

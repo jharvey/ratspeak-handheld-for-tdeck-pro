@@ -1,0 +1,50 @@
+# How-to video: Jack answers Jill with a voice message. Device hv_jack (recorded), companion
+# voice_message_jill.txt (hv_jill, recorded too: both side by side). The simulated microphone
+# plays audio/vm_jack.wav (Windows voice "David", tools/howto/make_speech.ps1); what Jack says
+# and what Jill's speaker plays are in the video's sound.
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 2000
+serial a
+expect 60000 {JILL16}
+serial contact {JILL} Jill
+wait 3000
+mic vm_jack.wav
+key M
+key H
+wait 1500
+serial idle now
+wait 2500
+rec voice_message
+note 5500 Jill asks where Jack is. He answers with a voice message.
+expect 180000 [MSG] in from
+wait 3000
+caption Jack wakes his radio (any key), I (Inbox), and opens Jill's chat (Enter).
+wait 1500
+key SPACE
+wait 1500
+key I
+wait 1500
+key ENTER
+wait 3000
+caption In the chat: MIC opens the chat menu, 5 = Voice message.
+wait 1500
+key MIC
+wait 1800
+key 5
+wait 2500
+caption Space starts recording. Jack speaks (up to 20 seconds).
+wait 1500
+key SPACE
+wait 8800
+caption Space again stops and sends it over LoRa.
+wait 800
+key SPACE
+expect 60000 [VM] sent
+wait 3500
+caption ^ closes the recorder. The voice message is in the chat.
+wait 1200
+key BACK
+wait 90000
+rec off
+quit

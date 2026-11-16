@@ -1,0 +1,40 @@
+# Companion for voice_message.txt: Jill's radio (recorded too). She asks by text, then plays
+# Jack's voice message.
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 6000
+serial a
+expect 60000 {JACK16}
+serial contact {JACK} Jack
+wait 2000
+key M
+key H
+wait 1500
+rec voice_message
+wait 7000
+caption Jill opens Jack's chat and asks: WHERE ARE YOU?
+wait 1000
+serial chat {JACK}
+wait 2500
+type WHERE ARE YOU?
+key ENTER
+expect 30000 [TX]
+wait 4000
+expect 240000 [MSG] in from
+wait 3000
+caption Jill wakes her radio (any key): the voice message is in Jack's chat. MIC, 5, then P plays it.
+wait 1500
+key SPACE
+wait 2000
+key MIC
+wait 1800
+key 5
+wait 2000
+key P
+wait 12000
+caption ^ closes the player.
+wait 1000
+key BACK
+wait 4000
+rec off
+quit
