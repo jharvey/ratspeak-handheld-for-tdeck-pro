@@ -113,6 +113,7 @@ void soakLog(const char* fmt, ...);
 void soakIncoming(const uint8_t peer[16], const char* text);
 void soakSent(const char* body);
 void soakNoteSlow(const char* name, uint32_t ms);
+uint32_t soakGoingDark();
 uint32_t g_i2cSlowCount = 0;              // slow keyboard / gauge reads (the 1 s I2C waits)
 
 // =============================================================================
@@ -10338,8 +10339,15 @@ bool bootBatteryOk(bool& panelShowsEmpty) {
 void emptyBatteryTick() {
 #if !defined(SIMULATOR)
     static uint8_t low = 0;
-    if (!g_bat.valid || g_bat.usb || g_bat.volts >= kBatEmptyV) { low = 0; return; }
-    if (++low < 10) return;
+    static uint32_t darkAt = 0;          // soak listener told: switch off at this time
+    if (!g_bat.valid || g_bat.usb || g_bat.volts >= kBatEmptyV) { low = 0; darkAt = 0; return; }
+    if (low < 10) { low++; return; }
+    if (!darkAt) {
+        const uint32_t wait = soakGoingDark();
+        if (wait) { darkAt = (millis() + wait) | 1; return; }
+    } else if ((int32_t)(millis() - darkAt) < 0) {
+        return;
+    }
     batteryShutdown(true, false);
 #endif
 }
@@ -11516,6 +11524,11 @@ const char* powerSleepBlocker() {
 // went out), half sent directly. Everything goes to <SD>/ratdeckpro/soak.log: a STAT line
 // a minute (battery, heap, counts, pauses) and a line per event, so a run on battery until
 // it is empty can be read afterwards. tools/stress/soaklog.py sums the logs up.
+// Each message is a live status line (uptime, battery, current, heap, counts, stalls, mode),
+// only letters, digits and spaces so typing it is plain. "soak listen <hex> [min]" adds a
+// listener (a unit left on USB, its console logging "[MSG] in from"): it gets a "PS" status
+// report every <min> (default 5), at boot, at the first low battery, and "dark" just before
+// the empty-battery switch-off. It does not answer (it ignores "PS").
 constexpr int kSoakPeers = 6;
 struct SoakState {
     bool on = false;
@@ -11527,7 +11540,7 @@ struct SoakState {
     int replyTo = -1;
     // typing
     int typePeer = -1;
-    char typeText[100] = "";
+    char typeText[BUF_CAP + 1] = "";
     size_t typePos = 0;
     uint32_t typeStep = 0;           // millis of the next typing step
     uint8_t typePhase = 0;           // 0 none, 1 typing, 2 Enter sent (waiting for the send)
@@ -11540,6 +11553,13 @@ struct SoakState {
     uint8_t tourPos = 0;
     uint32_t tourStep = 0, nextTour = 0, nextIdleSwap = 0;
     uint32_t tours = 0;
+    // listener (a unit on USB that records the reports)
+    bool listen = false;
+    uint8_t listener[16] = {};
+    uint8_t listenMin = 5;
+    uint32_t nextListen = 0;
+    bool lowSent = false;
+    uint32_t reports = 0;
 } g_soak;
 
 void soakLog(const char* fmt, ...) {
@@ -11596,6 +11616,9 @@ void soakSave() {
     p.putUChar("mean", g_soak.meanMin);
     p.putUChar("n", g_soak.n);
     p.putBytes("peers", g_soak.peer, sizeof(g_soak.peer));
+    p.putBool("listen", g_soak.listen);
+    p.putBytes("lpeer", g_soak.listener, 16);
+    p.putUChar("lmin", g_soak.listenMin);
     p.end();
 }
 
@@ -11616,6 +11639,7 @@ void soakSetup() {
         soakLog("SETTING idle screen was off: on, 30 s");
     }
     g_soak.nextTour = millis() + 120000 + esp_random() % 300000;
+    g_soak.nextListen = millis() + 60000;
     g_soak.nextIdleSwap = millis() + 30UL * 60000UL;
 }
 
@@ -11627,6 +11651,10 @@ void soakLoad() {
     g_soak.n = p.getUChar("n", 0);
     if (g_soak.n > kSoakPeers) g_soak.n = kSoakPeers;
     p.getBytes("peers", g_soak.peer, sizeof(g_soak.peer));
+    g_soak.listen = p.getBool("listen", false);
+    p.getBytes("lpeer", g_soak.listener, 16);
+    g_soak.listenMin = p.getUChar("lmin", 5);
+    if (g_soak.listenMin < 1) g_soak.listenMin = 5;
     p.end();
     if (!g_soak.on || !g_soak.n) { g_soak.on = false; return; }
     g_soak.next = millis() + soakRandMs(g_soak.meanMin * 60000UL);
@@ -11640,21 +11668,48 @@ void soakLoad() {
     soakSetup();
 }
 
-const char* const kSoakWords[] = {"ok", "on my way", "where are you", "at the camp", "see you soon", "got it",
-                                  "bring water", "the trail is muddy", "heading north", "battery fine",
-                                  "copy that", "meet at the truck", "in ten minutes", "all good here",
-                                  "any news", "signal is weak", "up on the ridge", "check the gate", "back soon"};
+// Live status, letters / digits / spaces only (it is typed too), under 90 chars:
+// "up 192m 3712mv 48pct 42ma dsg heap 104 98 s12 r11 f0 bad0 slow2 i2c14 bal"
+void soakStatus(char* out, size_t n) {
+    char mode[4] = "";
+    const char* m = power::modeName(g_pw.mode);
+    for (int k = 0; k < 3 && m[k] && m[k] != ' '; k++) mode[k] = (char)tolower((unsigned char)m[k]);
+    snprintf(out, n, "up %lum %dmv %dpct %dma %s heap %u %u s%lu r%lu f%lu bad%lu slow%lu i2c%lu %s",
+             (unsigned long)(millis() / 60000UL), (int)(g_bat.volts * 1000.0f + 0.5f), g_bat.pct, abs((int)g_bat.avgMa),
+             g_bat.usb ? "usb" : (g_bat.avgMa > 0 ? "chg" : "dsg"),
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+             (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned long)g_soak.sent,
+             (unsigned long)g_soak.rx, (unsigned long)g_soak.sendFail, (unsigned long)g_soak.typedBad,
+             (unsigned long)g_slowCount, (unsigned long)g_i2cSlowCount, mode);
+}
+
+// A report to the listener (sent directly, never typed): "PS <tag> <kind> <status>".
+void soakReport(const char* kind) {
+    if (!g_soak.on || !g_soak.listen) return;
+    char tag[5], st[100], text[BUF_CAP + 1];
+    snprintf(tag, sizeof(tag), "%.4s", g_destHex[0] ? g_destHex : "xxxx");
+    soakStatus(st, sizeof(st));
+    snprintf(text, sizeof(text), "PS %s %s %s", tag, kind, st);
+    const SendResult r = sendOrQueue(g_soak.listener, text);
+    g_soak.reports++;
+    soakLog("REPORT %s: %s", kind, r == SendResult::Sent ? "sent" : r == SendResult::Queued ? "outbox" : "FAILED");
+}
+
+// The empty-battery switch-off is coming: tell the listener, and say how long to wait so the
+// radio gets it out (0 = no listener, switch off now).
+uint32_t soakGoingDark() {
+    if (!g_soak.on || !g_soak.listen) return 0;
+    soakReport("dark");
+    return 20000;
+}
 
 void soakSend(int i, bool reply) {
     const uint32_t num = soakCounter(i, true);
-    char text[100];
-    char tag[5];
+    char text[BUF_CAP + 1];
+    char tag[5], st[100];
     snprintf(tag, sizeof(tag), "%.4s", g_destHex[0] ? g_destHex : "xxxx");
-    int len = snprintf(text, sizeof(text), "PP %s %lu", tag, (unsigned long)num);
-    const int words = 2 + (int)(esp_random() % 8);
-    for (int w = 0; w < words && len < 80; w++)
-        len += snprintf(text + len, sizeof(text) - len, " %s",
-                        kSoakWords[esp_random() % (sizeof(kSoakWords) / sizeof(kSoakWords[0]))]);
+    soakStatus(st, sizeof(st));
+    snprintf(text, sizeof(text), "PP %s %lu %s", tag, (unsigned long)num, st);
     char to[9];
     snprintf(to, sizeof(to), "%02x%02x%02x%02x", g_soak.peer[i][0], g_soak.peer[i][1], g_soak.peer[i][2], g_soak.peer[i][3]);
     // Typed: only from a plain screen (no menu, entry, game, map ...), like a person would.
@@ -11809,6 +11864,17 @@ void soakTick() {
         soakLog("SETTING idle screen -> %s", kIdleScreenName[g_cfg.idleScreen]);
         if (g_idleActive) { paintIdle(); g_display.fullRefresh(); }
     }
+    if (g_soak.listen && (int32_t)(now - g_soak.nextListen) >= 0) {   // status to the listener
+        const bool first = g_soak.reports == 0;
+        g_soak.nextListen = now + g_soak.listenMin * 60000UL;
+        soakReport(first ? "boot" : "stat");
+        return;
+    }
+    if (g_soak.listen && !g_soak.lowSent && g_bat.valid && !g_bat.usb && (g_bat.pct <= 10 || g_bat.volts < kBatBootV)) {
+        g_soak.lowSent = true;
+        soakReport("low");
+        return;
+    }
     if (g_soak.replyTo >= 0 && (int32_t)(now - g_soak.replyAt) >= 0) {
         const int i = g_soak.replyTo;
         g_soak.replyTo = -1;
@@ -11830,6 +11896,10 @@ uint32_t soakMsUntilNext() {
     if (g_soak.replyTo >= 0) {
         const uint32_t r = (int32_t)(g_soak.replyAt - now) > 0 ? g_soak.replyAt - now : 1;
         if (r < ms) ms = r;
+    }
+    if (g_soak.listen) {
+        const uint32_t l = (int32_t)(g_soak.nextListen - now) > 0 ? g_soak.nextListen - now : 1;
+        if (l < ms) ms = l;
     }
     const uint32_t stat = 60000;                     // the STAT line once a minute
     return ms < stat ? ms : stat;
@@ -12196,6 +12266,22 @@ void handleSerialLine(char* p) {
             soakLog("START peers=%u mean=%umin bat=%.3fV %d%% usb=%d", (unsigned)n, (unsigned)g_soak.meanMin, g_bat.volts,
                     g_bat.pct, g_bat.usb ? 1 : 0);
             soakSetup();
+        } else if (!strncmp(q, "listen", 6)) {        // soak listen <32 hex> [min] | soak listen off
+            const char* h = q + 6;
+            while (*h == ' ') h++;
+            if (!strcmp(h, "off")) {
+                g_soak.listen = false;
+            } else if (strlen(h) >= 32) {
+                for (int i = 0; i < 16; i++) { char b[3] = {h[2 * i], h[2 * i + 1], 0}; g_soak.listener[i] = (uint8_t)strtoul(b, nullptr, 16); }
+                const int m = h[32] ? atoi(h + 33) : 0;
+                g_soak.listenMin = (uint8_t)(m >= 1 && m <= 120 ? m : 5);
+                g_soak.listen = true;
+                g_soak.nextListen = millis() + 5000;
+                g_soak.reports = 0;
+            } else { Serial.println("[SOAK] soak listen <32 hex> [minutes] | soak listen off"); return; }
+            soakSave();
+            soakLog("LISTEN %s every %u min", g_soak.listen ? "on" : "off", (unsigned)g_soak.listenMin);
+            Serial.printf("[SOAK] listener %s\n", g_soak.listen ? "on" : "off");
         } else if (!strcmp(q, "dump")) {             // soak dump: the log (card, else flash)
             File f = (g_sdMounted || sdMount()) ? g_sdStore.openFile(SD_PATH_ROOT "/soak.log", FILE_READ) : File();
             if (!f) f = LittleFS.open("/soak.log", FILE_READ);
@@ -12216,9 +12302,10 @@ void handleSerialLine(char* p) {
             soakSave();
             Serial.println("[SOAK] off");
         } else {
-            Serial.printf("[SOAK] %s, %u peers, mean %u min, sent %lu typed ok %lu bad %lu rx %lu\n", g_soak.on ? "on" : "off",
-                          (unsigned)g_soak.n, (unsigned)g_soak.meanMin, (unsigned long)g_soak.sent,
-                          (unsigned long)g_soak.typedOk, (unsigned long)g_soak.typedBad, (unsigned long)g_soak.rx);
+            Serial.printf("[SOAK] %s, %u peers, mean %u min, sent %lu typed ok %lu bad %lu rx %lu, listener %s (%lu reports)\n",
+                          g_soak.on ? "on" : "off", (unsigned)g_soak.n, (unsigned)g_soak.meanMin, (unsigned long)g_soak.sent,
+                          (unsigned long)g_soak.typedOk, (unsigned long)g_soak.typedBad, (unsigned long)g_soak.rx,
+                          g_soak.listen ? "on" : "off", (unsigned long)g_soak.reports);
         }
         return;
     }
