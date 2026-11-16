@@ -44,6 +44,10 @@ video descriptions
 - When done it goes back to idle screen. 
 
 
+misc notes
+- In file names use _ instead of space, to prevent %20 issues in web pages etc.
+- when showing press a number in vidoes, show hand press and hold "sym" with half click sound. Then other hand press button button with full click sound. Then release with 2nd half click sound. 
+
 -- New_out_of_box_unit_first_turn_on.mp4
 - Purpose: show a new owner what to expect, from the box to the home screen. Show one unit, large, with a PC (or laptop) on the left of the frame.
 - Start with the unit fresh out of the box, screen blank or showing the LilyGO factory demo. Overlay box: "A new T-Deck Pro: first we put RatSpeak on it".
@@ -56,7 +60,3 @@ video descriptions
 - The home screen appears: the identity card with the new name and address. Overlay box: "This is your address: others add you with it, or you announce so they find you (see Search_for_others.mp4)".
 - Unplug the USB cable: overlay box "Charge it full the first time; the battery % settles after a full charge".
 - When done it goes to the idle screen (the If found screen just set up).
-
-misc notes
-- In file names use _ instead of space, to prevent %20 issues in web pages etc.
-- when showing press a number in vidoes, show hand press and hold "sym" with half click sound. Then other hand press button button with full click sound. Then release with 2nd half click sound. 
