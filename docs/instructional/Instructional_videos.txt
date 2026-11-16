@@ -16,14 +16,39 @@ What this folder is
 
 
 ==========================================================================================
+THE CAST (a family of rats, so the series is fun to watch)
+==========================================================================================
+Original characters (not Remy or other film rats: those belong to the studios, and these
+videos will be public). Colours are the name tags over each unit: no red or blue.
+- PIP WHISKERTON (person 1, green): a young rat with his first radio. Eager, a bit clumsy,
+  learns everything the viewer learns.
+- MABEL CHEDDARWORTH (person 2, orange): a seasoned trail rat, Pip's older cousin. Knows
+  every key, explains with a wink.
+- PROFESSOR NIBBLES (person 3, light purple): an absent-minded old scholar rat. Loves long
+  explanations, wanders off, forgets where he left things.
+- GRANNY GOUDA (when a 3rd or 4th is needed): wants it simple; reads big letters only.
+- Running jokes: "Is the cheese safe?" / "The cheese is always safe."; nobody trusts the
+  WiFi network called MouseTrap_5G; the cat is never seen, only reported.
+- Real places with a cheesy or ratty name used as GPS positions: Plymouth, Wisconsin (the
+  Cheese Capital of the World), Cheddar Gorge (England), Gouda (Netherlands), Hamelin
+  (Germany, the Pied Piper town), Rat Island (Alaska), the Paris Sewer Museum.
+- Overlay boxes may speak in the cast's voice ("Pip: wait, which key is Back?"), but the
+  step itself is always stated plainly, so the text guide made from the video still reads
+  as instructions.
+
+
+==========================================================================================
 THE SERIES
 ==========================================================================================
 
 -- 01_Unbox_to_first_conversation.mp4                                    PLANNED (long)
 - Purpose: from a new unit in the box to a first two-way conversation.
+- Theme: Pip's first radio arrives in a cheese crate in Plymouth, Wisconsin. He sets it
+  up, swaps contacts with Mabel, and their first conversation is "Is the cheese safe?" /
+  "The cheese is always safe."
 - Parts: what is in the box and the keys; charging over USB-C; putting RatSpeak on it (web
   flasher); first start (BOOTING banner) and the setup wizard; the home screen and your
-  address; swapping contacts with a second unit (Jack and Jill); first message and reply;
+  address; swapping contacts with a second unit (Pip and Mabel); first message and reply;
   back to the idle screen. Ends with the battery calibration note: charge full, run it until
   it switches itself off, charge full again.
 - Reuses: New_out_of_box_unit_first_turn_on, Contact_exchange, send / read message clips.
@@ -31,6 +56,8 @@ THE SERIES
 
 -- 02_Everyday_messaging_Minimal_mode.mp4                                PLANNED
 - Purpose: daily use with the fewest keys: wake, read, reply, back to sleep.
+- Theme: Granny Gouda in Gouda, Netherlands: Pip asks "Coming for Sunday supper?", she
+  wakes the unit, reads it and replies "Bring crackers". Big, slow, simple.
 - Parts: idle screen and the new-message count; any key wakes to the Inbox; open a chat,
   read, reply; delivered / not yet delivered; a message to someone out of range waits in
   the outbox; unlock with the password if set.
@@ -38,6 +65,8 @@ THE SERIES
 
 -- 03_Everyday_messaging_Everything_mode.mp4                             PLANNED
 - Purpose: the same day with every feature showing: what each extra menu entry is for.
+- Theme: Professor Nibbles gives a lecture tour of every menu, pointer in hand, getting
+  carried away at each one ("and THIS, my dear students, is the Peers list...").
 - Parts: the full menu (Home, Inbox, Contacts, Peers, Atlas, Library, Settings ...); chat
   menu (MIC): share location, voice message, contact card; Peers and announce; the home
   card; where each feature is explained further in this series.
@@ -45,6 +74,8 @@ THE SERIES
 
 -- 04_Configure_Typical_mode.mp4                                         PLANNED
 - Purpose: choose what your unit shows: Minimal / Typical / Everything, and pick the Typical
+- Theme: Mabel sets up Granny Gouda's unit: turns off what Granny will never use, keeps
+  messages and If found, picks big idle screen.
   features one by one.
 - Parts: Settings 1 Mode; Typical features list (turn each on / off and see the menu
   change); touch on / off; idle screen choice and timeout.
@@ -52,6 +83,9 @@ THE SERIES
 
 -- 05_Energy_modes.mp4                                       PLANNED (long: may be 3 parts)
 - Purpose: make the battery last: what each energy mode does and how to pick or tune one.
+- Theme: The Long Winter Burrow: Pip is snowed in for a week and rations battery like
+  cheese. Each energy mode is a "cheese ration" (Full power = the whole wheel in a day,
+  Ultra-low = one crumb an hour). Part C: Mabel teaches battery care.
 - Part A: the modes (Full power, Balanced, Saver, Ultra-low, On demand): what changes
   (radio listening, GPS, screen, wake time) and the hours each gives on the Power page.
 - Part B: Custom power: each setting and its cost; the energy monitor and the energy trend
@@ -62,6 +96,8 @@ THE SERIES
 
 -- 06_Home_Assistant_mode.mp4                                            PLANNED
 - Purpose: use the handheld with Home Assistant: alerts from the house, commands to it,
+- Theme: Rat Manor, the smart burrow: Pip says "open the pantry door"; the house warns
+  "Cat detected at the back door"; Mabel arrives home and the burrow knows.
   voice.
 - Parts: what is needed at home (the bridge); Settings Home Assistant voice; sending a
   command; receiving an alert; presence (home / away). Only what is built at recording
@@ -70,6 +106,9 @@ THE SERIES
 
 -- 07_Atlas_maps_and_navigation.mp4                                      PLANNED (long)
 - Purpose: the offline map: move around, find places, mark and go to them.
+- Theme: The Great Cheese Hunt in Cheddar Gorge, England: waypoints are cheese caves, the
+  breadcrumb track is (literally) a trail of crumbs, and an arrival alert fires when Pip
+  reaches the Big Cave.
 - Parts: open the Atlas, pan / zoom / keys (K), places search, your GPS position; contacts
   on the map; waypoints (save, step through); breadcrumb track (record, show, track back,
   GPX on SD); navigate to a contact or waypoint (arrow + distance); arrival alerts; map
@@ -78,12 +117,17 @@ THE SERIES
 
 -- 08_Finding_people_and_contacts.mp4                                    PLANNED
 - Purpose: get people into your contacts and keep them tidy.
+- Theme: The Rat Pack reunion: Pip announces, old friends show up in Peers one by one, he
+  adds them and names them ("Squeaky from school").
 - Parts: announce and what it does; Peers (who has announced); peer to contact; naming a
   contact; contact cards (send / receive); removing a contact; your own identity card and
   address. Reuses peer_search, add_contact, contact_exchange.
 
 -- 09_Voice_messages_and_walkie_talkie.mp4                               PLANNED
 - Purpose: talk instead of type. Needs two real units (sound).
+- Theme: Pip and Mabel in the tunnels under Paris (the Sewer Museum): walkie-talkie
+  through the tunnels, "squeak once for yes"; Mabel leaves a voice message "turn left at
+  the big pipe".
 - Parts: record and send a voice message, play one; walkie-talkie call: call, answer, talk
   / listen with Space, hang up; same WiFi or the unit's own hotspot; range and battery
   notes.
@@ -91,6 +135,8 @@ THE SERIES
 
 -- 10_Location_sharing_and_team_awareness.mp4                            PLANNED
 - Purpose: let your group see where you are, safely.
+- Theme: The Rat Island (Alaska) expedition: the team shares positions, the Professor is
+  always the dot furthest away, the check-in schedule keeps everyone counted.
 - Parts: share my location once; auto-share and the "sharing on" sign; seeing a contact's
   last position and its age; navigate to them; check-in schedule; low-battery notice with
   position; privacy: nothing is shared unless you turn it on.
@@ -98,18 +144,26 @@ THE SERIES
 
 -- 11_Lock_If_found_and_privacy.mp4                                      PLANNED
 - Purpose: protect the unit and get it back if lost.
+- Theme: Hamelin, Germany: the Pied Piper plays, Pip follows the music and drops his
+  radio. A friendly finder sees the If-found screen ("Reward: one wheel of cheese") and
+  returns it. The lock kept his messages private.
 - Parts: set a password, lock, unlock; the If-found idle screen and its details; what a
   finder sees; what the lock protects (and what not yet).
 - Shows: Screen & I/O idle splash, If found page, lock.
 
 -- 12_WiFi_and_internet_links.mp4                                        PLANNED
 - Purpose: connect over WiFi as well as LoRa.
+- Theme: Le Fromage Cafe: networks CheeseNet, Le_Fromage_Guest and MouseTrap_5G ("never
+  join MouseTrap_5G"). Pip joins the cafe WiFi and reaches Mabel across the ocean over the
+  TCP hub.
 - Parts: scan and join a network, saved networks, auto-connect; the TCP hub (reach other
   Reticulum users over the internet); WiFi and battery.
 - Shows: Settings WiFi, Networks, Saved WiFi, TCP hub. Reuses wifi / add_wifi.
 
 -- 13_SD_card_backup_and_updates.mp4                                     PLANNED
 - Purpose: keep your unit safe and up to date with the SD card.
+- Theme: Moving day: Pip moves to a bigger burrow and a new unit; backup on the old one,
+  restore on the new one, then a firmware update ("new cheese, same rat").
 - Parts: what lives on the card (maps, archive, logs, library); Back up now and Restore;
   firmware update from /firmware; message archive on / off; USB drive mode (card on the PC);
   eject before removing.
@@ -117,16 +171,23 @@ THE SERIES
 
 -- 14_Library_help_and_games.mp4                                         PLANNED (short)
 - Purpose: the built-in help pages and the games.
+- Theme: A rainy day in the burrow: Pip reads the help pages, plays Rat Trap, and loses at
+  chess to the Professor (level 4).
 - Parts: Library, reading a help file, bookmarks / pages; Rat Trap, chess (levels, take back).
 
 -- 15_Radio_range_test_and_antennas.mp4                                  PLANNED
 - Purpose: see how far you can reach and check an antenna.
+- Theme: "How far can a squeak carry?": Mabel on a hilltop, Pip walking away down the
+  valley; the antenna that fell off is found by the self-test.
 - Parts: LoRa settings (presets, TX power) and what they trade; range test with two units
   (RSSI / SNR, CSV on SD); what a bad or missing antenna looks like.
 - Shows: Settings 8 LoRa, Range test.
 
 -- 16_When_something_is_wrong.mp4                                        PLANNED
 - Purpose: troubleshooting a new owner can do alone.
+- Theme: Dr. Whiskers' Radio Clinic: patients (units) come in with ailments: one will not
+  wake (empty battery), one has lost messages (out of range), one cannot see the stars (no
+  GPS fix). Check this unit is the full check-up.
 - Parts: will not turn on (empty battery banner, charge, BOOTING); message not delivered
   (outbox, range, announce); no GPS fix (sky view, Settings GPS); battery % looks wrong
   (calibration cycle); Check this unit (self-test: PASS / WARN / FAIL and what each line
@@ -135,8 +196,62 @@ THE SERIES
 
 -- 17_Multiple_identities.mp4                                            PLANNED (Advanced)
 - Purpose: more than one identity on one unit (e.g. personal / team).
+- Theme: Agent Double-O-Cheese: Mabel's work identity and her secret-agent identity on one
+  unit.
 - Parts: Identities list, add / switch / remove, which address others see.
 - Shows: Settings Identities.
+
+
+-- 18_A_day_on_the_trail.mp4                                             PLANNED (showcase)
+- Purpose: everything working together on one day out, start to finish.
+- Theme: Pip and Mabel's Great Smoky Mountains hike: morning check-in, auto-shared
+  positions, an arrival alert at the picnic rock, a voice message ("save me the brie"),
+  the low-battery notice at dusk, back home.
+
+-- 19_Three_rats_one_group.mp4                                          PLANNED
+- Purpose: how messages and positions look with three people.
+- Theme: The Three Musketeers of the Pantry: Pip (green), Mabel (orange) and the Professor
+  (light purple) plan a midnight pantry raid; three units side by side.
+- Needs: three-unit video support in tools/howto/make_video.py.
+
+-- 20_Out_of_range_and_back.mp4                                         PLANNED (short)
+- Purpose: what happens to a message when the other person cannot be reached.
+- Theme: Pip goes down the drainpipe; Mabel's message waits in her outbox; Pip pops out of
+  the pipe and it is delivered at once.
+
+-- 21_Finding_a_lost_friend.mp4                                         PLANNED
+- Purpose: search and rescue with the tools on the unit.
+- Theme: Professor Nibbles wanders off chasing a rare blue-veined cheese; Pip and Mabel use
+  his last shared position, navigate to him, and the arrival alert says they are close.
+
+-- 22_Foraging_with_markers.mp4                                         PLANNED
+- Purpose: relative markers and pointing someone the right way in the field.
+- Theme: Rat scouts out foraging: "the berry bush is 900 ft north of me"; the arrow on
+  Pip's screen points him straight to it.
+
+-- 23_Setting_up_a_unit_for_someone_else.mp4                            PLANNED
+- Purpose: prepare a unit as a gift: name, If found, password, contacts, hand it over.
+- Theme: Pip sets up a radio for Granny Gouda's birthday, wrapped in cheesecloth.
+
+-- 24_Pack_for_the_trip_energy_choices.mp4                              PLANNED (short)
+- Purpose: which energy settings for a day, a weekend, a week.
+- Theme: "How much cheese to pack": day trip, weekend, a week in the woods, side by side.
+
+-- 25_Rat_Tips_shorts.mp4 (a series of one-minute clips)                PLANNED
+- Purpose: one key idea per clip, for the website and social media: the keys, SYM
+  numbers, Back, waking up, the idle screen, announce, where am I.
+- Theme: each clip opens with "Rat Tip number N" on a paper scroll.
+
+-- 26_For_radio_amateurs.mp4                                            PLANNED
+- Purpose: LoRa settings, range, antennas and logging for ham radio operators.
+- Theme: Squeaky, the ham radio rat, visits W1AW in Newington, Connecticut, runs a range
+  test and logs it like a contest.
+
+-- 27_What_is_RatSpeak.mp4                                              PLANNED (2 min)
+- Purpose: for people who do not own one yet: messages with no phone, no towers, no
+  internet needed.
+- Theme: "Why rats don't need cell towers": the power goes out in the city, the phones go
+  quiet, Pip and Mabel keep talking.
 
 
 ==========================================================================================

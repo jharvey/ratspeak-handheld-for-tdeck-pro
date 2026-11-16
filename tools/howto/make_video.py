@@ -51,9 +51,10 @@ HOLD_AFTER_MS = 350       # and leaves this long after it is released
 GLIDE_MS = 160            # moves to the next key this fast when presses follow each other
 STAY_MS = 900             # between two presses closer than this the hand stays on screen
 ORANGE = (230, 120, 0)
-CAP_BG = (22, 58, 110)         # caption banner: deep blue, white bold text
-CAP_POP = (70, 160, 245)       # ... flashes bright sky blue when the caption changes, then fades back
-                               # (not a person's colour, not the yellow of the note boxes)
+CAP_BG = (236, 220, 182)       # caption banner: antique paper (parchment), dark brown bold text
+CAP_TEXT, CAP_EDGE = (62, 40, 18), (128, 92, 48)
+CAP_POP = (255, 250, 232)      # ... flashes to bright new paper when the caption changes, then ages back
+CAP_POP_EDGE = (196, 150, 40)  # (its edge flashes gold; no red / blue anywhere, no person's colour)
 CAP_POP_MS = 900               # how long the change flash takes to fade
 CAP_GROW_MS = 220              # the banner grows in from 92 % over this time
 NOTE_POP_MS = 200              # note boxes grow in from 85 % over this time
@@ -443,8 +444,8 @@ def main():
             if ct <= t:
                 cap, cap_t = text, ct
         if cap:
-            # A banner that stands out: deep blue with white bold text. When the caption changes
-            # it flashes orange and grows in, then settles, so the eye catches the new text.
+            # A banner that stands out: antique paper with dark brown bold text. When the caption changes
+            # it flashes to bright new paper with a gold edge and grows in, then ages back.
             lines = wrap(d, cap, f_cap, W - 90)[:3]
             lh = f_cap.size + 8
             age = v - fwd(cap_t)
@@ -457,10 +458,10 @@ def main():
             d.rounded_rectangle((cx - bw / 2 + 3, top + 4, cx + bw / 2 + 3, top + bh + 4), radius=14,
                                 fill=(205, 205, 200))                       # soft shadow
             d.rounded_rectangle((cx - bw / 2, top, cx + bw / 2, top + bh), radius=14, fill=mix(CAP_BG, CAP_POP, k),
-                                outline=mix((10, 30, 60), (255, 220, 120), k), width=3)
+                                outline=mix(CAP_EDGE, CAP_POP_EDGE, k), width=3 + int(round(3 * k)))
             yy = top + 11
             for line in lines:
-                d.text((cx, yy), line, font=f_cap, fill=(255, 255, 255), anchor="mt")
+                d.text((cx, yy), line, font=f_cap, fill=CAP_TEXT, anchor="mt")
                 yy += lh
         for n, r in enumerate(recs):
             ox, oy = r.ox, r.oy
