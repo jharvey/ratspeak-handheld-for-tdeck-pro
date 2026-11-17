@@ -11585,16 +11585,23 @@ uint32_t stPattern(uint32_t* p, size_t words) {
 }
 
 void stRam() {
-    const size_t n = 32 * 1024;
-    uint32_t* p = (uint32_t*)heap_caps_malloc(n, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    // A busy unit (messages, the stress test) normally has 20-40 KB internal RAM free in blocks of
+    // 10-30 KB, so test what is there (up to 16 KB) instead of asking for one big block. Measured
+    // before the test block is taken.
     const unsigned freeK = (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
     const unsigned minK = (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024);
-    const unsigned blkK = (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024);
-    if (!p) { stSet(STI_RAM, ST_FAIL, "no 32 KB block (free %u KB, block %u KB)", freeK, blkK); return; }
+    const size_t blk = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+    const unsigned blkK = (unsigned)(blk / 1024);
+    size_t n = blk > 1024 ? blk - 1024 : 0;              // leave a little for everyone else
+    if (n > 16 * 1024) n = 16 * 1024;
+    n &= ~(size_t)3;
+    uint32_t* p = n >= 8 * 1024 ? (uint32_t*)heap_caps_malloc(n, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) : nullptr;
+    if (!p) { stSet(STI_RAM, ST_FAIL, "no 8 KB block free (free %u KB, block %u KB)", freeK, blkK); return; }
     const uint32_t bad = stPattern(p, n / 4);
     heap_caps_free(p);
-    if (bad) stSet(STI_RAM, ST_FAIL, "%lu bad words in 32 KB", (unsigned long)bad);
-    else stSet(STI_RAM, freeK < 40 ? ST_WARN : ST_PASS, "free %u KB, lowest %u, block %u", freeK, minK, blkK);
+    if (bad) stSet(STI_RAM, ST_FAIL, "%lu bad words in %u KB", (unsigned long)bad, (unsigned)(n / 1024));
+    else stSet(STI_RAM, freeK < 20 || blkK < 10 ? ST_WARN : ST_PASS, "%u KB ok; free %u KB, lowest %u, block %u",
+               (unsigned)(n / 1024), freeK, minK, blkK);
 }
 
 void stPsram() {
@@ -11626,6 +11633,7 @@ void stFlash() {
     }
     w.close();
     File r = ok ? LittleFS.open(path, FILE_READ) : File();
+    const bool opened = (bool)r;                  // remembered: a closed File reads as false
     uint32_t bad = 0;
     for (int k = 0; k < 4 && r; k++) {
         if (r.read(buf, sizeof(buf)) != sizeof(buf)) { bad++; break; }
@@ -11634,7 +11642,7 @@ void stFlash() {
     if (r) r.close();
     LittleFS.remove(path);
     const unsigned freeK = (unsigned)((LittleFS.totalBytes() - LittleFS.usedBytes()) / 1024);
-    if (!ok || !r) stSet(STI_FLASH, ST_FAIL, "write / read back failed, %u KB free", freeK);
+    if (!ok || !opened) stSet(STI_FLASH, ST_FAIL, "%s failed, %u KB free", ok ? "read back" : "write", freeK);
     else if (bad) stSet(STI_FLASH, ST_FAIL, "%lu bytes differ on read back", (unsigned long)bad);
     else stSet(STI_FLASH, freeK < 100 ? ST_WARN : ST_PASS, "8 KB write / read ok, %u KB free", freeK);
 }
@@ -11721,8 +11729,12 @@ void stBattery() {
     uint8_t v = ST_PASS;
     if (g_bat.volts < 3.0f || g_bat.volts > 4.45f || g_bat.rawSoc < 0) v = ST_FAIL;
     else if (!tOk || c < 0 || c > 45) v = ST_WARN;
-    stSet(STI_BAT, v, "%.2fV %d%% (gauge %d%%) %dC %dmA fcc %u", g_bat.volts, g_bat.pct, g_bat.rawSoc, c,
-          (int)g_bat.avgMa, (unsigned)g_bat.fccMah);
+    // 3000 mAh is the gauge chip's factory value: it has not learned this 1500 mAh battery, so
+    // its own % is off (the screen % is corrected; a full charge / run-down cycle teaches it)
+    const bool unlearned = g_bat.fccMah >= 2500;
+    if (v == ST_PASS && unlearned) v = ST_WARN;
+    stSet(STI_BAT, v, "%.2fV %d%% (gauge %d%%) %dC %dmA fcc %u%s", g_bat.volts, g_bat.pct, g_bat.rawSoc, c,
+          (int)g_bat.avgMa, (unsigned)g_bat.fccMah, unlearned ? " (gauge not learned: full charge + run down)" : "");
 }
 
 void stCharger() {
@@ -11780,6 +11792,9 @@ void stGpsEnd() {
     else if (!g_gpsFix)
         stSet(STI_GPS, ST_WARN, "talking (%lu ok, %lu bad), %u sats, no fix yet (indoors?)", (unsigned long)good,
               (unsigned long)bad, (unsigned)g_gpsSats);
+    else if (g_gpsSats < 3)                       // a fix flag with no satellites in view is not a real fix
+        stSet(STI_GPS, ST_WARN, "says fix but %u sats (HDOP %.1f), %lu ok %lu bad: check outdoors",
+              (unsigned)g_gpsSats, g_gpsHdop, (unsigned long)good, (unsigned long)bad);
     else
         stSet(STI_GPS, ST_PASS, "fix, %u sats, HDOP %.1f, %lu ok %lu bad", (unsigned)g_gpsSats, g_gpsHdop,
               (unsigned long)good, (unsigned long)bad);
