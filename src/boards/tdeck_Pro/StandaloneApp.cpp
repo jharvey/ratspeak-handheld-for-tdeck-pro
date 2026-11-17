@@ -4872,12 +4872,12 @@ void drawFooter() {
     }
 }
 
-void drawHeader(const char* left, bool moreUp) {
+void drawHeader(const char* left, bool moreUp, int listTop = LIST_TOP) {
     text(4, HEADER_Y, left, true, moreUp ? MENU_X - 8 : W - 8);
     if (moreUp) {
         // Hangs off MENU: same left/right edges, bottom edge = top line of
         // the first list row, so it reads like the footer's "more below" cell.
-        const int h = LIST_TOP - (TOP_H - 1) + 1;
+        const int h = listTop - (TOP_H - 1) + 1;
         box(MENU_X, TOP_H - 1, TAB_W, h, 1);
         label(MENU_X, TOP_H - 2, TAB_W, h, "^ more");
         addHit(MENU_X, TOP_H - 1, TAB_W, h, H_UP);
@@ -4894,14 +4894,19 @@ void renderList() {
     if (g_listScroll < pStart) g_listScroll = pStart;
     if (g_listSel >= g_listScroll + VIS_ROWS) g_listScroll = g_listSel - VIS_ROWS + 1;
     if (g_listScroll > std::max(pStart, pEnd - VIS_ROWS)) g_listScroll = std::max(pStart, pEnd - VIS_ROWS);
+    bool ownerLine = false;                 // Inbox: a second header line with this unit's name
+    char ownerRight[24] = "";               // Inbox: unread count, right end of the first line
     if (g_entry == Entry::Search) {
         snprintf(hdr, sizeof(hdr), "Find: %s_ (%d)", g_buf, g_rowCount);
     } else if (g_filter[0] && !g_shareActive) {
         snprintf(hdr, sizeof(hdr), "\"%.10s\" %d%s", g_filter, g_rowCount, pg);
     } else if (g_screen == SCR_INBOX) {
+        // "Inbox of" and this unit's name on the line below: which radio is this (several on a desk)
         int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
-        if (pages > 1) snprintf(hdr, sizeof(hdr), "Inbox%s new %d", pg, unread > 99 ? 99 : unread);
-        else           snprintf(hdr, sizeof(hdr), "Inbox  unread %02d", unread > 99 ? 99 : unread);
+        ownerLine = true;
+        strlcpy(hdr, "Inbox of", sizeof(hdr));
+        if (pages > 1) snprintf(ownerRight, sizeof(ownerRight), "%s new %d", pg + 1, unread > 99 ? 99 : unread);
+        else           snprintf(ownerRight, sizeof(ownerRight), "unread %02d", unread > 99 ? 99 : unread);
     } else if (g_shareActive && g_pickRt) {
         snprintf(hdr, sizeof(hdr), "Range test with:");
     } else if (g_shareActive && g_pickLowbat) {
@@ -4916,18 +4921,25 @@ void renderList() {
         snprintf(hdr, sizeof(hdr), pages > 1 ? "%s %d%s" : "%s (%d)%s", screenName(g_screen), g_rowCount, pg);
         if (g_screen == SCR_PEERS && strlen(hdr) + 13 < sizeof(hdr)) strlcat(hdr, "  R=announce", sizeof(hdr));
     }
-    drawHeader(hdr, g_listScroll > 0);
+    // 4 rows still fit with the extra line: 56 + 20 + 4 x 44 = 252, the footer starts at 260
+    const int top = LIST_TOP + (ownerLine ? 20 : 0);
+    drawHeader(hdr, g_listScroll > 0, top);
+    if (ownerLine) {
+        text(4, HEADER_Y + 20, g_selfName[0] ? g_selfName : "(no name)", true, g_listScroll > 0 ? MENU_X - 8 : W - 8);
+        // the "^ more" cell sits on the right when scrolled: the count gives way (each row has "n new")
+        if (g_listScroll == 0 && ownerRight[0]) text(W - 6 - textW(ownerRight), HEADER_Y, ownerRight);
+    }
 
     if (g_rowCount == 0) {
         const char* empty = g_filter[0] || g_entry == Entry::Search ? "No match"
                           : g_screen == SCR_CONTACTS ? "No contacts - see Peers"
                           : g_screen == SCR_PEERS    ? "No peers yet: R = announce"
                                                      : "No chats yet";
-        text(8, LIST_TOP + 8, empty);
+        text(8, top + 8, empty);
     }
     for (int i = g_listScroll; i < pEnd && i < g_listScroll + VIS_ROWS; i++) {
         const PeerRow& r = g_rows[i];
-        const int y = LIST_TOP + (i - g_listScroll) * ROW_H;
+        const int y = top + (i - g_listScroll) * ROW_H;
         char title[36];
         snprintf(title, sizeof(title), "%d : %s%s", rowNumber(g_screen, i), r.name,
                  (g_screen == SCR_PEERS && r.saved) ? " *" : "");
