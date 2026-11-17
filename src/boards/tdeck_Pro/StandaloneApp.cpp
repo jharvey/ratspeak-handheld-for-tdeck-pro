@@ -3067,6 +3067,22 @@ void navBox(int x, int y, int w, int h, const char* s, bool active, char hotkey)
     label(x, y, w, h, s, active, hotkey);
 }
 
+// The Inbox button names this unit: "Inbox of" and the name below it in the small font, so
+// several radios on one desk can be told apart from any screen with the bottom bar.
+void smallText(int x, int y, const char* s, bool bold);
+void inboxNavBox(int x, int y, int w, int h, bool active, char hotkey) {
+    box(x, y, w, h, active ? 3 : 1);
+    label(x, y - 9, w, h, "Inbox of", active, hotkey);          // 16 px line at y+3, underline y+20
+    char nm[sizeof(g_selfName)];
+    strlcpy(nm, g_selfName[0] ? g_selfName : "no name", sizeof(nm));
+    const lv_font_t* f = &lv_font_montserrat_12;
+    size_t n = strlen(nm);                                     // cut to fit the button
+    while (n > 1 && lv_txt_get_width(nm, n, f, 0, LV_TEXT_FLAG_NONE) > w - 3) n--;
+    nm[n] = 0;
+    const int nw = lv_txt_get_width(nm, n, f, 0, LV_TEXT_FLAG_NONE);
+    smallText(x + (w - nw) / 2, y + h - 17, nm, active);
+}
+
 // List / settings row: bold outline = selected. Leading row number is
 // underlined when digit-select works (browse mode).
 void listRow(int y, const char* title, const char* sub, bool selected, const char* right = nullptr) {
@@ -4872,12 +4888,12 @@ void drawFooter() {
     }
 }
 
-void drawHeader(const char* left, bool moreUp, int listTop = LIST_TOP) {
+void drawHeader(const char* left, bool moreUp) {
     text(4, HEADER_Y, left, true, moreUp ? MENU_X - 8 : W - 8);
     if (moreUp) {
         // Hangs off MENU: same left/right edges, bottom edge = top line of
         // the first list row, so it reads like the footer's "more below" cell.
-        const int h = listTop - (TOP_H - 1) + 1;
+        const int h = LIST_TOP - (TOP_H - 1) + 1;
         box(MENU_X, TOP_H - 1, TAB_W, h, 1);
         label(MENU_X, TOP_H - 2, TAB_W, h, "^ more");
         addHit(MENU_X, TOP_H - 1, TAB_W, h, H_UP);
@@ -4894,19 +4910,14 @@ void renderList() {
     if (g_listScroll < pStart) g_listScroll = pStart;
     if (g_listSel >= g_listScroll + VIS_ROWS) g_listScroll = g_listSel - VIS_ROWS + 1;
     if (g_listScroll > std::max(pStart, pEnd - VIS_ROWS)) g_listScroll = std::max(pStart, pEnd - VIS_ROWS);
-    bool ownerLine = false;                 // Inbox: a second header line with this unit's name
-    char ownerRight[24] = "";               // Inbox: unread count, right end of the first line
     if (g_entry == Entry::Search) {
         snprintf(hdr, sizeof(hdr), "Find: %s_ (%d)", g_buf, g_rowCount);
     } else if (g_filter[0] && !g_shareActive) {
         snprintf(hdr, sizeof(hdr), "\"%.10s\" %d%s", g_filter, g_rowCount, pg);
     } else if (g_screen == SCR_INBOX) {
-        // "Inbox of" and this unit's name on the line below: which radio is this (several on a desk)
         int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
-        ownerLine = true;
-        strlcpy(hdr, "Inbox of", sizeof(hdr));
-        if (pages > 1) snprintf(ownerRight, sizeof(ownerRight), "%s new %d", pg + 1, unread > 99 ? 99 : unread);
-        else           snprintf(ownerRight, sizeof(ownerRight), "unread %02d", unread > 99 ? 99 : unread);
+        if (pages > 1) snprintf(hdr, sizeof(hdr), "Inbox%s new %d", pg, unread > 99 ? 99 : unread);
+        else           snprintf(hdr, sizeof(hdr), "Inbox  unread %02d", unread > 99 ? 99 : unread);
     } else if (g_shareActive && g_pickRt) {
         snprintf(hdr, sizeof(hdr), "Range test with:");
     } else if (g_shareActive && g_pickLowbat) {
@@ -4921,25 +4932,18 @@ void renderList() {
         snprintf(hdr, sizeof(hdr), pages > 1 ? "%s %d%s" : "%s (%d)%s", screenName(g_screen), g_rowCount, pg);
         if (g_screen == SCR_PEERS && strlen(hdr) + 13 < sizeof(hdr)) strlcat(hdr, "  R=announce", sizeof(hdr));
     }
-    // 4 rows still fit with the extra line: 56 + 20 + 4 x 44 = 252, the footer starts at 260
-    const int top = LIST_TOP + (ownerLine ? 20 : 0);
-    drawHeader(hdr, g_listScroll > 0, top);
-    if (ownerLine) {
-        text(4, HEADER_Y + 20, g_selfName[0] ? g_selfName : "(no name)", true, g_listScroll > 0 ? MENU_X - 8 : W - 8);
-        // the "^ more" cell sits on the right when scrolled: the count gives way (each row has "n new")
-        if (g_listScroll == 0 && ownerRight[0]) text(W - 6 - textW(ownerRight), HEADER_Y, ownerRight);
-    }
+    drawHeader(hdr, g_listScroll > 0);
 
     if (g_rowCount == 0) {
         const char* empty = g_filter[0] || g_entry == Entry::Search ? "No match"
                           : g_screen == SCR_CONTACTS ? "No contacts - see Peers"
                           : g_screen == SCR_PEERS    ? "No peers yet: R = announce"
                                                      : "No chats yet";
-        text(8, top + 8, empty);
+        text(8, LIST_TOP + 8, empty);
     }
     for (int i = g_listScroll; i < pEnd && i < g_listScroll + VIS_ROWS; i++) {
         const PeerRow& r = g_rows[i];
-        const int y = top + (i - g_listScroll) * ROW_H;
+        const int y = LIST_TOP + (i - g_listScroll) * ROW_H;
         char title[36];
         snprintf(title, sizeof(title), "%d : %s%s", rowNumber(g_screen, i), r.name,
                  (g_screen == SCR_PEERS && r.saved) ? " *" : "");
@@ -6130,7 +6134,7 @@ void drawBottomBar() {
         navBox(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, "Peers", g_screen == SCR_PEERS && !over, hk ? 'P' : 0);
         if (hk) addHit(BOT_C_W, BOT_TOP, BOT_A_W, BOT_H, H_TAB, SCR_PEERS);
     }
-    navBox(BOT_C_W + BOT_A_W, BOT_TOP, BOT_I_W, BOT_H, "Inbox", g_screen == SCR_INBOX && !over, hk ? 'I' : 0);
+    inboxNavBox(BOT_C_W + BOT_A_W, BOT_TOP, BOT_I_W, BOT_H, g_screen == SCR_INBOX && !over, hk ? 'I' : 0);
     if (hk) {
         addHit(0, BOT_TOP, BOT_C_W, BOT_H, H_TAB, SCR_CONTACTS);
         addHit(BOT_C_W + BOT_A_W, BOT_TOP, BOT_I_W, BOT_H, H_TAB, SCR_INBOX);
