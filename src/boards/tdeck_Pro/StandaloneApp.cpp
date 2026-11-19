@@ -2311,14 +2311,15 @@ bool sendMessage(const uint8_t dest[16], const char* text) {
         TxStep st = txOnce(dest, body, n, ir, rej);
         if (st == TxStep::Rejected) {
             g_txTransient = rej == 1 || rej == 8;   // Busy / Recovering
-            static uint32_t busySince = 0, toldAt = 0;
-            static uint32_t lastBusy = 0;
+            static uint32_t busySince = 0, toldAt = 0, lastBusy = 0;
+            static bool busyRun = false, told = false;
             if (rej == 1) {
-                if (!busySince || millis() - lastBusy > 30000) busySince = millis() | 1;
-                lastBusy = millis();
-                if (millis() - busySince > 60000 && (!toldAt || millis() - toldAt > 600000)) {
-                    toldAt = millis() | 1;
-                    Serial.printf("[TX] busy for %lu s\n", (unsigned long)((millis() - busySince) / 1000));
+                const uint32_t now = millis();
+                if (!busyRun || now - lastBusy > 30000) { busyRun = true; busySince = now; }
+                lastBusy = now;
+                if (now - busySince > 60000 && (!told || now - toldAt > 600000)) {
+                    told = true; toldAt = now;
+                    Serial.printf("[TX] busy for %lu s\n", (unsigned long)((now - busySince) / 1000));
                     txDescribe();
                 }
             }

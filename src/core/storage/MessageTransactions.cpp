@@ -1345,7 +1345,10 @@ void MessageTransactions::pending(const Request& request, uint8_t* bytes, size_t
 bool MessageTransactions::makeRoom(int32_t& unreadDelta) {
     auto& stats = spaceStats();
     if (!_flash || !_flash->isReady()) return true;
-    if (stats.usedPct < SpaceHighPct && stats.checkEvery && ++stats.sinceCheck < stats.checkEvery) return true;
+    // Also above SpaceHighPct: when a removal pass could not get below it (everything left
+    // is protected), it must not run again on every create - a pass takes minutes and the
+    // unit would refuse sends as "busy" for hours.
+    if (stats.checkEvery && ++stats.sinceCheck < stats.checkEvery) return !stats.full;
     stats.sinceCheck = 0;
     const uint64_t total = stats.effectiveTotal(_flash->totalBytes());
     if (!total) return true;
@@ -1364,7 +1367,7 @@ bool MessageTransactions::makeRoom(int32_t& unreadDelta) {
         evictOldest(used > goal ? used - goal : 0, unreadDelta);
         used = _flash->usedBytes();
         stats.usedPct = uint8_t(std::min<uint64_t>(100, used * 100 / total));
-        stats.checkEvery = uint16_t(std::max<uint64_t>(4, std::min<uint64_t>(256,
+        stats.checkEvery = uint16_t(std::max<uint64_t>(used < high ? 4 : 16, std::min<uint64_t>(256,
             used < high ? (high - used) / SpaceCreateCost : 0)));
         ++stats.passes;
         Serial.printf("[MSGSTORE] flash space: removed %lu oldest messages in %lu ms, now %u%% used%c",
@@ -1372,6 +1375,7 @@ bool MessageTransactions::makeRoom(int32_t& unreadDelta) {
                       (unsigned)stats.usedPct, 10);
     }
     stats.full = stats.usedPct >= SpaceRefusePct;
+    if (stats.full) stats.checkEvery = 4;         // refused creates: look again soon (space may be freed)
     if (stats.full) Serial.printf("[MSGSTORE] flash full (%u%%): new message refused%c", (unsigned)stats.usedPct, 10);
     return !stats.full;
 }
