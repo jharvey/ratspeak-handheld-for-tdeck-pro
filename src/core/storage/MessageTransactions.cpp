@@ -1349,15 +1349,23 @@ bool MessageTransactions::makeRoom(int32_t& unreadDelta) {
     stats.sinceCheck = 0;
     const uint64_t total = stats.effectiveTotal(_flash->totalBytes());
     if (!total) return true;
-    stats.checkEvery = uint16_t(std::max<uint64_t>(1, std::min<uint64_t>(64, total / 100 / SpaceCreateCost)));
     uint64_t used = _flash->usedBytes();
     stats.usedPct = uint8_t(std::min<uint64_t>(100, used * 100 / total));
+    // Reading the usage walks the whole file system: ~12 s with a few thousand records, and
+    // the storage task (and with it every save and card read) waits for it. It was read every
+    // ~7 creates; now only when the creates since this reading could have used up the room
+    // left below SpaceHighPct (at least 4, at most 256 creates).
+    const uint64_t high = total * SpaceHighPct / 100;
+    stats.checkEvery = uint16_t(std::max<uint64_t>(4, std::min<uint64_t>(256,
+        used < high ? (high - used) / SpaceCreateCost : 0)));
     if (stats.usedPct >= SpaceHighPct) {
         const uint64_t goal = total * SpaceLowPct / 100;
         const uint32_t started = millis(), before = stats.removed;
         evictOldest(used > goal ? used - goal : 0, unreadDelta);
         used = _flash->usedBytes();
         stats.usedPct = uint8_t(std::min<uint64_t>(100, used * 100 / total));
+        stats.checkEvery = uint16_t(std::max<uint64_t>(4, std::min<uint64_t>(256,
+            used < high ? (high - used) / SpaceCreateCost : 0)));
         ++stats.passes;
         Serial.printf("[MSGSTORE] flash space: removed %lu oldest messages in %lu ms, now %u%% used%c",
                       (unsigned long)(stats.removed - before), (unsigned long)(millis() - started),

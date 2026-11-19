@@ -61,9 +61,10 @@ public:
     // removed until SpaceLowPct; at SpaceRefusePct new messages are refused so the rest of
     // the flash (identity, ratchets, contacts, settings) keeps room to write.
     static constexpr uint8_t SpaceHighPct = 85, SpaceLowPct = 80, SpaceRefusePct = 92;
-    // Usage is read (it walks the whole FS) after about 1% of the flash could have been
-    // written: a create costs at most ~8 KB (record block + a new shard folder).
-    static constexpr uint32_t SpaceCreateCost = 8192;
+    // Usage is read (it walks the whole FS: seconds) only when the creates since the last
+    // reading could have filled the room left below SpaceHighPct. A create costs about one
+    // 4 KB block (a small record lives in its folder's block; a new shard folder adds two).
+    static constexpr uint32_t SpaceCreateCost = 4096;
     static constexpr uint32_t KeepPerConversation = 10;  // newest records never removed for space
     // capBytes: bench/stress-test override (RAM only): message upkeep treats the flash as
     // this size, so removal and refusal happen after ~100 messages instead of ~1,600.
