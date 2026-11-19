@@ -16,6 +16,11 @@ Use the checked simulator build (bounds / UB traps) with RS_SIM_EXE:
 Examples:
   python tools/stress/monkey.py --rounds 20 --keys 3000
   python tools/stress/monkey.py --minutes 480 --keys 5000 --out monkey_night
+Maps: --card <folder holding ratdeckpro/> copies that folder in as the SD card of every
+round, and --map "<lat> <lon>" skips the first-run wizard and mixes map visits into the keys
+(map opened at a random zoom near that place, layer choices, map closed), so the map screens
+are entered at random between everything else:
+  python tools/stress/monkey.py --rounds 20 --card C:\\cards\\trial --map "43.64 -70.92"
 """
 import argparse
 import os
@@ -40,12 +45,38 @@ BAD = re.compile(r"runtime error|Assertion|assert|abort|Guru|panic|terminate cal
                  r"stack smashing|buffer overflow|segmentation|Access violation|EXCEPTION", re.I)
 
 
-def make_script(rng, n_keys):
+def map_lines(rng, place):
+    """A map visit: open near `place` at a random zoom (now and then far away, where the card
+    has nothing), sometimes another layer choice first, sometimes close it again."""
+    lat, lon = place
+    r = rng.random()
+    if r < 0.12:
+        return ["serial map close"]
+    if r < 0.27:
+        return ["serial maplayers %d" % rng.choice([0, 63, 63, rng.randint(0, 63)])]
+    if r < 0.33:
+        lat, lon = rng.uniform(-70, 70), rng.uniform(-179, 179)
+    else:
+        lat += rng.uniform(-0.25, 0.25); lon += rng.uniform(-0.35, 0.35)
+    return ["serial map %.5f %.5f %d" % (lat, lon, rng.randint(2, 17))]
+
+
+def make_script(rng, n_keys, place=None):
     keys, weights = zip(*KEYS)
     lines = ["# monkey", "expect 60000 [BOOT] ready", "serial hb 20", "wait 500"]
+    if place:
+        lines += ["serial wiz skip", "wait 1500"]
     for i in range(n_keys):
         r = rng.random()
-        if r < 0.004:
+        if place and r > 0.97:
+            lines += map_lines(rng, place)
+            # usually stay on the map for a few keys: pan (T V F H), zoom (Z W), re-centre (D)
+            if rng.random() < 0.7:
+                for _ in range(rng.randint(1, 12)):
+                    lines.append("key " + rng.choice("TVFHTVFHZZWWD"))
+                    if rng.random() < 0.4:
+                        lines.append("wait %d" % rng.randint(20, 600))
+        elif r < 0.004:
             lines.append(rng.choice(HW))
         elif r < 0.006:
             lines.append("wait %d" % rng.randint(2000, 8000))   # let timers / idle run
@@ -53,19 +84,22 @@ def make_script(rng, n_keys):
             lines.append("key " + rng.choices(keys, weights)[0])
             if rng.random() < 0.3:
                 lines.append("wait %d" % rng.randint(20, 400))
-    lines += ["sd in", "wait 1500", "serial hb", "wait 1000", "quit"]
+    lines += ["sd in", "wait 1500"] + (["serial map", "wait 500"] if place else [])
+    lines += ["serial hb", "wait 1000", "quit"]
     return "\n".join(lines) + "\n"
 
 
 def run_round(n, seed, args, out):
     rng = random.Random(seed)
-    script = make_script(rng, args.keys)
+    script = make_script(rng, args.keys, args.place)
     spath = os.path.join(out, "round_%03d.txt" % n)
     with open(spath, "w") as f:
         f.write("# seed %d\n" % seed + script)
     name = "monkey_%d" % n
     data = os.path.join(out, "data")
     shutil.rmtree(os.path.join(data, name), ignore_errors=True)
+    if args.card:
+        shutil.copytree(args.card, os.path.join(data, name, "sd"))
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
     env.setdefault("QT_QPA_FONTDIR", os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts"))
     log_path = os.path.join(out, "round_%03d.log" % n)
@@ -91,6 +125,12 @@ def run_round(n, seed, args, out):
                     state["pass"] = True
                 elif line.startswith("[SCRIPT] FAIL"):
                     state["bad"] = state["bad"] or line
+                elif line.startswith("[MAP] layered packs:"):
+                    m = re.search(r"(\d+) tiles, (\d+) layer streams \((\d+) compressed\), (\d+) bad", line)
+                    if m:
+                        state["map"] = tuple(int(v) for v in m.groups())
+                        if state["map"][3] and not state["bad"]:
+                            state["bad"] = "map layer streams failed to decode: " + line
                 if BAD.search(line) and not line.startswith("[SCRIPT]") and not state["bad"]:
                     state["bad"] = line
 
@@ -112,6 +152,7 @@ def run_round(n, seed, args, out):
         shutil.rmtree(os.path.join(data, name), ignore_errors=True)
         os.remove(spath)
         os.remove(log_path)
+    args.map_total = [a + b for a, b in zip(args.map_total, state.get("map", (0, 0, 0, 0)))]
     return ok, why, state["keys"], time.time() - t0
 
 
@@ -122,7 +163,11 @@ def main():
     ap.add_argument("--keys", type=int, default=3000, help="key taps per round")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--out", default=os.path.join(ROOT, "monkey_out"))
+    ap.add_argument("--card", help="folder holding ratdeckpro/: the SD card of every round")
+    ap.add_argument("--map", help='"<lat> <lon>": mix map visits around this place into the keys')
     args = ap.parse_args()
+    args.place = tuple(float(v) for v in args.map.replace(",", " ").split()) if args.map else None
+    args.map_total = [0, 0, 0, 0]
     os.makedirs(args.out, exist_ok=True)
     seed0 = args.seed if args.seed is not None else int(time.time())
     print("monkey: simulator %s, seed %d, %d keys per round" % (SIM, seed0, args.keys), flush=True)
@@ -137,6 +182,8 @@ def main():
             fails.append((n, seed0 + n, why))
         n += 1
     print("monkey: %d rounds, %d keys, %d failed" % (n, total_keys, len(fails)))
+    if args.place:
+        print("map: %d tiles from layered packs, %d layer streams (%d compressed), %d bad" % tuple(args.map_total))
     for f in fails:
         print("  round %d seed %d: %s  (script %s)" % (f[0], f[1], f[2],
               os.path.join(args.out, "round_%03d.txt" % f[0])))
