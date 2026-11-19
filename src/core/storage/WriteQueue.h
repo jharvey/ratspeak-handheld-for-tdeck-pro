@@ -51,6 +51,9 @@ public:
     bool accepting() const { assertOwner(); return _accepting; }
     int drainCount() const { assertOwner(); return _outstanding; }
     bool isFull() const;
+    // Diagnostics: one character per slot (F free, Q queued, C cancel queued, R running,
+    // D done and waiting for its owner to take the result, X retired).
+    size_t describe(char* out, size_t capacity) const;
     size_t retainedBytes() const;
 
     static constexpr bool CompactProfile = STORAGE_ASYNC_WRITES != 0;

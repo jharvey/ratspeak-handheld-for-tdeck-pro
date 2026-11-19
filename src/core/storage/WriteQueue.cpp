@@ -243,6 +243,15 @@ bool WriteQueue::finishStop() {
     _executor = nullptr; _task = nullptr;
     return true;
 }
+size_t WriteQueue::describe(char* out, size_t capacity) const {
+    size_t n = 0;
+    for (uint8_t i = 0; i < Budget::SlotCount && n + 1 < capacity; ++i) {
+        const auto state = static_cast<uint8_t>(_slots[i].state.load(std::memory_order_acquire));
+        out[n++] = state < 6 ? "FQCRDX"[state] : '?';
+    }
+    if (capacity) out[n] = 0;
+    return n;
+}
 bool WriteQueue::isFull() const {
     assertOwner();
     if (!_accepting) return true;

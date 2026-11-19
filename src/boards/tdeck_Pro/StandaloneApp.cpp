@@ -2217,13 +2217,30 @@ lv_obj_t* g_root = nullptr;
 
 enum class TxStep { Done, Rejected, Timeout, Late, Invalid };
 
-// Submissions the engine accepted but had not saved within txOnce's ~8 s wait (a slow flash
-// write: 55 s once in a simulator run). The engine still saves and sends them, so they count
-// as sent - reporting "failed" made the outbox / the user send them again (a duplicate) and
-// left the ticket unacknowledged, holding one of the engine's 20 slots for good. The main loop
-// finishes them (txLateTick).
-handheld::outgoing::Ticket g_txLate[8];
+// Submissions the engine accepted but had not saved within txOnce's wait (kTxWaitMs; a slow
+// flash write: 55 s once in a simulator run). The engine still saves and sends them, so they
+// count as sent - reporting "failed" made the outbox / the user send them again (a duplicate)
+// and left the ticket unacknowledged, holding one of the engine's 20 slots for good. The main
+// loop finishes them (txLateTick). 20 entries = the engine's rows, so one is always free.
+handheld::outgoing::Ticket g_txLate[20];
+// How long a send keeps the screen and keys waiting for the store. It was 800 loops (8 s by
+// the count, 12-15 s measured): the unit did not answer for that long whenever the store was
+// slow. Most saves take under a second; the rest finish in the background.
+constexpr uint32_t kTxWaitMs = 1500;
 void toast(const char* fmt, ...);
+
+// Why sends are refused as "busy": the engine's outgoing rows and the store's write slots.
+void txDescribe() {
+    static char buf[2200];
+    g_proto.lxmfDescribeRows(buf, sizeof(buf));
+    char slots[16];
+    g_msgStore.writeQueue().describe(slots, sizeof(slots));
+    int late = 0;
+    for (auto& t : g_txLate) late += t.valid() ? 1 : 0;
+    Serial.printf("[TX] store slots %s (F free, Q queued, R running, D done not taken), %d late, %d queued\n",
+                  slots, late, g_proto.lxmfQueuedCount());
+    Serial.print(buf[0] ? buf : "[TX] no outgoing rows in use\n");
+}
 
 void txLateTick() {
     for (auto& t : g_txLate) {
@@ -2245,7 +2262,7 @@ TxStep txOnce(const uint8_t dest[16], const char* body, size_t n,
               handheld::outgoing::InitialResult& ir, unsigned& rejection) {
     auto sub = g_proto.lxmfSubmit(dest, nullptr, 0, (const uint8_t*)body, n, false);
     if (!sub.accepted()) { rejection = (unsigned)sub.rejection; return TxStep::Rejected; }
-    for (int i = 0; i < 800; i++) {
+    for (const uint32_t t0 = millis(); millis() - t0 < kTxWaitMs;) {
         pumpOnce();
         auto p = g_proto.lxmfPoll(sub.ticket, ir);
         if (p == handheld::outgoing::Poll::Pending) { delay(10); continue; }
@@ -2254,7 +2271,7 @@ TxStep txOnce(const uint8_t dest[16], const char* body, size_t n,
     }
     for (auto& t : g_txLate)
         if (!t.valid()) { t = sub.ticket; return TxStep::Late; }
-    return TxStep::Timeout;                      // 8 already late: something is stuck
+    return TxStep::Timeout;                      // cannot happen: the list is as long as the rows
 }
 
 bool sendMessage(const uint8_t dest[16], const char* text) {
@@ -2292,6 +2309,17 @@ bool sendMessage(const uint8_t dest[16], const char* text) {
         TxStep st = txOnce(dest, body, n, ir, rej);
         if (st == TxStep::Rejected) {
             g_txTransient = rej == 1 || rej == 8;   // Busy / Recovering
+            static uint32_t busySince = 0, toldAt = 0;
+            static uint32_t lastBusy = 0;
+            if (rej == 1) {
+                if (!busySince || millis() - lastBusy > 30000) busySince = millis() | 1;
+                lastBusy = millis();
+                if (millis() - busySince > 60000 && (!toldAt || millis() - toldAt > 600000)) {
+                    toldAt = millis() | 1;
+                    Serial.printf("[TX] busy for %lu s\n", (unsigned long)((millis() - busySince) / 1000));
+                    txDescribe();
+                }
+            }
             snprintf(g_txStr, sizeof(g_txStr), g_txTransient ? "busy" : "rejected %u", rej);
             return false;
         }
@@ -7813,7 +7841,7 @@ bool vmSend() {
     auto sub = g_proto.lxmfSubmitAudio(g_threadPeer, handheld::lxmf::AudioCodec2_700C, g_vmBits, g_vmLen);
     if (!sub.accepted()) { vmStatus("not sent (%u)", (unsigned)sub.rejection); return false; }
     handheld::outgoing::InitialResult ir{};
-    for (int i = 0; i < 800; i++) {
+    for (const uint32_t t0 = millis(); millis() - t0 < 4000;) {   // a voice body is larger: 4 s
         pumpOnce();
         auto p = g_proto.lxmfPoll(sub.ticket, ir);
         if (p == handheld::outgoing::Poll::Pending) { delay(10); continue; }
@@ -13199,6 +13227,8 @@ void handleSerialLine(char* p) {
         Serial.printf("[MAP] card waits: longest %lu ms, %lu timed out; %lu layer reads put off\n",
                       (unsigned long)g_cardWaitMaxMs, (unsigned long)g_cardWaitFails,
                       (unsigned long)mapview::layeredReadFails());
+    } else if (!strcmp(p, "txrows")) {
+        txDescribe();                            // why sends are "busy": rows and store slots
     } else if (!strcmp(p, "maplayers") || !strncmp(p, "maplayers ", 10)) {
         // maplayers [mask]: overlay layers of the layered map packs. 1 labels, 2 contours,
         // 4 woods, 8 marsh marks, 16 hillshading, 32 any other; 63 = all, 0 = base map only.

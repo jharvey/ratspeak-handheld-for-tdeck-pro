@@ -203,6 +203,23 @@ bool RustLxmfEngine::status(const handheld::storage::RecordKey& record, StatusVi
     }
     return false;
 }
+size_t RustLxmfEngine::describeRows(char* out, size_t capacity) const {
+    size_t n = 0;
+    if (capacity) out[0] = 0;
+    for (uint8_t i = 0; i < RowCount; ++i) {
+        const auto& value = _rows[i];
+        if (value.phase == Phase::Free) continue;
+        const int w = snprintf(out + n, capacity - n,
+            "row %u phase %u flags 0x%03x initial %u status %u/%u store %s op %u err %u ctr %lu proofs %u rcpt %u\n",
+            (unsigned)i, (unsigned)value.phase, (unsigned)value.flags, (unsigned)value.initial,
+            (unsigned)value.desired, (unsigned)value.durable, value.storageSequence ? "held" : "-",
+            (unsigned)value.storageOperation, (unsigned)value.error, (unsigned long)value.counter,
+            (unsigned)value.proofCount, (unsigned)value.queuedReceipts);
+        if (w <= 0 || (size_t)w >= capacity - n) break;
+        n += (size_t)w;
+    }
+    return n;
+}
 int RustLxmfEngine::queuedCount() const {
     int count = 0;
     for (const auto& value : _rows)

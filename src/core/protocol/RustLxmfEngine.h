@@ -54,6 +54,8 @@ public:
     bool beginPeerDelete(const uint8_t peer[16]);
     void finishPeerDelete(const uint8_t peer[16], const handheld::storage::Result&);
     int queuedCount() const;
+    // Diagnostics: one line for each outgoing row in use (why a row cannot be reused).
+    size_t describeRows(char* out, size_t capacity) const;
     bool recovering() const { return _recovering; }   // still reading persisted outgoing records
     void loop();
     void onLinkSetupFailure(const uint8_t peer[16], const rs_handheld_route_t& failedRoute);

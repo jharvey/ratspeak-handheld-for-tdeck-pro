@@ -107,6 +107,10 @@ public:
     void lxmfFinishPeerDelete(const uint8_t peer[16], const handheld::storage::Result&) override;
     int lxmfQueuedCount() const override { return _enginesUp ? _lxmf.queuedCount() : 0; }
     bool lxmfRecovering() const { return _enginesUp && _lxmf.recovering(); }
+    size_t lxmfDescribeRows(char* out, size_t capacity) const {
+        if (capacity) out[0] = 0;
+        return _enginesUp ? _lxmf.describeRows(out, capacity) : 0;
+    }
     // Milliseconds until the next scheduled transmission (a throttled PATH_RESPONSE or a
     // deferred announce); UINT32_MAX when none. A sleeping device caps its sleep with this
     // so a peer's path request is answered on time instead of at the next wake-up.
