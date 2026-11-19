@@ -6378,7 +6378,7 @@ void flashSpaceTick() {
             // Deleting conversations frees space without a new save to notice it: re-check.
             const uint64_t total = sp.effectiveTotal(g_flash.totalBytes()), used = g_flash.usedBytes();
             if (total && (uint64_t)used * 100 / total < handheld::storage::MessageTransactions::SpaceRefusePct) {
-                sp.full = false; sp.usedPct = (uint8_t)((uint64_t)used * 100 / total);
+                sp.full = false; sp.usedPct = (uint8_t)((uint64_t)used * 100 / total); sp.checkEvery = 0;
             } else { fullAt = millis() | 1; toast("Storage full: msgs refused"); return; }
         } else return;
     }

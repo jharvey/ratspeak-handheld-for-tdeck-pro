@@ -841,7 +841,7 @@ void MessageTransactions::create(const Request& request, uint8_t* bytes, Result&
     if (!createRecord(document.document(), request, bytes)) { result.error = Error::Allocation; return; }
     _nextCounter = std::max(_nextCounter, cutoff + 1);
     int32_t evictedUnread = 0;
-    if (!makeRoom(evictedUnread)) { result.error = Error::Write; return; }   // flash full
+    if (!makeRoom(evictedUnread, !conversationExists)) { result.error = Error::Write; return; }   // flash full
     if (!reserveCounter(result.key.counter)) {
         result.error = _nextCounter == UINT32_MAX ? Error::CounterExhausted : Error::Write; return;
     }
@@ -1342,41 +1342,56 @@ void MessageTransactions::pending(const Request& request, uint8_t* bytes, size_t
 // Nothing else bounds flash history on this board, so a full LittleFS would fail every later
 // write (messages, announce order, contacts, ratchets). Runs on the storage executor inside
 // a create, under the same lease.
-bool MessageTransactions::makeRoom(int32_t& unreadDelta) {
+bool MessageTransactions::makeRoom(int32_t& unreadDelta, bool newConversation) {
     auto& stats = spaceStats();
     if (!_flash || !_flash->isReady()) return true;
-    // Also above SpaceHighPct: when a removal pass could not get below it (everything left
-    // is protected), it must not run again on every create - a pass takes minutes and the
-    // unit would refuse sends as "busy" for hours.
-    if (stats.checkEvery && ++stats.sinceCheck < stats.checkEvery) return !stats.full;
-    stats.sinceCheck = 0;
     const uint64_t total = stats.effectiveTotal(_flash->totalBytes());
     if (!total) return true;
-    uint64_t used = _flash->usedBytes();
-    stats.usedPct = uint8_t(std::min<uint64_t>(100, used * 100 / total));
-    // Reading the usage walks the whole file system: ~12 s with a few thousand records, and
-    // the storage task (and with it every save and card read) waits for it. It was read every
-    // ~7 creates; now only when the creates since this reading could have used up the room
-    // left below SpaceHighPct (at least 4, at most 256 creates).
     const uint64_t high = total * SpaceHighPct / 100;
-    stats.checkEvery = uint16_t(std::max<uint64_t>(4, std::min<uint64_t>(256,
-        used < high ? (high - used) / SpaceCreateCost : 0)));
-    if (stats.usedPct >= SpaceHighPct) {
-        const uint64_t goal = total * SpaceLowPct / 100;
-        const uint32_t started = millis(), before = stats.removed;
-        evictOldest(used > goal ? used - goal : 0, unreadDelta);
-        used = _flash->usedBytes();
-        stats.usedPct = uint8_t(std::min<uint64_t>(100, used * 100 / total));
-        stats.checkEvery = uint16_t(std::max<uint64_t>(used < high ? 4 : 16, std::min<uint64_t>(256,
-            used < high ? (high - used) / SpaceCreateCost : 0)));
-        ++stats.passes;
-        Serial.printf("[MSGSTORE] flash space: removed %lu oldest messages in %lu ms, now %u%% used%c",
-                      (unsigned long)(stats.removed - before), (unsigned long)(millis() - started),
-                      (unsigned)stats.usedPct, 10);
+    // Reading the usage walks the whole file system (~12 s with a few thousand records) on
+    // the storage task, and every save, history read and card read waits for it. So it is
+    // read rarely and counted in between: + SpaceCreateCost per create, - what a removal
+    // pass freed. The next reading comes before the creates since this one could have
+    // reached SpaceRefusePct at their worst cost (8 KB: record + a new shard folder; 32 KB
+    // for a new conversation), so a count that runs low cannot fill the flash. checkEvery
+    // 0 = read now (first create, bench commands).
+    const uint64_t refuse = total * SpaceRefusePct / 100;
+    stats.budget -= newConversation ? 32768 : 8192;
+    if (!stats.checkEvery || stats.budget <= 0 || ++stats.sinceCheck >= 256) {
+        stats.sinceCheck = 0; stats.checkEvery = 1;
+        stats.usedEst = _flash->usedBytes();
+        stats.budget = stats.usedEst < refuse ? int64_t(refuse - stats.usedEst) : 0;
+    } else {
+        stats.usedEst += SpaceCreateCost;
+        // Never refuse a message on a count alone: read the usage before calling it full.
+        if (!stats.full && stats.usedEst * 100 / total >= SpaceRefusePct) stats.usedEst = _flash->usedBytes();
     }
+    // From SpaceHighPct the oldest messages go, SpaceEvictBatch at a time: one pass over
+    // ~100 messages took 90-105 s, and opening a conversation meanwhile froze the unit for
+    // as long as it had left (29 s seen). After a pass that found nothing to remove, the
+    // next one waits 16 creates.
+    if (stats.usedEst >= high && stats.holdOff) --stats.holdOff;
+    else if (stats.usedEst >= high) {
+        const uint64_t goal = total * SpaceLowPct / 100;
+        // Halfway from SpaceHighPct to refusing, there is no time for small steps.
+        const bool urgent = stats.usedEst >= (high + refuse) / 2;
+        const uint64_t want = std::min<uint64_t>(stats.usedEst > goal ? stats.usedEst - goal : 0,
+                                                 urgent ? UINT64_MAX : uint64_t(SpaceEvictBatch) * SpaceCreateCost);
+        const uint32_t started = millis(), before = stats.removed;
+        const uint64_t freed = evictOldest(want, unreadDelta);
+        stats.usedEst -= std::min<uint64_t>(freed, stats.usedEst);
+        if (!freed) stats.holdOff = 16;
+        ++stats.passes;
+        Serial.printf("[MSGSTORE] flash space: removed %lu oldest messages in %lu ms, now about %u%% used%c",
+                      (unsigned long)(stats.removed - before), (unsigned long)(millis() - started),
+                      (unsigned)std::min<uint64_t>(100, stats.usedEst * 100 / total), 10);
+    }
+    stats.usedPct = uint8_t(std::min<uint64_t>(100, stats.usedEst * 100 / total));
     stats.full = stats.usedPct >= SpaceRefusePct;
-    if (stats.full) stats.checkEvery = 4;         // refused creates: look again soon (space may be freed)
-    if (stats.full) Serial.printf("[MSGSTORE] flash full (%u%%): new message refused%c", (unsigned)stats.usedPct, 10);
+    if (stats.full) {
+        stats.budget = 4 * 8192;                  // refused creates: read again soon (space may be freed)
+        Serial.printf("[MSGSTORE] flash full (%u%%): new message refused%c", (unsigned)stats.usedPct, 10);
+    }
     return !stats.full;
 }
 

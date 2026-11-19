@@ -66,10 +66,14 @@ public:
     // 4 KB block (a small record lives in its folder's block; a new shard folder adds two).
     static constexpr uint32_t SpaceCreateCost = 4096;
     static constexpr uint32_t KeepPerConversation = 10;  // newest records never removed for space
+    static constexpr uint32_t SpaceEvictBatch = 12;      // oldest records removed in one pass (~1 s each)
     // capBytes: bench/stress-test override (RAM only): message upkeep treats the flash as
     // this size, so removal and refusal happen after ~100 messages instead of ~1,600.
     struct SpaceStats { uint8_t usedPct = 0; bool full = false; uint16_t sinceCheck = 0, checkEvery = 0;
                         uint32_t removed = 0, passes = 0; uint64_t capBytes = 0;
+                        uint64_t usedEst = 0;      // flash bytes used: last reading + creates - removals
+                        uint16_t holdOff = 0;      // creates to skip before the next removal pass
+                        int64_t budget = 0;        // worst-case bytes creates may still use before the next reading
                         uint64_t effectiveTotal(uint64_t real) const { return capBytes && capBytes < real ? capBytes : real; } };
     static SpaceStats& spaceStats() { static SpaceStats s; return s; }
 
@@ -177,7 +181,7 @@ private:
     void conversationPage(const Request&, uint8_t*, size_t, Result&);
     void conversation(const Request&, uint8_t*, size_t, Result&);
     void trim(const Request&, Result&);
-    bool makeRoom(int32_t& unreadDelta);   // false = flash full, refuse the create
+    bool makeRoom(int32_t& unreadDelta, bool newConversation);   // false = flash full, refuse the create
     uint64_t evictOldest(uint64_t bytes, int32_t& unreadDelta);   // returns bytes freed (estimate)
     bool reserveCounter(uint32_t&);
     bool retainedCopy(const RecordKey&, unsigned medium, MessageDocument&);
