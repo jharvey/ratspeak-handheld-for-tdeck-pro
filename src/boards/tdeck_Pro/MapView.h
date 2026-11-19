@@ -41,6 +41,7 @@ void forget();                       // drop every cached tile and pack index (c
 // Layered-pack counters: tiles composed, layer streams decoded, of which context-coded,
 // and streams that failed to decode.
 void layeredStats(uint32_t& tiles, uint32_t& streams, uint32_t& coded, uint32_t& bad);
+const char* layeredLastBad();        // "" or e.g. "read z13 2482/2990 layer 2 at 81234 len 912 coded"
 
 bool isOpen();
 // Opens centred on (lat, lon); with havePos=false opens on the last centre (or 0,0).

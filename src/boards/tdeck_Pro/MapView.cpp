@@ -75,6 +75,7 @@ LayPack g_lays[kLaySlots];
 uint8_t* g_layBits = nullptr;    // one overlay layer while it is decoded
 uint32_t g_layerMask = kLayerAll;
 uint32_t g_layTiles = 0, g_layStreams = 0, g_layCoded = 0, g_layBad = 0;
+char g_layBadWhat[72] = "";      // the last layer stream that failed: where and why
 Tile g_cache[kCacheSlots];
 Pack g_packs[kPackSlots];
 uint8_t* g_io = nullptr;         // header + tile read buffer
@@ -305,8 +306,14 @@ bool readLayered(int z, int x, int y, uint8_t* out) {
         const bool coded = word >> 31;
         if (!len) continue;
         uint8_t* dst = li ? g_layBits : out;
-        bool ok = len <= kIoBytes && (!coded || (p->v3 && p->priorAt[li])) &&
-                  g_reader(path, off, g_io, len) == len;
+        const char* why = "decode";
+        bool ok = len <= kIoBytes && (!coded || (p->v3 && p->priorAt[li]));
+        if (!ok) why = "index";
+        else {
+            // A short read is retried once: the card now and then fails a single read.
+            ok = g_reader(path, off, g_io, len) == len || g_reader(path, off, g_io, len) == len;
+            if (!ok) why = "read";
+        }
         if (ok) {
             const int64_t t0 = esp_timer_get_time();
             ok = coded ? ctxDecode(g_io, len, p->head + p->priorAt[li], dst) : unRle(g_io, len, dst);
@@ -316,6 +323,8 @@ bool readLayered(int z, int x, int y, uint8_t* out) {
         if (coded) ++g_layCoded;
         if (!ok) {
             ++g_layBad;
+            snprintf(g_layBadWhat, sizeof(g_layBadWhat), "%s z%d %d/%d layer %d at %lu len %lu%s", why, z, x, y,
+                     li, (unsigned long)off, (unsigned long)len, coded ? " coded" : "");
             if (!li) return false;
             continue;
         }
@@ -457,6 +466,7 @@ void forget() {
 void layeredStats(uint32_t& tiles, uint32_t& streams, uint32_t& coded, uint32_t& bad) {
     tiles = g_layTiles; streams = g_layStreams; coded = g_layCoded; bad = g_layBad;
 }
+const char* layeredLastBad() { return g_layBadWhat; }
 
 CoordFormatter g_coordFmt = nullptr;
 void setCoordFormatter(CoordFormatter f) { g_coordFmt = f; }

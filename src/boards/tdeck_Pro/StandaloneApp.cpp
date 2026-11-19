@@ -63,6 +63,7 @@
 #include "radio/SX1262.h"
 #include "storage/FlashStore.h"
 #include "storage/SDStore.h"
+#include "storage/StorageLease.h"
 #include "storage/MessageStore.h"
 #include "storage/MessageTransactions.h"
 #include "storage/ConversationView.h"
@@ -6169,12 +6170,28 @@ void gpsRequestVisit(const char* why = "location share");
 void mapGpsAsk(bool opening);
 bool gpsCurrent();
 bool gpsFresh();
+uint32_t g_cardWaitFails = 0, g_cardWaitMaxMs = 0;   // waits for the storage lease: timed out / longest
 bool g_mapSdTried = false;
 File g_mapFile;                  // pack file kept open between reads
 char g_mapFilePath[80] = "";
 uint32_t g_looseChecked = 0, g_looseHave = 0, g_looseAt = 0;   // per zoom: /maps/<z> looked up / exists
 
+// Card calls from the main loop fail at once while the storage worker holds the storage
+// lease (it is saving a message: up to ~1 s on a busy unit). For the map and for uploads a
+// short wait is better than a file reported missing, so hold the lease across the call.
+struct CardWait {
+    handheld::storage::StorageLease lease{false};
+    bool ok = false;
+    explicit CardWait(uint32_t maxMs = 3000) {
+        const uint32_t t0 = millis();
+        while (!(ok = lease.tryAcquire()) && millis() - t0 < maxMs) delay(2);
+        if (!ok) g_cardWaitFails++;
+        else if (millis() - t0 > g_cardWaitMaxMs) g_cardWaitMaxMs = millis() - t0;
+    }
+};
+
 size_t mapReadTile(const char* rel, uint32_t offset, uint8_t* buf, size_t len) {
+    CardWait card;
     if (!g_sdMounted) {
         if (g_mapSdTried) return 0;          // one mount attempt per map visit
         g_mapSdTried = true;
@@ -12575,6 +12592,8 @@ void sdputStart(const char* args) {
 
 void sdputFinish() {
     g_putActive = false;
+    handheld::storage::StorageLease lease(false);   // wait for the storage worker (see CardWait)
+    for (const uint32_t t0 = millis(); !lease.tryAcquire() && millis() - t0 < 3000;) delay(2);
     if (crc32Of(g_putBuf, g_putLen) != g_putCrc) { Serial.println("[SDPUT] err crc"); return; }
     static char lastDir[96] = "";
     char dir[96];
@@ -13171,6 +13190,9 @@ void handleSerialLine(char* p) {
         Serial.printf("[MAP] layered packs: %lu tiles, %lu layer streams (%lu compressed), %lu bad; layers %lu\n",
                       (unsigned long)lt, (unsigned long)lsn, (unsigned long)lc, (unsigned long)lb,
                       (unsigned long)mapview::layers());
+        if (lb) Serial.printf("[MAP] last bad stream: %s\n", mapview::layeredLastBad());
+        Serial.printf("[MAP] card waits: longest %lu ms, %lu timed out\n", (unsigned long)g_cardWaitMaxMs,
+                      (unsigned long)g_cardWaitFails);
     } else if (!strcmp(p, "maplayers") || !strncmp(p, "maplayers ", 10)) {
         // maplayers [mask]: overlay layers of the layered map packs. 1 labels, 2 contours,
         // 4 woods, 8 marsh marks, 16 hillshading, 32 any other; 63 = all, 0 = base map only.
