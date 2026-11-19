@@ -10022,10 +10022,18 @@ void drawIdleTop() {
     if (textW(line) > maxW) snprintf(line, sizeof(line), "%s %s  %s", t, tz, bat);
     if (textW(line) > maxW) snprintf(line, sizeof(line), "%s  %s", t, bat);
     label(0, 0, W, 20, line);
-    snprintf(line2, sizeof(line2), "%s  %s  %s", md, g_selfName, unr);
-    if (textW(line2) > maxW) snprintf(line2, sizeof(line2), "%s  %.12s  %s", md, g_selfName, unr);
-    if (textW(line2) > maxW) snprintf(line2, sizeof(line2), "%s  %.8s  %s", md, g_selfName, unr);
-    if (textW(line2) > maxW) snprintf(line2, sizeof(line2), "%s  %s", md, unr);   // the date stays
+    // The name always stays (it is how you tell units apart, also on a flat one): first the
+    // year goes, then the name is cut from the right until the line fits.
+    const char* nm = g_selfName[0] ? g_selfName : "no name";
+    snprintf(line2, sizeof(line2), "%s  %s  %s", md, nm, unr);
+    if (textW(line2) > maxW) {
+        char mdS[8] = "--/--";
+        if (md[0] != '-') snprintf(mdS, sizeof(mdS), "%d/%d", lt.tm_mon + 1, lt.tm_mday);
+        for (int n = (int)strlen(nm); n >= 1; n--) {
+            snprintf(line2, sizeof(line2), "%s  %.*s  %s", mdS, n, nm, unr);
+            if (textW(line2) <= maxW) break;
+        }
+    }
     label(0, 18, W, 18, line2);
     g_idleShownUnread = unread;
     g_idleShownPct = pct;
