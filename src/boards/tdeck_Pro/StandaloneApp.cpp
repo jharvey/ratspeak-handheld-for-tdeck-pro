@@ -9996,12 +9996,12 @@ bool paintIdleMap();
 
 bool paintIdleLibrary();
 void paintIdleFound();
-constexpr int kIdleMapTop = 38, kIdleMapBottom = 300;
+constexpr int kIdleMapTop = 56, kIdleMapBottom = 300;
 
 // Every idle screen: time, battery and unread across the top, the date and the radio's name
 // under them, and the wake / LOCKED line at the bottom.
 void drawIdleTop() {
-    // Line 1: "1:45 PM EST  100% bat  ~12h"; line 2: "11/14/2026  name  3 NEW". Regular weight (bold
+    // Line 1: "1:45 PM EST  100% bat  ~12h"; line 2: "11/14/2026  3 NEW"; line 3: the name. Regular weight (bold
     // was hard to read). Each line drops its least important part until it fits the width.
     char t[12], line[64], line2[64], bat[16] = "", left[10] = "", md[12] = "--/--/----", unr[12];
     fmtTime(t, sizeof(t));
@@ -10022,19 +10022,14 @@ void drawIdleTop() {
     if (textW(line) > maxW) snprintf(line, sizeof(line), "%s %s  %s", t, tz, bat);
     if (textW(line) > maxW) snprintf(line, sizeof(line), "%s  %s", t, bat);
     label(0, 0, W, 20, line);
-    // The name always stays (it is how you tell units apart, also on a flat one): first the
-    // year goes, then the name is cut from the right until the line fits.
-    const char* nm = g_selfName[0] ? g_selfName : "no name";
-    snprintf(line2, sizeof(line2), "%s  %s  %s", md, nm, unr);
-    if (textW(line2) > maxW) {
-        char mdS[8] = "--/--";
-        if (md[0] != '-') snprintf(mdS, sizeof(mdS), "%d/%d", lt.tm_mon + 1, lt.tm_mday);
-        for (int n = (int)strlen(nm); n >= 1; n--) {
-            snprintf(line2, sizeof(line2), "%s  %.*s  %s", mdS, n, nm, unr);
-            if (textW(line2) <= maxW) break;
-        }
-    }
+    snprintf(line2, sizeof(line2), "%s  %s", md, unr);
     label(0, 18, W, 18, line2);
+    // Line 3: the radio's name on its own line (it is how you tell units apart, also on a flat
+    // one), bold. Only a name wider than the screen is cut.
+    char nm[sizeof(g_selfName)];
+    strlcpy(nm, g_selfName[0] ? g_selfName : "no name", sizeof(nm));
+    for (size_t n = strlen(nm); n > 1 && textW(nm) > maxW; ) nm[--n] = 0;
+    label(0, 36, W, 18, nm, true);
     g_idleShownUnread = unread;
     g_idleShownPct = pct;
     g_idleShownMin = millis() / 60000UL;
@@ -10058,7 +10053,7 @@ void paintIdle() {
     if (sc == IDLE_FOUND) { paintIdleFound(); return; }
     clearRoot();
     drawIdleTop();
-    const int y0 = 140, step = 20;
+    const int y0 = 158, step = 20;
     label(0, y0, W, 20, "RatSpeak", true);
     char line[40];
     label(0, y0 + step, W, 18,
