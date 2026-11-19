@@ -1851,8 +1851,17 @@ bool MessageTransactions::saveIndexIfIdle(uint32_t quietMs) {
     auto& ix = recordIndex();
     if (!ix.valid || _external || !ix.dirty || millis() - ix.lastChangeMs < quietMs) return false;
     if (!_flash || !_flash->isReady()) return false;
+    // Not while the user is on the keys (the write stalls the main loop for 1-4 s) - but a
+    // changed index is saved within 10 minutes regardless, or a reset costs a full scan.
+    static uint32_t putOffSince = 0;
+    const uint32_t active = userActiveAtMs();
+    if (active && millis() - active < 20000) {
+        if (!putOffSince) putOffSince = millis() | 1;
+        if (millis() - putOffSince < 600000) return false;
+    }
     StorageLease lease;
     if (!lease.held()) return false;   // the storage task is busy: try on a later poll
+    putOffSince = 0;
     const uint32_t started = millis();
     std::vector<uint8_t> out;
     try {

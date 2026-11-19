@@ -82,6 +82,9 @@ public:
     // Off while the SD archive is on (flash is then only a cache of the card).
     bool startupFromIndex(uint32_t& conversations, int& unread, RecentIds& recent);
     bool saveIndexIfIdle(uint32_t quietMs);   // owner; true when it wrote the file
+    // millis() of the last key / touch, set by the board's main loop (0 = never). The index
+    // save stalls the main loop for 1-4 s, so it waits until the user has been away 20 s.
+    static uint32_t& userActiveAtMs() { static uint32_t value = 0; return value; }
     struct IndexStats { uint32_t entries = 0, saves = 0, loadMs = 0; bool valid = false, onDisk = false, used = false; };
     IndexStats indexStats();
     bool indexVerify(uint32_t& checked, uint32_t& mismatches);   // owner; stress tests

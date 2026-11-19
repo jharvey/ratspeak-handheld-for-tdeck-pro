@@ -1611,7 +1611,9 @@ void initStorageAndProto() {
     Serial.printf("[PROTO] up dest=%s\n", g_destHex);
 }
 
+extern uint32_t g_lastInputMs;
 void pumpOnce() {
+    handheld::storage::MessageTransactions::userActiveAtMs() = g_lastInputMs;   // index save waits for a pause in use
     if (g_protoReady) g_proto.loop();
     if (g_storeReady) g_msgStore.poll();
 }
