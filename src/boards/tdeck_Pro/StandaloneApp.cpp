@@ -848,7 +848,7 @@ bool sdMount() {
     }
     g_sdMounted = true;
     if (!g_sdStore.formatForRsDeck()) Serial.println("[SD] folder setup failed");
-    g_haveMaps = g_sdStore.exists(SD_PATH_ROOT "/maps");
+    g_haveMaps = g_sdStore.exists(SD_PATH_ROOT "/maps") || g_sdStore.exists(SD_PATH_ROOT "/packs");
     g_haveLib = false;
     if (File d = g_sdStore.openDir(SD_PATH_ROOT "/library")) {
         for (File e = d.openNextFile(); e && !g_haveLib; e = d.openNextFile()) {
@@ -882,6 +882,7 @@ void mapReadDone();
 void sdUnmount() {
     g_batLogSd = false;
     mapReadDone();
+    mapview::forget();                      // another card may hold other maps
     if (g_sdMounted) { g_sdStore.end(); g_sdMounted = false; }
     g_haveMaps = false;
     g_haveLib = false;
@@ -6183,7 +6184,7 @@ size_t mapReadTile(const char* rel, uint32_t offset, uint8_t* buf, size_t len) {
     snprintf(path, sizeof(path), "%s%s", SD_PATH_ROOT, rel);
     // Pack files are read many times in a row (header, index, then one piece per tile):
     // keep the last one open, since a fresh exists() + open costs ~45 ms on the card.
-    const bool pack = strncmp(rel, "/maps/packs/", 12) == 0;
+    const bool pack = strncmp(rel, "/maps/packs/", 12) == 0 || strncmp(rel, "/packs/", 7) == 0;
     if (!pack) {
         // Loose tile /maps/<z>/<x>/<y>.rmt: a card with packs only has no /maps/<z> folder,
         // so remember per zoom whether it exists (checked again after 60 s) instead of an
@@ -6289,7 +6290,8 @@ void openMap() {
     int homeZoom = 0;
     if (!have) {
         char txt[48] = "";
-        const size_t n = mapReadTile("/maps/home.txt", 0, (uint8_t*)txt, sizeof(txt) - 1);
+        size_t n = mapReadTile("/maps/home.txt", 0, (uint8_t*)txt, sizeof(txt) - 1);
+        if (!n) n = mapReadTile("/packs/home.txt", 0, (uint8_t*)txt, sizeof(txt) - 1);
         txt[n < sizeof(txt) ? n : sizeof(txt) - 1] = 0;
         if (n && sscanf(txt, "%lf %lf %d", &lat, &lon, &homeZoom) >= 2) { cardHome = true; how = "card home"; }
     }
@@ -10192,7 +10194,8 @@ bool paintIdleMap() {
     if (!have) {
         char txt[48] = "";
         int z = 0;
-        const size_t n = mapReadTile("/maps/home.txt", 0, (uint8_t*)txt, sizeof(txt) - 1);
+        size_t n = mapReadTile("/maps/home.txt", 0, (uint8_t*)txt, sizeof(txt) - 1);
+        if (!n) n = mapReadTile("/packs/home.txt", 0, (uint8_t*)txt, sizeof(txt) - 1);
         txt[n < sizeof(txt) ? n : sizeof(txt) - 1] = 0;
         have = n && sscanf(txt, "%lf %lf %d", &lat, &lon, &z) >= 2;
     }
@@ -13164,6 +13167,16 @@ void handleSerialLine(char* p) {
                       mapview::isOpen() ? "open" : "closed", st, (unsigned long)ld,
                       (unsigned long)mapview::packedLoaded(), (unsigned long)mapview::packedMillis(),
                       (unsigned long)mapview::decodeMillis(), (unsigned long)ms, (unsigned long)hi);
+        uint32_t lt, lsn, lc, lb; mapview::layeredStats(lt, lsn, lc, lb);
+        Serial.printf("[MAP] layered packs: %lu tiles, %lu layer streams (%lu compressed), %lu bad; layers %lu\n",
+                      (unsigned long)lt, (unsigned long)lsn, (unsigned long)lc, (unsigned long)lb,
+                      (unsigned long)mapview::layers());
+    } else if (!strcmp(p, "maplayers") || !strncmp(p, "maplayers ", 10)) {
+        // maplayers [mask]: overlay layers of the layered map packs. 1 labels, 2 contours,
+        // 4 woods, 8 marsh marks, 16 hillshading, 32 any other; 63 = all, 0 = base map only.
+        if (p[9]) { mapview::setLayers((uint32_t)atoi(p + 10) & mapview::kLayerAll); requestRedraw(); }
+        Serial.printf("[MAP] layers %lu (1 labels 2 contours 4 woods 8 marsh 16 hillshade 32 other)\n",
+                      (unsigned long)mapview::layers());
     } else if (!strncmp(p, "maptest ", 8)) {
         // Bench: write labelled grid test tiles (3x3 at z14 and z15) around <lat> <lon> on the SD card.
         double la = 0, lo = 0;

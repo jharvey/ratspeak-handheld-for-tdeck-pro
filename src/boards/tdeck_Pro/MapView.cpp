@@ -28,6 +28,14 @@ constexpr size_t kPackHeader = 16, kPackIndex = kPackSide * kPackSide * 8;
 constexpr int kCtxCount = 1024;                       // RMP2 context coder (tools/maptiles/rmcodec.py)
 constexpr size_t kPackPrior = kCtxCount * 2;
 constexpr int kPackSlots = 4;
+// Layered packs (the map build's build_tiles.py / pack3.py): /packs/<z>/<X>/<Y>.rmp, 16x16
+// tiles, a base bitmap plus overlay layers per tile. RMP1 = every stream RLE; RMP3 = each
+// stream RLE or context-coded (the RMP2 coder), with one starting table per coded layer.
+constexpr int kLaySide = 16, kLayMaxLayers = 8, kLaySlots = 4;
+constexpr size_t kLayNames = 16;                      // header: magic, z, N, L, ctxmask, x0, y0
+constexpr size_t kLayHeadMax = kLayNames + 8 * kLayMaxLayers + kLayMaxLayers * kPackPrior +
+                               kLaySide * kLaySide * kLayMaxLayers * 8;
+constexpr size_t kIoBytes = kHeaderBytes + kTileBytes + 1024;   // an RLE stream can pass 8192
 
 struct Tile {
     int z = -1, x = 0, y = 0;
@@ -48,7 +56,25 @@ struct Pack {
     const uint8_t* index() const { return head + kPackHeader + (ctx ? kPackPrior : 0); }
 };
 
+struct LayPack {
+    int z = -1;
+    uint32_t bx = 0, by = 0;
+    bool present = false;
+    bool v3 = false;             // RMP3: streams may be context-coded
+    uint8_t layers = 0, ctxMask = 0;
+    uint8_t show = 0;            // layers to draw (bit = layer index), from g_layerMask and the names
+    int8_t woods = -1;           // index of the layer stored solid and drawn hatched
+    uint32_t used = 0;
+    uint16_t priorAt[kLayMaxLayers] = {};   // offset in head of each coded layer's table
+    uint32_t indexAt = 0;
+    uint8_t* head = nullptr;     // kLayHeadMax, allocated once
+};
+
 TileReader g_reader = nullptr;
+LayPack g_lays[kLaySlots];
+uint8_t* g_layBits = nullptr;    // one overlay layer while it is decoded
+uint32_t g_layerMask = kLayerAll;
+uint32_t g_layTiles = 0, g_layStreams = 0, g_layCoded = 0, g_layBad = 0;
 Tile g_cache[kCacheSlots];
 Pack g_packs[kPackSlots];
 uint8_t* g_io = nullptr;         // header + tile read buffer
@@ -182,6 +208,132 @@ bool ctxDecode(const uint8_t* src, size_t len, const uint8_t* prior, uint8_t* ou
     return pos <= len + 8;
 }
 
+void layPath(char* out, size_t n, int z, uint32_t bx, uint32_t by) {
+    snprintf(out, n, "/packs/%d/%lu/%lu.rmp", z, (unsigned long)bx, (unsigned long)by);
+}
+
+uint32_t layerBit(const uint8_t* name) {
+    static const struct { const char* n; uint32_t bit; } k[] = {
+        {"labels", kLayerLabels}, {"contours", kLayerContours}, {"woods", kLayerWoods},
+        {"vegmarks", kLayerVeg}, {"hillshd", kLayerHill}};
+    for (const auto& e : k) if (!strncmp((const char*)name, e.n, 8)) return e.bit;
+    return kLayerOther;
+}
+
+void layShow(LayPack& p) {
+    p.show = 1;                                   // the base is always drawn
+    p.woods = -1;
+    for (int i = 1; i < p.layers; i++) {
+        const uint8_t* name = p.head + kLayNames + 8 * i;
+        const uint32_t bit = layerBit(name);
+        if (g_layerMask & bit) p.show |= (uint8_t)(1u << i);
+        if (bit == kLayerWoods) p.woods = (int8_t)i;
+    }
+}
+
+// The header, tables and index of the layered pack holding block (bx, by) of zoom z.
+LayPack* layPack(int z, uint32_t bx, uint32_t by) {
+    LayPack* victim = &g_lays[0];
+    for (auto& p : g_lays) {
+        if (p.z == z && p.bx == bx && p.by == by) { p.used = ++g_clock; return &p; }
+        if (p.used < victim->used) victim = &p;
+    }
+    if (!victim->head) victim->head = bigAlloc(kLayHeadMax);
+    if (!victim->head) return nullptr;
+    LayPack& p = *victim;
+    p.z = z; p.bx = bx; p.by = by; p.used = ++g_clock; p.present = false;
+    char path[48];
+    layPath(path, sizeof(path), z, bx, by);
+    uint8_t* h = p.head;
+    if (!g_reader || g_reader(path, 0, h, kLayNames) != kLayNames) return victim;
+    const bool v1 = !memcmp(h, "RMP1", 4), v3 = !memcmp(h, "RMP3", 4);
+    const int layers = h[6];
+    if ((!v1 && !v3) || h[4] != z || h[5] != kLaySide || layers < 1 || layers > kLayMaxLayers ||
+        rd32(h + 8) != bx * kLaySide || rd32(h + 12) != by * kLaySide)
+        return victim;
+    p.v3 = v3; p.layers = (uint8_t)layers; p.ctxMask = v3 ? h[7] : 0;
+    size_t at = kLayNames + 8 * (size_t)layers;
+    for (int i = 0; i < kLayMaxLayers; i++) {
+        p.priorAt[i] = 0;
+        if (i < layers && (p.ctxMask >> i & 1)) { p.priorAt[i] = (uint16_t)at; at += kPackPrior; }
+    }
+    p.indexAt = (uint32_t)at;
+    const size_t rest = at + (size_t)kLaySide * kLaySide * layers * 8 - kLayNames;
+    if (g_reader(path, kLayNames, h + kLayNames, rest) != rest) return victim;
+    layShow(p);
+    p.present = true;
+    return victim;
+}
+
+// RLE stream of a layered pack -> 8192 bytes: c < 0x80: c + 1 bytes follow as they are;
+// else the byte at +2 repeated ((c & 0x7F) << 8 | byte at +1) + 1 times.
+bool unRle(const uint8_t* s, size_t len, uint8_t* out) {
+    size_t i = 0, o = 0;
+    while (i < len) {
+        const uint8_t c = s[i];
+        if (c < 0x80) {
+            const size_t n = (size_t)c + 1;
+            if (i + 1 + n > len || o + n > kTileBytes) return false;
+            memcpy(out + o, s + i + 1, n);
+            i += 1 + n; o += n;
+        } else {
+            if (i + 3 > len) return false;
+            const size_t n = (((size_t)(c & 0x7F)) << 8 | s[i + 1]) + 1;
+            if (o + n > kTileBytes) return false;
+            memset(out + o, s[i + 2], n);
+            i += 3; o += n;
+        }
+    }
+    return o == kTileBytes;
+}
+
+// A tile out of a layered pack: the base, then every shown overlay layer ORed in (woods
+// only on its hatch lines, (x - y) % 8 == 0). A layer that fails to decode is left out.
+bool readLayered(int z, int x, int y, uint8_t* out) {
+    LayPack* p = layPack(z, (uint32_t)x / kLaySide, (uint32_t)y / kLaySide);
+    if (!p || !p->present) return false;
+    char path[48];
+    layPath(path, sizeof(path), z, p->bx, p->by);
+    const uint8_t* e = p->head + p->indexAt +
+                       (size_t)((y % kLaySide) * kLaySide + (x % kLaySide)) * p->layers * 8;
+    if (!(rd32(e + 4) & 0x7FFFFFFFu)) return false;          // no base: no tile here
+    if (!g_layBits) g_layBits = bigAlloc(kTileBytes);
+    if (!g_layBits) return false;
+    for (int li = 0; li < p->layers; li++, e += 8) {
+        if (!(p->show >> li & 1)) continue;
+        const uint32_t off = rd32(e), word = rd32(e + 4), len = word & 0x7FFFFFFFu;
+        const bool coded = word >> 31;
+        if (!len) continue;
+        uint8_t* dst = li ? g_layBits : out;
+        bool ok = len <= kIoBytes && (!coded || (p->v3 && p->priorAt[li])) &&
+                  g_reader(path, off, g_io, len) == len;
+        if (ok) {
+            const int64_t t0 = esp_timer_get_time();
+            ok = coded ? ctxDecode(g_io, len, p->head + p->priorAt[li], dst) : unRle(g_io, len, dst);
+            g_decodeUs += (uint64_t)(esp_timer_get_time() - t0);
+        }
+        ++g_layStreams;
+        if (coded) ++g_layCoded;
+        if (!ok) {
+            ++g_layBad;
+            if (!li) return false;
+            continue;
+        }
+        if (!li) continue;
+        if (li == p->woods) {
+            for (int yy = 0; yy < kTileSize; yy++) {
+                const uint8_t m = (uint8_t)(0x80 >> (yy & 7));
+                uint8_t* o = out + yy * 32; const uint8_t* s = g_layBits + yy * 32;
+                for (int i = 0; i < 32; i++) o[i] |= s[i] & m;
+            }
+        } else {
+            for (size_t i = 0; i < kTileBytes; i++) out[i] |= g_layBits[i];
+        }
+    }
+    ++g_layTiles;
+    return true;
+}
+
 bool readPacked(int z, int x, int y, uint8_t* out) {
     Pack* p = pack(z, (uint32_t)x >> kPackShift, (uint32_t)y >> kPackShift);
     if (!p || !p->present) return false;
@@ -242,11 +394,11 @@ Tile* tile(int z, int x, int y) {
         if (t.used < victim->used) victim = &t;
     }
     if (!victim->bits) victim->bits = bigAlloc(kTileBytes);
-    if (!g_io) g_io = bigAlloc(kHeaderBytes + kTileBytes);
+    if (!g_io) g_io = bigAlloc(kIoBytes);
     if (!victim->bits || !g_io) return nullptr;
     victim->z = z; victim->x = x; victim->y = y; victim->used = ++g_clock; victim->present = false;
     const int64_t t0 = esp_timer_get_time();
-    const bool packed = readPacked(z, x, y, victim->bits);
+    const bool packed = readLayered(z, x, y, victim->bits) || readPacked(z, x, y, victim->bits);
     g_packUs += (uint64_t)(esp_timer_get_time() - t0);
     if (packed) {
         victim->present = true;
@@ -289,6 +441,22 @@ void scaleBar(double& metres, int& pixels) {
 }  // namespace
 
 void setReader(TileReader reader) { g_reader = reader; }
+
+void setLayers(uint32_t mask) {
+    if (mask == g_layerMask) return;
+    g_layerMask = mask;
+    for (auto& t : g_cache) t.z = -1;             // tiles were composed with the old choice
+    for (auto& p : g_lays) if (p.present) layShow(p);
+}
+uint32_t layers() { return g_layerMask; }
+void forget() {
+    for (auto& t : g_cache) t.z = -1;
+    for (auto& p : g_packs) p.z = -1;
+    for (auto& p : g_lays) p.z = -1;
+}
+void layeredStats(uint32_t& tiles, uint32_t& streams, uint32_t& coded, uint32_t& bad) {
+    tiles = g_layTiles; streams = g_layStreams; coded = g_layCoded; bad = g_layBad;
+}
 
 CoordFormatter g_coordFmt = nullptr;
 void setCoordFormatter(CoordFormatter f) { g_coordFmt = f; }

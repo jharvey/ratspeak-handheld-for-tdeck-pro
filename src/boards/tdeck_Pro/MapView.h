@@ -30,6 +30,18 @@ using PixelFn = void (*)(int x, int y, bool black);
 
 void setReader(TileReader reader);
 
+// Layered packs (<SD>/ratdeckpro/packs/<z>/<X>/<Y>.rmp, 16x16 tiles each, format RMP1 or the
+// compressed RMP3 written by the map build's pack3.py): a base bitmap plus overlay layers.
+// Looked up before the single-layer packs and the loose tiles. The mask picks the overlays.
+constexpr uint32_t kLayerLabels = 1, kLayerContours = 2, kLayerWoods = 4, kLayerVeg = 8,
+                   kLayerHill = 16, kLayerOther = 32, kLayerAll = 63;
+void setLayers(uint32_t mask);       // drops the cached tiles when it changes
+uint32_t layers();
+void forget();                       // drop every cached tile and pack index (card changed)
+// Layered-pack counters: tiles composed, layer streams decoded, of which context-coded,
+// and streams that failed to decode.
+void layeredStats(uint32_t& tiles, uint32_t& streams, uint32_t& coded, uint32_t& bad);
+
 bool isOpen();
 // Opens centred on (lat, lon); with havePos=false opens on the last centre (or 0,0).
 // follow=false: an explicit place (console "map <lat> <lon>"), not the own position.
