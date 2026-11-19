@@ -628,7 +628,11 @@ bool FlashStore::completeReset() {
 
 size_t FlashStore::totalBytes() const {
     handheld::storage::assertOwner(); handheld::storage::StorageLease lease;
-    return lease.held() && _ready ? LittleFS.totalBytes() : 0;
+    // The partition size is fixed, and the driver computes the usage (a walk over the whole
+    // file system, seconds with thousands of records) on every size call: ask once.
+    static size_t total = 0;
+    if (!total && lease.held() && _ready) total = LittleFS.totalBytes();
+    return lease.held() && _ready ? total : 0;
 }
 
 size_t FlashStore::usedBytes() const {

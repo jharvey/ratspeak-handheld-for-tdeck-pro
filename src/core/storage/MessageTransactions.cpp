@@ -1345,7 +1345,11 @@ void MessageTransactions::pending(const Request& request, uint8_t* bytes, size_t
 bool MessageTransactions::makeRoom(int32_t& unreadDelta, bool newConversation) {
     auto& stats = spaceStats();
     if (!_flash || !_flash->isReady()) return true;
-    const uint64_t total = stats.effectiveTotal(_flash->totalBytes());
+    // The partition size never changes, and asking for it walks the file system like the
+    // usage does (the driver returns both from one call): ask once.
+    static uint64_t realTotal = 0;
+    if (!realTotal) realTotal = _flash->totalBytes();
+    const uint64_t total = stats.effectiveTotal(realTotal);
     if (!total) return true;
     const uint64_t high = total * SpaceHighPct / 100;
     // Reading the usage walks the whole file system (~12 s with a few thousand records) on
@@ -1400,7 +1404,29 @@ uint64_t MessageTransactions::evictOldest(uint64_t bytes, int32_t& unreadDelta) 
     struct Victim { uint32_t counter; uint16_t peer; bool incoming; };
     std::vector<std::array<uint8_t, 16>> peers;
     std::vector<Victim> victims;
-    try {
+    // The record index already holds every record's name: no listing of the folders (that
+    // listing took ~15 s of a pass with ~2,300 records). Without a usable index: list them.
+    bool listed = false;
+    if (indexUsable()) {
+        try {
+            const auto& ix = recordIndex();
+            peers = ix.peers;
+            victims.reserve(ix.entries.size());
+            for (const auto& e : ix.entries)
+                if (e.peer < peers.size()) victims.push_back({e.counter, e.peer, bool(e.flags & RecordIndex::Incoming)});
+            // Per conversation the newest KeepPerConversation stay: sort by conversation, newest first.
+            std::sort(victims.begin(), victims.end(), [](const Victim& x, const Victim& y) {
+                return x.peer != y.peer ? x.peer < y.peer : x.counter > y.counter; });
+            size_t out = 0, run = 0;
+            for (size_t i = 0; i < victims.size(); ++i) {
+                run = i && victims[i].peer == victims[i - 1].peer ? run + 1 : 0;
+                if (run >= KeepPerConversation) victims[out++] = victims[i];
+            }
+            victims.resize(out);
+            listed = true;
+        } catch (const std::bad_alloc&) { peers.clear(); victims.clear(); }
+    }
+    if (!listed) try {
         FlashStore::NameScan root; char name[64]; bool isDir = false; int failure = 0;
         if (_flash->openNames(PATH_MESSAGES, root) != 0) return 0;
         while (_flash->nextName(root, name, sizeof(name), isDir, failure)) {
