@@ -149,8 +149,18 @@ def main():
         if steps % 10 == 0:
             before = st["lines"]
             send("hb", 0.6); send("map", 0.6)
+            # No reply: the main loop is busy (a slow message save can take many seconds).
+            # Keep asking for up to 45 s before calling it dead, and note how long it was.
+            t_wait = time.time()
+            while st["lines"] == before and time.time() - t_wait < 45:
+                send("hb", 1.5)
             if st["lines"] == before:
-                st["crash"] = "unit stopped answering (no reply to hb / map)"
+                st["crash"] = "unit stopped answering (no reply to hb / map for 45 s)"
+            elif time.time() - t_wait > 3:
+                stall = time.time() - t_wait
+                st["stalls"] = st.get("stalls", 0) + 1
+                st["stall_max"] = max(st.get("stall_max", 0), stall)
+                print("%s unit did not answer for %.0f s" % (time.strftime("%H:%M:%S"), stall), flush=True)
             print("%s step %d: %d tiles, %d streams (%d compressed), %d bad, heap min %s, %d screens drawn, slowest %d ms"
                   % (time.strftime("%H:%M:%S"), steps, st["tiles"], st["streams"], st["coded"], st["bad"],
                      st["heap_min"], st["frames"], st["build_max"]), flush=True)
@@ -165,6 +175,8 @@ def main():
           "(%.1f ms each), read + decode %d ms" % (st["tiles"], st["streams"], st["coded"], st["bad"], st["decode_ms"],
                                                    st["packed"], st["decode_ms"] / max(1, st["packed"]), st["pack_ms"]))
     print("lowest free memory seen: heap %s, PSRAM %s" % (st["heap_min"], st["ps_min"]))
+    if st.get("stalls"):
+        print("unit did not answer for more than 3 s: %d times, longest %.0f s" % (st["stalls"], st["stall_max"]))
     for k, (n, mx) in sorted(st["slow"].items(), key=lambda kv: -kv[1][1])[:8]:
         print("  [SLOW] %-14s %4d times, longest %d ms" % (k, n, mx))
     if st["crash"]:

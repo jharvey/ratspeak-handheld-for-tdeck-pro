@@ -6171,6 +6171,7 @@ void mapGpsAsk(bool opening);
 bool gpsCurrent();
 bool gpsFresh();
 uint32_t g_cardWaitFails = 0, g_cardWaitMaxMs = 0;   // waits for the storage lease: timed out / longest
+uint32_t g_cardWaitGaveUpAt = 0;                     // millis() of the last wait that timed out
 bool g_mapSdTried = false;
 File g_mapFile;                  // pack file kept open between reads
 char g_mapFilePath[80] = "";
@@ -6179,13 +6180,17 @@ uint32_t g_looseChecked = 0, g_looseHave = 0, g_looseAt = 0;   // per zoom: /map
 // Card calls from the main loop fail at once while the storage worker holds the storage
 // lease (it is saving a message: up to ~1 s on a busy unit). For the map and for uploads a
 // short wait is better than a file reported missing, so hold the lease across the call.
+// After one wait has timed out the worker is in a long job (a big index save): the next
+// calls do not wait again for 4 s, or a map view of many tiles would freeze the unit for
+// a multiple of the wait. Those tiles show as missing and are looked up again later.
 struct CardWait {
     handheld::storage::StorageLease lease{false};
     bool ok = false;
-    explicit CardWait(uint32_t maxMs = 3000) {
+    explicit CardWait(uint32_t maxMs = 1200) {
         const uint32_t t0 = millis();
+        if (g_cardWaitGaveUpAt && t0 - g_cardWaitGaveUpAt < 4000) maxMs = 0;
         while (!(ok = lease.tryAcquire()) && millis() - t0 < maxMs) delay(2);
-        if (!ok) g_cardWaitFails++;
+        if (!ok) { g_cardWaitFails++; if (maxMs) g_cardWaitGaveUpAt = millis() | 1; }
         else if (millis() - t0 > g_cardWaitMaxMs) g_cardWaitMaxMs = millis() - t0;
     }
 };

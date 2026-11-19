@@ -41,6 +41,7 @@ struct Tile {
     int z = -1, x = 0, y = 0;
     bool present = false;        // false = known missing (draw the "no tile" pattern)
     uint32_t used = 0;
+    int64_t lookedAt = 0;        // when it was found missing (looked for again after 5 s)
     uint8_t* bits = nullptr;     // kTileBytes, allocated once
 };
 
@@ -65,6 +66,7 @@ struct LayPack {
     uint8_t show = 0;            // layers to draw (bit = layer index), from g_layerMask and the names
     int8_t woods = -1;           // index of the layer stored solid and drawn hatched
     uint32_t used = 0;
+    int64_t lookedAt = 0;        // when a missing pack was looked for (it is looked for again later)
     uint16_t priorAt[kLayMaxLayers] = {};   // offset in head of each coded layer's table
     uint32_t indexAt = 0;
     uint8_t* head = nullptr;     // kLayHeadMax, allocated once
@@ -235,14 +237,20 @@ void layShow(LayPack& p) {
 // The header, tables and index of the layered pack holding block (bx, by) of zoom z.
 LayPack* layPack(int z, uint32_t bx, uint32_t by) {
     LayPack* victim = &g_lays[0];
+    // A pack found missing is looked for again after 5 s: the card may only have been busy.
+    const int64_t now = esp_timer_get_time();
     for (auto& p : g_lays) {
-        if (p.z == z && p.bx == bx && p.by == by) { p.used = ++g_clock; return &p; }
+        if (p.z == z && p.bx == bx && p.by == by && (p.present || now - p.lookedAt < 5000000)) {
+            p.used = ++g_clock;
+            return &p;
+        }
+        if (p.z == z && p.bx == bx && p.by == by) { victim = &p; break; }   // look again, same slot
         if (p.used < victim->used) victim = &p;
     }
     if (!victim->head) victim->head = bigAlloc(kLayHeadMax);
     if (!victim->head) return nullptr;
     LayPack& p = *victim;
-    p.z = z; p.bx = bx; p.by = by; p.used = ++g_clock; p.present = false;
+    p.z = z; p.bx = bx; p.by = by; p.used = ++g_clock; p.present = false; p.lookedAt = now;
     char path[48];
     layPath(path, sizeof(path), z, bx, by);
     uint8_t* h = p.head;
@@ -398,14 +406,21 @@ Tile* tile(int z, int x, int y) {
     if (y < 0 || y >= n) return nullptr;
     x = ((x % n) + n) % n;
     Tile* victim = &g_cache[0];
+    const int64_t now = esp_timer_get_time();
     for (auto& t : g_cache) {
-        if (t.z == z && t.x == x && t.y == y) { t.used = ++g_clock; ++g_hits; return &t; }
+        if (t.z == z && t.x == x && t.y == y) {
+            // A tile found missing is looked for again after 5 s (the card may have been busy).
+            if (!t.present && now - t.lookedAt >= 5000000) { victim = &t; break; }
+            t.used = ++g_clock; ++g_hits;
+            return &t;
+        }
         if (t.used < victim->used) victim = &t;
     }
     if (!victim->bits) victim->bits = bigAlloc(kTileBytes);
     if (!g_io) g_io = bigAlloc(kIoBytes);
     if (!victim->bits || !g_io) return nullptr;
     victim->z = z; victim->x = x; victim->y = y; victim->used = ++g_clock; victim->present = false;
+    victim->lookedAt = now;
     const int64_t t0 = esp_timer_get_time();
     const bool packed = readLayered(z, x, y, victim->bits) || readPacked(z, x, y, victim->bits);
     g_packUs += (uint64_t)(esp_timer_get_time() - t0);
