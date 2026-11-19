@@ -41,6 +41,7 @@ void forget();                       // drop every cached tile and pack index (c
 // Layered-pack counters: tiles composed, layer streams decoded, of which context-coded,
 // and streams that failed to decode.
 void layeredStats(uint32_t& tiles, uint32_t& streams, uint32_t& coded, uint32_t& bad);
+uint32_t layeredReadFails();         // streams the card did not give (busy); those tiles are retried
 const char* layeredLastBad();        // "" or e.g. "read z13 2482/2990 layer 2 at 81234 len 912 coded"
 
 bool isOpen();

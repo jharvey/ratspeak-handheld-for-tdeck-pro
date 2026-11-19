@@ -110,7 +110,9 @@ def main():
         return time.time() - t0 - settle
 
     print("mapstress: %s, seed %d, %.0f min, around %.4f,%.4f" % (a.port, seed, a.minutes, lat0, lon0), flush=True)
-    send("hb", 1.0)
+    t_first = time.time()
+    while st["lines"] == 0 and time.time() - t_first < 60:   # a busy unit can take a while to answer
+        send("hb", 2.0)
     if st["lines"] == 0:
         sys.exit("no answer from the unit on %s" % a.port)
     end = time.time() + a.minutes * 60

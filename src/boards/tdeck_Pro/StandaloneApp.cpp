@@ -13196,8 +13196,9 @@ void handleSerialLine(char* p) {
                       (unsigned long)lt, (unsigned long)lsn, (unsigned long)lc, (unsigned long)lb,
                       (unsigned long)mapview::layers());
         if (lb) Serial.printf("[MAP] last bad stream: %s\n", mapview::layeredLastBad());
-        Serial.printf("[MAP] card waits: longest %lu ms, %lu timed out\n", (unsigned long)g_cardWaitMaxMs,
-                      (unsigned long)g_cardWaitFails);
+        Serial.printf("[MAP] card waits: longest %lu ms, %lu timed out; %lu layer reads put off\n",
+                      (unsigned long)g_cardWaitMaxMs, (unsigned long)g_cardWaitFails,
+                      (unsigned long)mapview::layeredReadFails());
     } else if (!strcmp(p, "maplayers") || !strncmp(p, "maplayers ", 10)) {
         // maplayers [mask]: overlay layers of the layered map packs. 1 labels, 2 contours,
         // 4 woods, 8 marsh marks, 16 hillshading, 32 any other; 63 = all, 0 = base map only.

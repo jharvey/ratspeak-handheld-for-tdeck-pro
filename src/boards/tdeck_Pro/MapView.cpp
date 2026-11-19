@@ -77,6 +77,7 @@ LayPack g_lays[kLaySlots];
 uint8_t* g_layBits = nullptr;    // one overlay layer while it is decoded
 uint32_t g_layerMask = kLayerAll;
 uint32_t g_layTiles = 0, g_layStreams = 0, g_layCoded = 0, g_layBad = 0;
+uint32_t g_layReadFails = 0;     // streams the card did not give (busy): the tile is looked up again
 char g_layBadWhat[72] = "";      // the last layer stream that failed: where and why
 Tile g_cache[kCacheSlots];
 Pack g_packs[kPackSlots];
@@ -329,6 +330,12 @@ bool readLayered(int z, int x, int y, uint8_t* out) {
         }
         ++g_layStreams;
         if (coded) ++g_layCoded;
+        if (!ok && !strcmp(why, "read")) {
+            // The card was busy. Leave the whole tile out rather than cache it without this
+            // layer: a missing tile is looked up again after 5 s.
+            ++g_layReadFails;
+            return false;
+        }
         if (!ok) {
             ++g_layBad;
             snprintf(g_layBadWhat, sizeof(g_layBadWhat), "%s z%d %d/%d layer %d at %lu len %lu%s", why, z, x, y,
@@ -482,6 +489,7 @@ void layeredStats(uint32_t& tiles, uint32_t& streams, uint32_t& coded, uint32_t&
     tiles = g_layTiles; streams = g_layStreams; coded = g_layCoded; bad = g_layBad;
 }
 const char* layeredLastBad() { return g_layBadWhat; }
+uint32_t layeredReadFails() { return g_layReadFails; }
 
 CoordFormatter g_coordFmt = nullptr;
 void setCoordFormatter(CoordFormatter f) { g_coordFmt = f; }
