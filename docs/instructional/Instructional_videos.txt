@@ -66,10 +66,16 @@ THE SERIES
   the outbox; unlock with the password if set.
 - Shows: Minimal mode, Inbox, chat, outbox, lock.
 
--- 03_Everyday_messaging_Everything_mode.mp4                             PLANNED
+-- 02.1_Everyday_messaging_Everything_mode.mp4                             PLANNED
+- Purpose: the same as 02, but in everything mode, so extra stuff in the menues.
+- Theme: saem theme as 02, but continue the chat Pip asks "What cheese should I bring? and Gouda replies. Show the prior messages from 02. 
+- Parts: same as 02
+- Shows: same as 02
+
+-- 03_Every_Menu_option.mp4                             PLANNED
 - Purpose: the same day with every feature showing: what each extra menu entry is for.
 - Theme: Professor Nibbles gives a lecture tour of every menu, pointer in hand, getting
-  carried away at each one ("and THIS, my dear students, is the Peers list...").
+  carried away at each one ("and THIS, my dear students, is the Peers list..."). Include audio, preferably a voice that sounds fluid not robotic. can we use the Claude play back voice?
 - Parts: the full menu (Home, Inbox, Contacts, Peers, Atlas, Library, Settings ...); chat
   menu (MIC): share location, voice message, contact card; Peers and announce; the home
   card; where each feature is explained further in this series.
@@ -88,7 +94,7 @@ THE SERIES
 - Purpose: make the battery last: what each energy mode does and how to pick or tune one.
 - Theme: The Long Winter Burrow: Pip is snowed in for a week and rations battery like
   cheese. Each energy mode is a "cheese ration" (Full power = the whole wheel in a day,
-  Ultra-low = one crumb an hour). Part C: Mabel teaches battery care.
+  Ultra-low = one crumb an hour). Part C: Mabel teaches battery care. Explain what each mode does likes is GPS turned on once a day, or only on demand? Explain things like that. Go through all modes and explain what each one does. 
 - Part A: the modes (Full power, Balanced, Saver, Ultra-low, On demand): what changes
   (radio listening, GPS, screen, wake time) and the hours each gives on the Power page.
 - Part B: Custom power: each setting and its cost; the energy monitor and the energy trend
@@ -99,9 +105,8 @@ THE SERIES
 
 -- 06_Home_Assistant_mode.mp4                                            PLANNED
 - Purpose: use the handheld with Home Assistant: alerts from the house, commands to it,
-- Theme: Rat Manor, the smart burrow: Pip says "open the pantry door"; the house warns
-  "Cat detected at the back door"; Mabel arrives home and the burrow knows.
-  voice.
+- Theme: Rat Manor, the smart burrow: Pip says via microphone button "turn on the kitchen lights" then "open the pantry door"; the house warns
+  "Fluffy the Cat detected at the back door"; Mabel the home owner arrives home and the burrow knows. Borrow warns to "Home Ownder Mabel returned, Cat is moving likely entering kitchen, get back to your home". Pip types instead of saying "Home safe turn kitchen light off". Pip reviews the setitngs showing what is needed to make this happen. House is on WiFi and accepts both voice message and text messages as commands. Text messages work over LoRa and voice works when high bandwidth on WiFi. 
 - Parts: what is needed at home (the bridge); Settings Home Assistant voice; sending a
   command; receiving an alert; presence (home / away). Only what is built at recording
   time; the rest is said as "coming".
@@ -255,6 +260,20 @@ THE SERIES
   internet needed.
 - Theme: "Why rats don't need cell towers": the power goes out in the city, the phones go
   quiet, Pip and Mabel keep talking.
+  
+-- 28_ATAK_overview.mp4
+- Purpose: explain ATAK and describe how to use it with this device.
+- Theme: "Tacticle rat, protecting the mice."
+
+-- 29_Group_message_overview.mp4
+- Purpose: show how to send a group message, then show how to configure a group, and how to share a group.
+- Theme: Rat family on vactaion, family 1 visits family 2, they share contact inforamtion to communcicate during the visit.
+
+-- 30_get_and_install_maps_On_SD_card_overview.mp4
+- Purpose: show how to format and install a SD card then how to get map data for your SD card.
+- Theme: Rat is going on vacation wants to get maps data for new location.
+
+  
 
 
 ==========================================================================================

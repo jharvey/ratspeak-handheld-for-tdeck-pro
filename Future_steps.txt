@@ -409,6 +409,13 @@ Also asked 2026-11-13
   must supply 5 V on VBUS and the USB-C is wired as a charge input; check the schematic.
   Workaround: a powered USB hub / OTG adapter with its own supply, if the port can do host
   data at all. The PC-side need (drag maps onto the card) is the USB mass-storage item.
+Also asked 2026-11-21
+- Add ATAK can we add this? Share items of interest to other devices. 
+- Add maps selection feature, how to get world maps vs higher resolution for local maps? Local maps, etc. How does someone else obtain these maps for the SD card?
+- Add how to's to libary. Explain less intuitive stuff like energy modes. Add basic information about LoRa and how it's slow but low energy. As well WiFi works for audio, and consumes a bunch more power. 
+- stress test shouldn't be random menus key strokes, it should be random tasks. A task could be change idle screen, or view wifi routers, or browse to random map location. Create a bunch of common tasks, then randomize which task is done for each message wake session. Randomoize a task and measure how long it takes to complete the task. Also we should do this with different energy modes as well. Test with some radios on full power, others on normal, or low energy modes. 
+- Add option that if USB can provide greater then I guess 0.4A of if energy goes into something other then charging the battery, then while plugged in, operate in full power mode. But if connected to a USB solar panel, you'll likly have much less energy, so don't auto switch to high energy mode. Also add this as a menu option to enable or dissable. Prioritze charging the battery first, then if you have extra energy, go into preformance mode. Concept being that this sits plugged in typically, then power goes out and it backs down on energy consumption. Or you put it on a backpack with a small USB solar panel, whcih will provide enough power for low energy mode, but not enough for high power mode. So don't consume energy when you don't have an infinate supply. 
+- Hmmm, should we create a group chat option? Send message to my family, or predefined groups? Also share a group? Perhaps it's contacts / groups? Can we create groups as a sub menu on contacts? Also can we share a group? Share a group would send the contacts, and the group, similar to what is done with contacts. 
 
 Build / devex
 -------------
