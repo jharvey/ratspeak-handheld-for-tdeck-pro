@@ -141,7 +141,7 @@ Purpose: two people who meet swap contact cards, so they can message each other.
 
 Setup:
 - Side-by-side video: two units, "JACK" on the left and "JILL" on the right, each labeled.
-- Both idle screens are the Map, at Cave Spring Hollow in Lynchburg, Tennessee.
+- Both idle screens are the Map, at Cave Spring Hollow in Lynchburg, Tennessee. Zoom 14.
 - No password on either unit. Both wake to the Inbox, as the Inbox is what they probably
   used last.
 - Jack and Jill are not contacts yet, but both have announced, so each is in the other's
@@ -155,6 +155,7 @@ Steps:
 4. Jack presses 3 (SYM + R) = Share. The list reads "Send JACK to:".
 5. Jill is not a contact yet, so Jack presses P to switch to Peers, picks Jill (T / V) and
    presses Enter. His card goes out.
+   5.1 show arrow or similar to point 0 NEW on jill device. Which changes to 1 NEW.
 6. Overlay box: "Jill receives his contact and sends her contact to Jack".
 7. Jill presses a key: the Inbox shows a new chat from Jack. She opens it (its number, then
    Enter): it shows "[card] JACK". She presses Enter on the empty message line: Jack is
