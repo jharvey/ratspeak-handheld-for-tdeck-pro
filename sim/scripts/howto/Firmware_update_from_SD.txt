@@ -54,7 +54,7 @@ wait 1500
 key 0
 wait 4500
 caption The bottom line asks: Enter again: install it. (^ cancels.)
-point 120 271 3500
+point 120 271 3500 234 20
 wait 4500
 note 8000 After the second Enter the radio writes the file (about half a minute), checks it and restarts with the new firmware. Do not switch it off meanwhile.
 wait 8500

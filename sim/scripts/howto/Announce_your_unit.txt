@@ -23,7 +23,7 @@ wait 1200
 key H
 wait 2500
 caption Home shows your name and your address: the two lines of letters and digits after LXMF.
-point 150 60 3500
+point 150 60 3500 176 36
 wait 4200
 caption N: Announce ID. The radio sends its name and address once over LoRa.
 wait 1500

@@ -23,7 +23,7 @@ rec 31_USB_power_and_charging
 note 7000 Cheddar Gorge. Professor Nibbles is off on a long walk. Did he charge his radio? He did not.
 wait 7500
 caption The idle screen shows the battery at the top: 30 %, and "unplugged".
-point 168 8 3500
+point 168 8 3500 86 16
 wait 4500
 # --- Part A: charging
 caption Part A: charging. Plug a USB-C charger or a power bank into the radio.
@@ -34,7 +34,7 @@ caption Any key wakes the radio. The battery icon at the top left shows the char
 wait 1500
 key SPACE
 wait 1500
-point 44 14 3000
+point 44 14 3000 24 26
 wait 3500
 caption Settings: M, then S. Then 6 (Battery): hold SYM, press F.
 wait 1500
@@ -129,7 +129,7 @@ wait 1000
 key ENTER
 wait 3000
 caption Done: Low battery -> MABEL at 10%. Row 1, Send at, picks 5, 10, 15 or 20 %, or off.
-point 120 271 3500
+point 120 271 3500 234 20
 wait 5000
 key BACK
 wait 1200
@@ -146,7 +146,7 @@ caption Part D: empty. The battery is nearly flat.
 wait 1500
 battery 3
 wait 4000
-point 168 8 3000
+point 168 8 3000 86 16
 wait 3500
 caption When it runs out, the radio draws this screen and switches itself off.
 wait 1500
@@ -156,7 +156,7 @@ wait 4500
 # it, so draw it again (a real unit is off by now and redraws nothing)
 serial batempty
 wait 1500
-point 120 300 4000
+point 120 300 4000 234 44
 wait 4500
 note 7500 BATTERY EMPTY / PLUG IN A USB CHARGER. The e-ink screen keeps this picture with no power at all.
 wait 8000

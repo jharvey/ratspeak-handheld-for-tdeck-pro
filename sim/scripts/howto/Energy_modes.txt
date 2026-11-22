@@ -1,4 +1,5 @@
 # How-to video: the energy modes on Settings > Power. Device hv_robin, on battery.
+# What each mode does is taken from src/boards/tdeck_Pro/power/PowerModes.h.
 usb off
 battery 80
 expect 60000 [BOOT] ready
@@ -13,8 +14,8 @@ wait 1500
 serial idle now
 wait 2500
 rec Energy_modes
-note 6000 Energy modes: how much the radio sleeps. More sleep means more days on one charge.
-wait 6500
+note 7000 Energy modes: how much the radio sleeps, and how often it uses the GPS. More sleep means more days on one charge.
+wait 7500
 caption Any key wakes the radio. Settings: M, then S. Then 5 (Power): hold SYM, press D.
 wait 1500
 key SPACE
@@ -25,29 +26,49 @@ key S
 wait 1500
 key 5
 wait 3000
-caption Each row is a mode, with how long the battery lasts in it. A row's number picks it. Now: 2, Balanced.
-wait 5500
-caption 1 Full power: always awake. The fastest, and the shortest battery life.
+caption Each row is a mode, with how long a full battery lasts in it. A row's number picks it. Now: 2, Balanced.
+wait 6000
+note 8500 Asleep does not mean deaf. In every mode that listens, a key press or an incoming message wakes the radio at once. What slows down is background work.
+wait 9000
+caption 1 Full power: never sleeps.
 wait 1500
 key 1
-wait 4000
-caption 3 Saver: sleeps most of the time and wakes once a minute. LoRa still hears your messages.
+wait 2500
+note 8000 Full power: always awake, GPS always on, WiFi and the key light allowed. The fastest, and the shortest battery life.
+wait 8500
+caption 2 Balanced, the everyday mode.
+wait 1500
+key 2
+wait 2500
+note 8500 Balanced: sleeps between wake-ups one second apart. GPS takes a fix every 15 minutes. WiFi and the key light are allowed.
+wait 9000
+caption 3 Saver.
 wait 1500
 key 3
-wait 4500
-caption 4 Ultra-low: LoRa only. GPS and WiFi are off; the radio wakes every 5 minutes.
+wait 2500
+note 8500 Saver: sleeps and wakes once a minute. GPS takes a fix once an hour. WiFi and the key light are off. LoRa still hears your messages.
+wait 9000
+caption 4 Ultra-low.
 wait 1500
 key 4
-wait 4500
-caption V goes down. 5 On demand: LoRa is on only for a while after you press a key.
+wait 2500
+note 8500 Ultra-low: LoRa listening and nothing else. It wakes every 5 minutes. GPS, WiFi and the lights are off, so your position is not updated.
+wait 9000
+caption V goes down. 5 On demand.
 wait 1500
 key V
 wait 600
 key 5
-wait 4500
-caption 6 Check-in: LoRa listens only at set times, here every hour. Messages wait until then. 7 Custom: your own settings.
-wait 6500
-caption Further down: 9 Energy monitor, 10 Full power on USB (on a charger the radio runs at full power).
+wait 2500
+note 10000 On demand: everything is off until you press a key. Then LoRa is on for 2 minutes, to send and get replies, and the GPS takes a fix if the last one is over 15 minutes old. Messages sent to you in between wait at the sender.
+wait 10500
+caption 6 Check-in: a set time to listen. 7 Custom: your own settings.
+wait 2500
+note 10000 Check-in: LoRa is on only around a set time, for example every hour at half past: from 1 minute before to 3 minutes after. Messages you write wait for it. Everyone in the team uses the same time.
+wait 10500
+caption A GPS fix can keep the GPS powered for up to 3 minutes. Fewer fixes is the biggest saving after sleep.
+wait 7000
+caption Further down: 9 Energy monitor, 10 Full power on USB.
 wait 1500
 key V
 wait 500
@@ -58,14 +79,26 @@ wait 500
 key V
 wait 500
 key V
-wait 4500
+wait 3500
+note 10000 Full power on USB is ON at first: whenever USB power is plugged in, the radio runs at Full power, whatever mode you chose. Unplug it and it goes back to your mode by itself.
+wait 10500
+note 8000 Switch row 10 OFF to keep your own mode on USB: a small solar panel or a weak power bank then charges the battery instead of feeding Full power.
+wait 8500
 caption 11 Standby when idle: after some hours without a key press, GPS, WiFi and the key light go off. LoRa still listens. 12 sets the hours.
 wait 1500
 key V
 wait 500
 key V
-wait 500
+wait 6500
+caption Now USB is plugged in. Row 13, Now, shows what is in force.
+wait 1500
 key V
+wait 800
+usb on
+wait 5000
+caption Unplugged again: back to the chosen mode.
+wait 1500
+usb off
 wait 4500
 caption Back to the everyday mode: 2, Balanced.
 wait 1500

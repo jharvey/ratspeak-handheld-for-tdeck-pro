@@ -36,6 +36,9 @@ CONVENTIONS FOR EVERY VIDEO
   label above it showing its name (for example "JACK" left, "JILL" right).
 - Colours in anything new (name tags, overlays, highlights): no red and no blue. Name tags:
   person 1 green, person 2 orange, person 3 light purple.
+- Pointing at something on the screen: a blinking box around the item, with the hand beside
+  it (no circle). In the simulator script: point <x> <y> <ms> <w> <h>, the item's centre and
+  size in screen pixels.
 - Hand pointer with click sounds on every key press; the key's name shows above the
   keyboard as it is pressed.
 - Typing is shown in ALL CAPS (the keyboard types capitals). Alt + key gives a small letter.

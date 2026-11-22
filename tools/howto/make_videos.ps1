@@ -214,6 +214,10 @@ foreach ($v in $videos) {
     if ($v.mic) { $pyArgs += "--mic" }      # the clean voice too (not on calls: it echoes)
     if ($v.rec2) { $pyArgs += @("--rec2", "$simData\$($v.rec2)\shots\$name", "--labels") + $v.labels }
     if ($v.colours) { $pyArgs += @("--label-colours") + $v.colours }   # each person keeps a colour
+    # the scripts give the size of each "point" box: the main one, then the second recorded device's
+    $sc2 = @($v.comps | Where-Object { $_ -and $v.rec2 -and ($_ -split "@")[1] -replace "\+.*", "" -eq $v.rec2 } |
+             ForEach-Object { "$scripts\" + ($_ -split "@")[0] })
+    $pyArgs += @("--scripts", "$scripts\$name.txt") + $sc2
     & python @pyArgs
     if ($LASTEXITCODE) { $failed += $name }
 }

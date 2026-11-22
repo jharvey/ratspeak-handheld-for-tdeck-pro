@@ -65,7 +65,7 @@ wait 1000
 key ENTER
 wait 3000
 caption Done. The line at the bottom confirms it: Low battery -> SAGE at 10%.
-point 120 271 3500
+point 120 271 3500 234 20
 wait 4500
 note 5500 Row 1 of the same page, Send at, changes the % or turns the notice off.
 wait 6000

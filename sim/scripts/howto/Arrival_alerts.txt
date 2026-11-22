@@ -62,7 +62,7 @@ wait 2500
 serial cpos 5a9e0c2d7b41f6830e1d4c7a9b2f5e60 29.4262 -98.4859 0
 expect 5000 [GEOF] SAGE is
 wait 1000
-point 120 271 3500
+point 120 271 3500 234 20
 wait 5000
 serial idle now
 wait 3500

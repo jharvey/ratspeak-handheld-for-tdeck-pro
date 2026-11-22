@@ -8,7 +8,10 @@ fNNNNN.png (whole device drawing, saved when it changes) and rec.txt:
   K|D|U <ms> <key> x,y,w,h    key tap / key held down / released (cap rectangle in frame pixels)
   C <ms> <text>               caption above the device(s) from now on
   N <ms> <dur> <text>         a note box over the screen for dur ms
-  P <ms> <dur> <x> <y>        a hand points (and wiggles) at x,y for dur ms
+  P <ms> <dur> <x> <y>        a blinking box around the item at x,y for dur ms, a hand beside it.
+                              The box size comes from the simulator script (--scripts):
+                              "point <x> <y> <ms> [<w> <h>]", x,y = the item's centre and
+                              w,h = its size, in panel pixels (240 x 320).
   E <ms>                      end
 This script:
   * plays the frames at their real times, with long quiet gaps shortened,
@@ -222,9 +225,27 @@ def click_wav(path, clicks, total_ms, rate=44100, audio=()):
 
 
 # ---- one recording ---------------------------------------------------------------------
+PANEL_PX = 1.46           # recording pixels per panel pixel (the simulator's device drawing)
+POINT_BOX = (64, 20)      # box size in panel pixels when the script gives none
+BLINK_MS = (420, 180)     # the box: on, off
+
+
+def point_boxes(script):
+    """The box size (panel pixels) of each "point" line of a simulator script, in order."""
+    out = []
+    if not script or not os.path.exists(script):
+        return out
+    for line in open(script, encoding="utf-8"):
+        p = line.split()
+        if p and p[0] == "point":
+            out.append((float(p[4]), float(p[5])) if len(p) >= 6 else POINT_BOX)
+    return out
+
+
 class Rec:
-    def __init__(self, d, crop_bottom=0, mic=False):
+    def __init__(self, d, crop_bottom=0, mic=False, script=""):
         self.dir = d
+        self.boxes = point_boxes(script)
         self.frames, self.keys, self.caps, self.notes, self.points = [], [], [], [], []
         self.t0, end = None, 0
         for line in open(os.path.join(d, "rec.txt"), encoding="utf-8"):
@@ -397,12 +418,16 @@ def main():
                     help="colour number of each label (0 green, 1 orange, 2 light purple, 3 olive brown); default 0 1")
     ap.add_argument("--crop-bottom", type=int, default=0, help="pixels to cut off the device drawing's bottom")
     ap.add_argument("--mic", action="store_true", help="also the microphone's sound (the clean voice)")
+    ap.add_argument("--scripts", nargs="*", default=[],
+                    help="the simulator script of rec (and of rec2): the sizes of its point boxes")
     args = ap.parse_args()
 
     ffmpeg = os.environ.get("FFMPEG") or shutil.which("ffmpeg")
     if not ffmpeg:
         sys.exit("ffmpeg not found (PATH or FFMPEG=...)")
-    recs = [Rec(args.rec, args.crop_bottom, args.mic)] + ([Rec(args.rec2, args.crop_bottom, args.mic)] if args.rec2 else [])
+    sc = args.scripts + ["", ""]
+    recs = [Rec(args.rec, args.crop_bottom, args.mic, sc[0])] + \
+           ([Rec(args.rec2, args.crop_bottom, args.mic, sc[1])] if args.rec2 else [])
     if len(recs) == 2 and recs[0].t0 and recs[1].t0:
         base = min(r.t0 for r in recs)
         for r in recs:
@@ -538,12 +563,14 @@ def main():
                 hand, tx, ty = (hand_r, tipx_r, tipy_r) if side == "R" else (hand_l, tipx_l, tipy_l)
                 px = ox + pos[0] + (push if side == "R" else -push)
                 img.paste(hand, (int(px - tx), int(oy + pos[1] - ty + push)), hand)
-            for pt, dur, px, py in r.points:            # a hand points (wiggling) at something
+            for n, (pt, dur, px, py) in enumerate(r.points):   # a blinking box around the item, a hand beside it
                 if pt <= t <= pt + dur:
-                    wig = 7 * math.sin((t - pt) / 1000 * 2 * math.pi * 2.2)
-                    rr = 24 + 4 * math.sin((t - pt) / 1000 * 2 * math.pi * 1.5)
-                    d.ellipse((ox + px - rr, oy + py - rr, ox + px + rr, oy + py + rr), outline=ORANGE, width=4)
-                    img.paste(hand_r, (int(ox + px + 6 + wig - tipx_r), int(oy + py + 6 + wig - tipy_r)), hand_r)
+                    bw, bh = r.boxes[n] if n < len(r.boxes) else POINT_BOX
+                    hw, hh = bw * PANEL_PX / 2 + 5, bh * PANEL_PX / 2 + 5
+                    if (v - fwd(pt)) % sum(BLINK_MS) < BLINK_MS[0]:
+                        d.rectangle((ox + px - hw, oy + py - hh, ox + px + hw, oy + py + hh), outline=ORANGE, width=5)
+                    # the hand's finger on the box's lower right corner, clear of the item
+                    img.paste(hand_r, (int(ox + px + hw + 2 - tipx_r), int(oy + py + hh + 2 - tipy_r)), hand_r)
             if badge:
                 tw = d.textlength(badge, font=f_key)
                 bx, by = ox + r.w // 2, oy + int(r.h * 0.615)

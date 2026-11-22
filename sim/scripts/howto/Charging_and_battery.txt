@@ -14,7 +14,7 @@ serial idle now
 wait 2500
 rec Charging_and_battery
 caption The idle screen shows the battery at the top: 35 %, and "unplugged".
-point 168 8 3500
+point 168 8 3500 86 16
 wait 4200
 caption Plug a USB-C charger into the radio.
 wait 1500
@@ -24,7 +24,7 @@ caption Any key wakes the radio. The battery icon at the top left shows the char
 wait 1500
 key SPACE
 wait 1500
-point 44 14 3000
+point 44 14 3000 24 26
 wait 3500
 caption Settings: M, then S. Then 6 (Battery): hold SYM, press F.
 wait 1500
