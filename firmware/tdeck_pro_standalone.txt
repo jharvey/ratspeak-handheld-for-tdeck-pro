@@ -1,7 +1,7 @@
 env tdeck_pro_standalone
-source 1c890512c1529bee8a122a19f83a839ffb42cb86
-built 2026-11-22 03:34 on debian-build (tools/vm_build.py)
-size 2347184
-sha256 b4df967048048f0e5014be511fbce07c0c8126647ee74caf4ae4f3f8f167d8f7
+source d582a508266bde1f901442912721f4120813dc41 + uncommitted changes
+built 2026-11-22 04:11 on debian-build (tools/vm_build.py)
+size 2348080
+sha256 654d7cd0cbd9598a1aba9cce658fd66f1dee708f13ef20a811ad6a2728e358c5
 uncommitted changes in the build:
-  none
+   M tools/howto/make_videos.ps1
