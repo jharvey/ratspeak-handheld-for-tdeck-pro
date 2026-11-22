@@ -1,0 +1,104 @@
+# Standby when idle (Settings > Power rows 11 and 12, console "standby"). Fresh device:
+#   run-script.bat scripts\standby.txt standby fresh
+# then scripts\standby_after.txt on the same device name (no "fresh"): the option is saved.
+# The real timeout is hours; "standby test <s>" makes it seconds for this script (not saved).
+# A message arriving in standby is tested with two simulators: scripts\standby_pair.py.
+usb off
+expect 20000 [BOOT] ready
+serial wiz skip
+wait 2000
+serial standby
+expect 3000 [STANDBY] option=off after=6 h state=normal
+# Option off: the (shortened) timeout never triggers.
+serial standby test 8
+expect 3000 (test timeout) state=normal
+wait 14000
+serial standby
+expect 3000 option=off after=6 h (test timeout) state=normal
+serial standby test 0
+# Turn it on in Settings > Power: row 11 (the page opens on the mode in use, Balanced = row 2:
+# nine rows down, Enter). Row 12 steps the hours.
+key M
+wait 800
+key S
+wait 800
+key 5
+wait 1200
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+wait 800
+key ENTER
+expect 3000 [STANDBY] option on, after 6 h
+wait 1200
+shot standby-01-option-on.png
+key V
+wait 500
+key ENTER
+expect 3000 [STANDBY] option on, after 12 h
+serial standby after 6
+expect 3000 option=on after=6 h state=normal
+# Normal mode before standby: Balanced, GPS always on and powered.
+serial pw
+expect 3000 [POWER] mode=Balanced cpu=240 MHz sleep=1 s awake=15s lora=on gps=Always on(powered)
+# Idle timeout reached (8 s without a key): standby. GPS off, WiFi off, key light off,
+# LoRa still listening, the idle screen up.
+serial standby test 8
+expect 20000 [STANDBY] enter (idle)
+expect 3000 [POWER] Balanced (standby): cpu 240 MHz, sleep 5 min, awake 5s, lora on, gps Off, wifi off, keylight off
+expect 3000 [IDLE] enter
+wait 1500
+shot standby-02-idle-screen.png
+serial pw
+expect 3000 state=standby
+expect 3000 lora=on gps=Off(resting) wifi=off keylight=off
+# Console activity is not use: a console key wakes the idle screen, the unit stays in standby.
+serial k T
+expect 3000 [IDLE] wake
+wait 3000
+serial standby
+expect 3000 state=standby
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+# A real key: normal mode and the GPS are back, the idle timer starts again.
+key T
+expect 3000 [STANDBY] leave (key)
+expect 3000 [POWER] Balanced: cpu 240 MHz, sleep 1 s, awake 15s, lora on, gps Always on, wifi allowed, keylight allowed
+wait 1500
+serial pw
+expect 3000 state=normal
+expect 3000 gps=Always on(powered)
+shot standby-03-awake.png
+# Left alone again: standby again. This time a real key on the idle screen ends it.
+expect 20000 [STANDBY] enter (idle)
+wait 1500
+key A
+expect 3000 [STANDBY] leave (key)
+expect 3000 [IDLE] wake
+# "standby now" / "standby wake" (bench), and the Power page line while in standby.
+serial standby test 0
+serial standby now
+expect 3000 [STANDBY] enter (console)
+serial standby wake
+expect 3000 [STANDBY] leave (console)
+# Option off from the console while in standby: back to normal, and it stays normal.
+serial standby now
+expect 3000 [STANDBY] enter (console)
+serial standby off
+expect 3000 [STANDBY] leave (option off)
+serial standby test 5
+wait 9000
+serial standby
+expect 3000 option=off after=6 h (test timeout) state=normal
+# Leave it on for standby_after.txt.
+serial standby test 0
+serial standby on
+expect 3000 option=on after=6 h state=normal
+quit

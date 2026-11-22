@@ -341,8 +341,10 @@ S     Settings                      ← M then S
 │   ├── S.5.8  Check-in sched       the same Check-in page (time · every · next · waiting · clock)
 │   ├── S.5.9  Energy monitor       per-part mAh vs gauge, trend graph (§6.5)
 │   ├── S.5.10 Full power on USB    ON (default) / OFF
-│   ├── S.5.11 Now                  CPU MHz and % of time asleep
-│   └── S.5.12 Battery draw         mA and estimated time left (gauge)
+│   ├── S.5.11 Standby when idle    ON / OFF (default): GPS off after the hours below without a key (§6.2a)
+│   ├── S.5.12 Standby after        1 / 3 / 6 (default) / 12 / 24 h
+│   ├── S.5.13 Now                  CPU MHz and % of time asleep, or "STANDBY for N min"
+│   └── S.5.14 Battery draw         mA and estimated time left (gauge)
 ├── S.6   Battery                   volts, %, current, charger status, capacity
 │   ├── S.6.8  Battery log          internal RAM ring / SD CSV, dump to USB
 │   └── S.6.10 Reset calibration
@@ -395,6 +397,29 @@ runs **Full**, whatever mode is chosen, and goes back to the chosen mode when un
 The Power row on the Settings root then reads e.g. `Saver (USB: Full)`.
 
 Modes are stored in NVS namespace `rs_power` and survive reboots.
+
+#### 6.2a Standby when idle (S.5.11, S.5.12)
+
+For a radio that mostly sits on a shelf and is picked up now and then. With the option ON,
+the unit runs in the chosen mode while someone uses it. After **Standby after** hours
+(1 / 3 / 6 / 12 / 24, default 6) without a key or touch it goes into **standby**: GPS off,
+WiFi off, key light off, touch off, the CPU asleep between 5 minute wake-ups, and the idle
+screen up with `STANDBY | press a KEY` on its bottom line. LoRa keeps listening (duty-cycled
+receive, as in Ultra-low), so messages still arrive and are notified as usual. From Full,
+Balanced or Saver the standby profile equals Ultra-low (~7 mA estimated, against ~67 mA for
+Balanced with the GPS always on); On demand and Check-in keep their own LoRa schedule.
+
+Standby ends only with a real key (or a touch): the chosen mode is back at once, the GPS
+starts a fix, WiFi rejoins, and the idle timer starts again. A message arriving, console
+commands, console keys (`k`) and the soak test do **not** end it and do not reset the timer.
+Standby also applies on USB power (it overrides *Full power on USB*). The last GPS fix stays
+on the map and in Time & Location with its age. The option is OFF by default; it is saved
+in NVS `rs_power` (`sby`, `sbyH`).
+
+Console: `standby` (state), `standby on|off`, `standby after <1|3|6|12|24>`, `standby now`,
+`standby wake`, `standby test <seconds>` (bench: a timeout in seconds, not saved). `pw`
+prints the state too. Simulator: `sim/scripts/standby.txt`, `standby_after.txt`,
+`standby_pair.py` (a message arriving in standby).
 
 ### 6.2 Custom knobs (S.5.7)
 
@@ -1030,6 +1055,7 @@ the device does not light-sleep.
 | `rl` / `rl 0` | dump / clear the RTC power log (survives resets: time, uptime, mV, mA, USB, sleeps; a BOOT line with the reset reason at every boot) |
 | `sleeptest <ms> [guard] [stop]` | diagnostic: one timer-only light sleep; stop bits 1 audio, 2 GPS, 4 LoRa |
 | `msg <32 hex> <text>` / `id` | send a message to a destination hash / print this device's destination |
+| `standby` / `standby on\|off` / `standby after <h>` / `standby now\|wake` / `standby test <s>` | Standby when idle (§6.2a): state / the option / hours 1, 3, 6, 12, 24 (saved) / enter or leave now / bench timeout in seconds (not saved) |
 | `rxdc 0\|2..8` / `tcxo` | LoRa receive duty cycle off / preamble symbols per window (default 4, saved); bench: TCXO cold-start check at 5–640 ms |
 | `txp <dBm>` | LoRa transmit power, −9…22, saved (bench builds with `RS_BENCH_TX_DBM` default to it) |
 | `epdoff 0\|1` / `audio 0\|1` / `gpio <pin> <0\|1>` | bench switches: e-ink off before sleep, audio path, raw output pin |
@@ -1136,3 +1162,4 @@ entry mode.
 | 0.13 | Boot no longer opens every saved message: a record index (saved after 30 s without a change, checked against the file names at boot) replaces the scan (§8.4); opening threads and mark-read use it too |
 | 0.14 | Password lock (§1.2c), contact sharing (§1.2a), list pages + find (§1.2b), TCP hub (S.3.6), identity slots (S.7.5) |
 | 0.15 | Boot: the outgoing-recovery wait stops when recovery is done (was a fixed 3 s); boot phase times on the console (`[BOOT] <ms> <phase>`). Outbox saved without padding (NVS key `q2`, ~6x less NVS wear when messages queue) |
+| 0.16 | Standby when idle (S.5.11 / S.5.12, §6.2a): after 1-24 h (default 6) without a key the GPS, WiFi and key light go off and the CPU sleeps, LoRa still listening; a key brings the chosen mode back. Off by default; console `standby` |

@@ -1,0 +1,11 @@
+# Run after scripts\standby.txt on the same device (no "fresh"): the Standby when idle
+# option and its hours survive a restart; the unit starts in the normal mode. Then off again.
+expect 60000 [BOOT] ready
+wait 1500
+serial standby
+expect 3000 [STANDBY] option=on after=6 h state=normal
+serial standby after 24
+expect 3000 option=on after=24 h
+serial standby off
+expect 3000 option=off after=24 h state=normal
+quit

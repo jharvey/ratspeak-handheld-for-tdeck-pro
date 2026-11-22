@@ -2597,6 +2597,14 @@ char     g_toast[28] = "";
 uint32_t g_toastUntil = 0;
 bool     g_idleActive = false;
 uint32_t g_lastInputMs = 0;
+// Standby when idle (S.5.11): g_lastUseMs is the last real key or touch (console keys, the
+// soak test and incoming messages do not count); g_standby = the standby profile is in force.
+uint32_t g_lastUseMs = 0;
+bool     g_standby = false;
+uint32_t g_standbySince = 0;
+uint32_t g_standbyTestS = 0;       // console "standby test <s>": timeout in seconds, not saved
+volatile bool g_useSeen = false;   // a key came off the keyboard chip (set in the busy callback too)
+void standbyNoteUse(const char* why);
 
 void requestRedraw() { g_redraw = true; }
 
@@ -3890,8 +3898,13 @@ void buildSettingsRows(Page p) {
         srow(RK_MENU, "Check-in sched", "%s, every %s%s", at, ci, g_outboxCount ? ", msgs wait" : "");
         srow(RK_MENU, "Energy monitor", "what uses the battery");
         srow(RK_TOGGLE, "Full power on USB", "%s", g_pw.fullOnUsb ? "ON" : "OFF");
+        srow(RK_TOGGLE, "Standby when idle", g_pw.standby ? "ON: GPS off after %u h idle" : "OFF",
+             (unsigned)g_pw.standbyHours);
+        srow(RK_PICK, "Standby after", "%u h without a key", (unsigned)g_pw.standbyHours);
         const uint32_t tot = g_pwAwakeMs + g_pwSleepMs;
-        if (g_pwOnUsb)               srow(RK_INFO, "Now", "Full (USB power)");
+        if (g_standby)               srow(RK_INFO, "Now", "STANDBY for %lu min, GPS off",
+                                          (unsigned long)((millis() - g_standbySince) / 60000UL));
+        else if (g_pwOnUsb)          srow(RK_INFO, "Now", "Full (USB power)");
         else if (!g_pwEff.wakeSecs)  srow(RK_INFO, "Now", "%u MHz, never sleeps", (unsigned)g_pwEff.cpuMhz);
         else srow(RK_INFO, "Now", "%u MHz, asleep %u%%", (unsigned)g_pwEff.cpuMhz,
                   tot ? (unsigned)((uint64_t)g_pwSleepMs * 100 / tot) : 0u);
@@ -4567,6 +4580,17 @@ void activateSetting(int idx) {
             g_pw.fullOnUsb = !g_pw.fullOnUsb;
             power::save(g_pw);
             powerApply(true);
+            requestRedraw();
+        } else if (idx == power::MODE_CUSTOM + 4) {
+            g_pw.standby = !g_pw.standby;
+            power::save(g_pw);
+            toast(g_pw.standby ? "Standby after %u h idle" : "Standby when idle: off", (unsigned)g_pw.standbyHours);
+            Serial.printf("[STANDBY] option %s, after %u h\n", g_pw.standby ? "on" : "off", (unsigned)g_pw.standbyHours);
+            requestRedraw();
+        } else if (idx == power::MODE_CUSTOM + 5) {
+            g_pw.standbyHours = power::nextStandbyHours(g_pw.standbyHours);
+            power::save(g_pw);
+            Serial.printf("[STANDBY] option %s, after %u h\n", g_pw.standby ? "on" : "off", (unsigned)g_pw.standbyHours);
             requestRedraw();
         }
         break;
@@ -6606,7 +6630,7 @@ void fmtCoord(double lat, double lon, char* out, size_t n) {
 // (seconds into this visit, satellites heard / in view) or "GPS next 12m" between visits.
 void gpsStateText(char* out, size_t n) {
     if (!g_cfg.gpsOn) { snprintf(out, n, "GPS off"); return; }
-    if (g_pwEff.gps == power::GPS_OFF) { snprintf(out, n, "GPS off (power)"); return; }
+    if (g_pwEff.gps == power::GPS_OFF) { snprintf(out, n, g_standby ? "GPS off (standby)" : "GPS off (power)"); return; }
     if (g_gpsBbrFault) { snprintf(out, n, "GPS backup fault"); return; }
     int inView = 0, heard = 0, best = 0;
     gpsSkySummary(inView, heard, best);
@@ -10095,7 +10119,9 @@ void drawIdleFoot(const char* unlockedText) {
     // About to go flat (under 1 %, on battery): say so instead of "press a key".
     const bool dying = g_bat.valid && !g_bat.usb && g_bat.pct < 1;
     const char* s = dying ? (g_locked ? "LOCKED | plug in USB" : "PLUG IN USB TO CHARGE")
-                          : g_locked ? "LOCKED | press a key" : unlockedText;
+                          : g_locked ? (g_standby ? "LOCKED | standby | key" : "LOCKED | press a key")
+                          : g_standby && !strncmp(unlockedText, "press", 5) ? "STANDBY | press a KEY"
+                          : unlockedText;
     label(0, kIdleMapBottom, W, H - kIdleMapBottom, s, g_locked || dying);
 }
 
@@ -11144,11 +11170,13 @@ void readKeyboardIntoQueue() {
         if (next == g_keyqTail) break;                  // queue full: leave rest in FIFO
         g_keyq[g_keyqHead] = g_kb.getEvent();
         g_keyqHead = next;
+        g_useSeen = true;                               // a real key: someone is using the unit
     }
 }
 
 void processKeys() {
     readKeyboardIntoQueue();
+    if (g_useSeen) { g_useSeen = false; standbyNoteUse("key"); }
     while (g_keyqTail != g_keyqHead) {
         KeyEvent ev = g_keyq[g_keyqTail];
         g_keyqTail = (uint8_t)((g_keyqTail + 1) % KEYQ_CAP);
@@ -11185,6 +11213,7 @@ bool cst328Read(int16_t& x, int16_t& y) {
 void handleTouch(int16_t x, int16_t y) {
     if (g_idleActive || g_locked || g_cfg.touchOff) return;   // key-only wake; none while locked or off
     noteInput();
+    standbyNoteUse("touch");
     const Hit* hit = nullptr;
     for (int i = g_hitCount - 1; i >= 0; i--) {      // last drawn = topmost
         const Hit& h = g_hits[i];
@@ -11278,11 +11307,13 @@ bool powerUsbPowered() { return g_bat.usb && !g_benchUntil; }
 void powerApply(bool force) {
     const bool usb = powerUsbPowered();
     power::Profile want = power::effective(g_pw, usb);
+    // Standby: the chosen mode's profile with GPS / WiFi / key light off, also on USB power.
+    if (g_standby) want = power::standbyProfile(power::selected(g_pw));
     if (!want.lora && want.loraOnUse && (millis() < power::kLoraOnUseMs ||
                                          (g_lastInputMs && millis() - g_lastInputMs < power::kLoraOnUseMs)))
         want.lora = true;                        // on demand: LoRa on for 2 min after a key
     if (want.checkin && !want.lora && checkinNow().inWindow) want.lora = true;   // check-in window
-    const bool onUsb = usb && g_pw.fullOnUsb && g_pw.mode != power::MODE_FULL;
+    const bool onUsb = usb && g_pw.fullOnUsb && g_pw.mode != power::MODE_FULL && !g_standby;
     if (!force && power::sameProfile(want, g_pwEff) && onUsb == g_pwOnUsb) return;
     const power::Profile old = g_pwEff;
     g_pwEff = want;
@@ -11321,7 +11352,8 @@ void powerApply(bool force) {
     char w[16];
     power::fmtWake(w, sizeof(w), g_pwEff.wakeSecs);
     Serial.printf("[POWER] %s%s: cpu %u MHz, sleep %s, awake %us, lora %s, gps %s, wifi %s, keylight %s\n",
-                  power::modeName(g_pw.mode), g_pwOnUsb ? " (USB -> Full)" : "", (unsigned)g_pwEff.cpuMhz, w,
+                  power::modeName(g_pw.mode), g_standby ? " (standby)" : g_pwOnUsb ? " (USB -> Full)" : "",
+                  (unsigned)g_pwEff.cpuMhz, w,
                   (unsigned)g_pwEff.awakeSecs, g_pwEff.lora ? "on" : "off", power::gpsName(g_pwEff.gps),
                   g_pwEff.wifi ? "allowed" : "off", g_pwEff.keyLight ? "allowed" : "off");
     if (g_screen == SCR_SETTINGS) requestRedraw();
@@ -11440,10 +11472,74 @@ void checkinTick() {
     requestRedraw();                             // sendMessage cleared the widget tree
 }
 
+// ---- Standby when idle (S.5.11 / S.5.12, console "standby") ---------------------------
+// With the option on, standbyHours without a real key or touch puts the standby profile in
+// force (power::standbyProfile: GPS, WiFi, key light off; LoRa still listens) and shows the
+// idle screen. It stays until a real key or touch: incoming messages, console commands and
+// console keys ("k", the soak test) do not end it. Off = never entered.
+uint32_t standbyTimeoutMs() {
+    return g_standbyTestS ? g_standbyTestS * 1000UL : (uint32_t)g_pw.standbyHours * 3600000UL;
+}
+
+void standbyPrint() {
+    const uint32_t idleS = g_lastUseMs ? (millis() - g_lastUseMs) / 1000UL : 0;
+    const uint32_t limS = standbyTimeoutMs() / 1000UL;
+    char in[24] = "-";
+    if (g_pw.standby && !g_standby) snprintf(in, sizeof(in), "%lu s", (unsigned long)(idleS < limS ? limS - idleS : 0));
+    Serial.printf("[STANDBY] option=%s after=%u h%s state=%s idle=%lu s enters_in=%s gps=%s wifi=%s\n",
+                  g_pw.standby ? "on" : "off", (unsigned)g_pw.standbyHours, g_standbyTestS ? " (test timeout)" : "",
+                  g_standby ? "standby" : "normal", (unsigned long)idleS, in,
+                  g_gpsSerial ? "powered" : "off", g_pwEff.wifi ? "allowed" : "off");
+}
+
+void standbyEnter(const char* why) {
+    if (g_standby) return;
+    g_standby = true;
+    g_standbySince = millis();
+    Serial.printf("[STANDBY] enter (%s): GPS off, WiFi off, key light off, LoRa %s\n", why,
+                  power::standbyProfile(power::selected(g_pw)).lora ? "listening" : "as the mode has it");
+    powerApply(true);
+    powerGpsTick();                              // receiver off now, not at the next tick
+    if (!g_idleActive) {
+        if (lockOnIdle() && !g_locked) lockNow(); else enterIdle();
+    } else {                                     // already on the idle screen: show the standby line
+        paintIdle();
+        g_display.refreshIfDirty();
+    }
+}
+
+void standbyLeave(const char* why) {
+    if (!g_standby) return;
+    g_standby = false;
+    Serial.printf("[STANDBY] leave (%s) after %lu s: normal mode\n", why,
+                  (unsigned long)((millis() - g_standbySince) / 1000UL));
+    powerApply(true);                            // GPS visit now, WiFi auto-join, key light
+    powerGpsTick();
+    // A key is waiting: it wakes the idle screen with its own full refresh, no repaint here.
+    if (g_idleActive && g_keyqTail == g_keyqHead) { paintIdle(); g_display.refreshIfDirty(); }
+    else if (!g_idleActive) requestRedraw();
+}
+
+// A real key or touch (not the console).
+void standbyNoteUse(const char* why) {
+    g_lastUseMs = millis() ? millis() : 1;
+    if (g_standby) standbyLeave(why);
+}
+
+void standbyTick() {
+    if (!g_lastUseMs) g_lastUseMs = millis() ? millis() : 1;
+    if (!g_pw.standby || g_standby) return;
+    if (millis() - g_lastUseMs < standbyTimeoutMs()) return;
+    // Not in the middle of something that holds the audio path or the USB drive.
+    if (g_usbDrive || g_wtOpen || g_vmOpen || walkie::state() != walkie::State::Idle || havoice::busy()) return;
+    standbyEnter("idle");
+}
+
 void powerTick() {
     static uint32_t last = 0;
     if (millis() - last < 1000) return;
     last = millis();
+    standbyTick();
     if (g_usbSleepUntil && (int32_t)(millis() - g_usbSleepUntil) >= 0) g_usbSleepUntil = 0;
     if (g_benchUntil) {
         static uint32_t lastHiz = 0;
@@ -11470,7 +11566,7 @@ void powerTick() {
         char line[128];
         const uint32_t tot = g_pwAwakeMs + g_pwSleepMs;
         snprintf(line, sizeof(line), "%s%s | asleep %u%% (%lu sleeps) | %u MHz | LoRa %s",
-                 power::modeName(g_pw.mode), g_pwOnUsb ? " (USB -> Full)" : "",
+                 power::modeName(g_pw.mode), g_standby ? " (STANDBY)" : g_pwOnUsb ? " (USB -> Full)" : "",
                  tot ? (unsigned)((uint64_t)g_pwSleepMs * 100 / tot) : 0u, (unsigned long)g_pwSleeps,
                  (unsigned)g_pwEff.cpuMhz, loraOnline() ? "on" : "off");
         ::sim::setPowerInfo(line);
@@ -12525,8 +12621,10 @@ void powerStatus() {
     char w[16];
     power::fmtWake(w, sizeof(w), g_pwEff.wakeSecs);
     const char* why = powerSleepBlocker();
+    standbyPrint();
     Serial.printf("[POWER] mode=%s%s cpu=%u MHz sleep=%s awake=%us lora=%s gps=%s(%s) wifi=%s keylight=%s\n",
-                  power::modeName(g_pw.mode), g_pwOnUsb ? " (USB->Full)" : "", (unsigned)g_pwEff.cpuMhz, w,
+                  power::modeName(g_pw.mode), g_standby ? " (standby)" : g_pwOnUsb ? " (USB->Full)" : "",
+                  (unsigned)g_pwEff.cpuMhz, w,
                   (unsigned)g_pwEff.awakeSecs, g_pwEff.lora ? "on" : "off", power::gpsName(g_pwEff.gps),
                   g_gpsSerial ? "powered" : "resting", g_pwEff.wifi ? "allowed" : "off",
                   g_pwEff.keyLight ? "allowed" : "off");
@@ -13051,6 +13149,31 @@ void handleSerialLine(char* p) {
         return;
     }
     if (!strcmp(p, "idle now")) { enterIdle(); return; }
+    if (!strncmp(p, "standby", 7) && (p[7] == 0 || p[7] == ' ')) {
+        // standby                 print the option and the state
+        // standby on | off        the option (saved), like S.5.11
+        // standby after <hours>   1, 3, 6, 12 or 24 (saved), like S.5.12
+        // standby now             enter standby at once (bench; works with the option off)
+        // standby wake            leave it, as a key press would
+        // standby test <secs>     bench: idle timeout in seconds instead of hours (0 = back to hours; not saved)
+        const char* a = p[7] ? p + 8 : "";
+        int v = 0;
+        if (!strcmp(a, "on") || !strcmp(a, "off")) {
+            g_pw.standby = a[1] == 'n';
+            power::save(g_pw);
+            if (!g_pw.standby) standbyLeave("option off");
+            requestRedraw();
+        }
+        else if (sscanf(a, "after %d", &v) == 1) {
+            if (v == 1 || v == 3 || v == 6 || v == 12 || v == 24) { g_pw.standbyHours = (uint16_t)v; power::save(g_pw); requestRedraw(); }
+            else Serial.println("[STANDBY] after 1|3|6|12|24");
+        }
+        else if (sscanf(a, "test %d", &v) == 1 && v >= 0) g_standbyTestS = (uint32_t)v;
+        else if (!strcmp(a, "now")) standbyEnter("console");
+        else if (!strcmp(a, "wake")) standbyLeave("console");
+        standbyPrint();
+        return;
+    }
     if (!strncmp(p, "lock", 4) && (p[4] == 0 || p[4] == ' ')) {
         if (!strcmp(p, "lock now")) lockNow();
         Serial.printf("[LOCK] locked=%d password=%d idleMode=%u fails=%u wait=%us vault=%s\n", g_locked,

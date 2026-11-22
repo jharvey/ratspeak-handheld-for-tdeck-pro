@@ -22,6 +22,7 @@ const Profile kOnDemand = {240, 300,  10,  false, GPS_ON_USE, false, false,   tr
 const Profile kCheckin  = {240, 300,  10,  false, GPS_ON_USE, false, false,   true,      false,    true,   false, false};
 
 const uint16_t kEverySteps[] = {15, 30, 60, 120, 180, 360, 720, 1440};
+const uint16_t kStandbySteps[] = {1, 3, 6, 12, 24};
 
 const uint16_t kCpuSteps[]   = {240, 160, 80};
 const uint16_t kWakeSteps[]  = {0, 1, 5, 10, 30, 60, 300};
@@ -125,6 +126,21 @@ bool sameProfile(const Profile& a, const Profile& b) {
            a.mapGps == b.mapGps && a.trackGps == b.trackGps;
 }
 
+Profile standbyProfile(const Profile& sel) {
+    Profile p = sel;
+    if (p.wakeSecs < 300) p.wakeSecs = 300;
+    if (p.awakeSecs > 5)  p.awakeSecs = 5;
+    p.gps = GPS_OFF;
+    p.wifi = false;
+    p.keyLight = false;
+    p.touchOnKey = true;
+    p.mapGps = false;
+    p.trackGps = false;
+    return p;
+}
+
+uint16_t nextStandbyHours(uint16_t hours) { return stepNext(kStandbySteps, hours); }
+
 CheckinPhase checkinPhase(const Settings& s, uint32_t secOfDay) {
     const uint32_t period = (uint32_t)(s.checkinEvery ? s.checkinEvery : 60) * 60u;
     const uint32_t offset = ((uint32_t)s.checkinStart * 60u) % period;
@@ -206,7 +222,10 @@ void load(Settings& s) {
     else s.checkinStart = 450;
     s.checkinEvery = p.getUShort("ciEvery", 60);
     s.rxDc         = p.getUChar("rxdc", 4);
+    s.standby      = p.getBool("sby", false);
+    s.standbyHours = p.getUShort("sbyH", 6);
     p.end();
+    if (!inSteps(kStandbySteps, s.standbyHours)) s.standbyHours = 6;
     if (s.mode >= MODE_COUNT) s.mode = MODE_BALANCED;
     if (!inSteps(kCpuSteps, c.cpuMhz))      c.cpuMhz = kBalanced.cpuMhz;
     if (!inSteps(kWakeSteps, c.wakeSecs))   c.wakeSecs = kBalanced.wakeSecs;
@@ -239,6 +258,8 @@ void save(const Settings& s) {
     if (p.isKey("ciMin")) p.remove("ciMin");
     p.putUShort("ciEvery", s.checkinEvery);
     p.putUChar("rxdc", s.rxDc);
+    p.putBool("sby", s.standby);
+    p.putUShort("sbyH", s.standbyHours);
     p.end();
 }
 

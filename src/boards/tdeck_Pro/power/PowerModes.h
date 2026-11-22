@@ -57,6 +57,10 @@ struct Settings {
     // LoRa RX duty cycle in every sleeping mode (not Full): 0 = continuous receive,
     // else the preamble symbols one listen window must catch (2..8, default 4).
     uint8_t rxDc      = 4;
+    // "Standby when idle": after standbyHours without a key or touch the unit drops to the
+    // standby profile (GPS, WiFi and key light off, LoRa still listening) until a key is pressed.
+    bool    standby      = false;
+    uint16_t standbyHours = 6;    // 1, 3, 6, 12 or 24
     Profile custom    = {};
 };
 
@@ -78,6 +82,13 @@ uint16_t nextAwake(uint16_t secs);
 void     fmtWake(char* out, unsigned n, uint16_t secs);   // "never", "1 s", "1 min"
 
 bool sameProfile(const Profile& a, const Profile& b);
+
+// The profile used while in standby, made from the chosen mode's profile: GPS, WiFi and key
+// light off, touch off until a key, the CPU asleep between 5 min wake-ups. LoRa stays as the
+// chosen mode has it (listening in Full ... Ultra-low; on a key / in the windows in On demand
+// and Check-in), so messages still arrive. From Full, Balanced or Saver this is Ultra-low.
+Profile  standbyProfile(const Profile& sel);
+uint16_t nextStandbyHours(uint16_t hours);   // 1, 3, 6, 12, 24
 
 // Where secOfDay (local) is in the check-in cycle: inWindow, seconds until that changes,
 // and seconds since the check-in time (only meaningful in the window; can be "negative" in
