@@ -123,27 +123,42 @@ The password is the SecretVault password (§12): once set, the device **also loc
 every boot**, and saved WiFi passwords stay sealed until it is typed (WiFi auto-connect
 waits). Picking Off / On (no password) keeps that; remove the password to stop it.
 
-### 1.2d Share my location
+### 1.2d Share my status (position and battery)
 
-In a chat, **MIC** opens the location menu (**MIC** or **^** goes back):
+In a chat, **MIC** opens the share menu (**MIC** or **^** goes back). **B** there changes
+what a share carries: position + battery (the default), position only, battery only.
 
-1. **Share my location** sends a normal message any LXMF client can read:
-   `My location: 43.64012, -70.92011 (+-10 m, 14:32)`. Without a fresh fix (GPS resting
-   in Balanced / Saver, or indoors) it sends the last fix with its age, `My last
-   location: … (35 min old)`, or the manual location (S.2.4), and wakes the GPS for a visit.
-2. **Auto-share location**: Enter steps off → every 5 → 15 → 30 → 60 min → off.
+1. **Share …** sends once, as a normal message any LXMF client can read:
+   `My location: 43.64012, -70.92011 (+-10 m, 14:32). Battery 84%` or `My battery: 84%
+   (14:32)`. Without a fresh fix (GPS resting in Balanced / Saver, or indoors) it sends the
+   last fix with its age, `My last location: … (35 min old)`, or the manual location
+   (S.2.4), and wakes the GPS for a visit. The message also carries Sideband's telemetry
+   field (LXMF field 0x02: time, location, battery), so Sideband puts the unit on its map.
+2. **Auto-share …**: Enter steps off → every 5 → 15 → 30 → 60 min → off. Off by default; a
+   new one starts with position + battery.
 3. **Auto-share for**: 1 h / 4 h / until off (applies to the next and the running share).
-4. **Stop all auto-sharing** (also S.2.8).
-5. **Show them on the map** (their last shared position, see §8.1).
+4. **Show them on the map** (their last shared position, see §8.1; the row also shows their
+   battery %).
+5. **Voice message**.
 
-Auto updates are short (`Loc: 43.64012, -70.92011 14:32`), go out only with a fresh fix
-(the GPS is woken for a visit when one is due), only after moving > 50 m or two intervals,
-and in Check-in mode wait for the window. The chat header shows **[loc 15m]** and the top
-bar a small pin while any auto-share is on. Settings are kept per contact (NVS rs_ashare).
+In a group chat **MIC** shows who got the last message; **L** there opens rows 1 to 3 for
+the group (each member gets a copy, sent one after the other through the outbox).
 
-On a RatSpeak unit a received location shows as **[loc]** (consecutive auto updates fold
-into the newest); **Enter** on the empty draft opens it on the map. The LXMF telemetry
-field (Sideband) is not sent yet: the protocol library has no field API on the send path.
+Auto updates are short (`Loc: 43.64012, -70.92011 14:32 Bat 84%`, `Bat: 84% 14:32`). One is
+due every interval and goes out when the unit moved > 50 m or the battery changed by 5
+points or more, else at every second interval. The GPS is woken for a visit when one is due;
+with no fix after 3 minutes, or with the GPS off (S.2, standby, a power mode without GPS),
+the battery goes alone (position only: nothing is sent). In Check-in mode updates wait for
+the window. The chat header shows **[loc+bat 15m]** (or **loc** / **bat**) and the top bar a
+small pin while any auto-share is on. Kept per contact or group (NVS rs_ashare, 8 at most).
+
+On a RatSpeak unit a received share shows as **[loc]** / **[bat]**; **Enter** on the empty
+draft opens a position on the map. Automatic updates make no alert, fold into the newest
+line in a contact's chat and are left out of a group chat; one is marked read at once when
+nothing else is unread. The sender's newest position and battery are kept per contact
+(NVS rs_cpos): Atlas marker, contact page (row 1 battery and its age, row 4 the position's
+age). Not done: reading Sideband's telemetry field on receive (the engine stores only the
+audio and group fields); a stored record per update (the store has no single-record delete).
 
 ### 1.3 First-boot setup: the setup wizard
 

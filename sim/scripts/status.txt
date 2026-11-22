@@ -1,0 +1,64 @@
+# Status sharing menu on one radio (position / battery to a contact or a group). Run fresh,
+# then status_after.txt on the same device name (a restart keeps the automatic shares):
+#   run-script.bat scripts\status.txt status fresh
+#   run-script.bat scripts\status_after.txt status
+# Sending between radios, thresholds, standby, groups: python sim\scripts\status_net.py
+expect 60000 [BOOT] ready
+serial wiz skip
+serial contact a10000000000000000000000000000a1 Alex
+expect 10000 "Alex" ok=1
+wait 1500
+# A start ends on the idle screen: this key only wakes it.
+key BACK
+wait 800
+serial loc
+expect 3000 [LOC] auto-share: 0 on
+serial chat a10000000000000000000000000000a1
+wait 2500
+# MIC = the share menu. It starts with position + battery; B changes what is shared.
+key MIC
+wait 1000
+shot status-01-menu.png
+key B
+expect 3000 [LOC] sharing position
+wait 800
+shot status-02-position.png
+key B
+expect 3000 [LOC] sharing battery
+wait 800
+shot status-03-battery.png
+key B
+expect 3000 [LOC] sharing position + battery
+# 2 = automatic, every 5 minutes.
+key 2
+expect 3000 [LOC] auto-share 5 min (1 on)
+wait 1000
+shot status-04-auto-on.png
+serial loc
+expect 3000 every 5 min position + battery
+# Back in the chat the header carries the "sharing on" mark.
+key BACK
+wait 1200
+shot status-05-mark.png
+key BACK
+wait 800
+# A group: MIC = who got it, L = the share menu for the group.
+serial grp new TEAM
+serial grp add 1 a10000000000000000000000000000a1
+serial grp open 1
+wait 2500
+key MIC
+wait 1000
+shot status-06-group-who.png
+key L
+wait 1000
+shot status-07-group-menu.png
+key B
+expect 3000 [LOC] sharing position
+key 2
+expect 3000 [LOC] auto-share 5 min (2 on)
+wait 1000
+shot status-08-group-auto.png
+serial loc
+expect 3000 [LOC] auto-share: 2 on
+quit

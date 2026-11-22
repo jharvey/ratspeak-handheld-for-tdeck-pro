@@ -294,6 +294,13 @@ Team awareness, ATAK-style (user asked 2026-11-12, longer term)
 - Contacts on the map: last shared position of each contact with its age; list sorted by
   distance with bearing arrows; optional periodic position sharing (opt-in, interval, to
   chosen contacts only; respects energy modes / check-in windows).
+  BUILT 2026-11-22 (simulator, three radios; not tried on real radios), status sharing:
+  position, battery % or both to a contact or a group, one time or automatic (off by default,
+  starts with both; sends on a 50 m move or a 5-point battery change, else every second
+  interval; battery alone when there is no GPS fix). The receiver keeps each contact's
+  position and battery with their age (Atlas, contact page); one-time shares carry
+  Sideband's telemetry field. Report: docs/sharing_atak_report.md. Not done: reading
+  Sideband's telemetry on receive; removing the stored record of each automatic update.
 - Waypoints / navigation: "go to" a marker: distance + bearing on screen; heading from GPS
   course over ground (no magnetometer, see Map heading).
 - Navigate to a contact (user asked 2026-11-12, e.g. hunting: "son is over that way 900 ft"):

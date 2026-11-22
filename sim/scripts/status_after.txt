@@ -1,0 +1,13 @@
+# Run after scripts\status.txt on the same device (no "fresh"): both automatic shares and what
+# each one carries are still there after a restart. Then all sharing is stopped.
+expect 60000 [BOOT] ready
+wait 1500
+serial loc
+expect 3000 every 5 min position + battery
+expect 3000 every 5 min position until
+expect 3000 [LOC] auto-share: 2 on
+serial ashare off
+expect 3000 [LOC] auto-share: all stopped
+serial loc
+expect 3000 [LOC] auto-share: 0 on
+quit

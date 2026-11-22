@@ -186,6 +186,72 @@ inline bool findGroup(const uint8_t* fields, size_t length, GroupTag& out) {
     return false;
 }
 
+// ---- Telemetry (FIELD_TELEMETRY), Sideband compatible -----------------------------------
+// A one-time "share my status" message carries, next to its readable text,
+//   fields[0x02] = bin( msgpack {0x01: time, 0x02: location, 0x04: battery} )
+// in the layout of Sideband's sense.py (Telemeter.packed): location = [lat*1e6, lon*1e6,
+// altitude*100, speed*100, bearing*100 as 4-byte big-endian bins, accuracy*100 as a 2-byte
+// bin, last_update]; battery = [percent (float), charging, temperature (nil)]. Sideband then
+// puts the sender on its map; a RatSpeak radio reads the text and does not store this field.
+constexpr uint8_t FieldTelemetry = 0x02;             // LXMF.py FIELD_TELEMETRY
+constexpr size_t TelemetryEntryMax = 72;
+
+struct Telemetry {
+    uint32_t time = 0;                               // epoch s
+    bool hasPosition = false;
+    double latitude = 0, longitude = 0;
+    float accuracyM = 0;
+    uint32_t positionTime = 0;                       // epoch s of the fix
+    bool hasBattery = false;
+    uint8_t percent = 0;
+    bool charging = false;
+};
+
+// One map entry (key, then the value) to add to a fields map; returns its length (0 = no room).
+inline size_t makeTelemetryEntry(const Telemetry& t, uint8_t* out, size_t capacity) {
+    if (!out || capacity < TelemetryEntryMax) return 0;
+    size_t n = 0;
+    auto be32 = [&](uint32_t v) { for (int i = 3; i >= 0; i--) out[n++] = uint8_t(v >> (i * 8)); };
+    auto bin32 = [&](int32_t v) { out[n++] = 0xC4; out[n++] = 4; be32(uint32_t(v)); };
+    out[n++] = FieldTelemetry; out[n++] = 0xC4; out[n++] = 0;      // bin 8, length set below
+    out[n++] = uint8_t(0x81 + (t.hasPosition ? 1 : 0) + (t.hasBattery ? 1 : 0));
+    out[n++] = 0x01; out[n++] = 0xCE; be32(t.time);
+    if (t.hasPosition) {
+        out[n++] = 0x02; out[n++] = 0x97;
+        bin32(int32_t(t.latitude * 1e6 + (t.latitude < 0 ? -0.5 : 0.5)));
+        bin32(int32_t(t.longitude * 1e6 + (t.longitude < 0 ? -0.5 : 0.5)));
+        bin32(0); bin32(0); bin32(0);                // altitude, speed, bearing: not sent
+        float a = t.accuracyM * 100.0f;
+        if (a < 0) a = 0;
+        if (a > 65535.0f) a = 65535.0f;
+        const uint16_t acc = uint16_t(a);
+        out[n++] = 0xC4; out[n++] = 2; out[n++] = uint8_t(acc >> 8); out[n++] = uint8_t(acc);
+        out[n++] = 0xCE; be32(t.positionTime);
+    }
+    if (t.hasBattery) {
+        out[n++] = 0x04; out[n++] = 0x93; out[n++] = 0xCB;
+        const double pct = double(t.percent);
+        uint64_t bits = 0;
+        static_assert(sizeof(bits) == sizeof(pct), "double is 64 bit");
+        __builtin_memcpy(&bits, &pct, 8);
+        for (int i = 7; i >= 0; i--) out[n++] = uint8_t(bits >> (i * 8));
+        out[n++] = t.charging ? 0xC3 : 0xC2;
+        out[n++] = 0xC0;
+    }
+    out[2] = uint8_t(n - 3);
+    return n;
+}
+
+// Add one entry (from makeTelemetryEntry) to a small fields map (fixmap, or empty: length 0).
+inline size_t appendFieldEntry(uint8_t* fields, size_t length, size_t capacity, const uint8_t* entry, size_t entryLength) {
+    if (!fields || !entry || !entryLength) return length;
+    if (!length) { if (capacity < 1) return 0; fields[0] = 0x80; length = 1; }
+    if ((fields[0] & 0xF0) != 0x80 || (fields[0] & 15) == 15 || length + entryLength > capacity) return length;
+    fields[0]++;
+    __builtin_memcpy(fields + length, entry, entryLength);
+    return length + entryLength;
+}
+
 // A fields map holding only the audio field, as two spans: head (msgpack map/array/mode/bin
 // header) then the borrowed audio bytes. total() is the fields length.
 struct AudioField {

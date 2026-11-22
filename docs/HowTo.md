@@ -293,16 +293,30 @@ The radio tells one contact when its battery gets low: the battery % and its las
 
 Video: [Share_your_location.mp4](videos/Share_your_location.mp4) (two radios, side by side)
 
-Nothing about where you are is sent unless you send it.
+Nothing about where you are, or your battery, is sent unless you send it. Automatic sharing
+is off until you turn it on.
 
 1. Open the chat with the person: **C**, their number, **Enter**, **1** (Message).
-2. **MIC** opens the location menu. **1** (Share my location) sends your position once.
-3. **MIC**, **2** (Auto-share location): every 5 minutes; **2** again: 15, 30, 60 minutes,
-   off. Row 3 sets for how long.
-4. To stop all sharing: **M**, **S**, **2** (Time & Location), row 8.
+2. **MIC** opens the share menu. **1** sends your position and battery % once.
+3. **B** in that menu changes what is shared: position + battery, position only, battery
+   only. Rows 1 and 2 show the choice.
+4. **MIC**, **2** (Auto-share): every 5 minutes; **2** again: 15, 30, 60 minutes, off. Row 3
+   sets for how long. While it is on, the chat's top line shows a mark such as
+   **[loc+bat 5m]** and the clock box has a small pin.
+5. To a group: open the group chat, **MIC**, then **L**. Rows 1 to 3 and **B** work the same;
+   every member gets a copy.
+6. To stop all sharing: **M**, **S**, **2** (Time & Location), row 8.
 
-The other radio shows **[loc]** in the chat; **Enter** on the empty message line opens the
-map there.
+Automatic sharing sends only when it is worth it: when you moved more than 50 m or the
+battery changed by 5 points, and otherwise at every second interval. With no GPS fix (GPS
+off, standby, a power mode without GPS) the battery goes alone, and the other radio keeps
+your last position with its age.
+
+The other radio shows **[loc]** or **[bat]** in the chat for a one-time share; **Enter** on
+the empty message line opens the map there. Automatic updates make no sound and show as one
+line (the newest). Your position is on their Atlas; your battery % and its age are on your
+contact page (row 1) and in their share menu (row 4). Sideband and other LXMF apps show a
+one-time share as readable text; Sideband also gets it as telemetry.
 
 ## Waypoints
 

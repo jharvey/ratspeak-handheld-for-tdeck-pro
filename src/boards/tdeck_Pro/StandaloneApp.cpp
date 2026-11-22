@@ -517,6 +517,11 @@ struct Battery {
     bool     valid    = false;
 };
 Battery g_bat;
+#if defined(SIMULATOR)
+// Test hooks (simulator only): console "fake bat <pct|off>" and "fake move <metres north>".
+int g_fakeBat = -1;
+double g_fakeNorthM = 0;
+#endif
 
 int lipoPctFromVolts(float v) {
     static const float vp[] = {3.30f, 3.50f, 3.60f, 3.70f, 3.80f, 3.90f, 4.00f, 4.10f, 4.15f, 4.20f};
@@ -770,6 +775,9 @@ bool readBattery() {
     }
     if (chargeDone) pct = 100;    // charger says full: it is full
 
+#if defined(SIMULATOR)
+    if (g_fakeBat >= 0) pct = g_fakeBat;      // console "fake bat <pct>" (tests)
+#endif
     g_bat.volts = volts;
     g_bat.pct = constrain(pct, 0, 100);
     g_bat.rawSoc = raw;
@@ -1038,6 +1046,9 @@ bool nmeaDegrees(const char* v, const char* hemi, double& out) {
 void gpsNotePosition(const char* lat, const char* ns, const char* lon, const char* ew) {
     double la, lo;
     if (!nmeaDegrees(lat, ns, la) || !nmeaDegrees(lon, ew, lo)) return;
+#if defined(SIMULATOR)
+    la += g_fakeNorthM / 111320.0;            // console "fake move <metres north>" (tests)
+#endif
     g_gpsLat = la; g_gpsLon = lo; g_gpsPosValid = true; g_gpsPosAt = millis();
 }
 char    g_gpsStatus[16] = "off";
@@ -2134,6 +2145,8 @@ void wptOpenFromSettings(int i);
 struct InLoc { bool valid; double lat, lon; uint32_t counter; };
 InLoc g_threadLoc = {};
 bool locParse(const char* s, size_t len, double& lat, double& lon, bool* autoUpdate = nullptr);
+bool batParse(const char* s, size_t len, int& pct, bool* autoUpdate = nullptr);
+void batNote(const uint8_t dest[16], int pct, uint32_t at);
 void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at);
 uint32_t msgEpoch(double ts);
 // Enter on an empty draft: the newest of an unsaved card / a location wins.
@@ -2287,6 +2300,16 @@ void loadHistory(const uint8_t peer[16], bool markRead = true) {
                 g_threadLoc = {true, la, lo, entries[i].counter};
             if (h.incoming) cposNote(peer, la, lo, msgEpoch(hdr.timestamp));   // map marker
         }
+        int batPct = 0;
+        bool autoBat = false;
+        const bool isBat = !isCard && batParse((const char*)buf + off, clen, batPct, &autoBat);
+        if (isBat) {                             // a status share: battery alone, or after the position
+            const size_t at = isLoc ? strlen(h.text) : 0;
+            if (isLoc) snprintf(h.text + at, sizeof(h.text) - at, " bat %d%%", batPct);
+            else snprintf(h.text, sizeof(h.text), "[bat%s] %d%%", autoBat ? " auto" : "", batPct);
+            if (autoBat) h.autoLoc = true;
+            if (h.incoming) batNote(peer, batPct, msgEpoch(hdr.timestamp));
+        }
         if (clen >= sizeof(h.text)) clen = sizeof(h.text) - 1;
         const size_t wtLen = strlen(walkie::kInvitePrefix);   // walkie-talkie invite: not its key
         const bool isWt = !isCard && !isLoc && clen >= wtLen && !memcmp(buf + off, walkie::kInvitePrefix, wtLen);
@@ -2314,7 +2337,7 @@ void loadHistory(const uint8_t peer[16], bool markRead = true) {
                 strlcpy(g_threadGrp.name, gcName, sizeof(g_threadGrp.name));
             }
         }
-        if (clen && !isCard && !isLoc && !isWt && !h.voice && !isGrpCard) {
+        if (clen && !isCard && !isLoc && !isBat && !isWt && !h.voice && !isGrpCard) {
             size_t pre = 0;
             if (tagged) {                            // a group message: "[Family] text"
                 pre = (size_t)snprintf(h.text, sizeof(h.text), "[%s] ", gtag.name);
@@ -2483,13 +2506,19 @@ TxStep txOnce(const uint8_t dest[16], const char* body, size_t n,
 
 // gid / gseq: the message is one member's copy of a group message (see "Groups: data"): it
 // carries the group tag while this radio still has that group, else it goes as plain text.
+// g_txExtra: one more fields-map entry for the sends made while it is set (the Sideband
+// telemetry of a one-time status share, see "Location sharing"). A copy that has to wait in
+// the outbox goes without it (the text says the same).
+uint8_t g_txExtra[handheld::lxmf::TelemetryEntryMax];
+size_t  g_txExtraLen = 0;
+
 bool sendMessage(const uint8_t dest[16], const char* text, const uint8_t* gid = nullptr, uint32_t gseq = 0) {
     g_txTransient = false;
     if (!g_protoReady) { snprintf(g_txStr, sizeof(g_txStr), "proto off"); return false; }
     if (isSelf(dest))  { snprintf(g_txStr, sizeof(g_txStr), "pick remote"); return false; }
     if (isGrpHash(dest)) { snprintf(g_txStr, sizeof(g_txStr), "group?"); return false; }   // a group's row address
 
-    uint8_t fields[handheld::lxmf::FieldHeadMax];
+    uint8_t fields[handheld::lxmf::FieldHeadMax + handheld::lxmf::TelemetryEntryMax];
     size_t fieldsLen = 0;
     const int gi = gid ? grpFind(gid) : -1;
     if (gi >= 0 && handheld::lxmf::available()) {
@@ -2499,6 +2528,8 @@ bool sendMessage(const uint8_t dest[16], const char* text, const uint8_t* gid = 
         strlcpy(tag.name, g_grp[gi].name, sizeof(tag.name));
         fieldsLen = handheld::lxmf::makeGroupField(tag, fields, sizeof(fields));
     }
+    if (g_txExtraLen && handheld::lxmf::available())
+        fieldsLen = handheld::lxmf::appendFieldEntry(fields, fieldsLen, sizeof(fields), g_txExtra, g_txExtraLen);
 
     char body[161];
     size_t n = strlen(text);
@@ -2956,6 +2987,14 @@ void loadGroupHistory(const uint8_t peer[16], bool markRead) {
                 if (i == 0 && n == HIST_ROWS) olderUnread = true;       // more unread may lie further back
             }
             if (!mine) continue;
+            {   // automatic status updates go to the map and the contact card, not into the chat
+                double la = 0, lo = 0;
+                int bp = 0;
+                bool autoL = false, autoB = false;
+                locParse(c.text, len, la, lo, &autoL);
+                batParse(c.text, len, bp, &autoB);
+                if (autoL || autoB) continue;
+            }
             for (size_t k = 0; k < len; k++)
                 if ((unsigned char)c.text[k] < 32 || (unsigned char)c.text[k] > 126) c.text[k] = '?';
             c.ts = hdr.timestamp;
@@ -5707,6 +5746,8 @@ int draftWrap(char out[kDraftLines][64], int maxW) {
     return n;
 }
 uint8_t ashareMinsFor(const uint8_t dest[16]);
+const char* ashareMarkFor(const uint8_t dest[16]);
+extern bool g_tmenuGrpShare;
 int ashareActive();
 
 void renderThread() {
@@ -5715,14 +5756,15 @@ void renderThread() {
     const uint8_t am = ashareMinsFor(g_threadPeer);
     const int grp = grpOfHash(g_threadPeer);         // a group chat (-1: a contact's)
     if (g_tmenuOpen && g_toast[0]) snprintf(hdr, sizeof(hdr), "%s", g_toast);   // menu: no strip
-    else if (g_tmenuOpen && isGrpHash(g_threadPeer)) snprintf(hdr, sizeof(hdr), "Who got it (any key = back)");
-    else if (g_tmenuOpen) snprintf(hdr, sizeof(hdr), "1-5 / Enter, MIC or ^ = back");
+    else if (g_tmenuOpen && isGrpHash(g_threadPeer) && !g_tmenuGrpShare) snprintf(hdr, sizeof(hdr), "Who got it  L = share  key = back");
+    else if (g_tmenuOpen && isGrpHash(g_threadPeer)) snprintf(hdr, sizeof(hdr), "1-3 Enter, B what, ^ back");
+    else if (g_tmenuOpen) snprintf(hdr, sizeof(hdr), "1-5 Enter, B what, ^ back");
+    else if (am) snprintf(hdr, sizeof(hdr), ">>> %.12s [%s %um]", name, ashareMarkFor(g_threadPeer), (unsigned)am);   // sharing on
     else if (grp >= 0) snprintf(hdr, sizeof(hdr), g_grp[grp].n == 1 ? ">>> %s (%d member)" : ">>> %s (%d members)", name, (int)g_grp[grp].n);
-    else if (am) snprintf(hdr, sizeof(hdr), ">>> %.14s [loc %um]", name, (unsigned)am);
     else snprintf(hdr, sizeof(hdr), ">>> %s", name);
     text(4, HEADER_Y, hdr, true, W - 8);
     int y = HEADER_Y + 20;
-    if (g_tmenuOpen && isGrpHash(g_threadPeer)) { renderGrpWho(y); return; }   // MIC in a group chat
+    if (g_tmenuOpen && isGrpHash(g_threadPeer) && !g_tmenuGrpShare) { renderGrpWho(y); return; }   // MIC in a group chat
     if (g_tmenuOpen) {                       // MIC: location menu instead of the history
         renderThreadMenu(y);                 // 5 rows down to y + 220 (= 277)
         return;
@@ -7181,8 +7223,8 @@ void stampMap() {
 //   no fix  "My last location: 43.64012, -70.92011 (35 min old)"
 //   auto    "Loc: 43.64012, -70.92011 14:32"
 // A RatSpeak unit shows "[loc] ..." in the thread; Enter on an empty draft opens it on the
-// map. Auto-share: per contact, OFF by default, NVS rs_ashare; sends only with a fresh fix,
-// only after it moved > 50 m or two intervals passed; Check-in mode queues to the window.
+// map. Auto-share: per contact or group, OFF by default, NVS rs_ashare; Check-in mode queues
+// to the window. What it sends and when: "Status sharing" below.
 constexpr const char* kLocPrefix = "My location: ";
 constexpr const char* kLocLastPrefix = "My last location: ";
 constexpr const char* kLocAutoPrefix = "Loc: ";
@@ -7192,10 +7234,31 @@ const uint8_t kAutoMins[] = {0, 5, 15, 30, 60};           // 0 = off
 const uint16_t kAutoForMin[] = {60, 240, 0};               // 0 = until turned off
 const char* const kAutoForName[] = {"1 h", "4 h", "until off"};
 
+// Status sharing (2026-11-22): a share carries the position, the battery %, or both.
+//   manual  "My location: 43.64012, -70.92011 (+-10 m, 14:32). Battery 84%"  /  "My battery: 84% (14:32)"
+//   auto    "Loc: 43.64012, -70.92011 14:32 Bat 84%"                         /  "Bat: 84% 14:32"
+// A one-time share also carries Sideband's telemetry field (LxmfFields.h). The receiver keeps
+// the newest position and battery per contact (rs_cpos): Atlas marker, contact card. An
+// automatic update makes no alert and shows as one "[loc auto]" line in the chat (the newest).
+// Automatic: per contact or group, OFF by default, starts with position + battery. An update
+// is due every interval and goes out when the radio moved > 50 m or the battery changed by
+// >= 5 points, else at every second interval. No fix within 3 minutes (GPS off, standby, a
+// power mode without GPS, no sky): the battery goes alone and the receiver keeps showing the
+// last position with its age.
+enum : uint8_t { SH_POS = 1, SH_BAT = 2 };
+constexpr const char* kBatPrefix = "My battery: ";
+constexpr const char* kBatAutoPrefix = "Bat: ";
+constexpr float kAutoMoveM = 50.0f;
+constexpr int kAutoBatStep = 5;
+constexpr uint32_t kAutoFixWaitMs = 180000;
+uint8_t g_shareWhat = SH_POS | SH_BAT;   // what "share now" sends and a new auto-share starts with
+
 struct AutoShare {
-    uint8_t dest[16];
+    uint8_t dest[16];        // a contact, or a group's row address (isGrpHash)
     uint8_t mins;            // interval
-    uint8_t pad[3];
+    uint8_t what;            // SH_POS | SH_BAT (0 = saved before 2026-11-22: position)
+    uint8_t lastBat;         // battery % + 1 last sent (0 = none yet)
+    uint8_t pad;
     uint32_t until;          // epoch s, 0 = until turned off
     uint32_t lastAt;         // epoch s of the last update sent
     float lastLat, lastLon;
@@ -7343,6 +7406,34 @@ bool locParse(const char* s, size_t len, double& lat, double& lon, bool* autoUpd
     return true;
 }
 
+// The battery % of a status share (alone, or after a position).
+bool batParse(const char* s, size_t len, int& pct, bool* autoUpdate) {
+    char t[120];
+    if (len >= sizeof(t)) len = sizeof(t) - 1;
+    memcpy(t, s, len);
+    t[len] = 0;
+    const char* p = nullptr;
+    bool au = false;
+    if (!strncmp(t, kBatPrefix, strlen(kBatPrefix))) p = t + strlen(kBatPrefix);
+    else if (!strncmp(t, kBatAutoPrefix, strlen(kBatAutoPrefix))) { p = t + strlen(kBatAutoPrefix); au = true; }
+    else if (!strncmp(t, kLocAutoPrefix, strlen(kLocAutoPrefix))) { p = strstr(t, " Bat "); if (p) p += 5; au = true; }
+    else if (!strncmp(t, kLocPrefix, strlen(kLocPrefix)) || !strncmp(t, kLocLastPrefix, strlen(kLocLastPrefix))) {
+        p = strstr(t, "Battery ");
+        if (p) p += 8;
+    }
+    if (!p) return false;
+    char* e = nullptr;
+    const long v = strtol(p, &e, 10);
+    if (e == p || *e != '%' || v < 0 || v > 100) return false;
+    pct = (int)v;
+    if (autoUpdate) *autoUpdate = au;
+    return true;
+}
+
+const char* shareWhatName(uint8_t what) {
+    return what == SH_BAT ? "battery" : what == SH_POS ? "position" : "position + battery";
+}
+
 void localHHMM(char* out, size_t n) {
     const time_t now = time(nullptr);
     struct tm lt;
@@ -7362,29 +7453,71 @@ SendResult locSendOrQueue(const uint8_t dest[16], const char* body) {
     return r;
 }
 
-void shareMyLocation(const uint8_t dest[16]) {
-    char body[96], hhmm[8], age[16];
-    if (gpsFresh()) {
-        localHHMM(hhmm, sizeof(hhmm));
-        const int acc = g_gpsHdop > 0 ? (int)(g_gpsHdop * 5.0f + 0.5f) : 0;
-        char grid[28] = "";
-        if (g_cfg.coordFmt == 2) { mgrsText(g_gpsLat, g_gpsLon, grid, sizeof(grid)); strlcat(grid, ", ", sizeof(grid)); }
-        if (acc > 0) snprintf(body, sizeof(body), "%s%.5f, %.5f (%s+-%d m, %s)", kLocPrefix, g_gpsLat, g_gpsLon, grid, acc < 3 ? 3 : acc, hhmm);
-        else snprintf(body, sizeof(body), "%s%.5f, %.5f (%s%s)", kLocPrefix, g_gpsLat, g_gpsLon, grid, hhmm);
-    } else if (g_gpsPosValid) {
-        fmtAge((millis() - g_gpsPosAt) / 1000, age, sizeof(age));
-        snprintf(body, sizeof(body), "%s%.5f, %.5f (%s old)", kLocLastPrefix, g_gpsLat, g_gpsLon, age);
-    } else if (g_cfg.hasPos) {
-        snprintf(body, sizeof(body), "%s%.5f, %.5f (set by hand)", kLocLastPrefix, g_cfg.lat, g_cfg.lon);
-    } else {
-        toast(g_cfg.gpsOn ? "No GPS position yet" : "GPS is off (S.2)");
-        return;
-    }
-    const SendResult r = locSendOrQueue(dest, body);
-    Serial.printf("[LOC] share %s: %s\n", r == SendResult::Sent ? "sent" : r == SendResult::Queued ? "queued" : "failed", body);
-    if (!gpsFresh() && g_cfg.gpsOn) gpsRequestVisit();       // the next share can be fresh
-    toast(r == SendResult::Sent ? (gpsFresh() ? "Location sent" : "Last location sent") : r == SendResult::Queued ? "Location queued" : "Not sent: %s", g_txStr);
+// A status text to a contact, or to every member of a group (dest = the group's row address).
+SendResult statusSend(const uint8_t dest[16], const char* body) {
+    if (!isGrpHash(dest)) return locSendOrQueue(dest, body);
+    int queued = 0;
+    const int n = groupSend(grpOfHash(dest), body, &queued);
+    requestRedraw();
+    return !n ? SendResult::Failed : queued == n ? SendResult::Queued : SendResult::Sent;
 }
+
+// One-time share: position, battery % or both (what = SH_POS | SH_BAT). With no position to
+// send, "both" sends the battery alone.
+void shareMyStatus(const uint8_t dest[16], uint8_t what) {
+    char body[128] = "", hhmm[8], age[16];
+    if (!(what & (SH_POS | SH_BAT))) what = SH_POS;
+    const bool haveBat = (what & SH_BAT) && g_bat.valid;
+    const time_t now = time(nullptr);
+    handheld::lxmf::Telemetry tm;
+    tm.time = now > 1600000000 ? (uint32_t)now : 0;
+    localHHMM(hhmm, sizeof(hhmm));
+    bool fresh = false;
+    if (what & SH_POS) {
+        tm.hasPosition = true;
+        tm.latitude = g_gpsLat; tm.longitude = g_gpsLon; tm.positionTime = tm.time;
+        if (gpsFresh()) {
+            fresh = true;
+            const int acc = g_gpsHdop > 0 ? (int)(g_gpsHdop * 5.0f + 0.5f) : 0;
+            tm.accuracyM = (float)acc;
+            char grid[28] = "";
+            if (g_cfg.coordFmt == 2) { mgrsText(g_gpsLat, g_gpsLon, grid, sizeof(grid)); strlcat(grid, ", ", sizeof(grid)); }
+            if (acc > 0) snprintf(body, sizeof(body), "%s%.5f, %.5f (%s+-%d m, %s)", kLocPrefix, g_gpsLat, g_gpsLon, grid, acc < 3 ? 3 : acc, hhmm);
+            else snprintf(body, sizeof(body), "%s%.5f, %.5f (%s%s)", kLocPrefix, g_gpsLat, g_gpsLon, grid, hhmm);
+        } else if (g_gpsPosValid) {
+            const uint32_t old = (millis() - g_gpsPosAt) / 1000;
+            fmtAge(old, age, sizeof(age));
+            if (tm.time > old) tm.positionTime = tm.time - old;
+            snprintf(body, sizeof(body), "%s%.5f, %.5f (%s old)", kLocLastPrefix, g_gpsLat, g_gpsLon, age);
+        } else if (g_cfg.hasPos) {
+            tm.latitude = g_cfg.lat; tm.longitude = g_cfg.lon;
+            snprintf(body, sizeof(body), "%s%.5f, %.5f (set by hand)", kLocLastPrefix, g_cfg.lat, g_cfg.lon);
+        } else {
+            tm.hasPosition = false;
+            if (!haveBat) { toast(g_cfg.gpsOn ? "No GPS position yet" : "GPS is off (S.2)"); return; }
+        }
+    }
+    if (!body[0] && !haveBat) { toast("No battery reading yet"); return; }
+    if (haveBat) {
+        tm.hasBattery = true;
+        tm.percent = (uint8_t)g_bat.pct;
+        tm.charging = g_bat.charging;
+        const size_t at = strlen(body);
+        if (at) snprintf(body + at, sizeof(body) - at, ". Battery %d%%", g_bat.pct);
+        else snprintf(body, sizeof(body), "%s%d%% (%s)", kBatPrefix, g_bat.pct, hhmm);
+    }
+    g_txExtraLen = tm.time ? handheld::lxmf::makeTelemetryEntry(tm, g_txExtra, sizeof(g_txExtra)) : 0;
+    const SendResult r = statusSend(dest, body);
+    g_txExtraLen = 0;
+    Serial.printf("[LOC] share %s: %s\n", r == SendResult::Sent ? "sent" : r == SendResult::Queued ? "queued" : "failed", body);
+    if ((what & SH_POS) && !gpsFresh() && g_cfg.gpsOn) gpsRequestVisit();       // the next share can be fresh
+    const char* const nm = !tm.hasPosition ? "Battery" : !haveBat ? (fresh ? "Location" : "Last location")
+                                                                  : (fresh ? "Location + battery" : "Last loc. + battery");
+    if (r == SendResult::Failed) toast("Not sent: %s", g_txStr);
+    else toast("%s %s", nm, r == SendResult::Sent ? "sent" : "queued");
+}
+
+void shareMyLocation(const uint8_t dest[16]) { shareMyStatus(dest, SH_POS); }
 
 // ---- Auto-share list ---------------------------------------------------------------
 void ashareSave() {
@@ -7411,6 +7544,14 @@ int ashareFind(const uint8_t dest[16]) {
 }
 
 uint8_t ashareMinsFor(const uint8_t dest[16]) { const int i = ashareFind(dest); return i >= 0 ? g_ashare[i].mins : 0; }
+uint8_t ashareWhat(const AutoShare& a) { return (a.what & (SH_POS | SH_BAT)) ? (a.what & (SH_POS | SH_BAT)) : SH_POS; }
+// "loc+bat" / "loc" / "bat" for the chat header mark; "" when this chat has no automatic share.
+const char* ashareMarkFor(const uint8_t dest[16]) {
+    const int i = ashareFind(dest);
+    if (i < 0) return "";
+    const uint8_t w = ashareWhat(g_ashare[i]);
+    return w == SH_BAT ? "bat" : w == SH_POS ? "loc" : "loc+bat";
+}
 int ashareActive() { return g_ashareCount; }
 
 void ashareRemove(int i) {
@@ -7441,17 +7582,38 @@ void ashareCycle(const uint8_t dest[16]) {
             i = g_ashareCount++;
             memset(&g_ashare[i], 0, sizeof(AutoShare));
             memcpy(g_ashare[i].dest, dest, 16);
+            g_ashare[i].what = g_shareWhat;
         }
         g_ashare[i].mins = next;
         const uint16_t forMin = kAutoForMin[g_autoForSel];
         const time_t now = time(nullptr);
         g_ashare[i].until = forMin ? (uint32_t)now + forMin * 60UL : 0;
-        if (!g_cfg.gpsOn) toast("Every %u min; GPS is OFF (S.2)", (unsigned)next);
+        if (!g_cfg.gpsOn && (ashareWhat(g_ashare[i]) & SH_POS)) toast("Every %u min; GPS is OFF (S.2)", (unsigned)next);
         else toast("Every %u min, %s", (unsigned)next, kAutoForName[g_autoForSel]);
     }
     ashareSave();
     Serial.printf("[LOC] auto-share %u min (%d on)\n", (unsigned)next, g_ashareCount);
     requestRedraw();
+}
+
+// What a chat's shares carry: position + battery -> position -> battery. Applies to "share
+// now" and to this chat's automatic share when it is on.
+uint8_t shareWhatFor(const uint8_t dest[16]) {
+    const int i = ashareFind(dest);
+    return i >= 0 ? ashareWhat(g_ashare[i]) : g_shareWhat;
+}
+
+void shareWhatSet(const uint8_t dest[16], uint8_t what) {
+    g_shareWhat = what;
+    const int i = ashareFind(dest);
+    if (i >= 0) { g_ashare[i].what = what; g_ashare[i].lastAt = 0; ashareSave(); }   // lastAt 0: the next one goes now
+    Serial.printf("[LOC] sharing %s\n", shareWhatName(what));
+    requestRedraw();
+}
+
+void shareWhatCycle(const uint8_t dest[16]) {
+    const uint8_t cur = shareWhatFor(dest);
+    shareWhatSet(dest, cur == (SH_POS | SH_BAT) ? SH_POS : cur == SH_POS ? SH_BAT : (SH_POS | SH_BAT));
 }
 
 float metersBetween(double la1, double lo1, double la2, double lo2) {
@@ -7462,6 +7624,7 @@ float metersBetween(double la1, double lo1, double la2, double lo2) {
 
 void autoShareTick() {
     static uint32_t last = 0;
+    static uint32_t waitSince[kAutoShareMax] = {};   // millis when an update first waited for a fix
     if (!g_ashareCount || millis() - last < 5000) return;
     last = millis();
     const time_t now = time(nullptr);
@@ -7477,28 +7640,48 @@ void autoShareTick() {
             requestRedraw();
             continue;
         }
-        const uint32_t iv = a.mins * 60UL;
-        if (a.lastAt && (uint32_t)now - a.lastAt < iv) continue;
-        if (!gpsFresh()) {                   // no fresh fix: power the GPS for a visit
-            static uint32_t asked = 0;
-            if (g_cfg.gpsOn && (!asked || millis() - asked > 180000)) { asked = millis(); gpsRequestVisit(); }
+        if (isGrpHash(a.dest) && grpOfHash(a.dest) < 0) {       // the group was deleted
+            Serial.println("[LOC] auto-share to a deleted group ended");
+            ashareRemove(i--);
+            ashareSave();
+            requestRedraw();
             continue;
         }
-        const bool moved = !a.lastAt || metersBetween(a.lastLat, a.lastLon, g_gpsLat, g_gpsLon) > 50.0f;
-        if (!moved && (uint32_t)now - a.lastAt < 2 * iv) continue;
-        char body[64], hhmm[8];
+        const uint32_t iv = a.mins * 60UL;
+        if (a.lastAt && (uint32_t)now - a.lastAt < iv) { waitSince[i] = 0; continue; }
+        const uint8_t what = ashareWhat(a);
+        // The receiver is off in standby, in a power mode without GPS and with GPS off (S.2).
+        bool pos = (what & SH_POS) && g_cfg.gpsOn && g_pwEff.gps != power::GPS_OFF;
+        if (pos && !gpsFresh()) {            // no fresh fix: power the GPS for a visit
+            static uint32_t asked = 0;
+            if (!asked || millis() - asked > 180000) { asked = millis(); gpsRequestVisit(); }
+            if (!waitSince[i]) waitSince[i] = millis() | 1;
+            if (!(what & SH_BAT) || millis() - waitSince[i] < kAutoFixWaitMs) continue;
+            pos = false;                     // no fix in 3 minutes: the battery goes alone
+        }
+        const bool bat = (what & SH_BAT) && g_bat.valid;
+        if (!pos && !bat) continue;
+        const bool moved = pos && (!a.lastAt || metersBetween(a.lastLat, a.lastLon, g_gpsLat, g_gpsLon) > kAutoMoveM);
+        const bool batChanged = bat && (!a.lastBat || abs(g_bat.pct - (int)(a.lastBat - 1)) >= kAutoBatStep);
+        if (a.lastAt && !moved && !batChanged && (uint32_t)now - a.lastAt < 2 * iv) continue;
+        char body[80], hhmm[8];
         localHHMM(hhmm, sizeof(hhmm));
-        snprintf(body, sizeof(body), "%s%.5f, %.5f %s", kLocAutoPrefix, g_gpsLat, g_gpsLon, hhmm);
-        const SendResult r = locSendOrQueue(a.dest, body);
+        if (pos && bat) snprintf(body, sizeof(body), "%s%.5f, %.5f %s Bat %d%%", kLocAutoPrefix, g_gpsLat, g_gpsLon, hhmm, g_bat.pct);
+        else if (pos) snprintf(body, sizeof(body), "%s%.5f, %.5f %s", kLocAutoPrefix, g_gpsLat, g_gpsLon, hhmm);
+        else snprintf(body, sizeof(body), "%s%d%% %s", kBatAutoPrefix, g_bat.pct, hhmm);
+        const SendResult r = statusSend(a.dest, body);
         Serial.printf("[LOC] auto %s: %s\n", r == SendResult::Sent ? "sent" : r == SendResult::Queued ? "queued" : "failed", body);
         if (r != SendResult::Failed) {
+            waitSince[i] = 0;
             a.lastAt = (uint32_t)now;
-            a.lastLat = (float)g_gpsLat;
-            a.lastLon = (float)g_gpsLon;
+            if (pos) { a.lastLat = (float)g_gpsLat; a.lastLon = (float)g_gpsLon; }
+            if (bat) a.lastBat = (uint8_t)(g_bat.pct + 1);
             ashareSave();
             if (g_threadOpen && !memcmp(g_threadPeer, a.dest, 16)) loadHistory(g_threadPeer);
         }
-        break;                               // one send per tick
+        // No break: every share that is due goes in this pass (the second and later ones wait
+        // in the outbox for the 3 s spacing), so a radio that wakes for a few seconds between
+        // sleeps (standby, Saver) serves all of them in one wake.
     }
 }
 
@@ -7510,7 +7693,9 @@ void autoShareTick() {
 // num = the contact's map number (1-99): set by hand on the contact page (4 Map number),
 // else the lowest free one when their first position arrives. hasPos = 0: a number set
 // before any position (no marker yet).
-struct CPos { uint8_t dest[16]; float lat, lon; uint32_t at; uint8_t num, hasPos, pad[2]; };
+// bat = their battery % + 1 from a status share (0 = none yet), batAt = when.
+struct CPos { uint8_t dest[16]; float lat, lon; uint32_t at; uint8_t num, hasPos, bat, pad; uint32_t batAt; };
+struct CPosV2 { uint8_t dest[16]; float lat, lon; uint32_t at; uint8_t num, hasPos, pad[2]; };   // NVS before 2026-11-22
 struct CPosV1 { uint8_t dest[16]; float lat, lon; uint32_t at; };   // NVS before 2026-11-12
 constexpr int kCPosMax = 16;
 CPos g_cpos[kCPosMax];
@@ -7534,6 +7719,15 @@ void cposLoad() {
     const size_t len = p.getBytesLength("list");
     if (n > 0 && n <= kCPosMax && len == sizeof(CPos) * (size_t)n) {
         if (p.getBytes("list", g_cpos, len) == len) g_cposCount = n;
+    } else if (n > 0 && n <= kCPosMax && len == sizeof(CPosV2) * (size_t)n) {   // migrate: no battery yet
+        CPosV2 old[kCPosMax];
+        if (p.getBytes("list", old, len) == len) {
+            for (int i = 0; i < n; i++) {
+                memset(&g_cpos[i], 0, sizeof(CPos));
+                memcpy(&g_cpos[i], &old[i], offsetof(CPosV2, pad));
+            }
+            g_cposCount = n;
+        }
     } else if (n > 0 && n <= kCPosMax && len == sizeof(CPosV1) * (size_t)n) {   // migrate
         CPosV1 old[kCPosMax];
         if (p.getBytes("list", old, len) == len) {
@@ -7709,6 +7903,32 @@ void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at) {
 
 // Contact page "4 Map number": give this contact number n; whoever had it takes this
 // contact's old number (or the lowest free one).
+// A contact's battery % from a status share (contact card, thread menu).
+void batNote(const uint8_t dest[16], int pct, uint32_t at) {
+    if (isSelf(dest) || pct < 0 || pct > 100) return;
+    const int found = cposFind(dest);
+    if (found >= 0 && g_cpos[found].bat && g_cpos[found].batAt >= at) return;   // have this one or a newer
+    const int i = cposSlot(dest);
+    g_cpos[i].bat = (uint8_t)(pct + 1);
+    g_cpos[i].batAt = at;
+    cposSave();
+    char nm[24];
+    peerName(dest, nm, sizeof(nm));
+    Serial.printf("[LOC] %s battery %d%%\n", nm, pct);
+    requestRedraw();
+}
+
+// "84%, 12 min old" for a contact; false when no battery report came from them.
+bool batText(const uint8_t dest[16], char* out, size_t n) {
+    const int i = cposFind(dest);
+    if (i < 0 || !g_cpos[i].bat) return false;
+    const time_t now = time(nullptr);
+    char age[12] = "?";
+    if (g_cpos[i].batAt) fmtAge(now > (time_t)g_cpos[i].batAt ? (uint32_t)(now - g_cpos[i].batAt) : 0, age, sizeof(age));
+    snprintf(out, n, "%u%%, %s old", (unsigned)(g_cpos[i].bat - 1), age);
+    return true;
+}
+
 void cposAssign(const uint8_t dest[16], int n) {
     const int i = cposSlot(dest);
     const int other = cposByNum(n);
@@ -7910,12 +8130,19 @@ void renderWalkie() {
                                                                        : "Codec2 3200, encrypted, WiFi");
 }
 
+// The new-message alert (beep / vibration) is raised here, per message, once its text is
+// known: an automatic status update (position / battery) from a contact makes none, and is
+// marked read at once when nothing else is unread, so the new-message count stays honest.
+bool g_inMissed = false;                     // the queue was full: alert without reading
+
 void onCommittedMessage(const LXMFManager::CommittedMessage& m) {
-    if (!m.key.incoming || g_inQn >= (int)(sizeof(g_inQ) / sizeof(g_inQ[0]))) return;
+    if (!m.key.incoming) return;
+    if (g_inQn >= (int)(sizeof(g_inQ) / sizeof(g_inQ[0]))) { g_inMissed = true; return; }
     g_inQ[g_inQn++] = m.key;
 }
 
 void inboundTick() {
+    if (g_inMissed) { g_inMissed = false; notifyInbound(); }
     if (!g_inQn || !g_storeReady) return;
     const handheld::storage::RecordKey key = g_inQ[0];
     char text[176];                          // a hotspot walkie-talkie invite is ~110 characters
@@ -7924,13 +8151,23 @@ void inboundTick() {
         static uint8_t tries = 0;
         if (++tries < 20) return;            // store busy: try again next loop
         tries = 0;
+        notifyInbound();
     } else {
         char from[33];
         hashToHex(key.peer, from);
         Serial.printf("[MSG] in from %s: \"%.80s\"\n", from, text);   // stress tests match on this
         soakIncoming(key.peer, text);
         double la, lo;
-        if (locParse(text, strlen(text), la, lo)) cposNote(key.peer, la, lo, msgEpoch(ts));
+        int bp = 0;
+        bool autoL = false, autoB = false;
+        if (locParse(text, strlen(text), la, lo, &autoL)) cposNote(key.peer, la, lo, msgEpoch(ts));
+        if (batParse(text, strlen(text), bp, &autoB)) batNote(key.peer, bp, msgEpoch(ts));
+        if (!autoL && !autoB) notifyInbound();
+        else if (g_inQn == 1 && g_msgStore.totalUnreadCount() == 1) {   // the only unread message is this one
+            if (g_markReadPending) { if (!g_markReadNext[0]) strlcpy(g_markReadNext, from, sizeof(g_markReadNext)); }
+            else markReadStart(from);
+            Serial.println("[LOC] status update: no alert, marked read");
+        }
         wizCardIn(text);
         if (!strncmp(text, walkie::kInvitePrefix, strlen(walkie::kInvitePrefix))) wtInvite(key.peer, text);
     }
@@ -8633,8 +8870,12 @@ bool g_tmenuOpen = false;
 int  g_tmenuSel = 0;
 constexpr int kTmenuRows = 5;
 
+// A group chat: MIC shows "who got it"; L there opens rows 1-3 of this menu for the group.
+bool g_tmenuGrpShare = false;
+
 void tmenuAct(int i) {
-    if (i == 0) { g_tmenuOpen = false; shareMyLocation(g_threadPeer); loadHistory(g_threadPeer); }
+    if (isGrpHash(g_threadPeer) && i > 2) return;
+    if (i == 0) { g_tmenuOpen = false; shareMyStatus(g_threadPeer, shareWhatFor(g_threadPeer)); loadHistory(g_threadPeer); }
     else if (i == 1) ashareCycle(g_threadPeer);
     else if (i == 2) {
         g_autoForSel = (uint8_t)((g_autoForSel + 1) % 3);
@@ -8662,21 +8903,37 @@ void tmenuAct(int i) {
 }
 
 void tmenuKey(const KeyEvent& ev) {
-    if (ev.up || ev.fn || isGrpHash(g_threadPeer)) { g_tmenuOpen = false; requestRedraw(); return; }   // group: a read-only page
-    if (ev.enter) { tmenuAct(g_tmenuSel); return; }
+    const bool grp = isGrpHash(g_threadPeer);
     const char c = (char)toupper((unsigned char)ev.character);
-    if (c >= '1' && c <= '0' + kTmenuRows) { g_tmenuSel = c - '1'; tmenuAct(g_tmenuSel); return; }
+    if (grp && !g_tmenuGrpShare) {           // "who got it": L = share with the group, any other key = back
+        if (c == 'L' && !ev.up && !ev.fn && !ev.enter) { g_tmenuGrpShare = true; g_tmenuSel = 0; }
+        else g_tmenuOpen = false;
+        requestRedraw();
+        return;
+    }
+    if (ev.up || ev.fn) { g_tmenuOpen = false; g_tmenuGrpShare = false; requestRedraw(); return; }
+    if (ev.enter) { tmenuAct(g_tmenuSel); return; }
+    const int rows = grp ? 3 : kTmenuRows;
+    if (c >= '1' && c <= '0' + rows) { g_tmenuSel = c - '1'; tmenuAct(g_tmenuSel); return; }
+    if (c == 'B') { shareWhatCycle(g_threadPeer); return; }   // position + battery / position / battery
     if (c == 'T' && g_tmenuSel > 0) g_tmenuSel--;
-    if (c == 'V' && g_tmenuSel < kTmenuRows - 1) g_tmenuSel++;
+    if (c == 'V' && g_tmenuSel < rows - 1) g_tmenuSel++;
     requestRedraw();
 }
 
 void renderThreadMenu(int y) {
     char sub[40], a[40];
     const int k = ashareFind(g_threadPeer);
-    gpsPosText(a, sizeof(a));
-    snprintf(sub, sizeof(sub), "%s", a);
-    listRow(y, "1 Share my location", sub, g_tmenuSel == 0);
+    const uint8_t what = shareWhatFor(g_threadPeer);         // B changes it
+    if (what == SH_BAT) {
+        if (g_bat.valid) snprintf(sub, sizeof(sub), "now %d%%  (B: what to share)", g_bat.pct);
+        else snprintf(sub, sizeof(sub), "no reading yet");
+    } else {
+        gpsPosText(a, sizeof(a));
+        snprintf(sub, sizeof(sub), "%s", a);
+    }
+    listRow(y, what == SH_BAT ? "1 Share my battery %" : what == SH_POS ? "1 Share my location" : "1 Share location + battery",
+            sub, g_tmenuSel == 0);
     addHit(2, y, W - 4, ROW_H, H_TMENU, 0); y += ROW_H;
     if (k >= 0) {
         char left[16] = "until off";
@@ -8689,17 +8946,30 @@ void renderThreadMenu(int y) {
     } else {
         snprintf(sub, sizeof(sub), "off (Enter: 5/15/30/60 min)");
     }
-    listRow(y, "2 Auto-share location", sub, g_tmenuSel == 1);
+    listRow(y, what == SH_BAT ? "2 Auto-share battery %" : what == SH_POS ? "2 Auto-share location" : "2 Auto-share loc. + battery",
+            sub, g_tmenuSel == 1);
     addHit(2, y, W - 4, ROW_H, H_TMENU, 1); y += ROW_H;
     listRow(y, "3 Auto-share for", kAutoForName[g_autoForSel], g_tmenuSel == 2);
     addHit(2, y, W - 4, ROW_H, H_TMENU, 2); y += ROW_H;
+    if (isGrpHash(g_threadPeer)) {           // a group: rows 1-3 only
+        snprintf(sub, sizeof(sub), "B: share %s", shareWhatName(what));
+        text(8, y + 8, sub, false, W - 16);
+        text(8, y + 30, "Each member gets a copy.", false, W - 16);
+        return;
+    }
     const int ci = cposFind(g_threadPeer);
+    char bt[28];
+    const bool haveBat = batText(g_threadPeer, bt, sizeof(bt));
     if (ci >= 0 && g_cpos[ci].hasPos) {
         const time_t now = time(nullptr);
         const uint32_t a = (g_cpos[ci].at && now > (time_t)g_cpos[ci].at) ? (uint32_t)(now - g_cpos[ci].at) : 0;
         char age[12];
         fmtAge(a, age, sizeof(age));
-        snprintf(sub, sizeof(sub), "#%u, %s old", (unsigned)g_cpos[ci].num, g_cpos[ci].at ? age : "?");
+        if (haveBat) snprintf(sub, sizeof(sub), "#%u %s old, bat %u%%", (unsigned)g_cpos[ci].num, g_cpos[ci].at ? age : "?",
+                              (unsigned)(g_cpos[ci].bat - 1));
+        else snprintf(sub, sizeof(sub), "#%u, %s old", (unsigned)g_cpos[ci].num, g_cpos[ci].at ? age : "?");
+    } else if (haveBat) {
+        snprintf(sub, sizeof(sub), "no position; battery %s", bt);
     } else {
         snprintf(sub, sizeof(sub), "no position from them yet");
     }
@@ -9703,9 +9973,19 @@ void renderCard() {
     for (int i = 0; i < 4; i++) {
         char sub[40];
         snprintf(sub, sizeof(sub), "%s", kCardSubs[i]);
+        if (i == 0) {                            // their battery, from a status share
+            char bt[28];
+            if (batText(g_cardPeer, bt, sizeof(bt))) snprintf(sub, sizeof(sub), "battery %s", bt);
+        }
         if (i == 3) {
             const int ci = cposFind(g_cardPeer);
             if (g_entry == Entry::MapNum) snprintf(sub, sizeof(sub), ">%s_  (1-99, Enter)", g_buf);
+            else if (ci >= 0 && g_cpos[ci].hasPos && g_cpos[ci].at) {   // the position's age
+                const time_t now = time(nullptr);
+                char age[12];
+                fmtAge(now > (time_t)g_cpos[ci].at ? (uint32_t)(now - g_cpos[ci].at) : 0, age, sizeof(age));
+                snprintf(sub, sizeof(sub), "#%u on the map, %s old", (unsigned)g_cpos[ci].num, age);
+            }
             else if (ci >= 0) snprintf(sub, sizeof(sub), "#%u on the map%s", (unsigned)g_cpos[ci].num,
                                        g_cpos[ci].hasPos ? "" : " (no position yet)");
             else snprintf(sub, sizeof(sub), "none yet (1 = shown first)");
@@ -12036,7 +12316,7 @@ void entryKey(const KeyEvent& ev) {
                  g_entry == Entry::PlaceFind || g_entry == Entry::FoundText || g_entry == Entry::GroupName) c = ' ';
     } else if (ev.fn) {
         if (passEntry(g_entry)) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
-        if (g_entry == Entry::Message && g_threadOpen) { g_tmenuOpen = true; g_tmenuSel = 0; requestRedraw(); return; }
+        if (g_entry == Entry::Message && g_threadOpen) { g_tmenuOpen = true; g_tmenuGrpShare = false; g_tmenuSel = 0; requestRedraw(); return; }
         if (entryNumeric()) c = '0';          // MIC (+SYM) types 0 in number fields
     } else {
         c = ev.character;
@@ -14597,6 +14877,8 @@ void handleSerialLine(char* p) {
             Serial.printf("[LOC] cpos #%u %s %s %.5f,%.5f at %lu%s\n", (unsigned)g_cpos[i].num, hex, nm,
                           g_cpos[i].lat, g_cpos[i].lon, (unsigned long)g_cpos[i].at,
                           g_cpos[i].hasPos ? "" : " (no position yet)");
+            if (g_cpos[i].bat) Serial.printf("[LOC] cbat #%u %s %u%% at %lu\n", (unsigned)g_cpos[i].num, hex,
+                                             (unsigned)(g_cpos[i].bat - 1), (unsigned long)g_cpos[i].batAt);
         }
         Serial.printf("[LOC] cpos %d contacts\n", g_cposCount);
     } else if (!strcmp(p, "loc")) {
@@ -14605,20 +14887,47 @@ void handleSerialLine(char* p) {
         Serial.printf("[LOC] %s (hdop %.1f)\n", pos, g_gpsHdop);
         for (int i = 0; i < g_ashareCount; i++) {
             char hex[33]; hashToHex(g_ashare[i].dest, hex);
-            Serial.printf("[LOC] auto %s every %u min until %lu last %lu\n", hex, (unsigned)g_ashare[i].mins,
-                          (unsigned long)g_ashare[i].until, (unsigned long)g_ashare[i].lastAt);
+            Serial.printf("[LOC] auto %s every %u min %s until %lu last %lu\n", hex, (unsigned)g_ashare[i].mins,
+                          shareWhatName(ashareWhat(g_ashare[i])), (unsigned long)g_ashare[i].until, (unsigned long)g_ashare[i].lastAt);
         }
+        Serial.printf("[LOC] auto-share: %d on\n", g_ashareCount);
+#if defined(SIMULATOR)
+    } else if (!strncmp(p, "fake ", 5)) {    // tests: fake bat <pct|off> | fake move <metres north>
+        if (!strncmp(p + 5, "bat ", 4)) { g_fakeBat = isdigit((unsigned char)p[9]) ? atoi(p + 9) : -1; readBattery(); }
+        else if (!strncmp(p + 5, "move ", 5)) g_fakeNorthM = atof(p + 10);
+        Serial.printf("[FAKE] bat %d (now %d%%) north %.0f m\n", g_fakeBat, g_bat.pct, g_fakeNorthM);
+#endif
     } else if (!strncmp(p, "locshare ", 9) || !strncmp(p, "ashare ", 7)) {
-        // Bench: locshare <hex32> = share my location; ashare <hex32> <0|5|15|30|60> | ashare off
+        // Bench: locshare <to> [p|b|pb] = share once (default: position)
+        //        ashare <to> <minutes, 0 = off> [p|b|pb] (default: both) | ashare off
+        //        <to> = <hex32>, or g<n> = group number n in the list
         const bool share = p[0] == 'l';
         const char* a = p + (share ? 9 : 7);
         if (!share && !strcmp(a, "off")) { ashareStopAll(); return; }
         uint8_t dest[16];
-        if (strlen(a) < 32 || !hexToHash(a, dest)) { Serial.println("[LOC] need <hex32>"); return; }
-        if (share) { shareMyLocation(dest); return; }
-        const int mins = atoi(a + 32);
+        const char* rest = a;
+        if (a[0] == 'g' && isdigit((unsigned char)a[1])) {
+            const int gn = atoi(a + 1);
+            if (gn < 1 || gn > g_grpCount) { Serial.println("[LOC] no such group"); return; }
+            grpHash(g_grp[gn - 1].id, dest);
+            rest = a + 1;
+            while (isdigit((unsigned char)*rest)) rest++;
+        } else {
+            if (strlen(a) < 32 || !hexToHash(a, dest)) { Serial.println("[LOC] need <hex32> or g<n>"); return; }
+            rest = a + 32;
+        }
+        auto whatOf = [](const char* s, uint8_t dflt) -> uint8_t {
+            const char* e = s + strlen(s);
+            while (e > s && e[-1] == ' ') e--;
+            if (e - s >= 3 && !strncmp(e - 3, " pb", 3)) return SH_POS | SH_BAT;
+            if (e - s >= 2 && !strncmp(e - 2, " p", 2)) return SH_POS;
+            if (e - s >= 2 && !strncmp(e - 2, " b", 2)) return SH_BAT;
+            return dflt;
+        };
+        if (share) { shareMyStatus(dest, whatOf(rest, SH_POS)); return; }
+        const int mins = atoi(rest);
         int i = ashareFind(dest);
-        if (!mins) { if (i >= 0) { ashareRemove(i); ashareSave(); } Serial.println("[LOC] auto-share off"); return; }
+        if (!mins) { if (i >= 0) { ashareRemove(i); ashareSave(); } Serial.println("[LOC] auto-share off"); requestRedraw(); return; }
         if (i < 0) {
             if (g_ashareCount >= kAutoShareMax) return;
             i = g_ashareCount++;
@@ -14626,9 +14935,10 @@ void handleSerialLine(char* p) {
             memcpy(g_ashare[i].dest, dest, 16);
         }
         g_ashare[i].mins = (uint8_t)mins;
+        g_ashare[i].what = whatOf(rest, SH_POS | SH_BAT);
         g_ashare[i].until = 0;
         ashareSave();
-        Serial.printf("[LOC] auto-share every %d min\n", mins);
+        Serial.printf("[LOC] auto-share every %d min, %s\n", mins, shareWhatName(g_ashare[i].what));
         requestRedraw();
     } else if (!strncmp(p, "sdput ", 6)) {
         sdputStart(p + 6);
@@ -15235,7 +15545,7 @@ void watchMessages() {
     static uint32_t lastIncoming = 0;
     static uint32_t lastRev = 0, lastRedraw = 0;
     const uint32_t incoming = g_msgStore.incomingCommitted();
-    if (incoming != lastIncoming) { lastIncoming = incoming; notifyInbound(); }
+    if (incoming != lastIncoming) lastIncoming = incoming;   // the alert itself: inboundTick()
     static int lastUnread = -1;
     const int unread = g_msgStore.totalUnreadCount();
     if (g_locked && !g_idleActive && unread != lastUnread) requestRedraw();   // lock prompt count
