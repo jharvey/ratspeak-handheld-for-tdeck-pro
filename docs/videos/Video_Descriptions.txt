@@ -26,6 +26,9 @@ CONVENTIONS FOR EVERY VIDEO
 - The videos are recorded on the simulator (tools/howto/make_videos.ps1; one script per
   video in sim/scripts/howto). It shows the device screen and keys, one unit or two side
   by side, and plays sound. It cannot show the box, cables, the side buttons or a PC screen.
+  The simulator used on 22 Nov 2026 was built from the firmware of that day (commit
+  d582a50). Its map card has tiles around San Antonio, Texas only, down to zoom 10 at the
+  Alamo, so the map videos are set there and do not zoom in further.
 - Start on the idle screen and end on the idle screen. Any key wakes the unit. A unit wakes
   to the screen used last (in these videos usually the Inbox, because that is what most
   people used last); in Minimal mode it always wakes to the Inbox.
@@ -345,6 +348,447 @@ Overlays:
 End: the unit goes back to the idle screen.
 
 
+-- Charging_and_battery.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: the Battery page changes.
+
+Purpose: charge the unit, read the Battery page, and know when to do the calibration cycle.
+
+Setup:
+- One unit, "ROBIN", shown large. On battery at 35 %. Splash idle screen. No password.
+
+Steps:
+1. Idle screen: the pointing hand shows the battery % at the top (35 %, "unplugged").
+2. A USB-C charger is plugged in.
+3. Press a key: the Inbox. The hand shows the battery icon at the top left with the
+   charging sign.
+4. M, S, then 6 (SYM + F) = Battery: Voltage, Charge, Avg current (+ in, - out), Status
+   (charging).
+5. V goes down the list to row 9, Full-charge cal, then to row 11, Time left (measured).
+6. Overlay box with the calibration cycle (see Overlays).
+7. ^ twice to go back.
+
+Overlays:
+- Step 6: "New radio, or the % looks wrong? Charge it full. Use it until it switches itself
+  off. Charge it full again. Now the % is right."
+
+End: the unit goes back to the idle screen.
+
+
+-- Password_lock_and_unlock.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: the Idle splash page changes; messages encrypted under the password.
+
+Purpose: set a password lock, lock the unit, and unlock it.
+
+Setup:
+- One unit, "ROBIN", shown large. Splash idle screen. No password yet.
+
+Steps:
+1. Press a key: the Inbox.
+2. M, S, then 4 (SYM + S) = Screen & I/O, then 2 (SYM + E) = Idle splash.
+3. Press 3 (SYM + R) = On + password. Type the new password "HAZELNUT" (4 to 32
+   characters). MIC shows or hides it. Enter.
+4. Type "HAZELNUT" again, Enter. The lock is on.
+5. Press 7 (SYM + Z) = Lock now. The idle screen says LOCKED.
+6. Press a key: the unit asks for the password. Type a wrong one ("WALNUT"), Enter: refused.
+7. Type "HAZELNUT", Enter: unlocked, back where you were.
+
+Overlays:
+- Step 3: "MIC shows or hides the password while you type it".
+- Step 6 (caption): after 3 wrong tries you must wait 30 s, then longer each time.
+- Step 7: "Do not forget the password: there is no way to read it back".
+
+End: the unit locks and goes back to the idle screen.
+
+
+-- Announce_your_unit.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: ATAK, groups (the menu).
+
+Purpose: what announce does, and the two ways to do it.
+
+Setup:
+- One unit, "ROBIN", shown large. A second radio, "SAGE", is on nearby (not shown) and
+  announces during the video. Splash idle screen. No password.
+
+Steps:
+1. Overlay box: what announce is (see Overlays).
+2. Press a key, then M, then H: Home, with the name and the address (the pointing hand
+   shows the address).
+3. Press N = Announce ID.
+4. Press P: Peers. The other radio is listed with its signal and how long ago.
+5. Press R: announce from Peers.
+6. Overlay box: when to announce. Then I: the Inbox.
+
+Overlays:
+- Step 1: "Announce: your radio tells the radios nearby who it is. After that they can find
+  you and message you".
+- Step 6: "Announce once when you meet someone new, or when others cannot find you. It is
+  not needed for every message".
+
+End: the unit goes back to the idle screen.
+
+
+-- Energy_modes.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: Full power only on a strong USB supply lands; the Power page changes. (The
+Standby rows, 11 and 12, are in the video.)
+
+Purpose: what each energy mode does, and how to pick one.
+
+Setup:
+- One unit, "ROBIN", shown large. On battery at 80 %. Balanced mode. Splash idle screen.
+
+Steps:
+1. Press a key, then M, S, then 5 (SYM + D) = Power. Each row is a mode with the battery
+   life in it.
+2. Press 1 = Full power: always awake.
+3. Press 3 = Saver: sleeps most of the time, wakes once a minute, LoRa still listens.
+4. Press 4 = Ultra-low: LoRa only; GPS and WiFi off; wakes every 5 minutes.
+5. V, then 5 = On demand: LoRa is on only for a while after a key press.
+6. Caption only: 6 Check-in (LoRa only at set times), 7 Custom (your own settings).
+7. V further down: 9 Energy monitor, 10 Full power on USB, then Now, Battery draw, Times use.
+8. Press 2 = Balanced, the everyday mode. ^ twice.
+
+Overlays:
+- Start: "Energy modes: how much the radio sleeps. More sleep means more days on one
+  charge".
+
+End: the unit goes back to the idle screen.
+
+
+-- Low_battery_notice.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: groups (send the notice to a group).
+
+Purpose: have the unit tell one contact when its battery gets low.
+
+Setup:
+- Two units side by side, each labeled: "ROBIN" left (on battery at 40 %), "SAGE" right.
+  They are contacts of each other. Splash idle screens. No password.
+
+Steps:
+1. Robin presses a key, then M, S, then 6 (SYM + F) = Battery.
+2. V down the list to row 12, Low-battery notice. Enter opens it.
+3. Press 2 = Send to. In the list press 1 (Sage), then Enter. The unit goes back to
+   Settings; the bottom line confirms "Low battery -> SAGE at 10%".
+4. ^, and the unit goes back to sleep.
+5. Later Robin's battery is at 9 %: the unit sends the message by itself, once.
+6. Sage presses a key, I, Enter: "Battery dying (9%). Last position ..." from Robin.
+
+Overlays:
+- Start: "When its battery gets low, the radio can tell one contact: the battery % and its
+  last position".
+- Step 3: "Row 1 of the same page, Send at, changes the % or turns the notice off".
+
+End: both units are on the idle screen.
+
+
+-- Battery_empty_wont_turn_on.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW, except the BOOTING banner, which is described in an overlay box
+but not shown (the simulator cannot restart inside one recording).
+Remake when: the empty-battery screen changes.
+
+Purpose: what an empty battery looks like, why the unit stays off, and how to start it.
+
+Setup:
+- One unit, "ROBIN", shown large. On battery at 3 %. Splash idle screen.
+
+Steps:
+1. Idle screen: the pointing hand shows "3% bat" at the top.
+2. The battery runs out: the idle screen shows "BATTERY EMPTY / PLUG IN A USB CHARGER" at
+   the bottom and the unit switches itself off. The hand shows the banner.
+3. Caption: keys do nothing; it stays off even if the battery recovers a little.
+4. Overlay box: plug in a USB charger; the unit starts by itself with BOOTING and the
+   firmware version at the bottom of the idle screen.
+
+Overlays:
+- Step 2: "BATTERY EMPTY / PLUG IN A USB CHARGER. The e-ink screen keeps this picture with no
+  power at all".
+- Step 4 as given above.
+
+End: the empty-battery idle screen.
+
+
+-- Share_your_location.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: ATAK, groups (share with a group; markers).
+
+Purpose: send your position to a contact once, or keep sending it; open a position you got.
+
+Setup:
+- Two units side by side, each labeled: "ROBIN" left, at the Alamo in San Antonio, Texas;
+  "SAGE" right, 1 km away. They are contacts of each other. Both SD cards hold the maps.
+  Splash idle screens. No password.
+
+Steps:
+1. Robin presses a key, then C, 1 (SYM + W), Enter (Sage's card), 1 = Message: the chat.
+2. MIC opens the location menu.
+3. Press 1 = Share my location. It goes to Sage once, as a message.
+4. Sage presses a key, I, Enter: "[loc]" in the chat with Robin. Enter on the empty message
+   line opens the map at Robin's position.
+5. Robin: MIC, then 2 = Auto-share location: every 5 minutes (2 again: 15, 30, 60 minutes,
+   off).
+6. ^ twice.
+
+Overlays:
+- Start: "Nothing about where you are is sent unless you send it".
+- Step 5: "Row 3 sets for how long: 1 hour, 4 hours, or until you turn it off. To stop all
+  sharing: Settings, 2 Time & Location, row 8".
+
+End: both units are on the idle screen.
+
+
+-- Atlas_waypoints.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: ATAK (markers on the map).
+
+Purpose: mark places on the map, step through them, remove one, and find the list.
+
+Setup:
+- One unit, "ROBIN", shown large, at the Alamo in San Antonio, Texas. The SD card holds the
+  maps. No waypoints yet. Splash idle screen.
+
+Steps:
+1. Press a key, then A: the Atlas on your position.
+2. Z three times to zoom in; H and T to move the map.
+3. Alt + P: type "WELL", Enter. A waypoint is added at the middle of the map.
+4. F, F, V to move on; Alt + P, "CAMP", Enter.
+5. P three times: steps through the waypoints; the bottom line shows name, distance and
+   direction.
+6. Alt + SYM twice: removes the selected waypoint (CAMP).
+7. M, S, 2 (SYM + E) = Time & Location, 9 (SYM + C) = Waypoints: the list.
+8. ^ three times.
+
+Overlays:
+- Start: "A waypoint is a place you mark on the map, so you can find it again".
+
+End: the unit goes back to the idle screen.
+
+
+-- Atlas_breadcrumb_track.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: the Track page changes.
+
+Purpose: record the way you walk, follow it back, and save it as a GPX file.
+
+Setup:
+- One unit, "ROBIN", shown large, near the Alamo in San Antonio, Texas. The SD card holds
+  the maps. No track yet. The 700 m walk is fed to the simulator as five positions.
+
+Steps:
+1. Press a key, then M, S, 2 (SYM + E) = Time & Location, then 0 (SYM + MIC) = row 10,
+   Track.
+2. Press 1 = Record track: ON. A point is dropped about every 25 m walked.
+3. Robin walks to the Alamo: the row counts 5 points.
+4. A: the Atlas. Z three times: the dotted line is the way walked.
+5. B = track back: the top line shows the distance to the next point on the way back.
+6. G: the big arrow and distance. G again: the map.
+7. B again stops the track back.
+8. M, S, 2, 0, then 3 = Export as GPX: the file is saved on the SD card.
+9. ^ three times.
+
+Overlays:
+- Start: "The track is a trail of breadcrumbs: the radio remembers the way you walked, so
+  you can find the way back".
+- Step 8: "4 (Clear track) empties it: Enter twice. Turn Record track off when you do not
+  need it".
+
+End: the unit goes back to the idle screen.
+
+
+-- Navigate_to_a_contact.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: ATAK.
+
+Purpose: walk to a contact who shared a position.
+
+Setup:
+- One unit, "ROBIN", shown large, at the Alamo in San Antonio, Texas. The SD card holds the
+  maps. The contact "SAGE" has a last shared position 1 km to the north-east, 7 minutes old.
+
+Steps:
+1. Press a key, then A: the Atlas on your position.
+2. N: the map goes to Sage's last shared position. Z twice to zoom in.
+3. G: the big arrow, the distance, the direction, and the age of Sage's position.
+4. G again (or ^): the map. D centres it on you.
+5. I: the Inbox.
+
+Overlays:
+- Start: "Sage shared a position with Robin a few minutes ago. Robin wants to walk there".
+- Step 3: "North is at the top. The radio has no compass: use the direction (NE, and the
+  degrees) with a landmark, the sun or a compass".
+
+End: the unit goes back to the idle screen.
+
+
+-- Arrival_alerts.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: ATAK, groups.
+
+Purpose: get told when a contact comes near you.
+
+Setup:
+- One unit, "ROBIN", shown large, at the Alamo in San Antonio, Texas. The contact "SAGE"
+  has a last shared position 6 km away. No alerts yet.
+
+Steps:
+1. Press a key, then M, S, 9 (SYM + C) = Alerts, 5 (SYM + D) = Arrival alerts.
+2. Press 1 = New alert. The rows: 1 Contact (Sage), 2 Near (me), 3 Within, 4 Repeat.
+3. Press 3 twice: Within 2 km. Press 4: Repeat every time they come back.
+4. Press 5 = Save alert.
+5. I: the Inbox. Sage is 6 km away: nothing happens.
+6. A position from Sage arrives that is 30 m away: the unit beeps and the bottom line reads
+   "SAGE: 29 m from you" (the pointing hand shows it).
+
+Overlays:
+- Start: "An arrival alert tells you when a contact comes near you, or near one of your
+  waypoints. They must be sharing their location with you".
+
+End: the unit goes back to the idle screen.
+
+
+-- SD_backup_and_restore.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: the SD card page changes (for example backups encrypted with the password).
+
+Purpose: back the unit up to the SD card, and find the restore list and the contacts
+export.
+
+Setup:
+- One unit, "ROBIN", shown large, with an SD card in. One contact. No backup yet.
+
+Steps:
+1. Press a key, then M, S. V down to row 11, Storage; Enter.
+2. Press 5 (SYM + D) = SD card.
+3. Press 8 (SYM + X) = Back up now. The row then shows the date and time of the backup.
+4. Press 9 (SYM + C) = Restore backup: the list, newest first. (Enter twice on a backup
+   restores it; not done here.)
+5. ^ three times, back to Settings. Press 7 (SYM + Z) = Identity; V down to Export contacts
+   (SD) and Import contacts (SD).
+6. ^ twice.
+
+Overlays:
+- Start: "A backup on the SD card holds your messages, contacts, settings and your identity.
+  Keep the card safe: whoever has it can be you".
+- Step 4: "Enter twice on a backup restores it: the radio restarts and comes back as it was
+  at that time. Everything newer is replaced".
+
+End: the unit goes back to the idle screen.
+
+
+-- Firmware_update_from_SD.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW up to the question "Enter again: install it". The install and the
+restart are described in overlay boxes, not shown (the simulator cannot restart inside one
+recording).
+Remake when: the SD card page changes.
+
+Purpose: update the firmware from a file on the SD card.
+
+Setup:
+- One unit, "ROBIN", shown large. Its SD card has a firmware .bin file in the folder
+  "firmware".
+
+Steps:
+1. Overlay box: copy the .bin file into the folder "firmware" on the card, on a PC.
+2. Press a key, then M, S. V down to row 11, Storage; Enter. Then 5 (SYM + D) = SD card.
+3. Press 0 (SYM + MIC) = row 10, Update firmware. The row shows the file and its size; the
+   bottom line asks "Enter again: install it".
+4. Overlay boxes: what happens after the second Enter (see Overlays).
+5. Here the update is cancelled: ^ three times.
+
+Overlays:
+- Step 1: "New firmware comes as a .bin file. On a PC, copy it into the folder "firmware" on
+  the SD card, and put the card back in the radio".
+- Step 4: "After the second Enter the radio writes the file (about half a minute), checks it
+  and restarts with the new firmware. Do not switch it off meanwhile". Then: "If the new
+  firmware does not start properly, the radio goes back to the old one by itself".
+
+End: the unit goes back to the idle screen.
+
+
+-- Range_test.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: the LoRa page changes.
+
+Purpose: measure how well two radios hear each other.
+
+Setup:
+- One unit, "ROBIN", shown large, in Everything mode, with an SD card in. A second radio,
+  "SAGE", is on nearby (not shown) and is a contact.
+
+Steps:
+1. Press a key, then M, S, then 8 (SYM + X) = LoRa. (In Typical mode the Advanced feature
+   must be on.)
+2. Press 6 (SYM + F) = Range test. In the list press 1 (Sage), then Enter: the test starts.
+3. The screen counts the pings that came back, with RSSI and SNR, and the lost ones.
+4. ^ stops the test. ^ twice more.
+
+Overlays:
+- Start: "The range test pings one other radio again and again and shows how well each ping
+  came back. Walk away with it to see how far you reach".
+
+End: the unit goes back to the idle screen.
+
+
+-- Library_and_games.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: how-to pages are added to the Library.
+
+Purpose: read the help pages in the Library and find the two games.
+
+Setup:
+- One unit, "ROBIN", shown large. Its SD card holds the 12 help files (Help-1 to Help-12)
+  in the library folder.
+
+Steps:
+1. Press a key, then M, then R: the Library lists the files.
+2. Press 1 (SYM + W): the first help file opens.
+3. N twice (next page), B (back a page).
+4. L, type "REFRESH", Enter: finds the word.
+5. K shows the reader keys; K again hides them. ^ back to the list.
+6. V down to Rat Trap (game); Enter. Enter opens the middle square; H, H, T, Enter opens
+   another.
+7. ^ back to the list. V down to Chess (game); Enter. Enter picks up the pawn, T, T, Enter
+   puts it down two squares ahead; the unit answers.
+8. I: the Inbox.
+
+Overlays: captions only.
+
+End: the unit goes back to the idle screen.
+
+
 ==========================================================================================
 MADE WITHOUT A FULL SCRIPT HERE (the simulator script is the script)
 ==========================================================================================
@@ -391,25 +835,6 @@ In the order a new user would need them. Keys from the firmware menus; write the
 script (Purpose / Setup / Steps / Overlays / End) before recording, and move the entry up
 to the scripted videos.
 
--- Charging_and_battery.mp4: charging over USB-C, the battery icon, Settings 6 Battery
-   (Charge, 9 Full-charge cal, 11 Time left), and when to redo the calibration.
-   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: the Battery page changes.
--- Password_lock_and_unlock.mp4: set a password (M, S, 4 Screen & I/O, 2 Idle splash,
-   3 On + password: type it twice, 4 to 32 characters), 7 Lock now, unlock with the
-   password; after 3 wrong tries the unit makes you wait (30 s, doubling each time).
-   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: the Idle splash page changes.
--- Announce_your_unit.mp4: M, H, N (Announce ID on Home) or P then R, and what announce does.
-   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: ATAK, groups (the menu).
--- Energy_modes.mp4: Settings 5 Power: Full, Balanced, Saver, Ultra-low, On demand,
-   Check-in, Custom; Full power on USB; the Energy monitor.
-   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: the standby power mode lands.
--- Low_battery_notice.mp4: Settings 6 Battery, 12 Low-battery notice: the % to send at and
-   the contact who gets the message (battery % and last position).
-   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: groups (send it to a group).
--- Battery_empty_wont_turn_on.mp4: the "BATTERY EMPTY / PLUG IN A USB CHARGER" banner, why
-   it stays off, plug in USB, the "BOOTING" banner with the firmware version.
-   Status: PROPOSED. Depends: CAN BE MADE NOW (check before recording that the simulator
-   shows both banners). Remake when: the standby power mode lands.
 -- Settings_tour.mp4: one pass through every Settings row (1 Mode, 2 Time & Location,
    3 WiFi, 4 Screen & I/O, 5 Power, 6 Battery, 7 Identity, 8 LoRa, 9 Alerts, 10 Diagnostics,
    11 Storage) and what each is for. LoRa and Diagnostics show only with the Advanced
@@ -417,34 +842,3 @@ to the scripted videos.
    Status: PROPOSED. Depends: WAITING ON a simulator built from the current firmware (the
    recording simulator is from 15 Nov: its Diagnostics page has no Stress test or Check this
    unit rows). Remake when: ATAK, groups, the standby power mode.
--- Share_your_location.mp4: in a chat MIC, 1 Share my location, 2 Auto-share location,
-   3 Auto-share for, 4 Show them on the map.
-   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: ATAK, groups.
--- Atlas_waypoints.mp4: Alt + P saves the place at the map centre as a waypoint, P steps
-   through waypoints, Alt + SYM twice removes one; the Waypoints list (Settings 2 Time &
-   Location, row 9).
-   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: ATAK (markers).
--- Atlas_breadcrumb_track.mp4: Settings 2 Time & Location, 10 Track: Record track, Track
-   back, Export as GPX, Clear track; B on the Atlas to track back.
-   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: the Track page changes.
--- Navigate_to_a_contact.mp4: on the Atlas N selects a contact's last position, G opens the
-   heading and distance screen to walk to them.
-   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: ATAK.
--- Arrival_alerts.mp4: Settings 9 Alerts, Arrival alerts, New arrival alert: Contact, Near,
-   Within, Repeat, Save alert.
-   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: ATAK, groups.
--- SD_backup_and_restore.mp4: Settings, Storage (row 11: go down with V), 5 SD card:
-   8 Back up now, 9 Restore backup (Enter twice); also Export / Import contacts (Settings
-   7 Identity).
-   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: the SD card page changes.
--- Firmware_update_from_SD.mp4: put the .bin in /firmware on the SD card; Settings,
-   Storage, 5 SD card, 10 Update firmware (row 10 is key 0).
-   Status: PROPOSED. Depends: CAN BE MADE NOW (check before recording what the simulator
-   shows after the update starts). Remake when: the SD card page changes.
--- Range_test.mp4: two units, Settings 8 LoRa (Advanced feature on), Range test: ping the
-   other radio and log the results to the SD card.
-   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: the LoRa page changes.
--- Library_and_games.mp4: M, R (Library, or "Games" without library files): reading a help
-   file (Space / N next page, B back, L find), Rat Trap and Chess (U take back, L level).
-   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: how-to pages are added to the
-   Library.

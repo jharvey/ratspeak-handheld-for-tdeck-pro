@@ -77,7 +77,7 @@ $videos = @(
        comps = @("walkie_talkie_jill.txt@hv_jill"); rec2 = "hv_jill"; labels = @("Jack", "Jill") },
     @{ name = "add_wifi"; title = "Add a WiFi network"; main = "hv_w1aw"
        devices = [ordered]@{ hv_w1aw = "W1AW" }
-       ini = @{ hv_w1aw = @("wifi = W1AW-Guest/-52; ARRL-HQ/-58/HIRAMMAXIM; QRZ-Home/-71/CQDX; Hiram-Net/-80/SPARKGAP") } },
+       ini = @{ hv_w1aw = @("wifi = W1AW-SHACK/-52; ARRL-HQ/-58/HIRAMMAXIM; QST-GUEST/-71; NEWINGTON-73/-80/SPARKGAP") } },
     # --- added 22 Nov 2026 (named as in docs\videos\Video_Descriptions.txt) ---
     @{ name = "Password_lock_and_unlock"; title = "Password lock and unlock"; main = "hv_robin"
        devices = [ordered]@{ hv_robin = "ROBIN" } },
@@ -92,7 +92,38 @@ $videos = @(
        devices = [ordered]@{ hv_robin = "ROBIN"; hv_sage = "SAGE" }
        comps = @("Low_battery_notice_sage.txt@hv_sage"); rec2 = "hv_sage"; labels = @("Robin", "Sage") },
     @{ name = "Battery_empty_wont_turn_on"; title = "Battery empty: it will not turn on"; main = "hv_robin"
-       devices = [ordered]@{ hv_robin = "ROBIN" } }
+       devices = [ordered]@{ hv_robin = "ROBIN" } },
+    @{ name = "Share_your_location"; title = "Share your location"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN"; hv_sage = "SAGE" }
+       comps = @("Share_your_location_sage.txt@hv_sage"); rec2 = "hv_sage"; labels = @("Robin", "Sage")
+       ini = @{ hv_robin = @($alamo); hv_sage = @("gps = 29.43500,-98.48000") }
+       seed = @{ hv_robin = "atlas"; hv_sage = "atlas" } },
+    @{ name = "Atlas_waypoints"; title = "Atlas: waypoints"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" }; ini = @{ hv_robin = @($alamo) }; seed = @{ hv_robin = "atlas" } },
+    @{ name = "Atlas_breadcrumb_track"; title = "Atlas: the breadcrumb track"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" }; ini = @{ hv_robin = @($alamo) }; seed = @{ hv_robin = "atlas" } },
+    @{ name = "Navigate_to_a_contact"; title = "Navigate to a contact"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" }; ini = @{ hv_robin = @($alamo) }; seed = @{ hv_robin = "atlas" } },
+    @{ name = "Arrival_alerts"; title = "Arrival alerts"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" }; ini = @{ hv_robin = @($alamo) }; seed = @{ hv_robin = "atlas" } },
+    # seed "library" = tools\sdcard\library\*.txt in <seed>\library\ratdeckpro\library;
+    # seed "fw" = a firmware .bin (firmware\tdeck_pro_standalone.bin) in <seed>\fw\firmware
+    @{ name = "SD_backup_and_restore"; title = "SD card: back up and restore"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" }; seed = @{ hv_robin = "library" } },
+    @{ name = "Firmware_update_from_SD"; title = "Firmware update from the SD card"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" }; seed = @{ hv_robin = "fw" } },
+    @{ name = "Range_test"; title = "Range test"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN"; hv_sage = "SAGE" }
+       comps = @("Range_test_sage.txt@hv_sage"); seed = @{ hv_robin = "library" } },
+    @{ name = "Library_and_games"; title = "Library and games"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" }; seed = @{ hv_robin = "library" } },
+    @{ name = "Settings_tour"; title = "A tour of Settings"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" }; seed = @{ hv_robin = "library" } },
+    # --- the instructional series (docs\instructional\Instructional_videos.txt): run these with
+    #     -Out docs\instructional ---
+    @{ name = "02_Everyday_messaging_Minimal_mode"; title = "Everyday messaging in Minimal mode"; main = "hv_granny"
+       devices = [ordered]@{ hv_pip = "PIP"; hv_granny = "GRANNY GOUDA" }
+       comps = @("02_Everyday_messaging_Minimal_mode_pip.txt@hv_pip"); rec2 = "hv_pip"; labels = @("Granny Gouda", "Pip"); colours = @(3, 0) }
 )
 
 function Start-Sim([string]$script, [string]$device, [int]$delay = 0) {
@@ -126,10 +157,19 @@ foreach ($v in $videos) {
     # 1. fresh devices
     foreach ($dev in $devs) {
         $dir = "$simData\$dev"
-        Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
+        # (on a network share a delete can lag: wait until the folder is gone, and try the copy again)
+        for ($try = 0; $try -lt 20 -and (Test-Path $dir); $try++) {
+            Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
+            if (Test-Path $dir) { Start-Sleep -Milliseconds 500 }
+        }
         New-Item -ItemType Directory -Force "$dir\sd" | Out-Null
         if ($v.ini -and $v.ini[$dev]) { [IO.File]::WriteAllLines("$dir\sim.ini", [string[]]$v.ini[$dev]) }
-        if ($v.seed -and $v.seed[$dev]) { Copy-Item -Recurse -Force "$Seed\$($v.seed[$dev])\*" "$dir\sd\" }
+        if ($v.seed -and $v.seed[$dev]) {
+            for ($try = 0; ; $try++) {
+                try { Copy-Item -Recurse -Force "$Seed\$($v.seed[$dev])\*" "$dir\sd\"; break }
+                catch { if ($try -ge 3) { throw }; Start-Sleep 2 }
+            }
+        }
     }
     # 2. names and addresses
     $procs = @()
@@ -164,6 +204,7 @@ foreach ($v in $videos) {
     $pyArgs = @("$PSScriptRoot\make_video.py", "$simData\$($v.main)\shots\$name", "$Out\$name.mp4", "--title", $v.title)
     if ($v.mic) { $pyArgs += "--mic" }      # the clean voice too (not on calls: it echoes)
     if ($v.rec2) { $pyArgs += @("--rec2", "$simData\$($v.rec2)\shots\$name", "--labels") + $v.labels }
+    if ($v.colours) { $pyArgs += @("--label-colours") + $v.colours }   # each person keeps a colour
     & python @pyArgs
     if ($LASTEXITCODE) { $failed += $name }
 }

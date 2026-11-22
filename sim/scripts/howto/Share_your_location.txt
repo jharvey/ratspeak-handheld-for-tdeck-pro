@@ -1,0 +1,61 @@
+# How-to video: share your location. Device hv_robin (recorded) at the Alamo, companion
+# Share_your_location_sage.txt (hv_sage, recorded too: both side by side), 1 km away.
+gps on
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact {SAGE} SAGE
+wait 2000
+serial a
+expect 60000 {SAGE16}
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Share_your_location
+note 6500 Nothing about where you are is sent unless you send it. Robin shares a position with Sage.
+wait 7000
+caption Robin wakes the radio and opens the chat with Sage: C (Contacts), 1, Enter, then 1 (Message).
+wait 1500
+key SPACE
+wait 1500
+key C
+wait 1500
+key 1
+wait 900
+key ENTER
+wait 1800
+key 1
+wait 2500
+caption In a chat, MIC opens the location menu.
+wait 1500
+key MIC
+wait 3500
+caption 1: Share my location. It goes to Sage once, as a message.
+wait 1500
+key 1
+expect 30000 [LOC] share sent
+wait 20000
+caption MIC, then 2: Auto-share location. The radio sends your position every 5 minutes; 2 again: 15, 30, 60 minutes, off.
+wait 1500
+key MIC
+wait 2000
+key 2
+expect 5000 [LOC] auto-share
+wait 5000
+note 6500 Row 3 sets for how long: 1 hour, 4 hours, or until you turn it off. To stop all sharing: Settings, 2 Time & Location, row 8.
+wait 7000
+caption ^ (Shift) leaves the chat. Later the radio sleeps again.
+wait 1500
+key BACK
+wait 1200
+key BACK
+wait 1500
+serial idle now
+wait 12000
+rec off
+quit

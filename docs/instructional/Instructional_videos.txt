@@ -22,7 +22,7 @@ What this folder is
   three units; an entry that needs those says so on its Depends line.
 - ATAK and groups will change the main menu, Contacts and the chat menu. "Remake when:
   ATAK, groups" marks every video that shows those screens.
-- Depends lines checked against the firmware on 22 Nov 2026.
+- Depends lines checked against the firmware on 22 Nov 2026 (commit d582a50).
 
 
 ==========================================================================================
@@ -130,8 +130,8 @@ THE SERIES
   BATTERY EMPTY banner and why it switches itself off, BOOTING when USB comes back.
 - Shows: Settings 5 Power, Custom power, Energy monitor / trend, 6 Battery, Low-battery.
 - Depends: CAN BE MADE NOW.
-- Remake when: the standby power mode lands (a new mode on the Power page); Full power only
-  on a strong USB supply (Future_steps.txt).
+- Remake when: Full power only on a strong USB supply lands (Future_steps.txt). Standby when
+  idle (Power rows 11 and 12, added 22 Nov) belongs in Part A.
 
 -- 06_Home_Assistant_mode.mp4                                            PLANNED
 - Purpose: use the handheld with Home Assistant: alerts from the house, commands to it,
@@ -256,9 +256,8 @@ THE SERIES
   (RSSI / SNR, CSV on SD); what a bad or missing antenna looks like.
 - Shows: Settings 8 LoRa, Range test.
 - Depends: the LoRa settings and range test parts CAN BE MADE NOW (the LoRa page has the
-  link presets; TX power is a console command only, not a row). The self-test part is
-  WAITING ON a simulator built from the current firmware (the recording simulator is from
-  15 Nov, before "Check this unit" existed).
+  link presets; TX power is a console command only, not a row), and so can the self-test
+  part (the recording simulator was rebuilt from the current firmware on 22 Nov).
 - Remake when: the self-test gets its two-unit LoRa ping.
 
 -- 16_When_something_is_wrong.mp4                                        PLANNED
@@ -271,8 +270,8 @@ THE SERIES
   (calibration cycle); Check this unit (self-test: PASS / WARN / FAIL and what each line
   means, the report on SD); restore a backup; where to ask for help.
 - Shows: Diagnostics, Check this unit, Battery, GPS, outbox.
-- Depends: WAITING ON a simulator built from the current firmware (Check this unit is not in
-  the recording simulator of 15 Nov).
+- Depends: CAN BE MADE NOW (the recording simulator was rebuilt from the current firmware on
+  22 Nov, so it has Check this unit).
 - Remake when: the self-test gains more checks (WiFi, display, keyboard, audio).
 
 -- 17_Multiple_identities.mp4                                            PLANNED (Advanced)
@@ -334,7 +333,7 @@ THE SERIES
 - Purpose: which energy settings for a day, a weekend, a week.
 - Theme: "How much cheese to pack": day trip, weekend, a week in the woods, side by side.
 - Depends: CAN BE MADE NOW.
-- Remake when: the standby power mode lands.
+- Remake when: the Power page changes.
 
 -- 25_Rat_Tips_shorts.mp4 (a series of one-minute clips)                 PLANNED
 - Purpose: one key idea per clip, for the website and social media: the keys, SYM

@@ -1,0 +1,74 @@
+# How-to video: firmware update from the SD card. Device hv_robin, a firmware file in
+# /firmware on its SD card (seed "fw"). The recording stops before the second Enter: the
+# install restarts the unit, which the simulator cannot show inside one recording.
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Firmware_update_from_SD
+note 7000 New firmware comes as a .bin file. On a PC, copy it into the folder "firmware" on the SD card, and put the card back in the radio.
+wait 7500
+caption Battery at 30 % or more, or on a charger. Any key wakes the radio. Settings: M, then S.
+wait 1500
+key SPACE
+wait 1500
+key M
+wait 900
+key S
+wait 1500
+caption Storage is the last row, 11: V goes down to it, Enter opens it. Then 5: SD card.
+wait 1500
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 1500
+key ENTER
+wait 2000
+key 5
+wait 3000
+caption Row 10 is Update firmware: press 0 (SYM + MIC). The row shows the newest file in the folder and its size.
+wait 1500
+key 0
+wait 4500
+caption The bottom line asks: Enter again: install it. (^ cancels.)
+point 120 271 3500
+wait 4500
+note 8000 After the second Enter the radio writes the file (about half a minute), checks it and restarts with the new firmware. Do not switch it off meanwhile.
+wait 8500
+note 6500 If the new firmware does not start properly, the radio goes back to the old one by itself.
+wait 7000
+caption Here we cancel with ^ (Shift).
+wait 1500
+key BACK
+wait 900
+key BACK
+wait 900
+key BACK
+wait 1500
+serial idle now
+wait 3500
+rec off
+quit

@@ -1,0 +1,70 @@
+# How-to video: arrival alerts. Device hv_robin at the Alamo. Sage's shared positions are set
+# with the console (cpos = as if they arrived over the radio): first 6 km away, then 30 m.
+gps on
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial geof clear
+serial contact 5a9e0c2d7b41f6830e1d4c7a9b2f5e60 SAGE
+serial cpos 5a9e0c2d7b41f6830e1d4c7a9b2f5e60 29.4700 -98.4500 3
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Arrival_alerts
+note 6500 An arrival alert tells you when a contact comes near you, or near one of your waypoints. They must be sharing their location with you.
+wait 7000
+caption Any key wakes the radio. Settings: M, S, 9 (Alerts), then 5 (Arrival alerts).
+wait 1500
+key SPACE
+wait 1500
+key M
+wait 900
+key S
+wait 1500
+key 9
+wait 1800
+key 5
+wait 2500
+caption 1: New alert.
+wait 1200
+key 1
+wait 2500
+caption Row 1, Contact: who to watch. Each press of 1 goes to the next contact. Here: Sage.
+wait 5000
+caption Row 2, Near: me (where I am), or one of my waypoints. Each press of 2 goes to the next.
+wait 5000
+caption Row 3, Within: the distance. Press 3 until it is right: 500 m, 1 km, 2 km ...
+wait 1500
+key 3
+wait 1500
+key 3
+wait 2500
+caption Row 4, Repeat: once, or every time they come back. 4 changes it.
+wait 1500
+key 4
+wait 2500
+caption 5: Save alert. It is in the list now. (Enter twice on it removes it.)
+wait 1500
+key 5
+expect 5000 [GEOF] new
+wait 4000
+caption Back to the Inbox. Sage is 6 km away: nothing happens.
+wait 1500
+key I
+wait 4000
+caption Later a position from Sage arrives that is inside the 2 km: the radio beeps and says so.
+wait 2500
+serial cpos 5a9e0c2d7b41f6830e1d4c7a9b2f5e60 29.4262 -98.4859 0
+expect 5000 [GEOF] SAGE is
+wait 1000
+point 120 271 3500
+wait 5000
+serial idle now
+wait 3500
+rec off
+quit

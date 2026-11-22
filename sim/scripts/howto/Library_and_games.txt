@@ -1,0 +1,148 @@
+# How-to video: the Library (help files) and the two games. Device hv_robin, the help files
+# of tools\sdcard\library on its SD card (seed "library").
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Library_and_games
+caption Any key wakes the radio. M opens the Menu; R is the Library.
+wait 1500
+key SPACE
+wait 1500
+key M
+wait 2000
+key R
+expect 5000 [LIB]
+wait 3000
+caption The Library lists the text files on the SD card: here the help pages. A file's number opens it.
+wait 2500
+key 1
+expect 5000 [LIB] open
+wait 3500
+caption Space or N: next page. B: back a page.
+wait 1500
+key N
+wait 2500
+key N
+wait 2500
+key B
+wait 2500
+caption L finds a word: type it, then Enter.
+wait 1500
+key L
+wait 1000
+type REFRESH
+wait 600
+key ENTER
+expect 8000 [LIB] found
+wait 4000
+caption K shows all the reader keys. K again hides them.
+wait 1500
+key K
+wait 4000
+key K
+wait 1500
+caption ^ (Shift) goes back to the list. The last two rows are games: V goes down to Rat Trap. Enter opens it.
+wait 1500
+key BACK
+wait 1500
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 1500
+key ENTER
+wait 3000
+caption Rat Trap: find the squares with no trap. T F V H move, D or Enter opens a square; a number says how many traps touch it.
+wait 2000
+key ENTER
+wait 2500
+key H
+wait 800
+key H
+wait 800
+key T
+wait 800
+key ENTER
+wait 3500
+caption ^ back to the list. The row after Rat Trap is Chess: you play the radio.
+wait 1500
+key BACK
+wait 1500
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 1500
+key ENTER
+expect 5000 [CHESS] open
+wait 3000
+caption Enter picks up the piece under the mark, T F V H move it, Enter puts it down. Then the radio answers.
+wait 1500
+key ENTER
+wait 1000
+key T
+wait 800
+key T
+wait 800
+key ENTER
+expect 5000 [CHESS] 1.
+expect 60000 [CHESS] engine
+wait 4000
+caption U takes a move back. L sets the level, 1 to 4. The game is kept when you leave.
+wait 5000
+caption I goes back to the Inbox.
+wait 1200
+key I
+wait 2000
+serial idle now
+wait 3500
+rec off
+quit

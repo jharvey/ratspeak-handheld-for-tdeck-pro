@@ -150,7 +150,8 @@ LETTER_OF = {v: k for k, v in SYM_OF.items() if k not in ("N",)}
 
 
 # Each person's colour (name tag over the device): 1 green, 2 orange, 3 light purple.
-LABEL_COLOURS = [(40, 150, 70), (235, 125, 20), (155, 115, 215)]
+# A 4th person (Granny Gouda in the instructional series): olive brown. No red, no blue.
+LABEL_COLOURS = [(40, 150, 70), (235, 125, 20), (155, 115, 215), (140, 108, 46)]
 NOTE_FILL, NOTE_EDGE = (255, 236, 130, 245), (190, 140, 0)   # note boxes: yellow, apart from the banner
 
 
@@ -392,6 +393,8 @@ def main():
     ap.add_argument("--title", default="")
     ap.add_argument("--rec2", default="")
     ap.add_argument("--labels", nargs="*", default=[])
+    ap.add_argument("--label-colours", nargs="*", type=int, default=[],
+                    help="colour number of each label (0 green, 1 orange, 2 light purple, 3 olive brown); default 0 1")
     ap.add_argument("--crop-bottom", type=int, default=0, help="pixels to cut off the device drawing's bottom")
     ap.add_argument("--mic", action="store_true", help="also the microphone's sound (the clean voice)")
     args = ap.parse_args()
@@ -507,7 +510,8 @@ def main():
             ox, oy = r.ox, r.oy
             img.paste(r.frame_at(t), (ox, oy), r.mask)
             if n < len(args.labels):                     # name tag above each device: who's who
-                tag, col = args.labels[n].upper(), LABEL_COLOURS[n % len(LABEL_COLOURS)]
+                ci = args.label_colours[n] if n < len(args.label_colours) else n
+                tag, col = args.labels[n].upper(), LABEL_COLOURS[ci % len(LABEL_COLOURS)]
                 tw = d.textlength(tag, font=f_label)
                 d.rounded_rectangle((ox + r.w / 2 - tw / 2 - 22, oy - 58, ox + r.w / 2 + tw / 2 + 22, oy - 8),
                                     radius=12, fill=col)

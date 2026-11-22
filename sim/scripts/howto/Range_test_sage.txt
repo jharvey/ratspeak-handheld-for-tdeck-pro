@@ -1,0 +1,16 @@
+# Companion for Range_test.txt: Sage's radio knows Robin and runs the range test toward Robin
+# (a radio answers pings only while its own test runs).
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact {ROBIN} ROBIN
+wait 5000
+serial a
+expect 60000 {ROBIN16}
+wait 3000
+serial rt start {ROBIN} 10
+wait 240000
+quit

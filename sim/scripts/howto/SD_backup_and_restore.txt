@@ -1,0 +1,96 @@
+# How-to video: back up to the SD card, the restore list, contacts export. Device hv_robin
+# with an SD card (any seed).
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact 5a9e0c2d7b41f6830e1d4c7a9b2f5e60 SAGE
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec SD_backup_and_restore
+note 6500 A backup on the SD card holds your messages, contacts, settings and your identity. Keep the card safe: whoever has it can be you.
+wait 7000
+caption Any key wakes the radio. Settings: M, then S. Storage is the last row, 11: V goes down to it, Enter opens it.
+wait 1500
+key SPACE
+wait 1500
+key M
+wait 900
+key S
+wait 1500
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 1500
+key ENTER
+wait 2500
+caption 5: SD card. The top row shows that the card is in and how full it is.
+wait 1500
+key 5
+wait 3500
+caption 8: Back up now. It takes a few seconds; the row then shows the date and time of the backup.
+wait 1500
+key 8
+expect 30000 [BACKUP] ok
+wait 4000
+caption 9: Restore backup lists the backups on the card, newest first.
+wait 1500
+key 9
+wait 4000
+note 7000 Enter twice on a backup restores it: the radio restarts and comes back as it was at that time. Everything newer is replaced.
+wait 7500
+caption ^ (Shift) goes back without restoring.
+wait 1500
+key BACK
+wait 1200
+key BACK
+wait 900
+key BACK
+wait 1500
+caption Only the contacts: 7 (Identity). Go down to Export contacts (SD) and Import contacts (SD).
+wait 1500
+key 7
+wait 1800
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 300
+key V
+wait 4500
+key BACK
+wait 900
+key BACK
+wait 1500
+serial idle now
+wait 3500
+rec off
+quit

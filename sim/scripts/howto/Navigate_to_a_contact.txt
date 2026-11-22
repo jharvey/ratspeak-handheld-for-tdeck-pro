@@ -1,0 +1,55 @@
+# How-to video: navigate to a contact. Device hv_robin at the Alamo, map tiles on its SD card.
+# Sage's last shared position (6 km to the north-east, 7 minutes old) is set with the console.
+gps on
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact 5a9e0c2d7b41f6830e1d4c7a9b2f5e60 SAGE
+serial cpos 5a9e0c2d7b41f6830e1d4c7a9b2f5e60 29.4700 -98.4500 7
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Navigate_to_a_contact
+note 6000 Sage shared a position with Robin a few minutes ago. Robin wants to walk there.
+wait 6500
+caption Any key wakes the radio. M, then A opens the Atlas on your own position.
+wait 1500
+key SPACE
+wait 1500
+key M
+wait 1200
+key A
+wait 3000
+caption N steps through your contacts' last shared positions. The map goes to Sage.
+wait 1500
+key N
+expect 5000 [MAP] contact
+wait 3000
+caption G: go. A big arrow, the distance, the direction, and how old Sage's position is.
+wait 1500
+key G
+expect 5000 [NAV] open
+wait 6000
+note 7000 North is at the top. The radio has no compass: use the direction (NE, and the degrees) with a landmark, the sun or a compass.
+wait 7500
+caption G or ^ goes back to the map. D centres the map on you again.
+wait 1500
+key G
+wait 2000
+key D
+wait 2500
+caption I leaves the map for the Inbox.
+wait 1200
+key I
+wait 2500
+note 6500 A shortcut: with Sage's row selected in the Inbox or in Contacts, A opens the map at Sage's position at once.
+wait 7000
+serial idle now
+wait 3500
+rec off
+quit

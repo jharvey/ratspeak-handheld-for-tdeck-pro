@@ -3,6 +3,10 @@ usb off
 battery 35
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 wait 3000
 key I
 wait 1500

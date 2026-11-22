@@ -1,0 +1,100 @@
+# How-to video: the breadcrumb track. Device hv_robin at the Alamo, map tiles on its SD card.
+# The walk is fed with the console ("track add"), as the GPS would while walking.
+gps on
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial track clear
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Atlas_breadcrumb_track
+note 6000 The track is a trail of breadcrumbs: the radio remembers the way you walked, so you can find the way back.
+wait 6500
+caption Any key wakes the radio. Settings: M, S, 2 (Time & Location). Then 0 (SYM + MIC): row 10, Track.
+wait 1500
+key SPACE
+wait 1500
+key M
+wait 900
+key S
+wait 1500
+key 2
+wait 1800
+key 0
+wait 2500
+caption 1: Record track. While it is on, the radio drops a point each time you have moved about 25 m.
+wait 1500
+# (GPS off while the walk is fed: the simulated GPS stands still and would add its own points)
+gps off
+wait 500
+key 1
+wait 3000
+caption Robin hikes 8 km to the Alamo. The page counts the points. (Five here; a real walk drops many more.)
+wait 1500
+serial track add 29.4800 -98.4300
+wait 900
+serial track add 29.4670 -98.4440
+wait 900
+serial track add 29.4540 -98.4580
+wait 900
+serial track add 29.4400 -98.4720
+wait 900
+serial track add 29.4261 -98.4860
+expect 5000 [TRACK] point 5
+wait 800
+gps on
+wait 1500
+key T
+wait 2500
+caption M, then A opens the Atlas. The dotted line is the way you came.
+wait 1500
+key M
+wait 1200
+key A
+wait 5000
+caption B: track back. The top line shows how far it is to the next point on the way back.
+wait 1500
+key B
+expect 5000 [TRACK] back on
+wait 4000
+caption G shows a big arrow and the distance. G again goes back to the map.
+wait 1500
+key G
+wait 5000
+key G
+wait 2000
+caption B again stops the track back.
+wait 1500
+key B
+wait 2500
+caption On the Track page, 3 (Export as GPX) saves the track on the SD card, for a map on a PC or phone.
+wait 1500
+key M
+wait 900
+key S
+wait 1200
+key 2
+wait 1200
+key 0
+wait 1800
+key 3
+expect 8000 .gpx
+wait 4000
+note 5500 4 (Clear track) empties it: Enter twice. Turn Record track off when you do not need it.
+wait 6000
+key BACK
+wait 800
+key BACK
+wait 800
+key BACK
+wait 1200
+serial idle now
+wait 3500
+rec off
+quit

@@ -1,0 +1,58 @@
+# How-to video: the range test. Device hv_robin (recorded); companion Range_test_sage.txt
+# (hv_sage) runs the same test toward Robin.
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact {SAGE} SAGE
+wait 2000
+serial a
+expect 60000 {SAGE16}
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Range_test
+note 7000 The range test pings one other radio again and again and shows how well each ping came back. Walk away with it to see how far you reach.
+wait 7500
+note 5500 Start it on both radios, each one picking the other. Sage has already started hers.
+wait 6000
+caption Any key wakes the radio. Settings: M, then S. Then 8 (LoRa). (Typical mode: turn the Advanced feature on first.)
+wait 1500
+key SPACE
+wait 1500
+key M
+wait 900
+key S
+wait 1500
+key 8
+wait 3000
+caption 6: Range test. Pick the other radio: 1 (Sage), then Enter. 1 to 4 on the test screen set how often it pings.
+wait 1500
+key 6
+wait 2500
+key 1
+wait 1200
+key ENTER
+expect 10000 [RT] start
+wait 2500
+key 1
+wait 2500
+caption Each ping that comes back is counted, with its signal strength (RSSI) and quality (SNR). Lost pings are counted too.
+expect 60000 [RT] pong
+wait 14000
+caption With an SD card in, every ping is also written to a file on the card, with your position.
+wait 9000
+caption ^ (Shift) stops the test.
+wait 1500
+key BACK
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 3500
+rec off
+quit

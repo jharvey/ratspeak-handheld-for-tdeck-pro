@@ -1,0 +1,91 @@
+# How-to video: waypoints on the Atlas. Device hv_robin at the Alamo (sim.ini gps), map tiles
+# on its SD card (howto_seed\atlas).
+gps on
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial wpt clear
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Atlas_waypoints
+note 5500 A waypoint is a place you mark on the map, so you can find it again.
+wait 6000
+caption Any key wakes the radio. A opens the Atlas on your own position.
+wait 1500
+key SPACE
+wait 1500
+key A
+wait 3000
+caption T F V H move the map: bring the place to the middle of the screen. (Z zooms in, W zooms out.)
+wait 2500
+key H
+wait 1200
+key T
+wait 2000
+caption Alt + P adds a waypoint at the middle of the map. Type a name, then Enter.
+wait 1500
+key ALT+P
+wait 1200
+type WELL
+wait 600
+key ENTER
+expect 5000 [WPT] W1 WELL
+wait 2500
+caption Move on and mark a second place the same way: CAMP.
+wait 1500
+key F
+wait 1000
+key F
+wait 1000
+key V
+wait 1500
+key ALT+P
+wait 1200
+type CAMP
+wait 600
+key ENTER
+expect 5000 [WPT] W2 CAMP
+wait 2500
+caption P steps through your waypoints. The bottom line shows the name, and how far and which way it is from you.
+wait 1500
+key P
+wait 1800
+key P
+wait 3000
+key P
+wait 3500
+caption To remove the waypoint that is selected: Alt + SYM, twice.
+wait 1500
+key ALT+SYM
+wait 900
+key ALT+SYM
+expect 5000 [WPT] removed
+wait 3000
+caption The whole list is in Settings: M, S, 2 (Time & Location), 9 (Waypoints).
+wait 1500
+key M
+wait 1000
+key S
+wait 1200
+key 2
+wait 1500
+key 9
+wait 4500
+caption ^ (Shift) goes back. Later the radio sleeps again.
+wait 1500
+key BACK
+wait 800
+key BACK
+wait 800
+key BACK
+wait 1200
+serial idle now
+wait 3500
+rec off
+quit

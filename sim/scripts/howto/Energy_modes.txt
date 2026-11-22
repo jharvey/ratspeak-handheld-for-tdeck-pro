@@ -3,6 +3,10 @@ usb off
 battery 80
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 wait 3000
 key I
 wait 1500
@@ -55,7 +59,7 @@ key V
 wait 500
 key V
 wait 4500
-caption The last rows: what the radio is doing now, the battery draw, and the capacity the times use.
+caption 11 Standby when idle: after some hours without a key press, GPS, WiFi and the key light go off. LoRa still listens. 12 sets the hours.
 wait 1500
 key V
 wait 500

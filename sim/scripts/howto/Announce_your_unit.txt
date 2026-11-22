@@ -2,6 +2,10 @@
 # Announce_your_unit_sage.txt (hv_sage) announces so that Peers has someone in it.
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 wait 3000
 key I
 wait 1500

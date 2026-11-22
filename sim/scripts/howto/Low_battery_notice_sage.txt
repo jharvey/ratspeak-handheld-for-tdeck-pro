@@ -1,6 +1,10 @@
 # Companion for Low_battery_notice.txt: Sage's radio (recorded too) gets the notice.
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 serial contact {ROBIN} ROBIN
 wait 5000
 serial a
