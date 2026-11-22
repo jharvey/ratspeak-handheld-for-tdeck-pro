@@ -1,0 +1,70 @@
+# Instructional video 02: everyday messaging in Minimal mode. Device hv_granny (Granny Gouda,
+# recorded), companion 02_Everyday_messaging_Minimal_mode_pip.txt (hv_pip, recorded too: both
+# side by side). Mabel is a contact whose radio is off (out of range).
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact {PIP} PIP
+serial contact 3c7e1a9b5d2f4086b1e3c5a7d9f2b4e6 MABEL
+serial opmode 0
+wait 2000
+serial a
+expect 60000 {PIP16}
+wait 2000
+key I
+wait 1500
+serial idle now
+wait 2000
+rec 02_Everyday_messaging_Minimal_mode
+note 7000 Granny Gouda wants it simple. Her radio is in Minimal mode: wake it, read, reply, done.
+wait 7500
+expect 120000 [MSG] inbound
+wait 2500
+caption A message has come in. The idle screen counts it: 1 NEW, in the second line.
+point 200 22 4000
+wait 5000
+caption Any key wakes the radio. In Minimal mode it always wakes on the Inbox.
+wait 1500
+key SPACE
+wait 2500
+caption The chat with Pip is marked "1 new". It is row 1: Enter opens it.
+wait 2500
+key ENTER
+wait 3500
+caption Pip asks: Coming for Sunday supper? Granny just types her answer and presses Enter.
+wait 3000
+type BRING CRACKERS
+wait 800
+key ENTER
+wait 2500
+caption Under her message: "sent", then "delivered" once Pip's radio has confirmed it.
+wait 9000
+caption ^ (Shift) goes back to the Inbox. Now a message to Mabel: C (Contacts), 2, Enter, then 1 (Message).
+wait 2000
+key BACK
+wait 1500
+key C
+wait 1800
+key 2
+wait 1000
+key ENTER
+wait 1800
+key 1
+wait 2500
+type SUPPER ON SUNDAY
+wait 800
+key ENTER
+wait 4000
+note 8000 Mabel's radio is out of range, so the message is not delivered yet. It waits, and goes out by itself when her radio is heard again.
+wait 8500
+caption That is all. ^ back; after a while the radio sleeps again. With a password lock, a key press asks for the password first.
+wait 2000
+key BACK
+wait 1500
+serial idle now
+wait 5000
+rec off
+quit

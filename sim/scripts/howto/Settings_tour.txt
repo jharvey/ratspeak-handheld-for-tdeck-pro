@@ -1,0 +1,99 @@
+# How-to video: one pass through every Settings row. Device hv_robin, Everything mode (all
+# rows show), SD card in.
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial opmode 2
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Settings_tour
+caption Any key wakes the radio. M, then S opens Settings. A row's number opens it; ^ (Shift) goes back.
+wait 1500
+key SPACE
+wait 1500
+key M
+wait 900
+key S
+wait 3000
+caption 1 Mode: how much the radio shows (Minimal, Typical, Everything), and the touch screen on or off.
+wait 1500
+key 1
+wait 4000
+key BACK
+wait 1200
+caption 2 Time & Location: clock, time zone, GPS, location sharing, waypoints, track, units.
+wait 1500
+key 2
+wait 4000
+key BACK
+wait 1200
+caption 3 WiFi: scan and join a network, saved networks, Home Assistant voice.
+wait 1500
+key 3
+wait 4000
+key BACK
+wait 1200
+caption 4 Screen & I/O: white or black screen, the idle screen and the password lock, the key light.
+wait 1500
+key 4
+wait 4000
+key BACK
+wait 1200
+caption 5 Power: the energy modes, from Full power to Check-in.
+wait 1500
+key 5
+wait 4000
+key BACK
+wait 1200
+caption 6 Battery: charge, calibration, time left, the low-battery notice.
+wait 1500
+key 6
+wait 4000
+key BACK
+wait 1200
+caption 7 Identity: your name and address, announce, the setup wizard, export and import of contacts.
+wait 1500
+key 7
+wait 4000
+key BACK
+wait 1200
+caption 8 LoRa: the radio's frequency and link preset, the last signal, the range test.
+wait 1500
+key 8
+wait 4000
+key BACK
+wait 1200
+caption 9 Alerts: beep, vibrate, volume, arrival alerts.
+wait 1500
+key 9
+wait 4000
+key BACK
+wait 1200
+caption Row 10 is Diagnostics: press 0 (SYM + MIC). Radio details, the stress test, and Check this unit.
+wait 1500
+key 0
+wait 4000
+key BACK
+wait 1200
+caption Row 11 is Storage: V goes down to it, Enter opens it. Memory, messages, and the SD card: backup, restore, firmware update.
+wait 1500
+key V
+wait 1200
+key ENTER
+wait 4500
+key BACK
+wait 1200
+note 6000 In Minimal mode Settings shows only row 1. In Typical mode LoRa and Diagnostics show only with the Advanced feature on.
+wait 6500
+key BACK
+wait 1500
+serial idle now
+wait 3500
+rec off
+quit

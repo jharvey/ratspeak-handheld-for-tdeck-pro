@@ -789,6 +789,32 @@ Overlays: captions only.
 End: the unit goes back to the idle screen.
 
 
+-- Settings_tour.mp4
+
+Status: MADE 22 Nov 2026.
+Depends: CAN BE MADE NOW.
+Remake when: ATAK, groups, or any new Settings row. It shows every page, so it is the first
+of the short videos to go out of date.
+
+Purpose: one pass through every Settings row, with one line on what each is for.
+
+Setup:
+- One unit, "ROBIN", shown large, in Everything mode (all rows show), with an SD card in.
+
+Steps:
+1. Press a key, then M, S: Settings.
+2. For each row: press its number, look at the page, ^ back. 1 Mode, 2 Time & Location,
+   3 WiFi, 4 Screen & I/O, 5 Power, 6 Battery, 7 Identity, 8 LoRa, 9 Alerts.
+3. Row 10, Diagnostics: 0 (SYM + MIC). ^ back.
+4. Row 11, Storage: V goes down to it, Enter opens it. ^ back.
+
+Overlays:
+- End: "In Minimal mode Settings shows only row 1. In Typical mode LoRa and Diagnostics show
+  only with the Advanced feature on".
+
+End: the unit goes back to the idle screen.
+
+
 ==========================================================================================
 MADE WITHOUT A FULL SCRIPT HERE (the simulator script is the script)
 ==========================================================================================
@@ -831,14 +857,6 @@ Each was made on 15 or 16 Nov from sim/scripts/howto/<name>.txt and is in docs/H
 PROPOSED VIDEOS (not scripted yet)
 ==========================================================================================
 
-In the order a new user would need them. Keys from the firmware menus; write the full
-script (Purpose / Setup / Steps / Overlays / End) before recording, and move the entry up
-to the scripted videos.
-
--- Settings_tour.mp4: one pass through every Settings row (1 Mode, 2 Time & Location,
-   3 WiFi, 4 Screen & I/O, 5 Power, 6 Battery, 7 Identity, 8 LoRa, 9 Alerts, 10 Diagnostics,
-   11 Storage) and what each is for. LoRa and Diagnostics show only with the Advanced
-   feature on (or in Everything mode).
-   Status: PROPOSED. Depends: WAITING ON a simulator built from the current firmware (the
-   recording simulator is from 15 Nov: its Diagnostics page has no Stress test or Check this
-   unit rows). Remake when: ATAK, groups, the standby power mode.
+None at the moment: every video proposed on 16 Nov is made. New ideas go here as one
+paragraph each (name, what it shows, Status: PROPOSED, Depends, Remake when); write the full
+script (Purpose / Setup / Steps / Overlays / End) before recording.

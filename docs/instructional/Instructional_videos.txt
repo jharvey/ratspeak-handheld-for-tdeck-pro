@@ -13,6 +13,8 @@ What this folder is
   SYM / Alt presses, overlay boxes, start and end on the idle screen, two units side by side
   with name labels).
 - Status per entry: PLANNED (listed here), SCRIPTED (full steps written), MADE (mp4 here).
+  A made video names its simulator script on a Script line; make it again with
+  tools/howto/make_videos.ps1 -Only <name> -Out docs\instructional.
 - Every entry has the same lines, in this order: Purpose, Theme, Parts, Reuses, Shows (where
   they are written), then:
   - Depends: CAN BE MADE NOW, or WAITING ON <what is missing>.
@@ -70,7 +72,7 @@ THE SERIES
   web flasher). The wizard, contact swap and first message parts can be recorded now.
 - Remake when: ATAK, groups (Contacts and the menu change).
 
--- 02_Everyday_messaging_Minimal_mode.mp4                                PLANNED
+-- 02_Everyday_messaging_Minimal_mode.mp4                                MADE 22 Nov 2026
 - Purpose: daily use with the fewest keys: wake, read, reply, back to sleep.
 - Theme: Granny Gouda in Gouda, Netherlands: Pip asks "Coming for Sunday supper?", she
   wakes the unit, reads it and replies "Bring crackers". Big, slow, simple.
@@ -80,6 +82,10 @@ THE SERIES
 - Shows: Minimal mode, Inbox, chat, outbox, lock.
 - Depends: CAN BE MADE NOW.
 - Remake when: groups (the Inbox and Contacts change).
+- Script: sim/scripts/howto/02_Everyday_messaging_Minimal_mode.txt (Granny Gouda) and
+  ..._pip.txt (Pip). Made: wake, read, reply, and a message to Mabel that waits because she
+  is out of range. The password unlock is only mentioned (it is in the short video
+  Password_lock_and_unlock.mp4). Granny's name tag is olive brown.
 
 -- 02.1_Everyday_messaging_Everything_mode.mp4                           PLANNED
 - Purpose: the same as 02, but in Everything mode, so the menus show the extra entries.

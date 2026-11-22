@@ -1,0 +1,41 @@
+# Companion for 02_Everyday_messaging_Minimal_mode.txt: Pip's radio (recorded too) asks
+# Granny Gouda about Sunday supper and reads her answer.
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact {GRANNY} GRANNY GOUDA
+wait 5000
+serial a
+expect 60000 {GRANNY16}
+wait 2000
+key I
+wait 1500
+serial idle now
+wait 1500
+rec 02_Everyday_messaging_Minimal_mode
+wait 9000
+key SPACE
+wait 1500
+key C
+wait 1500
+key 1
+wait 900
+key ENTER
+wait 1500
+key 1
+wait 2000
+type COMING FOR SUNDAY SUPPER?
+wait 600
+key ENTER
+expect 240000 [MSG] inbound
+wait 12000
+key BACK
+wait 1500
+serial idle now
+wait 60000
+rec off
+wait 2000
+quit
