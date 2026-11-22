@@ -148,11 +148,29 @@ One thing found on the way: the device compiler refused one line the simulator's
 accepted (fixed before the commit). The groups code adds about 4.5 KB of permanent RAM;
 the group chat borrows about 7 KB more only while it is being built.
 
-No unit was flashed.
+No unit was flashed for these tests (see "Real units" below for what was tried after).
 
 A slip to know about: my report commit `a2c52bd` also carried three lines that another
 session had just written into `docs/HowTo.md` (the `point` command under "Making the videos
 again"). They are that session's text, unchanged; nothing was lost.
+
+## Real units, 22 Nov 2026 (not conclusive)
+
+COM6 and COM9 were flashed with image `4540845` (owner's go-ahead; COM5 was not on USB, COM8
+kept logging on the older firmware). Both started normally and their soak test carried on.
+
+A group TEST (COM9 + COM8) was made on COM6 by console and one message, then the group
+cards, were sent. The firmware accepted them ("1 now, 1 queued, 0 failed") but nothing
+arrived on COM9 or COM8 in the 15 minutes watched. Cause seen in the logs, not a group
+fault as far as I can tell: both units' message stores are nearly full from the soak test
+(COM6 about 92 %, COM9 85 %) and spend 1.5 to 3 minutes at a time in "flash space"
+clean-ups (COM6: "removed 0 oldest messages in 154714 ms"), so every outgoing message sat
+in "saving (slow store)" with the engine rows "store held". COM6's own soak reports had
+already stopped reaching COM8 at 07:12, six hours before the flash.
+
+So groups are still unproven on real radios. A clean test needs units with room in the
+message store (or the store emptied, which I did not do: it is the soak test's data).
+Left on the units: group TEST on COM6, and the unsent test messages in its queue.
 
 ## Not done
 
