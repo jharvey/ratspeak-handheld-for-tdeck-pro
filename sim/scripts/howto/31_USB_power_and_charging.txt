@@ -1,0 +1,180 @@
+# Instructional video 31: USB power and charging. Device hv_nibbles (Professor Nibbles,
+# recorded), companion 31_USB_power_and_charging_mabel.txt (hv_mabel, recorded too: both
+# side by side). Cheddar Gorge. The simulator does not switch off and cannot restart inside
+# one recording, so the switch-off and the BOOTING start are described in note boxes.
+usb off
+battery 30
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact {MABEL} MABEL
+wait 2000
+serial a
+expect 60000 {MABEL16}
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec 31_USB_power_and_charging
+note 7000 Cheddar Gorge. Professor Nibbles is off on a long walk. Did he charge his radio? He did not.
+wait 7500
+caption The idle screen shows the battery at the top: 30 %, and "unplugged".
+point 168 8 3500
+wait 4500
+# --- Part A: charging
+caption Part A: charging. Plug a USB-C charger or a power bank into the radio.
+wait 2000
+usb on
+wait 4000
+caption Any key wakes the radio. The battery icon at the top left shows the charging sign.
+wait 1500
+key SPACE
+wait 1500
+point 44 14 3000
+wait 3500
+caption Settings: M, then S. Then 6 (Battery): hold SYM, press F.
+wait 1500
+key M
+wait 900
+key S
+wait 1500
+key 6
+wait 2500
+caption Voltage, charge in %, the current going in (+) or out (-), and charging or discharging.
+wait 6000
+note 7000 Plugged in but not charging? Some cables and ports give power but no charge. Settings 10, Diagnostics, row 8 "Check this unit" says so.
+wait 7500
+caption ^ (Shift) goes back to Settings.
+wait 1500
+key BACK
+wait 1500
+# --- Part B: running on USB
+caption Part B: running on USB. 5 (Power): hold SYM, press D.
+wait 1500
+key 5
+wait 2500
+caption V goes down to row 10, Full power on USB. It is ON at first.
+wait 1500
+key V
+wait 450
+key V
+wait 450
+key V
+wait 450
+key V
+wait 450
+key V
+wait 450
+key V
+wait 450
+key V
+wait 450
+key V
+wait 450
+key V
+wait 3000
+note 8000 ON: on a charger the radio runs at full power, whatever energy mode you chose. OFF: it keeps your energy mode, and charges faster.
+wait 8500
+caption Row 11, Standby when idle, still works on USB: after hours without a key, GPS goes off.
+wait 1500
+key V
+wait 4500
+caption ^ goes back.
+wait 1500
+key BACK
+wait 1500
+# --- Part C: running down
+caption The Professor unplugs and walks on. Part C: when the battery runs low.
+wait 2000
+usb off
+wait 2000
+caption 6 (Battery), then V down to row 12, Low-battery notice. Enter opens it.
+wait 1500
+key 6
+wait 2000
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 1500
+key ENTER
+wait 2500
+caption 2: Send to. Pick who gets the message: 1 (Mabel), then Enter.
+wait 1500
+key 2
+wait 2000
+key 1
+wait 1000
+key ENTER
+wait 3000
+caption Done: Low battery -> MABEL at 10%. Row 1, Send at, picks 5, 10, 15 or 20 %, or off.
+point 120 271 3500
+wait 5000
+key BACK
+wait 1200
+serial idle now
+wait 3000
+caption Hours later the battery is at 9 %. The radio tells Mabel by itself, once, with its last position.
+wait 2500
+battery 9
+wait 20000
+caption Mabel gets it: "Battery dying", the % and where the Professor was.
+wait 12000
+# --- Part D: empty
+caption Part D: empty. The battery is nearly flat.
+wait 1500
+battery 3
+wait 4000
+point 168 8 3000
+wait 3500
+caption When it runs out, the radio draws this screen and switches itself off.
+wait 1500
+serial batempty
+wait 4500
+# the preview is a drawing only: a late redraw of the idle screen's bottom line can cover
+# it, so draw it again (a real unit is off by now and redraws nothing)
+serial batempty
+wait 1500
+point 120 300 4000
+wait 4500
+note 7500 BATTERY EMPTY / PLUG IN A USB CHARGER. The e-ink screen keeps this picture with no power at all.
+wait 8000
+note 8000 It stays off even if the battery recovers a little. A rested battery looks better than it is and would run flat again at once.
+wait 8500
+caption Mabel lends him her power bank.
+wait 2000
+note 9000 Plug USB in: the radio starts by itself. BOOTING and the firmware version show at the bottom, then the idle screen (locked, if you set a password).
+wait 9500
+serial batempty
+note 7500 Messages sent while it was off are not lost: the sender's radio keeps them and tries again (video 20).
+wait 8000
+# --- Part E: battery care
+caption Part E: keep the battery % right.
+wait 1500
+note 9000 New radio, or the % looks wrong? Charge it full. Use it until it switches itself off. Charge it full again. Now the % and "time left" are right.
+wait 9500
+caption "Is the cheese safe?" "The cheese is always safe." The battery was not. Charge before you go.
+wait 6000
+rec off
+quit

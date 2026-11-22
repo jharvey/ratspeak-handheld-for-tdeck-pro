@@ -126,7 +126,12 @@ $videos = @(
        comps = @("02_Everyday_messaging_Minimal_mode_pip.txt@hv_pip"); rec2 = "hv_pip"; labels = @("Granny Gouda", "Pip"); colours = @(3, 0) },
     @{ name = "20_Out_of_range_and_back"; title = "Out of range and back"; main = "hv_mabel"
        devices = [ordered]@{ hv_mabel = "MABEL"; hv_pip = "PIP" }
-       comps = @("20_Out_of_range_and_back_pip.txt@hv_pip+75"); rec2 = "hv_pip"; labels = @("Mabel", "Pip"); colours = @(1, 0) }
+       comps = @("20_Out_of_range_and_back_pip.txt@hv_pip+75"); rec2 = "hv_pip"; labels = @("Mabel", "Pip"); colours = @(1, 0) },
+    @{ name = "31_USB_power_and_charging"; title = "USB power and charging"; main = "hv_nibbles"
+       devices = [ordered]@{ hv_nibbles = "PROF NIBBLES"; hv_mabel = "MABEL" }
+       comps = @("31_USB_power_and_charging_mabel.txt@hv_mabel"); rec2 = "hv_mabel"
+       labels = @("Professor Nibbles", "Mabel"); colours = @(2, 1)
+       ini = @{ hv_nibbles = @("gps = 51.28260,-2.76750"); hv_mabel = @("gps = 51.28300,-2.76500") } }
 )
 
 function Start-Sim([string]$script, [string]$device, [int]$delay = 0) {

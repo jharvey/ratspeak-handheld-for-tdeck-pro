@@ -386,7 +386,7 @@ THE SERIES
   see Future_steps.txt, "Map data for new users"). Formatting is also not on the unit's
   screens yet (the SD card page has Mount and Unmount; format is a console command only).
 
--- 31_USB_power_and_charging.mp4                                         PLANNED
+-- 31_USB_power_and_charging.mp4                                         MADE 22 Nov 2026
 - Purpose: how the unit charges and runs on USB, what it does as the battery runs down,
   what an empty battery looks like, and how to bring it back.
 - Theme: The Dead Battery at Cheddar Gorge: Professor Nibbles forgets to charge before a
@@ -425,6 +425,10 @@ THE SERIES
 - Open points for the owner: the battery % at which the unit switches itself off and the
   default % for the low-battery notice should be stated in the video; check them on a unit
   before recording. Should the video recommend a power bank size for a trip?
+- Script: sim/scripts/howto/31_USB_power_and_charging.txt (Professor Nibbles) and ..._mabel.txt
+  (Mabel gets the low-battery notice). 3 min 27 s. The plug, the switch-off and the BOOTING start
+  are captions and note boxes (the simulator cannot show them). The switch-off % and the notice
+  default are stated as the firmware has them: off under 3.40 V on battery, notice 10 % (5-20).
 
 
 ==========================================================================================
