@@ -1,0 +1,46 @@
+# How-to video: announce from Home (N) and from Peers (R). Device hv_robin; companion
+# Announce_your_unit_sage.txt (hv_sage) announces so that Peers has someone in it.
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Announce_your_unit
+note 6500 Announce: your radio tells the radios nearby who it is. After that they can find you and message you.
+wait 7000
+caption Any key wakes the radio. Then M (Menu) and H (Home).
+wait 1500
+key SPACE
+wait 1500
+key M
+wait 1200
+key H
+wait 2500
+caption Home shows your name and your address: the two lines of letters and digits after LXMF.
+point 150 60 3500
+wait 4200
+caption N: Announce ID. The radio sends its name and address once over LoRa.
+wait 1500
+key N
+wait 3500
+caption Others do the same. P opens Peers: every radio that announced and was heard.
+expect 120000 {SAGE16}
+wait 1500
+key P
+wait 3500
+caption A new radio is in the list: the start of its address, its signal and how long ago. R on Peers announces too.
+wait 2500
+key R
+wait 3500
+note 6000 Announce once when you meet someone new, or when others cannot find you. It is not needed for every message.
+wait 6500
+caption I goes back to the Inbox. Later the radio sleeps again.
+wait 1500
+key I
+wait 2000
+serial idle now
+wait 3500
+rec off
+quit

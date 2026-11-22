@@ -44,6 +44,9 @@ HAND_ANGLE = 40           # degrees, counter-clockwise: finger points up and to 
 HAND_SIZE = 0.78          # frame pixels per SVG unit, for a 410 px wide device
 QUIET_MAX_MS = 2200       # a gap with nothing happening longer than this ...
 QUIET_KEEP_MS = 1300      # ... is shortened to this
+READ_MS_PER_CHAR = 55     # but never while a caption is still being read (this long per character,
+READ_MIN_MS = 1500        # at least this long), nor while a note box shows
+READ_STEP_MS = 1000       # (time points this far apart keep the real speed)
 HAND_BEFORE_MS = 220      # hand shows this long before a press
 HAND_AFTER_MS = 650       # and stays this long after it
 HOLD_BEFORE_MS = 250      # a held modifier's hand arrives this long before it goes down
@@ -407,8 +410,12 @@ def main():
         pts += [t for t, _ in r.frames] + [c[0] for c in r.caps]
         for k in r.keys:
             pts += [k[0], k[0] + HAND_AFTER_MS, max(0, k[0] - HAND_BEFORE_MS)]
-        for n in r.notes:
-            pts += [n[0], n[0] + n[1]]
+        for n in r.notes:                       # a note box keeps its whole time: no shortening under it
+            pts += list(range(n[0], n[0] + n[1], READ_STEP_MS)) + [n[0] + n[1]]
+        for i, c in enumerate(r.caps):          # a new caption gets time to be read before a quiet gap is cut
+            stop = min(c[0] + max(READ_MIN_MS, READ_MS_PER_CHAR * len(c[1])),
+                       r.caps[i + 1][0] if i + 1 < len(r.caps) else r.end)
+            pts += list(range(c[0], stop, READ_STEP_MS)) + [stop]
         for p in r.points:
             pts += [p[0], p[0] + p[1]]
         for t, pcm in r.audio:                  # sound plays at its real speed: no shortening

@@ -1,0 +1,32 @@
+# How-to video: the empty-battery screen. Device hv_robin. "batempty" shows the screen an
+# emptied unit keeps (the simulator does not switch off, and cannot restart inside one
+# recording, so the BOOTING banner is described, not shown).
+usb off
+battery 3
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Battery_empty_wont_turn_on
+caption The battery is almost empty: 3 %. See the top of the idle screen.
+point 168 8 3500
+wait 4500
+caption When it runs out, the radio shows this and switches itself off.
+wait 1500
+serial batempty
+wait 4500
+point 120 300 4000
+wait 4500
+note 7000 BATTERY EMPTY / PLUG IN A USB CHARGER. The e-ink screen keeps this picture with no power at all.
+wait 7500
+caption Keys do nothing now. It stays off, even if the battery recovers a little, so it cannot run flat again and again.
+wait 7000
+note 7500 Plug a USB charger in. The radio starts by itself: the idle screen shows BOOTING and the firmware version at the bottom.
+wait 8000
+caption Your messages, contacts and settings are all still there.
+wait 5000
+rec off
+quit

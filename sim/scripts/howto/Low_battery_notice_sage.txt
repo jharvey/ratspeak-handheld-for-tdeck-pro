@@ -1,0 +1,28 @@
+# Companion for Low_battery_notice.txt: Sage's radio (recorded too) gets the notice.
+expect 60000 [BOOT] ready
+serial wiz skip
+serial contact {ROBIN} ROBIN
+wait 5000
+serial a
+expect 60000 {ROBIN16}
+wait 2000
+key I
+wait 1500
+serial idle now
+wait 1500
+rec Low_battery_notice
+expect 300000 [MSG] inbound
+wait 5000
+key SPACE
+wait 1500
+key I
+wait 1500
+key ENTER
+wait 9000
+key BACK
+wait 1500
+serial idle now
+wait 4000
+rec off
+wait 2000
+quit

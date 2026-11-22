@@ -1,0 +1,11 @@
+# Companion for Announce_your_unit.txt: Sage's radio announces a few times.
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 25000
+serial a
+wait 12000
+serial a
+wait 12000
+serial a
+wait 90000
+quit

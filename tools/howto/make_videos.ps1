@@ -80,6 +80,18 @@ $videos = @(
        ini = @{ hv_w1aw = @("wifi = W1AW-Guest/-52; ARRL-HQ/-58/HIRAMMAXIM; QRZ-Home/-71/CQDX; Hiram-Net/-80/SPARKGAP") } },
     # --- added 22 Nov 2026 (named as in docs\videos\Video_Descriptions.txt) ---
     @{ name = "Password_lock_and_unlock"; title = "Password lock and unlock"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" } },
+    @{ name = "Charging_and_battery"; title = "Charging and the Battery page"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" } },
+    @{ name = "Announce_your_unit"; title = "Announce your unit"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN"; hv_sage = "SAGE" }
+       comps = @("Announce_your_unit_sage.txt@hv_sage") },
+    @{ name = "Energy_modes"; title = "Energy modes"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" } },
+    @{ name = "Low_battery_notice"; title = "Low-battery notice"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN"; hv_sage = "SAGE" }
+       comps = @("Low_battery_notice_sage.txt@hv_sage"); rec2 = "hv_sage"; labels = @("Robin", "Sage") },
+    @{ name = "Battery_empty_wont_turn_on"; title = "Battery empty: it will not turn on"; main = "hv_robin"
        devices = [ordered]@{ hv_robin = "ROBIN" } }
 )
 

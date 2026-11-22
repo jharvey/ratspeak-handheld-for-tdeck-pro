@@ -1,0 +1,77 @@
+# How-to video: the energy modes on Settings > Power. Device hv_robin, on battery.
+usb off
+battery 80
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Energy_modes
+note 6000 Energy modes: how much the radio sleeps. More sleep means more days on one charge.
+wait 6500
+caption Any key wakes the radio. Settings: M, then S. Then 5 (Power): hold SYM, press D.
+wait 1500
+key SPACE
+wait 1500
+key M
+wait 900
+key S
+wait 1500
+key 5
+wait 3000
+caption Each row is a mode, with how long the battery lasts in it. A row's number picks it. Now: 2, Balanced.
+wait 5500
+caption 1 Full power: always awake. The fastest, and the shortest battery life.
+wait 1500
+key 1
+wait 4000
+caption 3 Saver: sleeps most of the time and wakes once a minute. LoRa still hears your messages.
+wait 1500
+key 3
+wait 4500
+caption 4 Ultra-low: LoRa only. GPS and WiFi are off; the radio wakes every 5 minutes.
+wait 1500
+key 4
+wait 4500
+caption V goes down. 5 On demand: LoRa is on only for a while after you press a key.
+wait 1500
+key V
+wait 600
+key 5
+wait 4500
+caption 6 Check-in: LoRa listens only at set times, here every hour. Messages wait until then. 7 Custom: your own settings.
+wait 6500
+caption Further down: 9 Energy monitor, 10 Full power on USB (on a charger the radio runs at full power).
+wait 1500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 4500
+caption The last rows: what the radio is doing now, the battery draw, and the capacity the times use.
+wait 1500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 4500
+caption Back to the everyday mode: 2, Balanced.
+wait 1500
+key 2
+wait 3500
+key BACK
+wait 900
+key BACK
+wait 1500
+serial idle now
+wait 3500
+rec off
+quit

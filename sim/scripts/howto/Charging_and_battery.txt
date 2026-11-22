@@ -1,0 +1,70 @@
+# How-to video: charging and the Battery page. Device hv_robin, on battery at 35 %.
+usb off
+battery 35
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Charging_and_battery
+caption The idle screen shows the battery at the top: 35 %, and "unplugged".
+point 168 8 3500
+wait 4200
+caption Plug a USB-C charger into the radio.
+wait 1500
+usb on
+wait 4000
+caption Any key wakes the radio. The battery icon at the top left shows the charging sign.
+wait 1500
+key SPACE
+wait 1500
+point 44 14 3000
+wait 3500
+caption Settings: M, then S. Then 6 (Battery): hold SYM, press F.
+wait 1500
+key M
+wait 900
+key S
+wait 1500
+key 6
+wait 2500
+caption Voltage, charge in %, the current going in (+) or out (-), and charging or discharging.
+wait 5500
+caption V goes down the list. Row 9, Full-charge cal: the radio learns what "full" is on this battery.
+wait 1500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 3500
+caption Row 11: Time left, measured from your own use. On USB power there is nothing to count down.
+wait 1500
+key V
+wait 500
+key V
+wait 4000
+note 9000 New radio, or the % looks wrong? Charge it full. Use it until it switches itself off. Charge it full again. Now the % is right.
+wait 9500
+caption ^ (Shift) goes back. Leave it on the charger until the Battery page says it is full.
+wait 1500
+key BACK
+wait 900
+key BACK
+wait 1500
+serial idle now
+wait 3500
+rec off
+quit
