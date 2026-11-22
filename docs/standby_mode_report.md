@@ -152,4 +152,4 @@ Not tested on hardware: the real button, its debounce, and the wake from light s
 ## 4. Commits
 
 - `071c48c` Standby when idle. Firmware: `ec8bb62`.
-- Lock button and boot to idle, this report, and its firmware build: the commits after that on main.
+- `d582a50` Lock button, boot to idle, this report. Firmware: `8cff149` (2,348,080 bytes, sha256 starts `654d7cd0cbd9598a`). The build tool labelled it "+ uncommitted changes": that was another job's edit to `tools/howto/make_videos.ps1`, not firmware source.
