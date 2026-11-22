@@ -13,6 +13,16 @@ What this folder is
   SYM / Alt presses, overlay boxes, start and end on the idle screen, two units side by side
   with name labels).
 - Status per entry: PLANNED (listed here), SCRIPTED (full steps written), MADE (mp4 here).
+- Every entry has the same lines, in this order: Purpose, Theme, Parts, Reuses, Shows (where
+  they are written), then:
+  - Depends: CAN BE MADE NOW, or WAITING ON <what is missing>.
+  - Remake when: the feature whose arrival changes the screens this video shows.
+- The videos are recorded on the simulator. It shows the device screen and keys, one unit
+  or two side by side, and plays sound. It cannot show the box, cables, a PC screen or
+  three units; an entry that needs those says so on its Depends line.
+- ATAK and groups will change the main menu, Contacts and the chat menu. "Remake when:
+  ATAK, groups" marks every video that shows those screens.
+- Depends lines checked against the firmware on 22 Nov 2026.
 
 
 ==========================================================================================
@@ -56,6 +66,9 @@ THE SERIES
   it switches itself off, charge full again.
 - Reuses: New_out_of_box_unit_first_turn_on, Contact_exchange, send / read message clips.
 - Shows: wizard, Contacts, contact card share, chat, idle screen, battery.
+- Depends: WAITING ON camera footage of a real unit and a PC (the box, the USB cable, the
+  web flasher). The wizard, contact swap and first message parts can be recorded now.
+- Remake when: ATAK, groups (Contacts and the menu change).
 
 -- 02_Everyday_messaging_Minimal_mode.mp4                                PLANNED
 - Purpose: daily use with the fewest keys: wake, read, reply, back to sleep.
@@ -65,52 +78,80 @@ THE SERIES
   read, reply; delivered / not yet delivered; a message to someone out of range waits in
   the outbox; unlock with the password if set.
 - Shows: Minimal mode, Inbox, chat, outbox, lock.
+- Depends: CAN BE MADE NOW.
+- Remake when: groups (the Inbox and Contacts change).
 
--- 02.1_Everyday_messaging_Everything_mode.mp4                             PLANNED
-- Purpose: the same as 02, but in everything mode, so extra stuff in the menues.
-- Theme: saem theme as 02, but continue the chat Pip asks "What cheese should I bring? and Gouda replies. Show the prior messages from 02. 
-- Parts: same as 02
-- Shows: same as 02
+-- 02.1_Everyday_messaging_Everything_mode.mp4                           PLANNED
+- Purpose: the same as 02, but in Everything mode, so the menus show the extra entries.
+- Theme: the same as 02, and the chat goes on: Pip asks "What cheese should I bring?" and
+  Granny Gouda replies. The earlier messages from 02 are still on the screen.
+- Parts: the same as 02.
+- Shows: the same as 02, in Everything mode.
+- Depends: CAN BE MADE NOW, after 02 (it continues that chat).
+- Remake when: ATAK, groups (Everything mode shows every new menu entry).
 
--- 03_Every_Menu_option.mp4                             PLANNED
+-- 03_Every_Menu_option.mp4                                              PLANNED
 - Purpose: the same day with every feature showing: what each extra menu entry is for.
 - Theme: Professor Nibbles gives a lecture tour of every menu, pointer in hand, getting
-  carried away at each one ("and THIS, my dear students, is the Peers list..."). Include audio, preferably a voice that sounds fluid not robotic. can we use the Claude play back voice?
+  carried away at each one ("and THIS, my dear students, is the Peers list...").
+- Sound: a spoken commentary, in a voice that sounds fluid, not robotic. Open question from
+  the owner: can the Claude playback voice be used?
 - Parts: the full menu (Home, Inbox, Contacts, Peers, Atlas, Library, Settings ...); chat
   menu (MIC): share location, voice message, contact card; Peers and announce; the home
   card; where each feature is explained further in this series.
 - Shows: Everything mode, menu, chat menu, Peers.
+- Depends: the pictures CAN BE MADE NOW; the spoken commentary is WAITING ON the choice of
+  voice (the PC has only the two built-in Windows voices, which sound robotic).
+- Remake when: ATAK, groups. Every menu changes, so this is the first video to remake.
 
 -- 04_Configure_Typical_mode.mp4                                         PLANNED
 - Purpose: choose what your unit shows: Minimal / Typical / Everything, and pick the Typical
-- Theme: Mabel sets up Granny Gouda's unit: turns off what Granny will never use, keeps
-  messages and If found, picks big idle screen.
   features one by one.
+- Theme: Mabel sets up Granny Gouda's unit: turns off what Granny will never use, keeps
+  messages and If found, picks a big idle screen.
 - Parts: Settings 1 Mode; Typical features list (turn each on / off and see the menu
   change); touch on / off; idle screen choice and timeout.
 - Shows: Settings Mode, Typical features, Screen & I/O.
+- Depends: CAN BE MADE NOW.
+- Remake when: ATAK, groups (they are likely to be new rows in the Typical features list).
 
 -- 05_Energy_modes.mp4                                       PLANNED (long: may be 3 parts)
 - Purpose: make the battery last: what each energy mode does and how to pick or tune one.
 - Theme: The Long Winter Burrow: Pip is snowed in for a week and rations battery like
   cheese. Each energy mode is a "cheese ration" (Full power = the whole wheel in a day,
-  Ultra-low = one crumb an hour). Part C: Mabel teaches battery care. Explain what each mode does likes is GPS turned on once a day, or only on demand? Explain things like that. Go through all modes and explain what each one does. 
+  Ultra-low = one crumb an hour). Part C: Mabel teaches battery care.
 - Part A: the modes (Full power, Balanced, Saver, Ultra-low, On demand): what changes
   (radio listening, GPS, screen, wake time) and the hours each gives on the Power page.
+  Go through all the modes and say plainly what each one does. For example: is the GPS
+  turned on once a day, or only on demand?
 - Part B: Custom power: each setting and its cost; the energy monitor and the energy trend
   graph; "time left" and the learned battery capacity.
 - Part C: battery care: charging, the calibration cycle, the low-battery notice, the
   BATTERY EMPTY banner and why it switches itself off, BOOTING when USB comes back.
 - Shows: Settings 5 Power, Custom power, Energy monitor / trend, 6 Battery, Low-battery.
+- Depends: CAN BE MADE NOW.
+- Remake when: the standby power mode lands (a new mode on the Power page); Full power only
+  on a strong USB supply (Future_steps.txt).
 
 -- 06_Home_Assistant_mode.mp4                                            PLANNED
 - Purpose: use the handheld with Home Assistant: alerts from the house, commands to it,
-- Theme: Rat Manor, the smart burrow: Pip says via microphone button "turn on the kitchen lights" then "open the pantry door"; the house warns
-  "Fluffy the Cat detected at the back door"; Mabel the home owner arrives home and the burrow knows. Borrow warns to "Home Ownder Mabel returned, Cat is moving likely entering kitchen, get back to your home". Pip types instead of saying "Home safe turn kitchen light off". Pip reviews the setitngs showing what is needed to make this happen. House is on WiFi and accepts both voice message and text messages as commands. Text messages work over LoRa and voice works when high bandwidth on WiFi. 
+  voice.
+- Theme: Rat Manor, the smart burrow. Pip presses the microphone button and says "turn on
+  the kitchen lights", then "open the pantry door". The house warns: "Fluffy the Cat
+  detected at the back door". Mabel, the home owner, arrives home and the burrow knows. The
+  burrow warns: "Home owner Mabel returned. Cat is moving, likely entering the kitchen. Get
+  back to your home." Pip types instead of speaking: "Home safe, turn kitchen light off".
+  Then Pip goes through the settings, to show what is needed to make this happen. The
+  house is on WiFi and takes both voice messages and text messages as commands. Text
+  messages work over LoRa; voice works when there is high bandwidth, on WiFi.
 - Parts: what is needed at home (the bridge); Settings Home Assistant voice; sending a
   command; receiving an alert; presence (home / away). Only what is built at recording
   time; the rest is said as "coming".
 - Shows: HA voice page, chat with the house, alerts.
+- Depends: WAITING ON the Home Assistant bridge (typed commands, alerts from the house and
+  presence are not built yet, see Future_steps.txt). The voice part works on a real unit
+  with a real Home Assistant, which the simulator does not have.
+- Remake when: each Home Assistant part lands.
 
 -- 07_Atlas_maps_and_navigation.mp4                                      PLANNED (long)
 - Purpose: the offline map: move around, find places, mark and go to them.
@@ -122,6 +163,10 @@ THE SERIES
   GPX on SD); navigate to a contact or waypoint (arrow + distance); arrival alerts; map
   layers. Reuses atlas.mp4.
 - Shows: Atlas, waypoints, track, navigate, arrival alerts, map packs on SD.
+- Depends: CAN BE MADE NOW, except the map layers part, which is WAITING ON the on-screen
+  map layer switch. It also needs map tiles of Cheddar Gorge for the simulator's card (the
+  tiles there now are around San Antonio, Texas).
+- Remake when: the on-screen map layer switch lands; ATAK (markers on the map).
 
 -- 08_Finding_people_and_contacts.mp4                                    PLANNED
 - Purpose: get people into your contacts and keep them tidy.
@@ -130,6 +175,9 @@ THE SERIES
 - Parts: announce and what it does; Peers (who has announced); peer to contact; naming a
   contact; contact cards (send / receive); removing a contact; your own identity card and
   address. Reuses peer_search, add_contact, contact_exchange.
+- Depends: CAN BE MADE NOW, except "removing a contact", which is WAITING ON that feature
+  (the firmware has no way to remove a contact on the unit yet).
+- Remake when: groups (Contacts gets a Groups sub-menu).
 
 -- 09_Voice_messages_and_walkie_talkie.mp4                               PLANNED
 - Purpose: talk instead of type. Needs two real units (sound).
@@ -140,6 +188,10 @@ THE SERIES
   / listen with Space, hang up; same WiFi or the unit's own hotspot; range and battery
   notes.
 - Shows: chat MIC 5, contact card W, walkie screen.
+- Depends: CAN BE MADE NOW on the simulator, which plays and records sound since 16 Nov
+  (voice_message.mp4 and walkie_talkie.mp4 were made that way, with the Windows voices).
+  Two real units are needed only if the real radio sound is wanted.
+- Remake when: groups (group / channel talk).
 
 -- 10_Location_sharing_and_team_awareness.mp4                            PLANNED
 - Purpose: let your group see where you are, safely.
@@ -149,6 +201,8 @@ THE SERIES
   last position and its age; navigate to them; check-in schedule; low-battery notice with
   position; privacy: nothing is shared unless you turn it on.
 - Shows: chat MIC 1 / 2, Atlas contacts, Check-in, Low-battery notice.
+- Depends: CAN BE MADE NOW.
+- Remake when: ATAK, groups (sharing with a group, markers).
 
 -- 11_Lock_If_found_and_privacy.mp4                                      PLANNED
 - Purpose: protect the unit and get it back if lost.
@@ -158,6 +212,8 @@ THE SERIES
 - Parts: set a password, lock, unlock; the If-found idle screen and its details; what a
   finder sees; what the lock protects (and what not yet).
 - Shows: Screen & I/O idle splash, If found page, lock.
+- Depends: CAN BE MADE NOW.
+- Remake when: messages are encrypted under the password (it changes what the lock protects).
 
 -- 12_WiFi_and_internet_links.mp4                                        PLANNED
 - Purpose: connect over WiFi as well as LoRa.
@@ -167,6 +223,9 @@ THE SERIES
 - Parts: scan and join a network, saved networks, auto-connect; the TCP hub (reach other
   Reticulum users over the internet); WiFi and battery.
 - Shows: Settings WiFi, Networks, Saved WiFi, TCP hub. Reuses wifi / add_wifi.
+- Depends: the WiFi parts CAN BE MADE NOW. The TCP hub part is WAITING ON a hub test on real
+  units (the hub link runs on the device only, not in the simulator).
+- Remake when: the WiFi page changes.
 
 -- 13_SD_card_backup_and_updates.mp4                                     PLANNED
 - Purpose: keep your unit safe and up to date with the SD card.
@@ -176,12 +235,18 @@ THE SERIES
   firmware update from /firmware; message archive on / off; USB drive mode (card on the PC);
   eject before removing.
 - Shows: Settings Storage, SD card, Restore backup.
+- Depends: CAN BE MADE NOW for the screens on the unit. The card showing up on the PC needs
+  camera or PC footage.
+- Remake when: the Storage page changes (for example backups encrypted with the password).
 
 -- 14_Library_help_and_games.mp4                                         PLANNED (short)
 - Purpose: the built-in help pages and the games.
 - Theme: A rainy day in the burrow: Pip reads the help pages, plays Rat Trap, and loses at
   chess to the Professor (level 4).
 - Parts: Library, reading a help file, bookmarks / pages; Rat Trap, chess (levels, take back).
+- Depends: CAN BE MADE NOW, except bookmarks (the Library has pages and find, but no
+  bookmarks yet; the Library page idle screen remembers the last page read).
+- Remake when: how-to pages are added to the Library (Future_steps.txt).
 
 -- 15_Radio_range_test_and_antennas.mp4                                  PLANNED
 - Purpose: see how far you can reach and check an antenna.
@@ -190,6 +255,11 @@ THE SERIES
 - Parts: LoRa settings (presets, TX power) and what they trade; range test with two units
   (RSSI / SNR, CSV on SD); what a bad or missing antenna looks like.
 - Shows: Settings 8 LoRa, Range test.
+- Depends: the LoRa settings and range test parts CAN BE MADE NOW (the LoRa page has the
+  link presets; TX power is a console command only, not a row). The self-test part is
+  WAITING ON a simulator built from the current firmware (the recording simulator is from
+  15 Nov, before "Check this unit" existed).
+- Remake when: the self-test gets its two-unit LoRa ping.
 
 -- 16_When_something_is_wrong.mp4                                        PLANNED
 - Purpose: troubleshooting a new owner can do alone.
@@ -201,6 +271,9 @@ THE SERIES
   (calibration cycle); Check this unit (self-test: PASS / WARN / FAIL and what each line
   means, the report on SD); restore a backup; where to ask for help.
 - Shows: Diagnostics, Check this unit, Battery, GPS, outbox.
+- Depends: WAITING ON a simulator built from the current firmware (Check this unit is not in
+  the recording simulator of 15 Nov).
+- Remake when: the self-test gains more checks (WiFi, display, keyboard, audio).
 
 -- 17_Multiple_identities.mp4                                            PLANNED (Advanced)
 - Purpose: more than one identity on one unit (e.g. personal / team).
@@ -208,72 +281,102 @@ THE SERIES
   unit.
 - Parts: Identities list, add / switch / remove, which address others see.
 - Shows: Settings Identities.
-
+- Depends: CAN BE MADE NOW.
+- Remake when: user accounts land (Future_steps.txt).
 
 -- 18_A_day_on_the_trail.mp4                                             PLANNED (showcase)
 - Purpose: everything working together on one day out, start to finish.
 - Theme: Pip and Mabel's Great Smoky Mountains hike: morning check-in, auto-shared
   positions, an arrival alert at the picnic rock, a voice message ("save me the brie"),
   the low-battery notice at dusk, back home.
+- Depends: CAN BE MADE NOW. It needs map tiles of the Great Smoky Mountains for the
+  simulator's card. Best made last, from the parts of the other videos.
+- Remake when: ATAK, groups.
 
--- 19_Three_rats_one_group.mp4                                          PLANNED
+-- 19_Three_rats_one_group.mp4                                           PLANNED
 - Purpose: how messages and positions look with three people.
 - Theme: The Three Musketeers of the Pantry: Pip (green), Mabel (orange) and the Professor
   (light purple) plan a midnight pantry raid; three units side by side.
 - Needs: three-unit video support in tools/howto/make_video.py.
+- Depends: WAITING ON three-unit video support (make_video.py puts at most two units side by
+  side), and on groups if the three are to share one group chat.
+- Remake when: groups.
 
--- 20_Out_of_range_and_back.mp4                                         PLANNED (short)
+-- 20_Out_of_range_and_back.mp4                                          PLANNED (short)
 - Purpose: what happens to a message when the other person cannot be reached.
 - Theme: Pip goes down the drainpipe; Mabel's message waits in her outbox; Pip pops out of
   the pipe and it is delivered at once.
+- Depends: CAN BE MADE NOW.
+- Remake when: sync through a propagation node lands (Future_steps.txt).
 
--- 21_Finding_a_lost_friend.mp4                                         PLANNED
+-- 21_Finding_a_lost_friend.mp4                                          PLANNED
 - Purpose: search and rescue with the tools on the unit.
 - Theme: Professor Nibbles wanders off chasing a rare blue-veined cheese; Pip and Mabel use
   his last shared position, navigate to him, and the arrival alert says they are close.
+- Depends: CAN BE MADE NOW.
+- Remake when: ATAK (markers), the SOS beacon.
 
--- 22_Foraging_with_markers.mp4                                         PLANNED
+-- 22_Foraging_with_markers.mp4                                          PLANNED
 - Purpose: relative markers and pointing someone the right way in the field.
 - Theme: Rat scouts out foraging: "the berry bush is 900 ft north of me"; the arrow on
   Pip's screen points him straight to it.
+- Depends: WAITING ON relative markers (part of the ATAK-style team awareness work; not
+  built yet).
+- Remake when: ATAK.
 
--- 23_Setting_up_a_unit_for_someone_else.mp4                            PLANNED
+-- 23_Setting_up_a_unit_for_someone_else.mp4                             PLANNED
 - Purpose: prepare a unit as a gift: name, If found, password, contacts, hand it over.
 - Theme: Pip sets up a radio for Granny Gouda's birthday, wrapped in cheesecloth.
+- Depends: CAN BE MADE NOW.
+- Remake when: groups (a family group would be part of the gift).
 
--- 24_Pack_for_the_trip_energy_choices.mp4                              PLANNED (short)
+-- 24_Pack_for_the_trip_energy_choices.mp4                               PLANNED (short)
 - Purpose: which energy settings for a day, a weekend, a week.
 - Theme: "How much cheese to pack": day trip, weekend, a week in the woods, side by side.
+- Depends: CAN BE MADE NOW.
+- Remake when: the standby power mode lands.
 
--- 25_Rat_Tips_shorts.mp4 (a series of one-minute clips)                PLANNED
+-- 25_Rat_Tips_shorts.mp4 (a series of one-minute clips)                 PLANNED
 - Purpose: one key idea per clip, for the website and social media: the keys, SYM
   numbers, Back, waking up, the idle screen, announce, where am I.
 - Theme: each clip opens with "Rat Tip number N" on a paper scroll.
+- Depends: CAN BE MADE NOW.
+- Remake when: ATAK, groups, for the clips that show the menu.
 
--- 26_For_radio_amateurs.mp4                                            PLANNED
+-- 26_For_radio_amateurs.mp4                                             PLANNED
 - Purpose: LoRa settings, range, antennas and logging for ham radio operators.
 - Theme: Squeaky, the ham radio rat, visits W1AW in Newington, Connecticut, runs a range
   test and logs it like a contest.
+- Depends: CAN BE MADE NOW.
+- Remake when: the LoRa page changes.
 
--- 27_What_is_RatSpeak.mp4                                              PLANNED (2 min)
+-- 27_What_is_RatSpeak.mp4                                               PLANNED (2 min)
 - Purpose: for people who do not own one yet: messages with no phone, no towers, no
   internet needed.
 - Theme: "Why rats don't need cell towers": the power goes out in the city, the phones go
   quiet, Pip and Mabel keep talking.
-  
--- 28_ATAK_overview.mp4
+- Depends: WAITING ON pictures the simulator cannot make (the city, the phones). The two
+  units talking can be recorded now.
+- Remake when: ATAK, groups, if it shows the menu.
+
+-- 28_ATAK_overview.mp4                                                  PLANNED
 - Purpose: explain ATAK and describe how to use it with this device.
-- Theme: "Tacticle rat, protecting the mice."
+- Theme: "Tactical rat, protecting the mice."
+- Depends: WAITING ON ATAK (not built yet, see Future_steps.txt, Team awareness).
 
--- 29_Group_message_overview.mp4
-- Purpose: show how to send a group message, then show how to configure a group, and how to share a group.
-- Theme: Rat family on vactaion, family 1 visits family 2, they share contact inforamtion to communcicate during the visit.
+-- 29_Group_message_overview.mp4                                         PLANNED
+- Purpose: show how to send a group message, then how to configure a group, and how to
+  share a group.
+- Theme: A rat family on vacation: family 1 visits family 2, and they share contact
+  information to communicate during the visit.
+- Depends: WAITING ON groups (not built yet, see Future_steps.txt, item 12).
 
--- 30_get_and_install_maps_On_SD_card_overview.mp4
-- Purpose: show how to format and install a SD card then how to get map data for your SD card.
-- Theme: Rat is going on vacation wants to get maps data for new location.
-
-  
+-- 30_Get_and_install_maps_on_SD_card_overview.mp4                       PLANNED
+- Purpose: show how to format and install an SD card, then how to get map data for it.
+- Theme: A rat is going on vacation and wants map data for the new location.
+- Depends: WAITING ON a way for owners to get maps (map selection and ready-made map packs,
+  see Future_steps.txt, "Map data for new users"). Formatting is also not on the unit's
+  screens yet (the SD card page has Mount and Unmount; format is a console command only).
 
 
 ==========================================================================================

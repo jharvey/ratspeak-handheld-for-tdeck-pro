@@ -1,10 +1,10 @@
 RatSpeak T-Deck Pro: video descriptions
 
-Scripts for the how-to videos. Each entry is one video. The videos are made by someone else
-from these scripts, are later turned into text how-to documents for new users, and the
-scripts are re-run whenever a feature changes, so every step must be clear and repeatable.
-Keys checked against docs/HowTo.md, AI-guide.txt and the firmware menus on 16 Nov 2026.
-A step marked "(check keys before recording)" could not be confirmed from the docs.
+Scripts for the how-to videos. Each entry is one video. The videos are made from these
+scripts, are later turned into text how-to documents for new users, and the scripts are
+re-run whenever a feature changes, so every step must be clear and repeatable.
+Keys checked against docs/HowTo.md, AI-guide.txt and the firmware menus on 22 Nov 2026.
+A step marked "(check keys before recording)" could not be confirmed from the firmware.
 
 
 ==========================================================================================
@@ -12,15 +12,27 @@ CONVENTIONS FOR EVERY VIDEO
 ==========================================================================================
 
 - File names: use _ instead of a space, to prevent %20 issues in web pages etc.
-- Every entry has the same parts: the file name line ("-- Name.mp4"), Purpose (what the
-  viewer learns), Setup (units, names, idle screen, password, location / GPS, contacts
-  already loaded), Steps (numbered, keys named exactly), Overlays (when not given inline in
-  the steps) and End.
+- Every entry has the same parts: the file name line ("-- Name.mp4"), Status, Depends,
+  Remake when, Purpose (what the viewer learns), Setup (units, names, idle screen, password,
+  location / GPS, contacts already loaded), Steps (numbered, keys named exactly), Overlays
+  (when not given inline in the steps) and End.
+- Status: PROPOSED (one paragraph only), SCRIPTED (full steps written) or MADE (the mp4 is
+  in docs/videos and was checked). "File:" names the mp4 when its name differs from the
+  entry's name (the first videos were saved under their simulator script names).
+- Depends: CAN BE MADE NOW, or WAITING ON <what is missing>.
+- Remake when: the feature whose arrival changes the screens this video shows. ATAK and
+  groups will change the main menu, Contacts and the chat menu, so every video that shows
+  those screens says "ATAK, groups" here.
+- The videos are recorded on the simulator (tools/howto/make_videos.ps1; one script per
+  video in sim/scripts/howto). It shows the device screen and keys, one unit or two side
+  by side, and plays sound. It cannot show the box, cables, the side buttons or a PC screen.
 - Start on the idle screen and end on the idle screen. Any key wakes the unit. A unit wakes
   to the screen used last (in these videos usually the Inbox, because that is what most
   people used last); in Minimal mode it always wakes to the Inbox.
 - Units on screen: either one unit, shown large, or two units side by side, each with a
   label above it showing its name (for example "JACK" left, "JILL" right).
+- Colours in anything new (name tags, overlays, highlights): no red and no blue. Name tags:
+  person 1 green, person 2 orange, person 3 light purple.
 - Hand pointer with click sounds on every key press; the key's name shows above the
   keyboard as it is pressed.
 - Typing is shown in ALL CAPS (the keyboard types capitals). Alt + key gives a small letter.
@@ -30,14 +42,16 @@ CONVENTIONS FOR EVERY VIDEO
   The digit keys with SYM held: W E R = 1 2 3, S D F = 4 5 6, Z X C = 7 8 9, MIC = 0.
 - Other keys used in the scripts: ^ (Shift tapped alone) = Back, Enter = open / send / save,
   T / V = up / down in lists, M = Menu, I = Inbox, C = Contacts, P = Peers, A = Atlas.
-  In Settings a row's number opens that row at once; in lists the number selects the row
-  and Enter opens it. While typing a message the letter keys type letters: press ^ first
-  to use them as keys again.
+  In Settings a row's number opens that row at once (0 = row 10; row 11, Storage, is
+  reached with V); in lists the number selects the row and Enter opens it. While typing a
+  message the letter keys type letters: press ^ first to use them as keys again.
 - Overlay boxes: short (one or two lines), shown long enough to read twice, placed where
   they do not hide the part of the screen being explained. An arrow or a hand wave may point
   at the part of the screen being talked about.
 - The names, places and messages in Setup must match what is on the screen, so the same
   video can be made again after a firmware change.
+- Characters and stories are original. The first videos borrowed names from books and
+  television (see "Questions" in docs/videos/video_run_report.md); new videos do not.
 
 
 ==========================================================================================
@@ -45,6 +59,12 @@ SCRIPTED VIDEOS (in the order a new owner needs them)
 ==========================================================================================
 
 -- New_out_of_box_unit_first_turn_on.mp4
+
+Status: SCRIPTED.
+Depends: WAITING ON camera footage of a real unit and a PC (steps 1 to 5 and step 9: the
+box, the cable, the BOOT and RESET buttons, the web flasher, the battery time-lapse).
+Steps 6 to 8 (the setup wizard and the home screen) can be recorded on the simulator now.
+Remake when: the setup wizard changes; ATAK, groups (the home screen and menu).
 
 Purpose: show a new owner what to expect, from the box to the home screen, plus the first
 battery calibration.
@@ -64,20 +84,24 @@ Steps:
 4. Cut to the PC: the RatSpeak web flasher in the browser (ratspeak.org/download.html).
    Pick "T-Deck Pro", pick the serial port, Flash. Show the progress bar filling, then
    "Done". Overlay box: "About 1 minute. Keep the cable in until it says done".
+   (Check the web page and its button names before recording.)
 5. Back to the unit: tap RESET (or unplug and plug in again). The screen shows the idle
-   screen with the "BOOTING v0.1" banner at the bottom. Overlay box: "First start takes a
-   few seconds".
-6. The setup wizard opens: Welcome, then one step at a time, Enter to go on:
-   - Device name: type a name, e.g. "TRAILHEAD".
-   - Time zone: pick yours.
-   - Clock.
-   - Energy mode: Balanced.
-   - Idle screen: pick If found (its name / phone lines are filled in later in Settings).
-   - Simple / Advanced: Typical.
-   - Password lock: skip for now.
-   - Import contacts: skip.
+   screen with the "BOOTING" banner and the firmware version at the bottom. Overlay box:
+   "First start takes a few seconds".
+6. The setup wizard opens. The top line reads "Setup 1/10" to "Setup 10/10". One step at a
+   time, Enter to go on, ^ to go back:
+   1. Welcome.
+   2. Device name: type a name, e.g. "TRAILHEAD".
+   3. Time zone: pick yours.
+   4. Clock.
+   5. Energy mode (Full / Balanced / Saver / Check-in): Balanced.
+   6. Idle screen: pick If found (its name / phone lines are filled in later in Settings).
+   7. Simple / Advanced (the rows read Minimal / Typical / Everything): Typical.
+   8. Password lock: skip for now.
+   9. Import contacts: skip.
+   10. Done: Enter announces the unit and finishes.
    Hand pointer with click sounds on each key, ALL CAPS typing.
-7. At the last step, overlay box: "0 (SYM + MIC) finishes the wizard at any step;
+7. At the last step, overlay box: "0 (SYM + MIC) skips the rest of the setup at any step;
    everything can be changed later in Settings".
 8. The home screen appears: the identity card with the new name and address. Overlay box:
    "This is your address: others add you with it, or you announce so they find you (see
@@ -104,21 +128,27 @@ End: the unit goes to the idle screen (the If found screen just picked in the wi
 
 -- Common_checkup.mp4
 
+Status: MADE. File: typical_checkup.mp4.
+Depends: CAN BE MADE NOW.
+Remake when: groups (the Inbox changes). The made video differs from this script in its
+names (Deep Thought and Fook, with Ford and Trillian as the other chats) and its password
+(ARTHOR).
+
 Purpose: the everyday check-up: wake the unit, unlock it, read a new message and answer it.
 
 Setup:
 - Two units side by side: "AUTHOR" on the left, "JILLIAN" on the right, each labeled.
-- Both on the RatSpeak (Splash) idle screen. Author has a password lock with the password
-  "42". Author and Jillian are already contacts of each other.
+- Both on the RatSpeak (Splash) idle screen. Author has a password lock. The script asked
+  for the password "42"; the firmware needs 4 to 32 characters, so a longer one is used
+  (the made video uses "ARTHOR"). Author and Jillian are already contacts of each other.
 - Author's Inbox has at least 3 chats; Jillian's chat is the 3rd row and has one new
   message from Jillian: "WHAT IS THE ANSWER TO THE ULTIMATE QUESTION OF LIFE, THE UNIVERSE
   AND EVERYTHING?"
 
 Steps:
 1. Emphasize the new message on Author's idle screen somehow: wave a hand near it, or use an
-   arrow pointing at the new-message count at the top of the idle screen.
-2. Author presses a key. The unit asks for the password: type 4 (SYM + S), 2 (SYM + E),
-   then Enter.
+   arrow pointing at the new-message count ("1 NEW") at the top of the idle screen.
+2. Author presses a key. The unit asks for the password: type it, then Enter.
 3. The Inbox opens. The 3rd row, Jillian's chat, is marked "1 new".
 4. Press 3 (SYM + R) to select it, then Enter to open it. Show Jillian's question.
 5. Author types the reply "42" (SYM + S, SYM + E) and presses Enter. "delivered" shows.
@@ -137,11 +167,19 @@ End: Author's unit goes back to the idle screen by itself (locked).
 
 -- Contact_exchange.mp4
 
+Status: MADE. File: contact_exchange.mp4.
+Depends: CAN BE MADE NOW, except the place: the Map idle screen at Cave Spring Hollow is
+WAITING ON map tiles of Lynchburg, Tennessee on the simulator's card (its tiles are around
+San Antonio, Texas, so the made video is at the Alamo), and zoom 14 needs zoom 14 tiles
+(the card stops at zoom 13).
+Remake when: groups (Contacts gets groups; a group can be shared like a contact).
+
 Purpose: two people who meet swap contact cards, so they can message each other.
 
 Setup:
 - Side-by-side video: two units, "JACK" on the left and "JILL" on the right, each labeled.
 - Both idle screens are the Map, at Cave Spring Hollow in Lynchburg, Tennessee. Zoom 14.
+  (Check before recording that the Map idle screen can be set to zoom 14.)
 - No password on either unit. Both wake to the Inbox, as the Inbox is what they probably
   used last.
 - Jack and Jill are not contacts yet, but both have announced, so each is in the other's
@@ -151,24 +189,26 @@ Steps:
 1. Start on both idle screens with the overlay box: "Jack meets Jill, and is going to send
    his contact to her".
 2. Jack presses a key: it goes to the Inbox.
-3. Jack presses C (Contacts). Row 0 at the top, MyID, is his own card: press Enter on it.
+3. Jack presses C (Contacts). Row 0 at the top, MyID, is his own card: press 0 (SYM + MIC),
+   then Enter.
 4. Jack presses 3 (SYM + R) = Share. The list reads "Send JACK to:".
 5. Jill is not a contact yet, so Jack presses P to switch to Peers, picks Jill (T / V) and
    presses Enter. His card goes out.
-   5.1 show arrow or similar to point 0 NEW on jill device. Which changes to 1 NEW.
-6. Overlay box: "Jill receives his contact and sends her contact to Jack".
-7. Jill presses a key: the Inbox shows a new chat from Jack. She opens it (its number, then
+6. An arrow or the pointing hand shows the new-message count at the top of Jill's idle
+   screen: it reads "no new" and changes to "1 NEW".
+7. Overlay box: "Jill receives his contact and sends her contact to Jack".
+8. Jill presses a key: the Inbox shows a new chat from Jack. She opens it (its number, then
    Enter): it shows "[card] JACK". She presses Enter on the empty message line: Jack is
    saved as a contact.
-8. Jill presses ^, then C: Jack is in her Contacts. She opens MyID (row 0) with Enter,
+9. Jill presses ^, then C: Jack is in her Contacts. She opens MyID (row 0) with Enter,
    presses 3 (SYM + R) = Share, picks Jack (now a contact) and presses Enter.
-9. On Jack's unit: the Inbox shows a new chat from Jill with "[card] JILL". He opens it and
-   presses Enter on the empty message line. Then ^ and C: show that Jill has been added to
-   his contacts.
+10. On Jack's unit: the Inbox shows a new chat from Jill with "[card] JILL". He opens it and
+    presses Enter on the empty message line. Then ^ and C: show that Jill has been added to
+    his contacts.
 
 Overlays:
-- At steps 1 and 6 as given above.
-- At step 7: "Enter on the empty message line saves the card as a contact".
+- At steps 1 and 7 as given above.
+- At step 8: "Enter on the empty message line saves the card as a contact".
 - At the end: "Jack and Jill can now message each other. Other LXMF apps see 'Contact card:
   name' and the address".
 
@@ -179,6 +219,11 @@ and announces the unit; it does not send a contact card. Sharing is C, MyID, Ent
 
 
 -- Search_for_others.mp4
+
+Status: MADE. File: peer_search.mp4.
+Depends: CAN BE MADE NOW.
+Remake when: ATAK, groups (the menu and the contact page change). The made video uses
+"KEN FRANKLIN" as the person of interest instead of "DR FLEMMING".
 
 Purpose: announce your unit so others can find you, find a new person in Peers, save them as
 a contact and send a first message.
@@ -221,6 +266,10 @@ End: Columbo's unit goes back to the idle screen (If found).
 
 -- Add_wifi_in_minimal_mode.mp4
 
+Status: MADE. File: add_wifi.mp4.
+Depends: CAN BE MADE NOW.
+Remake when: the WiFi page changes.
+
 Purpose: a unit in Minimal mode joins a WiFi network (Minimal hides the WiFi settings, so
 the unit is switched to Typical first).
 
@@ -238,10 +287,13 @@ Steps:
 3. Press 1 (SYM + W) = Mode, then 2 (SYM + E) = Typical. (WiFi settings are on in the
    Typical features, row 5, by default.)
 4. Press ^ to go back to Settings: it now shows all rows.
-5. Press 3 (SYM + R) = WiFi, then 3 again = Scan networks. The routers are listed.
-6. Press the number of "ARRL-HQ".
-7. Type the password HIRAMMAXIM (MIC shows or hides it) and press Enter. (Check keys
-   before recording: the join page has Network / Password / Auto-connect / Join rows.)
+5. Press 3 (SYM + R) = WiFi, then 3 again = Scan networks. The routers are listed, below a
+   "Rescan" row.
+6. Press the number of "ARRL-HQ". The Join WiFi page opens (Network / Password /
+   Auto-connect / Join) with the password line ready for typing.
+7. Type the password HIRAMMAXIM and press Enter: Enter after the password joins. (The
+   password shows as it is typed. MIC does not hide it: MIC show / hide works only for the
+   lock password.)
 8. "connected" shows on the WiFi page. The unit joins this network again by itself.
 9. Optional: switch back to Minimal with M, S, 1, 1 (SYM + W twice). (Check before
    recording that WiFi stays connected in Minimal.)
@@ -254,6 +306,10 @@ End: the unit goes back to the idle screen (If found, W1AW).
 
 
 -- atlas.mp4
+
+Status: MADE. File: atlas.mp4.
+Depends: CAN BE MADE NOW.
+Remake when: the on-screen map layer switch lands; ATAK (markers on the map).
 
 Purpose: open the Atlas (offline map), move around, find a place, get the heading and
 distance to it, and step through the contacts' last positions.
@@ -290,56 +346,105 @@ End: the unit goes back to the idle screen.
 
 
 ==========================================================================================
+MADE WITHOUT A FULL SCRIPT HERE (the simulator script is the script)
+==========================================================================================
+
+Each was made on 15 or 16 Nov from sim/scripts/howto/<name>.txt and is in docs/HowTo.md.
+
+-- Send_a_message.mp4: open a chat, type, Enter, "delivered"; a message to an out-of-range
+   radio waits in the queue and goes out by itself later.
+   Status: MADE. File: send_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
+-- Read_a_message.mp4: the new-message count on the idle screen, I (Inbox), open the chat,
+   T / V to scroll older messages.
+   Status: MADE. File: read_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
+-- Add_a_contact.mp4 (was First_message_to_a_new_contact): save a radio from Peers as a
+   contact (Enter, 2 Rename). The first message to it (1 Message) is in
+   Search_for_others.mp4.
+   Status: MADE. File: add_contact.mp4. Depends: CAN BE MADE NOW. Remake when: ATAK, groups.
+-- Connect_to_wifi.mp4: M, S, 3 WiFi, 3 Scan networks, the network's number, the password,
+   Enter.
+   Status: MADE. File: wifi.mp4. Depends: CAN BE MADE NOW. Remake when: the WiFi page
+   changes.
+-- If_found_idle_screen.mp4: fill in the If-found details (M, S, 4, 2, 9), pick the If
+   found idle screen (row 8), show or hide the address (row 10, key 0). The other idle
+   screens (Splash, Map, Library page) are named but not shown.
+   Status: MADE. File: if_found.mp4. Depends: CAN BE MADE NOW. Remake when: the Idle splash
+   page changes.
+-- Mode_and_touch.mp4: Settings 1 Mode: 1 Minimal / 2 Typical / 3 Everything, 4 Touch
+   screen on / off, 5 Typical features.
+   Status: MADE. File: mode_touch.mp4. Depends: CAN BE MADE NOW. Remake when: ATAK, groups
+   (new rows in the Typical features list).
+-- Voice_message.mp4: in a chat MIC, 5 Voice message, Space to record, Space to stop and
+   send (up to 20 s), P to play the newest one.
+   Status: MADE. File: voice_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
+-- Walkie_talkie.mp4: C, pick the person, Enter, W to call; the other answers with Enter;
+   Space talk / listen, ^ hang up; same WiFi or the unit's own hotspot.
+   Status: MADE. File: walkie_talkie.mp4. Depends: CAN BE MADE NOW. Remake when: groups
+   (group / channel talk).
+
+
+==========================================================================================
 PROPOSED VIDEOS (not scripted yet)
 ==========================================================================================
 
-In the order a new user would need them. Keys from docs/HowTo.md and the firmware menus;
-write the full script (Purpose / Setup / Steps / Overlays / End) before recording.
+In the order a new user would need them. Keys from the firmware menus; write the full
+script (Purpose / Setup / Steps / Overlays / End) before recording, and move the entry up
+to the scripted videos.
 
 -- Charging_and_battery.mp4: charging over USB-C, the battery icon, Settings 6 Battery
-   (charge %, full-charge calibration, time left), and when to redo the calibration.
+   (Charge, 9 Full-charge cal, 11 Time left), and when to redo the calibration.
+   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: the Battery page changes.
 -- Password_lock_and_unlock.mp4: set a password (M, S, 4 Screen & I/O, 2 Idle splash,
-   3 On + password), Lock now, unlock with the password, what happens after wrong tries.
--- Read_a_message.mp4: the new-message count on the idle screen, I (Inbox), open the chat,
-   T / V to scroll older messages.
--- Send_a_message.mp4: open a chat, type, Enter, "delivered"; a message to an out-of-range
-   radio waits in the queue and goes out by itself later.
--- First_message_to_a_new_contact.mp4: save a radio from Peers as a contact (Enter, 2
-   Rename) and send it its first message (1 Message).
+   3 On + password: type it twice, 4 to 32 characters), 7 Lock now, unlock with the
+   password; after 3 wrong tries the unit makes you wait (30 s, doubling each time).
+   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: the Idle splash page changes.
 -- Announce_your_unit.mp4: M, H, N (Announce ID on Home) or P then R, and what announce does.
--- If_found_idle_screen.mp4: fill in the If-found details (M, S, 4, 2, 9), pick the If
-   found idle screen (row 8), show or hide the address (row 10); also the other idle
-   screens (Splash, Map, Library page).
--- Mode_and_touch.mp4: Settings 1 Mode: Minimal / Typical / Everything, Typical features
-   (row 5), touch screen on / off (row 4).
+   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: ATAK, groups (the menu).
 -- Energy_modes.mp4: Settings 5 Power: Full, Balanced, Saver, Ultra-low, On demand,
    Check-in, Custom; Full power on USB; the Energy monitor.
--- Low_battery_notice.mp4: Settings 6 Battery, Low-battery notice: the % to send at and
+   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: the standby power mode lands.
+-- Low_battery_notice.mp4: Settings 6 Battery, 12 Low-battery notice: the % to send at and
    the contact who gets the message (battery % and last position).
+   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: groups (send it to a group).
 -- Battery_empty_wont_turn_on.mp4: the "BATTERY EMPTY / PLUG IN A USB CHARGER" banner, why
-   it stays off, plug in USB, the "BOOTING v0.1" banner.
--- Settings_tour.mp4: one pass through every Settings row (Mode, Time & Location, WiFi,
-   Screen & I/O, Power, Battery, Identity, LoRa, Alerts, Diagnostics, Storage) and what
-   each is for.
--- Voice_message.mp4: in a chat MIC, 5 Voice message, Space to record, Space to stop and
-   send (up to 20 s), P to play the newest one.
--- Walkie_talkie.mp4: C, pick the person, Enter, W to call; the other answers with Enter;
-   Space talk / listen, ^ hang up; same WiFi or the unit's own hotspot.
+   it stays off, plug in USB, the "BOOTING" banner with the firmware version.
+   Status: PROPOSED. Depends: CAN BE MADE NOW (check before recording that the simulator
+   shows both banners). Remake when: the standby power mode lands.
+-- Settings_tour.mp4: one pass through every Settings row (1 Mode, 2 Time & Location,
+   3 WiFi, 4 Screen & I/O, 5 Power, 6 Battery, 7 Identity, 8 LoRa, 9 Alerts, 10 Diagnostics,
+   11 Storage) and what each is for. LoRa and Diagnostics show only with the Advanced
+   feature on (or in Everything mode).
+   Status: PROPOSED. Depends: WAITING ON a simulator built from the current firmware (the
+   recording simulator is from 15 Nov: its Diagnostics page has no Stress test or Check this
+   unit rows). Remake when: ATAK, groups, the standby power mode.
 -- Share_your_location.mp4: in a chat MIC, 1 Share my location, 2 Auto-share location,
-   4 Show them on the map.
--- Atlas_waypoints.mp4: Alt + P saves a place as a waypoint, P steps through waypoints,
-   the Waypoints list in Settings 2 Time & Location.
--- Atlas_breadcrumb_track.mp4: record a track (Settings 2 Time & Location, Track), B on the
-   Atlas to track back, export as GPX to the SD card, clear the track.
+   3 Auto-share for, 4 Show them on the map.
+   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: ATAK, groups.
+-- Atlas_waypoints.mp4: Alt + P saves the place at the map centre as a waypoint, P steps
+   through waypoints, Alt + SYM twice removes one; the Waypoints list (Settings 2 Time &
+   Location, row 9).
+   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: ATAK (markers).
+-- Atlas_breadcrumb_track.mp4: Settings 2 Time & Location, 10 Track: Record track, Track
+   back, Export as GPX, Clear track; B on the Atlas to track back.
+   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: the Track page changes.
 -- Navigate_to_a_contact.mp4: on the Atlas N selects a contact's last position, G opens the
    heading and distance screen to walk to them.
--- Arrival_alerts.mp4: Settings 9 Alerts, Arrival alerts, New alert: contact, place,
-   distance, once or every time.
--- SD_backup_and_restore.mp4: Settings, Storage (last row): Back up now, Restore backup
-   (Enter twice); also Export / Import contacts (Settings 7 Identity).
--- Firmware_update_from_SD.mp4: put the .bin in /firmware on the SD card, Settings,
-   Storage, Update firmware.
+   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: ATAK.
+-- Arrival_alerts.mp4: Settings 9 Alerts, Arrival alerts, New arrival alert: Contact, Near,
+   Within, Repeat, Save alert.
+   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: ATAK, groups.
+-- SD_backup_and_restore.mp4: Settings, Storage (row 11: go down with V), 5 SD card:
+   8 Back up now, 9 Restore backup (Enter twice); also Export / Import contacts (Settings
+   7 Identity).
+   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: the SD card page changes.
+-- Firmware_update_from_SD.mp4: put the .bin in /firmware on the SD card; Settings,
+   Storage, 5 SD card, 10 Update firmware (row 10 is key 0).
+   Status: PROPOSED. Depends: CAN BE MADE NOW (check before recording what the simulator
+   shows after the update starts). Remake when: the SD card page changes.
 -- Range_test.mp4: two units, Settings 8 LoRa (Advanced feature on), Range test: ping the
    other radio and log the results to the SD card.
+   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: the LoRa page changes.
 -- Library_and_games.mp4: M, R (Library, or "Games" without library files): reading a help
-   file, Rat Trap and Chess.
+   file (Space / N next page, B back, L find), Rat Trap and Chess (U take back, L level).
+   Status: PROPOSED. Depends: CAN BE MADE NOW. Remake when: how-to pages are added to the
+   Library.

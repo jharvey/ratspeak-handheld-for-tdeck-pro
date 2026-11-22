@@ -1,26 +1,26 @@
 ================================================================================
 FUTURE STEPS — T-Deck Pro Ratspeak (long-term, update rarely)
-Last revised: 2026-11-15
+Last revised: 2026-11-22
 ================================================================================
 Short-term work stays in AI-guide.txt. This file is the backlog / vision list.
 ================================================================================
 
 Initial porting steps
 -------------------
-- DONE - PlatformIO.ini configured and folder structure setup. Program compiles for "tdeck_pro_cooperative"
-- DONE - generic IO, get a keyboard LED blinking at a 1 second interval / hellow world, libs and etc made in HAL
-- DONE - Serial messages functional / diagnositcs / remote serial control
+- DONE - platformio.ini configured and folder structure set up. Program compiles for "tdeck_pro_cooperative"
+- DONE - generic IO, get a keyboard LED blinking at a 1 second interval / hello world, libs and etc made in HAL
+- DONE - Serial messages functional / diagnostics / remote serial control
 - DONE - beeper functional, libs and etc made in HAL
 - DONE - microphone basic function test, libs and etc made in HAL
 - DONE - PSRAM functional, libs and etc made in HAL
-- DONE - LORA funtional, libs and etc made in HAL
+- DONE - LoRa functional, libs and etc made in HAL
 - DONE - Battery monitor, libs and etc made in HAL
 - DONE - GPS, libs and etc made in HAL
 - DONE - WiFi basic test functional, libs and etc made in HAL
-- DONE - tdeck_pro_cooperative works as a node mode device. 
+- DONE - tdeck_pro_cooperative works as a node mode device.
 - DONE - EINK static display, libs and etc made in EINK folder.
 - DONE - Touch screen functional, libs and etc made in HAL
-- DONE - tdeck_pro_standalone version made and initial files created. 
+- DONE - tdeck_pro_standalone version made and initial files created.
 
 
 Hardware / platform
@@ -65,6 +65,14 @@ Hardware / platform
 - DONE 2026-11-15 - Empty battery: idle screen + "BATTERY EMPTY / PLUG IN A USB CHARGER", charger
   ship mode until USB; boot check keeps an emptied unit off until USB (no surface-charge reboots).
   To do: confirm on a drained unit.
+- Full power only when the USB supply is strong (user asked 2026-11-21). Today "Full power on
+  USB" (S.5) switches to Full whenever USB power is present. Wanted: charge the battery
+  first; go to Full power only when the supply has energy to spare (a guess: more than
+  about 0.4 A, or current left over after charging). A small USB solar panel gives much
+  less, so the unit must stay in its low-energy mode on one. A menu option turns this on
+  or off. The idea: the unit normally sits plugged in at full performance; when the power
+  goes out it backs down; on a backpack with a small solar panel it never spends energy it
+  does not have.
 - Deep sleep 'storage' mode: conflicts with light sleep today (the vendored deep-sleep
   backports break light sleep); needs a backport that keeps both working
 - DONE - Battery model accuracy + charge UI (per-device full-charge calibration)
@@ -80,16 +88,17 @@ Boot / first impression
 - DONE - Add TDeck Pro Version number 1.1
 - DONE - Add This firmware version number
 - DONE - Boot splash screen: show almost immediately on power-up, then transition to Home only after protocol / radio / UI are ready
-- DONE - if it's in black background mode, splash screen should be in black mode. 
+- DONE - If it is in black background mode, the splash screen is in black mode too.
 
 UI / UX
 -------
 - DONE - Theme toggle: white paper (default) vs black ink background
 - DONE (sim; TCP device-only) - Settings parity with Plus: WiFi client + GPS time were already in;
   added TCP hub client (S.3.6, TcpClientSet) and identity slots (S.7.5 new / switch / erase).
-  Next: try TCP against a hub on hardware (not done: needs WiFi + a hub); WiFi AP mode and
-  AutoInterface (LAN) not added - they need the Plus NetworkCoordinator; identity import
-  from SD not added (no file picker).
+  Next: try TCP against a hub on hardware (not done: needs WiFi + a hub); WiFi AP mode not
+  added; identity import from SD not added (no file picker).
+  DONE 2026-11-14 - AutoInterface: Reticulum over WiFi between units on the same network
+  (S.3.8, transport/RnsAutoInterface, commit 7263826).
 - DONE - Contacts rename closer to Plus (context menu: Save Contact / Message / Close)
 - DONE - Inbox delivery status polish (queued / sent / delivered / fail)
 - DONE - Scroll indicators on long lists (Contacts, Peers, Settings)
@@ -105,9 +114,10 @@ UI / UX
   two units outdoors.
 - DONE (sim, two devices) - contacts on the map (2026-11-12): last shared position per
   contact as labelled markers, map key T cycles them with distance / direction / age.
-  Next: waypoints + breadcrumb track, place search (GNIS), coordinate formats (MGRS),
-  measure, touch pan, nearest NOAA weather radio, library viewer (user said yes to all).
-  Next: contacts' positions on the map (needs location sharing), touch pan, real map tiles
+  DONE since then: waypoints (sim/scripts/waypoints.txt), breadcrumb track (track_nav.txt),
+  place search (Atlas key L, places.txt), coordinate formats decimal / deg-min-sec / MGRS
+  (S.2.12, coords.txt), library viewer (library.txt), contacts' positions on the map.
+  Next: measure, touch pan, nearest NOAA weather radio.
 - Map data at country scale (user asked 2026-11-11: "something usable for the entire US").
   Contiguous-US bbox, raw 8 KB tiles: z0-12 ~2.6 GB, z13 +7.8 GB, z14 +31 GB, z15 +125 GB.
   Plan: (1) render 1-bit e-ink-styled tiles ourselves from free OSM vector data (Protomaps
@@ -128,6 +138,9 @@ UI / UX
   2026-11-15: contiguous-US USGS download at z13 nearly done (ui-features session, M:\ratspeak-maps);
   next: re-fetch tiles skipped by write races, build the card pack, on-device layer switching
   (base map + RLE overlay packs).
+  PARTLY DONE 2026-11-19 - the Atlas reads the layered packs (RLE RMP1 and compressed RMP3,
+  commit efb1c70); the layers are picked with the console command "maplayers <mask>" only.
+  Still to do: a key or menu on the unit to switch layers.
 - All zoom levels everywhere (user asked 2026-11-12): fetching raster tiles from USGS/NRCan
   tops out at ~4.5 tiles/s per polite single connection (~390k tiles/day); the US at z14 is
   3.8M tiles, z15 15M, z16 60M - weeks to months, and heavy on public servers. For deep
@@ -135,11 +148,18 @@ UI / UX
   data (TIGER/Line roads, NHD water, GNIS names in the US; NRCan CanVec in Canada; OSM
   extracts where the licence fits) with the render_world.py approach, fast and offline.
   Master copy on the NAS (M:\ratspeak-maps); cards hold the travel set.
-- Reference library on the device (user asked 2026-11-12): a "Library" screen that reads
-  plain-text files from <SD>/ratdeckpro/library/ (paged, find with F): frequency quick
-  reference, NOAA Weather Radio list nearest to the GPS position, GhostNet / JS8Call notes,
-  first aid etc. Source copies are on the NAS (M:\ratspeak-info; PDFs need a text
-  extract first - the e-ink panel cannot render PDF). Push them with push_tiles-style sdput.
+- DONE (screen) - Reference library on the device (user asked 2026-11-12): the "Library"
+  screen (MENU, Library) reads plain-text files from <SD>/ratdeckpro/library/, paged, with
+  find (sim/scripts/library.txt; help files Help-1..12 in tools/sdcard/library).
+  Still to do (content): frequency quick reference, NOAA Weather Radio list nearest to the
+  GPS position, GhostNet / JS8Call notes, first aid etc. Source copies are on the NAS
+  (M:\ratspeak-info; PDFs need a text extract first - the e-ink panel cannot render PDF).
+  Push them with push_tiles-style sdput.
+- How-to pages in the Library (user asked 2026-11-21): explain the less obvious things.
+  Energy modes: what each one does. LoRa basics: slow, but uses little energy. WiFi: fast
+  enough for audio, but uses much more power. (Help-1..12 cover keys, messages, contacts,
+  location, map, lock, battery, Home Assistant, walkie-talkie and voice messages; there is
+  no energy-modes page and no LoRa / WiFi basics page yet.)
 - RF coverage prediction (user asked 2026-11-12): Longley-Rice / ITM point-to-point and area
   coverage for LoRa links from the 3DEP elevation now on the NAS (M:\ratspeak-maps\dem: 10 m
   around 04095, 30 m home/corridor/TN/NC, then the lower 48; Canada next: NRCan CDEM/HRDEM,
@@ -174,6 +194,9 @@ UI / UX
   for PC users. Build the packs from public-domain sources only (USGS topo in the US,
   Natural Earth worldwide, our own render of OSM vector data where policy allows) and say
   the source/credit on the device.
+  Asked again 2026-11-21 - map selection: how does someone pick the world map versus
+  higher-detail maps for their own area, and how does another person get these maps onto
+  their SD card? (The instructional video 30 waits on this.)
 - Unit-to-unit USB (OTG) copy: the ESP32-S3 has USB OTG, but host mode must supply 5 V on
   VBUS to the other unit; the T-Deck Pro's USB-C is wired as a charge input, so check the
   schematic before planning this. Likely not possible without hardware changes; WiFi
@@ -187,6 +210,12 @@ Robustness to verify (before the stress-test pass)
 -------------------------------------------------
 - Stress-test plan (simulator soak, 24-72 h unit runs, nasty cases, pass criteria):
   Stress_test_plan.md
+- Stress test by tasks, not random keys (user asked 2026-11-21). Today the soak (S.10 Stress
+  test, console "soak") chats by itself, tours Settings and rotates the idle screen.
+  Wanted instead: a list of common tasks (change the idle screen, view the WiFi routers,
+  browse to a random map location ...); each time a message wakes the unit, pick one task at
+  random, do it, and measure how long it takes. Run it in different energy modes too: some
+  radios on Full power, others on Balanced or the low-energy modes.
 - DONE (sim) - FULL FLASH: before, every later write failed silently (messages, announce
   order, ratchets); boot still worked; refused incoming saves are not lost (proof only after
   a save). Now: oldest-first removal from 85% to 80% (newest 10 per conversation kept),
@@ -196,19 +225,19 @@ Robustness to verify (before the stress-test pass)
 - Same for a full SD card (archive + map tiles).
 - DONE (sim + COM5) - idle screen password lock: S.4.2 "On + password" (password = vault password,
   asked new + repeat when the lock is turned on), boot lock, lockout after 3 wrong tries, messages keep arriving.
-  Next: optional fully blank splash (no time/unread) and a duress/wipe-after-N option. 
+  Next: optional fully blank splash (no time/unread) and a duress/wipe-after-N option.
 - DONE (sim) 2026-11-13 - FLASH WEAR: simulator write counters (sim/shim/src/wear.cpp) +
   tools/stress/wear.py. 500 msgs/day: LittleFS ~185 years with flash 85 % full, NVS ~114
   years. Only hot spot: the outbox blob is rewritten whole on each change (~10 years for NVS
   if the radio is overloaded all day); optional fix: store texts by used length.
   SD card writes (archive, batlog) not counted (the card does its own wear levelling).
-- DONE - add manual refresh button, for ghosting issues. Do full screen refresh. 
-- DONE - add GPS clock displayed on idle screen / header. 
-- DONE - add battery / charge indicator. Lighting bolt in the battery icon, or a plug icon? Something to say it's getting power over USB. 
-- DONE - incrase keypad refresh rate (key queue read during e-ink refresh)
+- DONE - Manual refresh key for ghosting: a full screen refresh (MIC).
+- DONE - GPS clock on the idle screen / header.
+- DONE - Battery / charge indicator: shows when the unit gets power over USB.
+- DONE - Faster keypad response (key queue read during e-ink refresh)
 - DONE (sim, two devices) - share contact: contact page (Message / Rename / Share), card sent as
   "Contact card: <name>\n<hash>" LXMF text, receiver saves it with Enter.
-  Next: also carry it as an LXMF field so other clients can import it; try between two units. 
+  Next: also carry it as an LXMF field so other clients can import it; try between two units.
 
 Audio / modes
 -------------
@@ -217,12 +246,12 @@ Audio / modes
   voice messages over Reticulum (record, Codec2 at 700-3200 bps, send as an LXMF audio
   field like Sideband's FIELD_AUDIO so other clients can play it; LoRa airtime limits
   length - a few seconds per message at low bitrate).
-- DONE - in settings, add volum controls for the beeps (S.9 Alerts): 0 (silent) / 20 / 40 /
+- DONE - Volume control for the beeps (S.9 Alerts): 0 (silent) / 20 / 40 /
   60 / 80 (default, spares the speaker) / 100 %, plays the level when picked (2026-11-12).
 - DONE (sim) - idle screen = map around you (S.4.2 row 8): GPS / saved / card home position at
   z13, time + battery + unread across the top, GPS line at the bottom (2026-11-12).
-- intergreate audio, perhaps https://codeberg.org/rfnxdev/partyline
-- text to audio, so it can read you a message. 
+- Integrate audio, perhaps https://codeberg.org/rfnxdev/partyline
+- Text to speech, so the unit can read a message to you.
 
 Protocol / mesh
 ---------------
@@ -274,10 +303,14 @@ Team awareness, ATAK-style (user asked 2026-11-12, longer term)
   the map, north up. Alert when they stop sharing / fix gets old. True facing direction
   while still needs a magnetometer: confirm none on the board (I2C scan), else consider an
   add-on magnetometer board.
-- Units setting (ft/mi or m/km), lat/lon or MGRS grid.
 - Interop: compact binary location/marker field in LXMF (Sideband-compatible telemetry where
   possible); later a gateway to ATAK / TAK (Cursor-on-Target XML) so phones running ATAK
   see the T-Deck units and their markers.
+- Asked again 2026-11-21: "Add ATAK, can we add this? Share items of interest to other
+  devices." Not started (nothing in the code yet). Sharing items of interest is the
+  relative-markers item above. Menus and their videos will change when this lands.
+- Units setting: DONE (S.2 Time & Location: m / km or ft / mi; coordinates decimal,
+  deg-min-sec or MGRS, S.2.12).
 - Privacy: nothing shared automatically by default; clear "sharing on" indicator.
 
 Home Assistant integration (user asked 2026-11-12)
@@ -345,7 +378,12 @@ Maps / location
   "Navigate to a contact" under Team awareness.)
 - DONE 2026-11-13 (branch claude/features-6-11) - 8. Arrival / geofence alerts: "tell me when <contact> is within 500 m of <waypoint>".
 Field / test tools
-- 16. Hardware self-test (user asked 2026-11-16): one Settings > Diagnostics entry "Check this
+- PARTLY DONE 2026-11-16 (commits 3b1aa2e, 12343d1) - 16. Hardware self-test: Settings >
+  Diagnostics > Check this unit, console "selftest". Built: RAM, PSRAM, flash, NVS, SD speed,
+  I2C probe + stall check, gauge, charger, LoRa noise floor, GPS (silent / garbled / BBR
+  fault / fix), clock; PASS / WARN / FAIL per line, report to SD. Not built yet: the two-unit
+  LoRa ping, WiFi, display patterns, keyboard, audio, tools/selftest.py for many units.
+  The original request (user asked 2026-11-16): one Settings > Diagnostics entry "Check this
   unit" that runs every part and says PASS / WARN / FAIL per line, saves the report to SD (and
   shows it), so a broken unit is found at once - e.g. the COM8 GPS backup-cell fault ('CANNOT USE
   BBR', took a while to find) or COM5's I2C bus stalling 1 s at a time (soak 2026-11-16).
@@ -395,7 +433,12 @@ Field / test tools
   Validate with the battery-life test (Stress_test_plan.md section 4b, week of
   2026-11-16): those full discharges give the true mAh to compare the learned value with.
 Nice to have
-- 12. Group threads: one message to a named set of contacts.
+- 12. Group threads: one message to a named set of contacts. Not started.
+  Asked again 2026-11-21 (group chat): send a message to "my family" or another group set
+  up beforehand. Idea for the menu: groups as a sub-menu of Contacts (Contacts / Groups).
+  Share a group the way a contact is shared: sharing sends the group and its contacts.
+  Open questions from the owner: should there be a group chat option at all, and should
+  groups live under Contacts? Menus and their videos will change when this lands.
 - 13. Relay mode when plugged in: act as a Reticulum transport node on USB power to extend
   range for nearby units (see also the propagation-node item under Hardware / platform).
 - 14. Notepad: write notes on the device, saved to the Library folder on SD.
@@ -409,19 +452,23 @@ Also asked 2026-11-13
   must supply 5 V on VBUS and the USB-C is wired as a charge input; check the schematic.
   Workaround: a powered USB hub / OTG adapter with its own supply, if the port can do host
   data at all. The PC-side need (drag maps onto the card) is the USB mass-storage item.
-Also asked 2026-11-21
-- Add ATAK can we add this? Share items of interest to other devices. 
-- Add maps selection feature, how to get world maps vs higher resolution for local maps? Local maps, etc. How does someone else obtain these maps for the SD card?
-- Add how to's to libary. Explain less intuitive stuff like energy modes. Add basic information about LoRa and how it's slow but low energy. As well WiFi works for audio, and consumes a bunch more power. 
-- stress test shouldn't be random menus key strokes, it should be random tasks. A task could be change idle screen, or view wifi routers, or browse to random map location. Create a bunch of common tasks, then randomize which task is done for each message wake session. Randomoize a task and measure how long it takes to complete the task. Also we should do this with different energy modes as well. Test with some radios on full power, others on normal, or low energy modes. 
-- Add option that if USB can provide greater then I guess 0.4A of if energy goes into something other then charging the battery, then while plugged in, operate in full power mode. But if connected to a USB solar panel, you'll likly have much less energy, so don't auto switch to high energy mode. Also add this as a menu option to enable or dissable. Prioritze charging the battery first, then if you have extra energy, go into preformance mode. Concept being that this sits plugged in typically, then power goes out and it backs down on energy consumption. Or you put it on a backpack with a small USB solar panel, whcih will provide enough power for low energy mode, but not enough for high power mode. So don't consume energy when you don't have an infinate supply. 
-- Hmmm, should we create a group chat option? Send message to my family, or predefined groups? Also share a group? Perhaps it's contacts / groups? Can we create groups as a sub menu on contacts? Also can we share a group? Share a group would send the contacts, and the group, similar to what is done with contacts. 
+Also asked 2026-11-21 (each one is filed in its section; the owner's order is kept here)
+- ATAK, share items of interest with other devices: see Team awareness, ATAK-style.
+- Map selection, and how other people get maps for their SD card: see "Map data for new
+  users" under UI / UX.
+- How-to pages in the Library (energy modes, LoRa basics, WiFi and power): see "How-to
+  pages in the Library" under UI / UX.
+- Stress test by random tasks, timed, in different energy modes: see Robustness to verify.
+- Full power only when the USB supply is strong (not on a small solar panel), with a menu
+  option: see Hardware / platform.
+- Group chat, groups under Contacts, share a group: see item 12, Group threads, above.
 
 Build / devex
 -------------
 - DONE - Host UI simulator (Qt, real firmware) + scripted checks; live-device mirror over USB
-- Faster incremental builds (ccache; avoid full recompile on COM-only change)
-- COM port upload without editing platformio.ini (esptool --no-stub one-liner documented)
+- DONE another way 2026-11-14 - Faster incremental builds: firmware builds on the VM
+  (tools/vm_build.py): one changed file about 23 s, a full build about 3 min. ccache not used.
+- DONE - COM port upload without editing platformio.ini: python tools/flash_app.py COMx
 - DONE - Unique default device names (TDP-<MAC>) so units on one bench are identifiable
 
 Robustness / safety (code quality)
