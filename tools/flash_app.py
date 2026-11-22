@@ -43,14 +43,14 @@ def check(env):
     return fw
 
 
-def flash(port, fw):
+def flash(port, fw, reset=True):
     data = open(fw, "rb").read()
     with tempfile.TemporaryDirectory() as tmp:
         offs = list(range(0, len(data), PIECE))
         for off in reversed(offs):
             path = os.path.join(tmp, "p%07x.bin" % (APP + off))
             open(path, "wb").write(data[off:off + PIECE])
-            after = "hard_reset" if off == 0 else "no_reset"
+            after = "hard_reset" if off == 0 and reset else "no_reset"
             for attempt in range(6):
                 r = subprocess.run(esptool_cmd() + ["--chip", "esp32s3", "--port", port, "--baud", "115200",
                                                     "--before", "default_reset", "--after", after, "--no-stub",
