@@ -89,9 +89,9 @@ wait 4000
 note 5500 4 (Clear track) empties it: Enter twice. Turn Record track off when you do not need it.
 wait 6000
 key BACK
-wait 800
+wait 1500
 key BACK
-wait 800
+wait 1500
 key BACK
 wait 1200
 serial idle now

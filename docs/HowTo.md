@@ -4,7 +4,7 @@ Short, step-by-step guides for everyday use. Each one has a short video made wit
 simulator (`docs/videos/`): a hand points at every key as it is pressed, the key's name
 shows above the keyboard, and you hear a click.
 
-Keys as of 14 Nov 2026.
+Keys as of 22 Nov 2026.
 
 ## The keys you need
 
@@ -93,14 +93,15 @@ Video: [wifi.mp4](videos/wifi.mp4)
 1. **M**, **S** (Settings), then **3** (WiFi).
 2. Press **3** again: Scan networks.
 3. Pick your network by its number.
-4. Type the password (**Alt** for small letters, **SYM** for digits; **MIC** shows or
-   hides it) and press **Enter**.
+4. Type the password (**Alt** for small letters, **SYM** for digits; it shows as you
+   type it) and press **Enter**.
 5. "connected" shows on the WiFi page. The radio joins this network again by itself.
 
 WiFi is optional: messages go over LoRa radio without it. Saved networks: WiFi page, row 4.
 
-Second video: [add_wifi.mp4](videos/add_wifi.mp4): a radio in Typical mode (WiFi settings on;
-Minimal mode has no WiFi page) joins "ARRL-HQ" with the password HIRAMMAXIM.
+Second video: [add_wifi.mp4](videos/add_wifi.mp4): a radio in Minimal mode (which has no WiFi
+page) is switched to Typical (**M**, **S**, **1**, **2**) and joins "ARRL-HQ" with the password
+HIRAMMAXIM.
 
 ## Set the If-found details
 
@@ -180,9 +181,191 @@ Video: [typical_checkup.mp4](videos/typical_checkup.mp4)
 4. Type the answer (digits: hold **SYM**) and **Enter**.
 5. **^** back. After a while the radio sleeps (and locks) by itself.
 
+## Lock the radio with a password
+
+Video: [Password_lock_and_unlock.mp4](videos/Password_lock_and_unlock.mp4)
+
+1. **M**, **S**, **4** (Screen & I/O), **2** (Idle splash).
+2. **3** (On + password): type a new password (4 to 32 characters), **Enter**; type it
+   again, **Enter**. **MIC** shows or hides it while you type.
+3. **7** (Lock now) locks at once. The radio also locks when it goes to sleep, and asks for
+   the password at every start.
+4. To unlock: any key, the password, **Enter**.
+
+Messages still arrive while it is locked. After 3 wrong tries you must wait 30 s, then
+longer each time. There is no way to read a forgotten password back.
+
+## Announce your radio
+
+Video: [Announce_your_unit.mp4](videos/Announce_your_unit.mp4)
+
+Announce tells the radios nearby who you are, so they can find you and message you.
+
+1. **M**, **H** (Home): your name and your address.
+2. **N** (Announce ID) sends them once.
+3. Or: **P** (Peers), then **R**.
+
+Announce once when you meet someone new, or when others cannot find you. It is not needed
+for every message.
+
+## Charging and the Battery page
+
+Video: [Charging_and_battery.mp4](videos/Charging_and_battery.mp4)
+
+1. Plug a USB-C charger in. The battery icon at the top left shows the charging sign.
+2. **M**, **S**, **6** (Battery): voltage, charge in %, the current going in (+) or out (-).
+3. **V** goes down: row 9 Full-charge cal, row 11 Time left (measured from your own use).
+
+New radio, or the % looks wrong? Charge it full, use it until it switches itself off, and
+charge it full again. After that the % is right.
+
+## Energy modes
+
+Video: [Energy_modes.mp4](videos/Energy_modes.mp4)
+
+How much the radio sleeps. More sleep means more days on one charge.
+
+1. **M**, **S**, **5** (Power). Each row is a mode, with the battery life in it.
+2. A row's number picks it: **1** Full power (always awake), **2** Balanced (the everyday
+   mode), **3** Saver (wakes once a minute; LoRa still listens), **4** Ultra-low (LoRa only,
+   wakes every 5 minutes), **5** On demand (LoRa only for a while after a key press),
+   **6** Check-in (LoRa only at set times), **7** Custom.
+3. Further down: 9 Energy monitor, 10 Full power on USB.
+
+## Low-battery notice
+
+Video: [Low_battery_notice.mp4](videos/Low_battery_notice.mp4) (two radios, side by side)
+
+The radio tells one contact when its battery gets low: the battery % and its last position.
+
+1. **M**, **S**, **6** (Battery). **V** down to row 12, Low-battery notice, **Enter**.
+2. **2** (Send to): pick the contact by its number, **Enter**. The bottom line confirms,
+   for example "Low battery -> SAGE at 10%".
+3. Row 1 of the same page (Send at) changes the % or turns the notice off.
+
+## Share your location
+
+Video: [Share_your_location.mp4](videos/Share_your_location.mp4) (two radios, side by side)
+
+Nothing about where you are is sent unless you send it.
+
+1. Open the chat with the person: **C**, their number, **Enter**, **1** (Message).
+2. **MIC** opens the location menu. **1** (Share my location) sends your position once.
+3. **MIC**, **2** (Auto-share location): every 5 minutes; **2** again: 15, 30, 60 minutes,
+   off. Row 3 sets for how long.
+4. To stop all sharing: **M**, **S**, **2** (Time & Location), row 8.
+
+The other radio shows **[loc]** in the chat; **Enter** on the empty message line opens the
+map there.
+
+## Waypoints
+
+Video: [Atlas_waypoints.mp4](videos/Atlas_waypoints.mp4)
+
+1. On the Atlas (**A**), bring the place to the middle of the screen (**Z** zooms in,
+   **T F V H** move).
+2. **Alt** + **P**: type a name, **Enter**. The waypoint is saved.
+3. **P** steps through your waypoints; the bottom line shows the name, and how far and which
+   way it is from you.
+4. **Alt** + **SYM**, twice, removes the selected one.
+5. The list: **M**, **S**, **2** (Time & Location), **9** (Waypoints).
+
+## Breadcrumb track
+
+Video: [Atlas_breadcrumb_track.mp4](videos/Atlas_breadcrumb_track.mp4)
+
+The radio remembers the way you walked, so you can find the way back.
+
+1. **M**, **S**, **2** (Time & Location), **0** (row 10, Track), **1** (Record track).
+2. Walk. The radio drops a point about every 25 m; the Atlas shows them as a dotted line.
+3. On the Atlas, **B** is track back: the top line shows the distance to the next point.
+   **G** shows a big arrow; **B** again stops it.
+4. On the Track page, **3** (Export as GPX) saves the track on the SD card; **4** clears it
+   (**Enter** twice).
+
+## Navigate to a contact
+
+Video: [Navigate_to_a_contact.mp4](videos/Navigate_to_a_contact.mp4)
+
+1. On the Atlas (**A**), **N** steps through your contacts' last shared positions.
+2. **G** (go): a big arrow, the distance, the direction, and how old their position is.
+3. **G** or **^** goes back to the map; **D** centres it on you.
+
+North is at the top. The radio has no compass: use the direction with a landmark, the sun
+or a compass.
+
+## Arrival alerts
+
+Video: [Arrival_alerts.mp4](videos/Arrival_alerts.mp4)
+
+Tells you when a contact comes near you, or near one of your waypoints. They must be sharing
+their location with you.
+
+1. **M**, **S**, **9** (Alerts), **5** (Arrival alerts), **1** (New alert).
+2. Row 1 Contact, row 2 Near (me, or a waypoint), row 3 Within (the distance), row 4 Repeat
+   (once, or every time): press a row's number until it is right.
+3. **5** (Save alert). **Enter** twice on an alert in the list removes it.
+
+## Back up to the SD card
+
+Video: [SD_backup_and_restore.mp4](videos/SD_backup_and_restore.mp4)
+
+1. **M**, **S**, **V** down to row 11 (Storage), **Enter**, then **5** (SD card).
+2. **8** (Back up now): messages, contacts, settings and your identity go to the card.
+3. **9** (Restore backup) lists the backups; **Enter** twice on one restores it (the radio
+   restarts as it was at that time).
+4. Only the contacts: **M**, **S**, **7** (Identity), Export contacts (SD) / Import contacts
+   (SD).
+
+Keep the card safe: whoever has the backup can be you.
+
+## Update the firmware from the SD card
+
+Video: [Firmware_update_from_SD.mp4](videos/Firmware_update_from_SD.mp4)
+
+1. On a PC, copy the new `.bin` file into the folder `firmware` on the SD card.
+2. Battery at 30 % or more, or on a charger. **M**, **S**, **V** down to row 11 (Storage),
+   **Enter**, **5** (SD card).
+3. **0** (row 10, Update firmware), then **Enter** again to install. It takes about half a
+   minute, then the radio restarts. Do not switch it off meanwhile.
+
+If the new firmware does not start properly, the radio goes back to the old one by itself.
+
+## Range test
+
+Video: [Range_test.mp4](videos/Range_test.mp4)
+
+1. **M**, **S**, **8** (LoRa). (In Typical mode, turn the Advanced feature on first:
+   Settings, **1**, **5**.)
+2. **6** (Range test): pick the other radio by its number, **Enter**.
+3. The screen counts the pings that came back, with signal strength and quality, and the
+   lost ones. With an SD card in, each ping is also written to a file.
+4. **^** stops the test.
+
+## Library and games
+
+Video: [Library_and_games.mp4](videos/Library_and_games.mp4)
+
+1. **M**, **R** (Library): the text files on the SD card, here the help pages.
+2. A file's number opens it. **Space** or **N** next page, **B** back a page, **L** finds a
+   word, **K** shows all the reader keys, **^** back to the list.
+3. The last two rows are games. Rat Trap: **T F V H** move, **D** or **Enter** opens a
+   square. Chess: **Enter** picks a piece up and puts it down, **U** takes a move back,
+   **L** sets the level.
+
+## A tour of Settings
+
+Video: [Settings_tour.mp4](videos/Settings_tour.mp4)
+
+One pass through every Settings row: 1 Mode, 2 Time & Location, 3 WiFi, 4 Screen & I/O,
+5 Power, 6 Battery, 7 Identity, 8 LoRa, 9 Alerts, 10 Diagnostics (**0**), 11 Storage (**V**
+down to it, **Enter**).
+
 ---
 
 ## Walkie-talkie (live talk)
+
+Video: [walkie_talkie.mp4](videos/walkie_talkie.mp4)
 
 1. **C**, pick the person, **Enter** (their card), **W** = call.
 2. On the same WiFi the call starts at once; with no shared WiFi the invite goes over LoRa and
@@ -193,6 +376,8 @@ More on the card: `library/Help-11-Walkie-talkie.txt`.
 
 ## Voice message
 
+Video: [voice_message.mp4](videos/voice_message.mp4)
+
 1. Open the chat, **MIC**, **5** (Voice message).
 2. **Space** = start recording, **Space** again = stop and send (up to 20 s). **^** = cancel.
 3. To listen: **MIC**, **5**, **P** plays the newest one.
@@ -200,6 +385,8 @@ More on the card: `library/Help-11-Walkie-talkie.txt`.
 More on the card: `library/Help-12-Voice-messages.txt`.
 
 ## Battery empty
+
+Video: [Battery_empty_wont_turn_on.mp4](videos/Battery_empty_wont_turn_on.mp4)
 
 When the battery runs out the unit shows its idle screen (If found ...) with
 **BATTERY EMPTY / PLUG IN A USB CHARGER** and switches itself off. It stays off until USB
@@ -213,10 +400,17 @@ key names, captions, note boxes, click sounds). Digits and small letters are sho
 hand types them: one hand holds **SYM** or **Alt** (half click down, half click up), the
 other presses the key (full click). See the top of both files.
 
-Captions above the device sit on a deep-blue banner (white bold text) that flashes orange and
-grows in whenever the caption changes; note boxes over the screen pop in the same way.
+Captions above the device sit on a paper-coloured banner (dark brown bold text) that flashes
+brighter and grows in whenever the caption changes; note boxes over the screen (yellow) pop in
+the same way. A caption stays long enough to be read, and a note box for its whole time, before
+a quiet stretch is shortened.
 
 With the repo on the NAS (M:), Windows will not run the simulator from the share ("Access is
 denied"): build it to C: (`C:\Users\MyPC\simrun\build_simb.bat`), put Qt's `mingw_64\bin` and
 `Tools\mingw1310_64\bin` on PATH, and pass `-SimExe C:\Users\MyPC\simrun\simb\ratspeak-sim.exe
 -Seed C:\Users\MyPC\simrun\sim2\build\howto_seed`.
+
+`-DataRoot <folder>` puts the simulated radios' folders (and the recorded frames) there instead
+of next to the simulator, for example on M: when C: is nearly full. The seed folder holds what goes
+on a radio's SD card: `atlas` (map tiles and place names), `library` (the help files of
+`tools/sdcard/library` in `ratdeckpro/library`) and `fw` (a firmware `.bin` in `firmware`).

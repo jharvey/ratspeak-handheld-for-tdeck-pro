@@ -2,6 +2,10 @@
 # its SD card (howto_seed\atlas), three contacts with last positions far away.
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 serial contact 1a2b3c4d5e6f70819a2b3c4d5e6f7081 Jim Bowie
 serial contact 5e1a7c3b9d2f40a18c6e2b7d4f9a0c31 Ray at The Wall
 serial cpos 5e1a7c3b9d2f40a18c6e2b7d4f9a0c31 38.8913 -77.0477 6

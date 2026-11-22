@@ -52,7 +52,7 @@ wait 7000
 caption ^ (Shift) leaves the chat. Later the radio sleeps again.
 wait 1500
 key BACK
-wait 1200
+wait 1500
 key BACK
 wait 1500
 serial idle now

@@ -3,6 +3,10 @@
 # Idle screen: the map (tiles around the Alamo on both cards), no password.
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 serial idlescr 1
 wait 2000
 serial a
@@ -48,7 +52,7 @@ wait 2500
 key ENTER
 wait 2500
 caption C: Jill is in Jack's contacts now. They can message each other.
-wait 1200
+wait 1500
 key BACK
 wait 1200
 key C

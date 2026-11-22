@@ -1,6 +1,10 @@
 # How-to video: change the operator mode and touch on / off. Device ht_alex.
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 serial opmode 2
 serial touchscreen 1
 wait 3000
@@ -23,7 +27,7 @@ wait 2500
 key 1
 wait 2000
 caption Minimal: the menu (M) shows only the basics.
-wait 1000
+wait 1500
 key BACK
 wait 1200
 key M

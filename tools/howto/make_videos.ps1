@@ -77,7 +77,7 @@ $videos = @(
        comps = @("walkie_talkie_jill.txt@hv_jill"); rec2 = "hv_jill"; labels = @("Jack", "Jill") },
     @{ name = "add_wifi"; title = "Add a WiFi network"; main = "hv_w1aw"
        devices = [ordered]@{ hv_w1aw = "W1AW" }
-       ini = @{ hv_w1aw = @("wifi = W1AW-SHACK/-52; ARRL-HQ/-58/HIRAMMAXIM; QST-GUEST/-71; NEWINGTON-73/-80/SPARKGAP") } },
+       ini = @{ hv_w1aw = @("wifi = W1AW-SHACK/-52; ARRL-HQ/-58/HIRAMMAXIM; QST-GUEST/-71; NEWINGTON-HAMS/-80/SPARKGAP") } },
     # --- added 22 Nov 2026 (named as in docs\videos\Video_Descriptions.txt) ---
     @{ name = "Password_lock_and_unlock"; title = "Password lock and unlock"; main = "hv_robin"
        devices = [ordered]@{ hv_robin = "ROBIN" } },
@@ -123,12 +123,16 @@ $videos = @(
     #     -Out docs\instructional ---
     @{ name = "02_Everyday_messaging_Minimal_mode"; title = "Everyday messaging in Minimal mode"; main = "hv_granny"
        devices = [ordered]@{ hv_pip = "PIP"; hv_granny = "GRANNY GOUDA" }
-       comps = @("02_Everyday_messaging_Minimal_mode_pip.txt@hv_pip"); rec2 = "hv_pip"; labels = @("Granny Gouda", "Pip"); colours = @(3, 0) }
+       comps = @("02_Everyday_messaging_Minimal_mode_pip.txt@hv_pip"); rec2 = "hv_pip"; labels = @("Granny Gouda", "Pip"); colours = @(3, 0) },
+    @{ name = "20_Out_of_range_and_back"; title = "Out of range and back"; main = "hv_mabel"
+       devices = [ordered]@{ hv_mabel = "MABEL"; hv_pip = "PIP" }
+       comps = @("20_Out_of_range_and_back_pip.txt@hv_pip+75"); rec2 = "hv_pip"; labels = @("Mabel", "Pip"); colours = @(1, 0) }
 )
 
 function Start-Sim([string]$script, [string]$device, [int]$delay = 0) {
     $log = Join-Path $work "log_$device.txt"
-    $wait = if ($delay) { "timeout /t $delay /nobreak > nul&& " } else { "" }
+    # (ping as the delay: "timeout" refuses to run without a console, e.g. from a scheduled task)
+    $wait = if ($delay) { "ping -n $($delay + 1) 127.0.0.1 > nul& " } else { "" }
     $cmd = "$wait" + "set QT_QPA_PLATFORM=offscreen&& set QT_QPA_FONTDIR=%WINDIR%\Fonts&& set RS_SIM_AIR_PORT=48333&& set SIM_AUDIO_DIR=$scripts\audio&& " +
            "`"$SimExe`" --name $device --data `"$simData\$device`" --fast --script `"$script`" --quit > `"$log`" 2>&1"
     return Start-Process cmd.exe -ArgumentList "/c", $cmd -PassThru -WindowStyle Hidden

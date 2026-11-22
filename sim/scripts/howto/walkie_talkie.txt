@@ -6,6 +6,10 @@
 # Turn timing is shared with the companion: both count from "[WT] connected".
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 wait 2000
 serial a
 expect 60000 {JILL16}

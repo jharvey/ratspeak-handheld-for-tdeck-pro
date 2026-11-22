@@ -307,12 +307,15 @@ THE SERIES
   side), and on groups if the three are to share one group chat.
 - Remake when: groups.
 
--- 20_Out_of_range_and_back.mp4                                          PLANNED (short)
+-- 20_Out_of_range_and_back.mp4                                          MADE 22 Nov 2026 (short)
 - Purpose: what happens to a message when the other person cannot be reached.
 - Theme: Pip goes down the drainpipe; Mabel's message waits in her outbox; Pip pops out of
   the pipe and it is delivered at once.
 - Depends: CAN BE MADE NOW.
 - Remake when: sync through a propagation node lands (Future_steps.txt).
+- Script: sim/scripts/howto/20_Out_of_range_and_back.txt (Mabel) and ..._pip.txt (Pip, whose
+  radio starts 75 s later). Mabel asks "Is the cheese safe?"; the message waits as "queued";
+  Pip's radio is heard again and it is delivered; Pip answers "The cheese is always safe."
 
 -- 21_Finding_a_lost_friend.mp4                                          PLANNED
 - Purpose: search and rescue with the tools on the unit.

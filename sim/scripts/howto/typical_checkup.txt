@@ -3,6 +3,10 @@
 # (asks the question, answers the reply).
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 serial contact {FORD} Ford Prefect
 serial contact {TRILLIAN} Trillian
 serial contact {FOOK} Fook
@@ -49,10 +53,11 @@ type ARTHOR
 key ENTER
 wait 1500
 shot pre-lock.png
+wait 1500
 key BACK
-wait 600
+wait 1500
 key BACK
-wait 600
+wait 1500
 key BACK
 wait 800
 key I

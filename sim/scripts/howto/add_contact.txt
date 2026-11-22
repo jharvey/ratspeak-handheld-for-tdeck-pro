@@ -1,6 +1,10 @@
 # How-to video: add a contact. Fresh device ht_new; companion_sam_announce.txt (ht_sam).
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 wait 3000
 key M
 key H

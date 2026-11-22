@@ -80,9 +80,9 @@ wait 4500
 caption ^ (Shift) goes back. Later the radio sleeps again.
 wait 1500
 key BACK
-wait 800
+wait 1500
 key BACK
-wait 800
+wait 1500
 key BACK
 wait 1200
 serial idle now

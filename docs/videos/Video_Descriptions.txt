@@ -39,6 +39,8 @@ CONVENTIONS FOR EVERY VIDEO
 - Hand pointer with click sounds on every key press; the key's name shows above the
   keyboard as it is pressed.
 - Typing is shown in ALL CAPS (the keyboard types capitals). Alt + key gives a small letter.
+  Two quick taps of ^ (within 0.4 s) switch Caps Lock off or on: a script that goes back two
+  levels and then types must leave time between the two ^ presses, or use M / I instead.
 - Digits: when showing a number being pressed, show one hand press and hold "SYM" with a half
   click sound. Then the other hand presses the key with a full click sound. Then SYM is
   released with the 2nd half click sound. Alt + key (small letters) is shown the same way.
@@ -131,7 +133,7 @@ End: the unit goes to the idle screen (the If found screen just picked in the wi
 
 -- Common_checkup.mp4
 
-Status: MADE. File: typical_checkup.mp4.
+Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: typical_checkup.mp4.
 Depends: CAN BE MADE NOW.
 Remake when: groups (the Inbox changes). The made video differs from this script in its
 names (Deep Thought and Fook, with Ford and Trillian as the other chats) and its password
@@ -170,7 +172,7 @@ End: Author's unit goes back to the idle screen by itself (locked).
 
 -- Contact_exchange.mp4
 
-Status: MADE. File: contact_exchange.mp4.
+Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: contact_exchange.mp4.
 Depends: CAN BE MADE NOW, except the place: the Map idle screen at Cave Spring Hollow is
 WAITING ON map tiles of Lynchburg, Tennessee on the simulator's card (its tiles are around
 San Antonio, Texas, so the made video is at the Alamo), and zoom 14 needs zoom 14 tiles
@@ -223,7 +225,7 @@ and announces the unit; it does not send a contact card. Sharing is C, MyID, Ent
 
 -- Search_for_others.mp4
 
-Status: MADE. File: peer_search.mp4.
+Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: peer_search.mp4.
 Depends: CAN BE MADE NOW.
 Remake when: ATAK, groups (the menu and the contact page change). The made video uses
 "KEN FRANKLIN" as the person of interest instead of "DR FLEMMING".
@@ -269,9 +271,11 @@ End: Columbo's unit goes back to the idle screen (If found).
 
 -- Add_wifi_in_minimal_mode.mp4
 
-Status: MADE. File: add_wifi.mp4.
+Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: add_wifi.mp4.
 Depends: CAN BE MADE NOW.
-Remake when: the WiFi page changes.
+Remake when: the WiFi page changes. The video of 22 Nov follows this script (the first one
+started in Typical mode). It goes back to Settings with M, S instead of ^ in step 4, the
+networks are W1AW-SHACK, ARRL-HQ, QST-GUEST and NEWINGTON-HAMS, and step 9 is not shown.
 
 Purpose: a unit in Minimal mode joins a WiFi network (Minimal hides the WiFi settings, so
 the unit is switched to Typical first).
@@ -310,7 +314,7 @@ End: the unit goes back to the idle screen (If found, W1AW).
 
 -- atlas.mp4
 
-Status: MADE. File: atlas.mp4.
+Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: atlas.mp4.
 Depends: CAN BE MADE NOW.
 Remake when: the on-screen map layer switch lands; ATAK (markers on the map).
 
@@ -819,37 +823,38 @@ End: the unit goes back to the idle screen.
 MADE WITHOUT A FULL SCRIPT HERE (the simulator script is the script)
 ==========================================================================================
 
-Each was made on 15 or 16 Nov from sim/scripts/howto/<name>.txt and is in docs/HowTo.md.
+Each was made on 15 or 16 Nov from sim/scripts/howto/<name>.txt, made again on 22 Nov 2026
+on the current firmware, and is in docs/HowTo.md.
 
 -- Send_a_message.mp4: open a chat, type, Enter, "delivered"; a message to an out-of-range
    radio waits in the queue and goes out by itself later.
-   Status: MADE. File: send_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
+   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: send_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
 -- Read_a_message.mp4: the new-message count on the idle screen, I (Inbox), open the chat,
    T / V to scroll older messages.
-   Status: MADE. File: read_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
+   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: read_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
 -- Add_a_contact.mp4 (was First_message_to_a_new_contact): save a radio from Peers as a
    contact (Enter, 2 Rename). The first message to it (1 Message) is in
    Search_for_others.mp4.
-   Status: MADE. File: add_contact.mp4. Depends: CAN BE MADE NOW. Remake when: ATAK, groups.
+   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: add_contact.mp4. Depends: CAN BE MADE NOW. Remake when: ATAK, groups.
 -- Connect_to_wifi.mp4: M, S, 3 WiFi, 3 Scan networks, the network's number, the password,
    Enter.
-   Status: MADE. File: wifi.mp4. Depends: CAN BE MADE NOW. Remake when: the WiFi page
+   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: wifi.mp4. Depends: CAN BE MADE NOW. Remake when: the WiFi page
    changes.
 -- If_found_idle_screen.mp4: fill in the If-found details (M, S, 4, 2, 9), pick the If
    found idle screen (row 8), show or hide the address (row 10, key 0). The other idle
    screens (Splash, Map, Library page) are named but not shown.
-   Status: MADE. File: if_found.mp4. Depends: CAN BE MADE NOW. Remake when: the Idle splash
+   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: if_found.mp4. Depends: CAN BE MADE NOW. Remake when: the Idle splash
    page changes.
 -- Mode_and_touch.mp4: Settings 1 Mode: 1 Minimal / 2 Typical / 3 Everything, 4 Touch
    screen on / off, 5 Typical features.
-   Status: MADE. File: mode_touch.mp4. Depends: CAN BE MADE NOW. Remake when: ATAK, groups
+   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: mode_touch.mp4. Depends: CAN BE MADE NOW. Remake when: ATAK, groups
    (new rows in the Typical features list).
 -- Voice_message.mp4: in a chat MIC, 5 Voice message, Space to record, Space to stop and
    send (up to 20 s), P to play the newest one.
-   Status: MADE. File: voice_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
+   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: voice_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
 -- Walkie_talkie.mp4: C, pick the person, Enter, W to call; the other answers with Enter;
    Space talk / listen, ^ hang up; same WiFi or the unit's own hotspot.
-   Status: MADE. File: walkie_talkie.mp4. Depends: CAN BE MADE NOW. Remake when: groups
+   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: walkie_talkie.mp4. Depends: CAN BE MADE NOW. Remake when: groups
    (group / channel talk).
 
 

@@ -1,7 +1,12 @@
-# How-to video: add a WiFi network. Device hv_w1aw in Typical mode, If-found idle screen with the
+# How-to video: add a WiFi network. Device hv_w1aw in Minimal mode (switched to Typical in the
+# video, as Minimal has no WiFi page), If-found idle screen with the
 # ARRL / W1AW return address. Networks in range come from its sim.ini (make_videos.ps1).
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 serial found 1 ARRL Headquarters
 serial found 2 Station W1AW
 serial found 3 225 Main Street
@@ -20,14 +25,10 @@ wait 800
 key 2
 wait 800
 key 0
-wait 1000
-key BACK
-wait 600
-key BACK
-wait 600
-key BACK
-wait 800
-serial opmode 1
+wait 1500
+key I
+wait 1500
+serial opmode 0
 wait 1000
 key I
 wait 1500
@@ -36,16 +37,30 @@ wait 2500
 rec add_wifi
 caption The radio sleeps and shows where to return it: ARRL Headquarters, station W1AW.
 wait 3500
-caption Any key wakes it, back on the Inbox. (Typical mode: WiFi settings are on.)
+caption Any key wakes it. This radio is in Minimal mode.
 wait 1200
 key SPACE
 wait 2000
-caption Settings: M, then S. Then 3 (WiFi): hold SYM, press R.
+caption Settings: M, then S. Minimal mode shows only row 1, Mode: there is no WiFi row.
 wait 1200
 key M
 wait 900
 key S
+wait 3000
+note 5000 Minimal mode shows only the Mode row. Switch to Typical to see WiFi.
+wait 5500
+caption 1 (Mode): hold SYM, press W. Then 2 (Typical): WiFi settings are one of the Typical features.
 wait 1500
+key 1
+wait 2000
+key 2
+wait 2500
+caption M, then S again: Settings shows all its rows now. 3 is WiFi: hold SYM, press R.
+wait 1500
+key M
+wait 900
+key S
+wait 2500
 key 3
 wait 2000
 caption 3 again: Scan networks. The routers in range are listed, strongest first.
@@ -57,19 +72,23 @@ caption Pick ARRL-HQ by its number: 3.
 wait 1500
 key 3
 wait 2000
-caption Type its password: HIRAMMAXIM. MIC shows / hides it.
+caption The Join WiFi page opens, ready for the password. Type it: HIRAMMAXIM.
 wait 1200
 type HIRAMMAXIM
 wait 800
-caption Enter joins. The radio remembers it and joins again by itself.
+caption Enter after the password joins. The radio remembers the network and joins again by itself.
 wait 1000
 key ENTER
 expect 10000 [WIFI] connected
 wait 3000
-caption Connected. ^ (Shift) goes back; after a while the radio sleeps again.
-wait 1200
+caption Connected.
+wait 1500
+note 5000 WiFi is optional: messages go over LoRa radio without it.
+wait 5500
+caption ^ (Shift) goes back; after a while the radio sleeps again.
+wait 1500
 key BACK
-wait 900
+wait 1500
 key BACK
 wait 1500
 serial idle now

@@ -1,0 +1,52 @@
+# Instructional video 20: out of range and back. Device hv_mabel (Mabel, recorded); companion
+# 20_Out_of_range_and_back_pip.txt (hv_pip, recorded too) is started about a minute later:
+# until then Pip's radio cannot be reached.
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact {PIP} PIP
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec 20_Out_of_range_and_back
+note 7000 Pip has gone down the drainpipe. Down there his radio cannot hear Mabel's: he is out of range.
+wait 7500
+caption Mabel wakes her radio and writes to Pip: C (Contacts), 1, Enter, then 1 (Message).
+wait 1500
+key SPACE
+wait 1500
+key C
+wait 1500
+key 1
+wait 900
+key ENTER
+wait 1800
+key 1
+wait 2500
+type IS THE CHEESE SAFE?
+wait 800
+key ENTER
+wait 4000
+caption The message is sent, but no "delivered" comes back: Pip's radio did not hear it.
+wait 9000
+note 7500 Mabel does not have to send it again. The radio keeps the message and tries again by itself when Pip's radio is heard.
+wait 8000
+caption She leaves the chat open and waits ...
+expect 240000 {PIP16}
+wait 2000
+caption Pip pops out of the pipe. His radio is heard again, and the waiting message goes out.
+expect 240000 [MSG] inbound
+wait 3000
+caption Delivered, and Pip has answered: the cheese is always safe.
+wait 9000
+key BACK
+wait 1500
+serial idle now
+wait 5000
+rec off
+quit

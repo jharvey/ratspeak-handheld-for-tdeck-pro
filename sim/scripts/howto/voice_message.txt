@@ -4,6 +4,10 @@
 # and what Jill's speaker plays are in the video's sound.
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 wait 2000
 serial a
 expect 60000 {JILL16}
@@ -43,7 +47,7 @@ key SPACE
 expect 60000 [VM] sent
 wait 3500
 caption ^ closes the recorder. The voice message is in the chat.
-wait 1200
+wait 1500
 key BACK
 wait 90000
 rec off

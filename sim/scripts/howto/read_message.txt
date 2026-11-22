@@ -1,6 +1,10 @@
 # How-to video: read a message. Device ht_alex; companion_sam_send.txt (ht_sam) sends one.
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 serial contact {SAM} SAM
 wait 12000
 key M

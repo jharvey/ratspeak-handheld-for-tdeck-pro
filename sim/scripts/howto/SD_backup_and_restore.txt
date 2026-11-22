@@ -63,9 +63,9 @@ wait 7500
 caption ^ (Shift) goes back without restoring.
 wait 1500
 key BACK
-wait 1200
+wait 1500
 key BACK
-wait 900
+wait 1500
 key BACK
 wait 1500
 caption Only the contacts: 7 (Identity). Go down to Export contacts (SD) and Import contacts (SD).
@@ -87,7 +87,7 @@ wait 300
 key V
 wait 4500
 key BACK
-wait 900
+wait 1500
 key BACK
 wait 1500
 serial idle now

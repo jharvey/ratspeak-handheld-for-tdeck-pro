@@ -2,6 +2,10 @@
 # peer_search_franklin.txt (hv_franklin) starts later and announces while Columbo watches Peers.
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 serial found 1 Lt. Columbo
 serial found 2 (213) 555-0147
 serial found 3 LAPD Homicide Division
@@ -25,12 +29,8 @@ shot pre-idle-page.png
 key 0
 wait 800
 shot pre-found-addr.png
-key BACK
-wait 600
-key BACK
-wait 600
-key BACK
-wait 800
+# (no Back presses here: two quick taps of Shift toggle Caps Lock, and the name typed later must be in capitals)
+wait 1500
 key I
 wait 1500
 serial idle now

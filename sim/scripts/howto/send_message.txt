@@ -2,6 +2,10 @@
 # (companion_sam.txt) so the message is delivered. tools/howto/make_videos.ps1 runs it.
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 serial contact {SAM} SAM
 serial contact {JO} JO
 wait 15000

@@ -2,6 +2,10 @@
 # Jack's voice message.
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 wait 6000
 serial a
 expect 60000 {JACK16}
@@ -33,7 +37,7 @@ wait 2000
 key P
 wait 12000
 caption ^ closes the player.
-wait 1000
+wait 1500
 key BACK
 wait 4000
 rec off

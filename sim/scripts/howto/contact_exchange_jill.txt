@@ -1,6 +1,10 @@
 # Companion for contact_exchange.txt: Jill's radio (recorded too).
 expect 60000 [BOOT] ready
 serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
 serial idlescr 1
 wait 6000
 serial a
@@ -12,8 +16,11 @@ wait 1500
 serial idle now
 wait 1500
 rec contact_exchange
+point 205 21 4000
 expect 180000 [MSG] inbound
-wait 3000
+wait 1500
+point 205 21 4500
+wait 5000
 note 5500 Jill receives his contact and sends her contact to Jack.
 wait 6000
 caption Jill: any key, I (Inbox), open the new chat: [card] Jack. Enter on the empty line saves him.
