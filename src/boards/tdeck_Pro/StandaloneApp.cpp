@@ -5670,6 +5670,41 @@ void drawBubble(int y, const char* s, bool incoming, const char* status) {
 extern bool g_tmenuOpen;
 void renderThreadMenu(int y);
 void renderGrpWho(int y);
+
+// The message being typed, wrapped at words to the typing strip's width, cursor "_" at the
+// end. The strip shows 1 to kDraftLines lines as the text needs: out gets the last ones (so
+// the cursor is always in view); returns how many (1..kDraftLines).
+constexpr int kDraftLines = 3;
+int draftWrap(char out[kDraftLines][64], int maxW) {
+    char all[BUF_CAP + 2];
+    snprintf(all, sizeof(all), "%s_", g_buf);
+    const char* start[kDraftLines];
+    size_t len[kDraftLines];
+    int n = 0;
+    const char* p = all;
+    while (*p) {
+        size_t fit = 0, lastSpace = 0, i = 0;
+        while (p[i] && i < 63) {                  // longest prefix that fits
+            if (textW(p, i + 1) > maxW) break;
+            i++;
+            fit = i;
+            if (p[i - 1] == ' ') lastSpace = i;   // a line may end after a space
+        }
+        size_t take = fit ? fit : 1;
+        if (p[take] && lastSpace) take = lastSpace;   // more text follows: break at a word
+        if (n == kDraftLines) {                   // keep the newest lines
+            for (int k = 1; k < kDraftLines; k++) { start[k - 1] = start[k]; len[k - 1] = len[k]; }
+            n--;
+        }
+        start[n] = p;
+        len[n] = take;
+        n++;
+        p += take;
+    }
+    if (!n) { start[0] = all; len[0] = strlen(all); n = 1; }
+    for (int k = 0; k < n; k++) { memcpy(out[k], start[k], len[k]); out[k][len[k]] = 0; }
+    return n;
+}
 uint8_t ashareMinsFor(const uint8_t dest[16]);
 int ashareActive();
 
@@ -5697,7 +5732,11 @@ void renderThread() {
         text(4, y, st);
         y += 18;
     }
-    int yMax = STRIP_Y - 2;
+    // Typing strip: 1 to 3 lines of the draft and the hint line; the history gets the rest.
+    char draft[kDraftLines][64];
+    const int nDraft = draftWrap(draft, W - 14);
+    const int stripY = BOT_TOP - STRIP_LINE * (nDraft + 1);
+    int yMax = stripY - 2;
     // Check-in outbox messages for this contact are the newest: they sit under the
     // history (as sent bubbles, "queued HH:MM") and win the space first.
     constexpr int kQueuedH = 42;
@@ -5737,28 +5776,17 @@ void renderThread() {
         }
     }
 
-    // 3-line compose strip: show the tail so the cursor is always visible.
-    box(2, STRIP_Y, W - 4, BOT_TOP - STRIP_Y, 2);
-    constexpr size_t LINE = 26;
-    const char* tail = g_buf;
-    if (g_bufLen > LINE * 2) tail = g_buf + (g_bufLen - LINE * 2);
-    char l1[LINE + 2] = "", l2[LINE + 2] = "";
-    size_t tl = strlen(tail);
-    snprintf(l1, sizeof(l1), "%.*s", (int)(tl < LINE ? tl : LINE), tail);
-    if (tl > LINE) snprintf(l2, sizeof(l2), "%.*s", (int)(tl - LINE), tail + LINE);
-    // Cursor on the last line in use
-    if (tl < LINE) strncat(l1, "_", sizeof(l1) - strlen(l1) - 1);
-    else           strncat(l2, "_", sizeof(l2) - strlen(l2) - 1);
-    text(6, STRIP_Y + 1, l1, false, W - 12);
-    text(6, STRIP_Y + STRIP_LINE, l2, false, W - 12);
+    // Compose strip: the draft (word-wrapped, its last lines, cursor at the end), then the hint.
+    box(2, stripY, W - 4, BOT_TOP - stripY, 2);
+    for (int k = 0; k < nDraft; k++) text(6, stripY + 1 + k * STRIP_LINE - (k ? 1 : 0), draft[k], false, W - 12);
     char hint[40] = "[Enter] send  [MIC] location";
-    if (isGrpHash(g_threadPeer)) snprintf(hint, sizeof(hint), "[Enter] send  [MIC] who got it");
+    if (isGrpHash(g_threadPeer)) snprintf(hint, sizeof(hint), "[Enter] send [MIC] who got it");
     const bool offer = !g_bufLen && (locOffered() || cardOffered() || grpOffered());
     if (!g_bufLen && grpOffered())
         snprintf(hint, sizeof(hint), g_threadGrp.join ? "[Enter] join group: %.14s" : "[Enter] open group: %.14s", g_threadGrp.name);
     else if (!g_bufLen && locOffered()) snprintf(hint, sizeof(hint), "[Enter] map %.3f,%.3f", g_threadLoc.lat, g_threadLoc.lon);
     else if (!g_bufLen && cardOffered()) snprintf(hint, sizeof(hint), "[Enter] save card: %.14s", g_threadCard.name);
-    text(6, STRIP_Y + STRIP_LINE * 2, g_toast[0] ? g_toast : hint, !g_toast[0] && offer, W - 12);
+    text(6, stripY + STRIP_LINE * nDraft, g_toast[0] ? g_toast : hint, !g_toast[0] && offer, W - 12);
 }
 
 // ---- Rename (entry mode) ---------------------------------------------------------

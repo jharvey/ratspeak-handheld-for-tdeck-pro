@@ -1,0 +1,57 @@
+# The typing strip in a chat: the draft wraps at words and the strip grows from 1 to 3 lines
+# (the last 3 when the text is longer), with the hint line under it. Contact chat, then a
+# group chat. Run fresh:  run-script.bat scripts\typing.txt typing fresh
+expect 60000 [BOOT] ready
+serial wiz skip
+serial contact a10000000000000000000000000000a1 Alex
+serial contact a20000000000000000000000000000a2 Sam
+expect 10000 "Sam" ok=1
+serial grp new FAMILY
+serial grp add 1 a10000000000000000000000000000a1
+serial grp add 1 a20000000000000000000000000000a2
+expect 3000 (2 members)
+wait 1000
+key BACK
+wait 800
+serial chat a10000000000000000000000000000a1
+expect 3000 [UI] chat a1000000 open
+wait 1000
+devshot typing-01-empty.png
+type ON MY WAY
+wait 800
+devshot typing-02-one-line.png
+key SPACE
+type HOME NOW BE THERE SOON
+wait 800
+devshot typing-03-two-lines.png
+key SPACE
+type BRING THE MAP AND WATER
+wait 800
+devshot typing-04-three-lines.png
+key SPACE
+type AND TELL SAM WE MEET AT THE BRIDGE AT NOON
+wait 800
+devshot typing-05-over-three.png
+# Backspace shrinks it again.
+key BKSP
+key BKSP
+key BKSP
+key BKSP
+key BKSP
+wait 800
+key BACK
+wait 1000
+# The group chat has the same strip.
+serial grp open 1
+expect 5000 [HIST] group "FAMILY"
+wait 1000
+type ALL
+wait 800
+devshot typing-06-group-one-line.png
+key SPACE
+type MEET AT THE BRIDGE AT NOON BRING THE MAP AND WATER AND A COAT IT WILL BE COLD
+wait 800
+devshot typing-07-group-over-three.png
+key BACK
+wait 800
+quit
