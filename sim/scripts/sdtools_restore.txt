@@ -3,6 +3,9 @@ expect 60000 [BOOT] ready
 wait 1500
 serial id
 expect 3000 name=Bravo
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 key M
 wait 300
 key S

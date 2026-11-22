@@ -4037,7 +4037,7 @@ void buildSettingsRows(Page p) {
                  pw ? "set; asked at every boot" : "none (vault default key)");
         }
         srow(RK_ACTION, "Remove password", "%s", pw ? "Enter = remove" : "-");
-        srow(RK_ACTION, "Lock now", "%s", pw ? "Enter = lock" : "set a password first");
+        srow(RK_ACTION, "Lock now", "%s", pw ? "Enter, or the top side button" : "set a password first");
         srow(RK_PICK, "Idle screen", "%s", kIdleScreenName[g_cfg.idleScreen]);
         srow(RK_MENU, "If-found details", "%d of 10 lines set", foundCount());
         srow(RK_TOGGLE, "If found: my address", "%s", g_cfg.foundAddr ? "shown" : "hidden");
@@ -11184,11 +11184,67 @@ void processKeys() {
     }
 }
 
+// ---- Top side button (BOOT, GPIO0, low while pressed) = lock ---------------------------
+// A short press locks the unit and shows the idle screen in its locked form (lockNow, the
+// same path as "Lock now" and the idle lock). With no password there is nothing to lock: it
+// shows the idle screen. The bottom side button is the chip reset; a restart ends on the idle
+// screen too (begin()), locked if a password is set. Holding this button during a reset is
+// still the ESP32 USB download mode (a strap read by the ROM, not by this code).
+constexpr uint32_t kBtnDebounceMs = 30;
+bool g_btnRaw = false, g_btnDown = false;     // last reading / debounced state
+uint32_t g_btnChangeAt = 0;
+volatile bool g_btnPressed = false;           // a debounced press waits for the loop
+
+// Read the pin (loop and panel busy-wait); never draws.
+void sideButtonPoll() {
+    const bool raw = digitalRead(BOARD_BOOT_PIN) == LOW;
+    const uint32_t now = millis();
+    if (raw != g_btnRaw) { g_btnRaw = raw; g_btnChangeAt = now; return; }
+    if (raw == g_btnDown || now - g_btnChangeAt < kBtnDebounceMs) return;
+    g_btnDown = raw;
+    if (raw) g_btnPressed = true;             // once per press; the release does nothing
+}
+
+void sideButtonAction(const char* src) {
+    if (g_wizOpen || g_usbDrive) {            // first-run wizard / USB drive mode stay on screen
+        Serial.printf("[BTN] top button (%s): ignored (%s)\n", src, g_wizOpen ? "setup wizard" : "USB drive mode");
+        return;
+    }
+    if (g_vmOpen) vmClose();                  // a voice recording stops, nothing is sent
+    if (g_wtOpen) wtClose();                  // a walkie-talkie call is hung up
+    if (lockHasPassword()) {
+        // Locked = not "use": a unit in standby stays in standby.
+        if (!g_locked) {
+            Serial.printf("[BTN] top button (%s): lock\n", src);
+            lockNow();
+        } else if (!g_idleActive) {           // at the password prompt: back to the idle screen
+            Serial.printf("[BTN] top button (%s): locked already, idle screen\n", src);
+            lockWipe();
+            enterIdle();
+        } else {
+            Serial.printf("[BTN] top button (%s): locked already\n", src);
+        }
+        return;
+    }
+    Serial.printf("[BTN] top button (%s): idle screen (no password)\n", src);
+    noteInput();
+    standbyNoteUse("button");                 // unlocked: someone is using it
+    if (!g_idleActive) enterIdle();
+}
+
+void sideButtonTick() {
+    sideButtonPoll();
+    if (!g_btnPressed) return;
+    g_btnPressed = false;
+    sideButtonAction("button");
+}
+
 // Runs while the panel is busy refreshing. Must only read input, never draw.
 void onPanelBusy(const void*) {
     static uint32_t last = 0;
     if (millis() - last >= 8) {
         last = millis();
+        sideButtonPoll();
         readKeyboardIntoQueue();
         gpsPoll();                  // drain NMEA too, so no sentences are lost to a refresh
     }
@@ -11676,6 +11732,7 @@ const char* powerSleepBlocker() {
     // key anyway and must not keep the CPU awake.
     if (!g_idleActive && (g_redraw || g_redrawAt)) return "redraw";
     if (g_keyqTail != g_keyqHead) return "keys";
+    if (g_btnRaw || g_btnDown || g_btnPressed) return "side button";
     if (g_pwEff.checkin && g_outboxCount) {
         const power::CheckinPhase ph = checkinNow();
         if (ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS) return "check-in send";
@@ -12589,9 +12646,11 @@ void powerIdle() {
     // Acknowledge the keyboard interrupt; if the line stays low a key is waiting.
     if (g_kbOk) g_kb.clearInterrupt();
     if (digitalRead(KB_INT) == LOW) { delay(2); return; }
+    if (digitalRead(BOARD_BOOT_PIN) == LOW) { delay(2); return; }   // top side button down
 
     power::WakePins pins;
     pins.key = KB_INT;
+    pins.button = BOARD_BOOT_PIN;
     pins.touch = (g_idleActive || g_touchGated) ? -1 : TOUCH_INT;   // idle / gated: key-only wake
     pins.lora = (g_radio && g_loraIf && g_loraIf->isOnline()) ? LORA_IRQ : -1;
 
@@ -12773,7 +12832,7 @@ void handleSerialLine(char* p) {
     if (!*p) return;
     if (p[0] == '@') { handleRemoteLine(p + 1); return; }   // keys still meet the lock prompt
     if (g_locked) {                       // locked: status only, nothing that reads or changes data
-        static const char* kOk[] = {"pw", "clk", "id", "lock", "ev", "rl", "sdinfo", "energy"};
+        static const char* kOk[] = {"pw", "clk", "id", "lock", "ev", "rl", "sdinfo", "energy", "btn", "standby"};
         bool ok = false;
         for (const char* k : kOk) ok |= !strcmp(p, k);
         if (!ok) { Serial.println("[CMD] locked: unlock on the device first"); return; }
@@ -13149,6 +13208,7 @@ void handleSerialLine(char* p) {
         return;
     }
     if (!strcmp(p, "idle now")) { enterIdle(); return; }
+    if (!strcmp(p, "btn")) { sideButtonAction("console"); return; }   // the top side button (lock)
     if (!strncmp(p, "standby", 7) && (p[7] == 0 || p[7] == ' ')) {
         // standby                 print the option and the state
         // standby on | off        the option (saved), like S.5.11
@@ -14345,18 +14405,28 @@ bool begin() {
     g_proto.setMessageCallback(onCommittedMessage);
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
     noteInput();
+    pinMode(BOARD_BOOT_PIN, INPUT_PULLUP);             // top side button (lock); has a pull-up on the board too
+    g_btnRaw = g_btnDown = digitalRead(BOARD_BOOT_PIN) == LOW;   // held through the boot: not a press
     goScreen(minimalMode() ? SCR_INBOX : SCR_HOME);
-    // The first screen replaces the boot splash with a full refresh: a partial one left the
-    // splash showing through it (after the side-button reset the panel's old-image RAM did not
-    // hold the splash, so its pixels were never cleared).
-    g_fullRefreshReq = true;
-    requestRedraw();
-    render();
+    // A boot ends on the idle screen (its locked form with a password), like the top side
+    // button: reset or button, the unit is left locked on the same screen. A key wakes it as
+    // usual. Not on a new unit (the setup wizard shows) and not when a restore has a result to
+    // show. Either way the first screen replaces the boot splash with a full refresh: a partial
+    // one left the splash showing through it (after the side-button reset the panel's old-image
+    // RAM did not hold the splash, so its pixels were never cleared).
+    const bool bootWiz = g_wizNeeded || (g_cfgFresh && !g_hadIdentity);
+    restoreReport();
+    if (!bootWiz && !g_toast[0]) {
+        enterIdle();
+    } else {
+        g_fullRefreshReq = true;
+        requestRedraw();
+        render();
+    }
     soakLoad();                           // an unplugged soak test carries on after a restart
     Serial.println("[BOOT] ready");
-    restoreReport();
     if (sysimg::pendingVerify()) g_markValidAt = millis() + 10000;   // new firmware: confirm if it keeps running
-    if (g_wizNeeded || (g_cfgFresh && !g_hadIdentity)) wizStart();   // a new device (or unfinished)
+    if (bootWiz) wizStart();              // a new device (or unfinished)
     return true;
 }
 
@@ -14412,6 +14482,7 @@ void slowNote(const char* name, uint32_t ms) {
 
 void loop() {
     SLOW_STEP("keys", processKeys());   // input first: lowest latency to the next render
+    sideButtonTick();
     SLOW_STEP("soak", soakTick());
     SLOW_STEP("selftest", selftestTick());
     SLOW_STEP("pumpOnce", pumpOnce());

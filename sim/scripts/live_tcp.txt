@@ -5,6 +5,9 @@
 # The device's log reaches us over the link, the screen is mirrored, and keys,
 # a touch and a console command go back to it.
 wait 7000
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 shot live-01-home.png
 key M
 wait 1500

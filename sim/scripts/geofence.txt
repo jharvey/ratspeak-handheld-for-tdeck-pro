@@ -21,6 +21,9 @@ expect 3000 [LOC] Alice at
 serial cpos 0000000000000000000000000000a11c 43.6625 -79.3700 0
 expect 3000 [GEOF] Alice is
 wait 1500
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 shot geof-01-alert.png
 serial geof
 expect 3000 [GEOF] 1 alerts

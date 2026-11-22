@@ -17,6 +17,9 @@ serial cpos 0000000000000000000000000000ca01 43.7003 -70.8004 10
 expect 3000 [LOC] Carol at
 serial map 43.66 -70.90 10
 wait 3000
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 shot cmap-01-all.png
 key N
 expect 5000 [MAP] contact #1 Alice

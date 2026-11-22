@@ -4,6 +4,9 @@ expect 60000 [BOOT] ready
 expect 120000 [MSG] inbound message
 wait 3000
 # wake the idle splash first (the waking key is consumed)
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 key BACK
 wait 1500
 key I

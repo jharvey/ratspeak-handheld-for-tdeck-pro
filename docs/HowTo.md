@@ -115,7 +115,9 @@ What a finder sees on the screen, even with a flat battery (e-ink keeps the pict
 4. Row 10 hides or shows the address lines.
 
 When the radio goes to sleep, the If found screen shows. With a password lock
-(Idle splash, row 3) it shows while locked too.
+(Idle splash, row 3) it shows while locked too. The top button on the side locks the radio at
+once (with no password it just shows the idle screen); the bottom one restarts it, and a
+restart also ends on the idle screen, locked if a password is set.
 
 ## Change the operator mode, touch on / off
 

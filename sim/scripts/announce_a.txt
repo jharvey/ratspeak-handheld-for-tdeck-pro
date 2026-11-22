@@ -1,4 +1,7 @@
 wait 9000
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 key N
 wait 6000
 devshot device-a.png

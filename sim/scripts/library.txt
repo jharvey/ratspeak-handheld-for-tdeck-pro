@@ -5,6 +5,9 @@
 # --serial-tcp, see README); wide_table.csv is 41 lines of ~110 chars (see sim/README.md).
 expect 60000 [BOOT] ready
 wait 1500
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 key M
 wait 800
 shot lib-00-menu.png

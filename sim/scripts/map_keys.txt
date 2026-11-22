@@ -9,6 +9,9 @@ expect 60000 [BOOT] ready
 serial pm1
 expect 3000 [POWER] Balanced
 wait 3000
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 key T
 wait 1500
 key A

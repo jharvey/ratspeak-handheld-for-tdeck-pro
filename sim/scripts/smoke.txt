@@ -1,5 +1,8 @@
 # Boot, show Home, open the menu, open Settings > WiFi.
 wait 7000
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 shot 01-home.png
 key M
 wait 1500

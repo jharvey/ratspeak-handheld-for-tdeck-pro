@@ -9,6 +9,9 @@ wait 1500
 serial map
 expect 3000 tiles loaded
 devshot packs_z9.png
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 key Z
 wait 1200
 key Z

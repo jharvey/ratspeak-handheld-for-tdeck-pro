@@ -6,6 +6,9 @@ serial rt start 0000000000000000000000000000a11c 5
 expect 3000 [RT] start
 expect 15000 [RT] ping 2 sent
 expect 15000 [RT] ping 2 lost
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 key 3
 wait 1500
 shot rt-01-screen.png

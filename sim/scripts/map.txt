@@ -2,6 +2,9 @@
 #   python tools/maptiles/make_tiles.py --test --center 43.6532,-79.3832 --radius-km 1.5 --zoom 12-16 --out sim/build/simdata/map/sd
 # Run: run-script.bat scripts\map.txt map
 wait 9000
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 key A
 expect 4000 [MAP] open (GPS)
 wait 1500

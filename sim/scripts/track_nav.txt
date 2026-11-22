@@ -14,6 +14,9 @@ serial track add 43.6533 -79.3830
 expect 3000 [TRACK] point 5
 serial track gpx
 expect 5000 [TRACK] gpx 5 points
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 key G
 wait 800
 key A

@@ -8,6 +8,9 @@ serial wpt clear
 wait 300
 serial map 43.64 -70.92 12
 wait 3000
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 key ALT+P
 wait 500
 type BALLFIELD

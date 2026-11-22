@@ -1,0 +1,142 @@
+# Top side button = lock (console "btn" presses it; the simulator's Device > Hold BOOT menu
+# item holds / releases the real pin, GPIO0). Fresh device:
+#   run-script.bat scripts\lock_button.txt lockbtn fresh
+# then, on the same device name (no "fresh"), scripts\lock_button_boot.txt (a restart with a
+# password: locked, on the idle screen) and scripts\lock_button_boot2.txt (a restart without
+# one: the idle screen, not locked).
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+# No password: the button shows the idle screen, nothing is locked.
+serial btn
+expect 3000 [BTN] top button (console): idle screen (no password)
+expect 3000 [IDLE] enter
+wait 1200
+shot lockbtn-01-idle-nopass.png
+serial lock
+expect 3000 locked=0 password=0
+key T
+expect 3000 [IDLE] wake
+wait 800
+# The same with the real pin held low, then let go (the release does nothing).
+menu Device > Hold BOOT
+expect 3000 [BTN] top button (button): idle screen (no password)
+expect 3000 [IDLE] enter
+wait 800
+menu Device > Hold BOOT
+wait 800
+serial lock
+expect 3000 locked=0 password=0
+key T
+expect 3000 [IDLE] wake
+wait 800
+# Set a password (Settings S.4.2 row 3, new + repeat).
+key M
+wait 800
+key S
+wait 800
+key 4
+wait 800
+key 2
+wait 800
+key 3
+wait 600
+type Btn123
+key ENTER
+wait 600
+type Btn123
+key ENTER
+expect 5000 [LOCK] password set
+wait 800
+# From an open menu: the button locks; the idle screen shows in its locked form.
+key M
+wait 800
+serial btn
+expect 3000 [BTN] top button (console): lock
+expect 3000 [LOCK] locked
+expect 3000 [IDLE] enter
+wait 1200
+shot lockbtn-02-locked.png
+serial lock
+expect 3000 locked=1 password=1
+# The wrong password does not unlock, the right one does.
+key A
+expect 3000 [IDLE] wake (locked)
+wait 800
+type wrong1
+key ENTER
+expect 5000 [LOCK] wrong password (1 in a row
+serial lock
+expect 3000 locked=1
+type Btn123
+key ENTER
+expect 5000 [LOCK] unlocked
+wait 800
+# From the Inbox, with the real pin.
+key M
+wait 800
+key I
+wait 1000
+menu Device > Hold BOOT
+expect 3000 [BTN] top button (button): lock
+expect 3000 [LOCK] locked
+expect 3000 [IDLE] enter
+wait 800
+menu Device > Hold BOOT
+wait 800
+serial lock
+expect 3000 locked=1
+key A
+expect 3000 [IDLE] wake (locked)
+wait 800
+# At the password prompt the button goes back to the idle screen (still locked).
+serial btn
+expect 3000 [BTN] top button (console): locked already, idle screen
+expect 3000 [IDLE] enter
+wait 800
+serial btn
+expect 3000 [BTN] top button (console): locked already
+key A
+expect 3000 [IDLE] wake (locked)
+wait 800
+type Btn123
+key ENTER
+expect 5000 [LOCK] unlocked
+wait 800
+# From the map.
+serial map 43.65 -70.25 10
+expect 5000 [MAP] open
+wait 1500
+serial btn
+expect 3000 [BTN] top button (console): lock
+expect 3000 [LOCK] locked
+expect 3000 [IDLE] enter
+wait 1200
+key A
+expect 3000 [IDLE] wake (locked)
+wait 800
+type Btn123
+key ENTER
+expect 5000 [LOCK] unlocked
+wait 800
+serial map close
+wait 800
+# Standby with the idle lock on locks by itself; the button then changes nothing and the
+# unit stays in standby (locked = not in use).
+serial standby now
+expect 3000 [STANDBY] enter (console)
+expect 3000 [LOCK] locked
+wait 1500
+serial btn
+expect 3000 [BTN] top button (console): locked already
+serial standby
+expect 3000 state=standby
+# A real key is use: standby ends, the password prompt shows.
+key A
+expect 3000 [STANDBY] leave (key)
+expect 3000 [IDLE] wake (locked)
+wait 800
+type Btn123
+key ENTER
+expect 5000 [LOCK] unlocked
+quit

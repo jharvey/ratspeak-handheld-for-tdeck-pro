@@ -1,0 +1,38 @@
+# Run after scripts\lock_button.txt on the same device (no "fresh"): a restart with a
+# password set ends locked on the idle screen. Then the password is removed for
+# scripts\lock_button_boot2.txt.
+expect 60000 [LOCK] boot locked (password set)
+expect 60000 [IDLE] enter
+expect 60000 [BOOT] ready
+wait 1500
+shot lockbtn-03-boot-locked.png
+serial lock
+expect 3000 locked=1 password=1
+serial s
+expect 3000 [CMD] locked
+key A
+expect 3000 [IDLE] wake (locked)
+wait 800
+type wrong1
+key ENTER
+expect 5000 [LOCK] wrong password (1 in a row
+type Btn123
+key ENTER
+expect 5000 [LOCK] unlocked
+wait 800
+# Settings > Screen > Idle splash > Remove password (needs the current one).
+key M
+wait 800
+key S
+wait 800
+key 4
+wait 800
+key 2
+wait 800
+key 6
+type Btn123
+key ENTER
+expect 5000 [LOCK] password removed
+serial lock
+expect 3000 password=0
+quit

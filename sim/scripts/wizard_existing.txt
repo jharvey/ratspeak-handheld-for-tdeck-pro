@@ -5,6 +5,9 @@ expect 60000 [BOOT] ready
 wait 3000
 serial wiz
 expect 3000 open=0
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 key M
 wait 800
 key S

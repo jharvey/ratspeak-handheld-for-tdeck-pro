@@ -7,6 +7,9 @@ wait 1500
 shot lockboot-01.png
 serial s
 expect 3000 [CMD] locked
+# A boot ends on the idle screen (locked): this key only wakes it to the prompt.
+key BACK
+wait 800
 type Secret9
 key ENTER
 expect 5000 [LOCK] unlocked

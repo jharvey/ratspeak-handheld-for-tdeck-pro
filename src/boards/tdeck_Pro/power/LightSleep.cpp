@@ -76,6 +76,7 @@ Wake lightSleep(uint32_t ms, const WakePins& pins, uint32_t& sleptMs, bool guard
     armLevel(pins.key, GPIO_INTR_LOW_LEVEL);
     armLevel(pins.touch, GPIO_INTR_LOW_LEVEL);
     armLevel(pins.lora, GPIO_INTR_HIGH_LEVEL);
+    armLevel(pins.button, GPIO_INTR_LOW_LEVEL);
     esp_sleep_enable_gpio_wakeup();
 
     if (guardWdt) rwdtArm(ms + 5000);
@@ -92,12 +93,14 @@ Wake lightSleep(uint32_t ms, const WakePins& pins, uint32_t& sleptMs, bool guard
         if (pins.lora >= 0 && gpio_get_level((gpio_num_t)pins.lora) == 1)        why = WAKE_LORA;
         else if (pins.key >= 0 && gpio_get_level((gpio_num_t)pins.key) == 0)     why = WAKE_KEY;
         else if (pins.touch >= 0 && gpio_get_level((gpio_num_t)pins.touch) == 0) why = WAKE_TOUCH;
+        else if (pins.button >= 0 && gpio_get_level((gpio_num_t)pins.button) == 0) why = WAKE_KEY;
     }
 
     // Undo the wake configuration. gpio_wakeup_disable() leaves the level interrupt type
     // in place, so set each pin's type back explicitly.
     if (pins.key >= 0)   { gpio_wakeup_disable((gpio_num_t)pins.key);   gpio_set_intr_type((gpio_num_t)pins.key, GPIO_INTR_DISABLE); }
     if (pins.touch >= 0) { gpio_wakeup_disable((gpio_num_t)pins.touch); gpio_set_intr_type((gpio_num_t)pins.touch, GPIO_INTR_DISABLE); }
+    if (pins.button >= 0) { gpio_wakeup_disable((gpio_num_t)pins.button); gpio_set_intr_type((gpio_num_t)pins.button, GPIO_INTR_DISABLE); }
     if (pins.lora >= 0) {
         gpio_wakeup_disable((gpio_num_t)pins.lora);
         gpio_set_intr_type((gpio_num_t)pins.lora, GPIO_INTR_POSEDGE);   // the radio's RX-done ISR

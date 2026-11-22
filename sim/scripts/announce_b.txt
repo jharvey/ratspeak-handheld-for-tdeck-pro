@@ -1,6 +1,9 @@
 wait 5000
 expect 30000 [ANN]
 wait 3000
+# A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
+key BACK
+wait 800
 key P
 wait 1500
 shot peers-b.png

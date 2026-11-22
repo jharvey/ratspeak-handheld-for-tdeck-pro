@@ -1,0 +1,15 @@
+# Run after scripts\lock_button_boot.txt on the same device (no "fresh"): a restart without
+# a password ends on the idle screen, not locked; a key wakes it to the Home screen.
+expect 60000 [IDLE] enter
+expect 60000 [BOOT] ready
+wait 1500
+shot lockbtn-04-boot-idle.png
+serial lock
+expect 3000 locked=0 password=0
+key T
+expect 3000 [IDLE] wake
+wait 1200
+shot lockbtn-05-woke.png
+serial lock
+expect 3000 locked=0 password=0
+quit

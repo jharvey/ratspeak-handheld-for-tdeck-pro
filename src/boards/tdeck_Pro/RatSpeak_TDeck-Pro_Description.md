@@ -90,6 +90,12 @@ Inbox, Contacts and Peers hold up to 48 rows, shown in pages: Contacts 10 rows (
   repeat. Typed characters show as `*`; **MIC** shows / hides what you typed (also on
   the lock prompt; hidden again after each field).
 - **6 Remove password** (asks the current one) · **7 Lock now**.
+- **Top side button** (BOOT, GPIO0): a short press locks at once from any screen and shows
+  the idle screen in its locked form (the same as Lock now; a voice recording or
+  walkie-talkie call is ended first). With no password it just shows the idle screen. The
+  **bottom side button** restarts the unit; every start ends on the idle screen, locked if
+  a password is set (not on a new unit: the setup wizard shows). Console `btn` presses the
+  top button. Holding it during a reset is still the ESP32 USB download mode.
 
 Locked: the idle splash says **LOCKED | press a key**; a key shows the password prompt
 (time, unread count only; **^** clears, again goes back to the splash; the prompt falls
@@ -1072,6 +1078,7 @@ the device does not light-sleep.
 | `hb` / `hb <s>` / `hb 0` | stress-test heartbeat line (memory, outbox, unread, saved incoming, flash) once / every s seconds / off |
 | `msgstat <peer>` | stress test: a conversation's records by direction and status, numbered test messages (count, duplicates, gaps) |
 | `msgidx` / `msgidx check` | record index status (§8.4) / compare it with every message on flash |
+| `btn` | press the top side button: lock and show the idle screen (no password: just the idle screen); allowed while locked |
 | `lock` / `lock now` | password lock status (locked, password set, idle mode, wrong tries, wait) / lock now |
 | `ids` | identity slots (active marked) and TCP hub status |
 | `contact <32 hex> <name>` | bench: save a contact (list tests) |
@@ -1163,3 +1170,4 @@ entry mode.
 | 0.14 | Password lock (§1.2c), contact sharing (§1.2a), list pages + find (§1.2b), TCP hub (S.3.6), identity slots (S.7.5) |
 | 0.15 | Boot: the outgoing-recovery wait stops when recovery is done (was a fixed 3 s); boot phase times on the console (`[BOOT] <ms> <phase>`). Outbox saved without padding (NVS key `q2`, ~6x less NVS wear when messages queue) |
 | 0.16 | Standby when idle (S.5.11 / S.5.12, §6.2a): after 1-24 h (default 6) without a key the GPS, WiFi and key light go off and the CPU sleeps, LoRa still listening; a key brings the chosen mode back. Off by default; console `standby` |
+| 0.17 | Top side button (BOOT, GPIO0) = lock: a short press locks and shows the idle screen from any screen (no password: the idle screen); it also wakes the CPU from light sleep. Every start ends on the idle screen (locked with a password) instead of Home / Inbox. Console `btn` |

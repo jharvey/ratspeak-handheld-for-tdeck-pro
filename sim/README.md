@@ -83,7 +83,7 @@ battery slider, USB); scripts use `sd in|out`, `battery`, `usb`, `full`, `gps`.
 
 | Menu | Items |
 |---|---|
-| Device | **Reset** (bottom side button, Ctrl+R: the simulator restarts itself with the same options, like a power cut; a script is not run again) · **Hold BOOT** (top side button, GPIO0 low; the firmware does not use it yet) · screenshots (Ctrl+P = screen) · open the data folder · **Save this setup as the device's default** (writes `sim.ini`) · Quit |
+| Device | **Reset** (bottom side button, Ctrl+R: the simulator restarts itself with the same options, like a power cut; a script is not run again) · **Hold BOOT** (top side button, GPIO0 low: the lock button, a press locks / shows the idle screen; in a script `menu Device > Hold BOOT` holds it and the same line again lets go, or `serial btn`) · screenshots (Ctrl+P = screen) · open the data folder · **Save this setup as the device's default** (writes `sim.ini`) · Quit |
 | Power | battery level 0–100 % · USB connected · charge done |
 | SD card | inserted · card size 1 GB – 1 TB (seen at the next mount or Reset) · open the card folder |
 | GPS | fix · set position (lat, lon) · satellites |

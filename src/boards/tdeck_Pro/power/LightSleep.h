@@ -6,7 +6,8 @@
 // GPS / LoRa enable pins stay put. Wake-up takes ~1 ms and the program simply continues.
 //
 // Wake sources: a timer, the keyboard INT line (TCA8418, low), the touch INT line
-// (CST328, low) and the LoRa DIO1 line (SX1262 RX done, high).
+// (CST328, low), the top side button (BOOT, GPIO0, low; reported as a key wake) and the
+// LoRa DIO1 line (SX1262 RX done, high).
 //
 // Not used while a USB host is attached: the USB-Serial-JTAG console stops during
 // light sleep. On the desktop simulator this is a short delay.
@@ -20,6 +21,7 @@ struct WakePins {
     int key   = -1;   // active low
     int touch = -1;   // active low
     int lora  = -1;   // active high (has an edge ISR attached; restored after wake)
+    int button = -1;  // active low: the top side button (BOOT); wakes as WAKE_KEY
 };
 
 // Sleep up to `ms`. Returns why it woke; `sleptMs` gets the time actually spent asleep.
