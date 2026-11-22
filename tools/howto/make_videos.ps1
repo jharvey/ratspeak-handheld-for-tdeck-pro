@@ -22,7 +22,8 @@ param(
     [string[]]$Only = @(),
     [string]$SimExe = "",
     [string]$Out = "",
-    [string]$Seed = ""
+    [string]$Seed = "",
+    [string]$DataRoot = ""     # the radios' folders go here instead of <sim exe dir>\simdata (e.g. off a full C:)
 )
 $ErrorActionPreference = "Stop"
 $Only = @($Only | ForEach-Object { $_ -split "," } | Where-Object { $_ })   # "-File" passes "a,b" as one string
@@ -30,7 +31,7 @@ $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
 if (-not $SimExe) { $SimExe = "$repo\sim\build\ratspeak-sim.exe" }
 if (-not $Out) { $Out = "$repo\docs\videos" }
 if (-not $Seed) { $Seed = Join-Path (Split-Path $SimExe) "howto_seed" }
-$simData = Join-Path (Split-Path $SimExe) "simdata"
+$simData = if ($DataRoot) { $DataRoot } else { Join-Path (Split-Path $SimExe) "simdata" }
 $scripts = "$repo\sim\scripts\howto"
 $work = Join-Path $env:TEMP "ratspeak_howto"
 New-Item -ItemType Directory -Force $work, $Out | Out-Null
@@ -76,14 +77,17 @@ $videos = @(
        comps = @("walkie_talkie_jill.txt@hv_jill"); rec2 = "hv_jill"; labels = @("Jack", "Jill") },
     @{ name = "add_wifi"; title = "Add a WiFi network"; main = "hv_w1aw"
        devices = [ordered]@{ hv_w1aw = "W1AW" }
-       ini = @{ hv_w1aw = @("wifi = W1AW-Guest/-52; ARRL-HQ/-58/HIRAMMAXIM; QRZ-Home/-71/CQDX; Hiram-Net/-80/SPARKGAP") } }
+       ini = @{ hv_w1aw = @("wifi = W1AW-Guest/-52; ARRL-HQ/-58/HIRAMMAXIM; QRZ-Home/-71/CQDX; Hiram-Net/-80/SPARKGAP") } },
+    # --- added 22 Nov 2026 (named as in docs\videos\Video_Descriptions.txt) ---
+    @{ name = "Password_lock_and_unlock"; title = "Password lock and unlock"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" } }
 )
 
 function Start-Sim([string]$script, [string]$device, [int]$delay = 0) {
     $log = Join-Path $work "log_$device.txt"
     $wait = if ($delay) { "timeout /t $delay /nobreak > nul&& " } else { "" }
     $cmd = "$wait" + "set QT_QPA_PLATFORM=offscreen&& set QT_QPA_FONTDIR=%WINDIR%\Fonts&& set RS_SIM_AIR_PORT=48333&& set SIM_AUDIO_DIR=$scripts\audio&& " +
-           "`"$SimExe`" --name $device --fast --script `"$script`" --quit > `"$log`" 2>&1"
+           "`"$SimExe`" --name $device --data `"$simData\$device`" --fast --script `"$script`" --quit > `"$log`" 2>&1"
     return Start-Process cmd.exe -ArgumentList "/c", $cmd -PassThru -WindowStyle Hidden
 }
 
