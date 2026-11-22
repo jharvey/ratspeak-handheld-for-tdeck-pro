@@ -439,7 +439,9 @@ is plugged in; then it starts with **BOOTING v0.1** at the bottom of the idle sc
 
 `tools/howto/make_videos.ps1` runs the scripts in `sim/scripts/howto/` on the simulator
 and turns each recording into an MP4 with `tools/howto/make_video.py` (hand pointer,
-key names, captions, note boxes, click sounds). Digits and small letters are shown the way a
+key names, captions, note boxes, click sounds). To point at something on the screen a script
+says `point <x> <y> <ms> <w> <h>` (the item's centre and size in screen pixels): the video
+shows a blinking box around it with the hand beside it. Digits and small letters are shown the way a
 hand types them: one hand holds **SYM** or **Alt** (half click down, half click up), the
 other presses the key (full click). See the top of both files.
 
