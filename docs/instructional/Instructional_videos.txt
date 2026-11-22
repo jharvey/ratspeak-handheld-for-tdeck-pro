@@ -386,6 +386,46 @@ THE SERIES
   see Future_steps.txt, "Map data for new users"). Formatting is also not on the unit's
   screens yet (the SD card page has Mount and Unmount; format is a console command only).
 
+-- 31_USB_power_and_charging.mp4                                         PLANNED
+- Purpose: how the unit charges and runs on USB, what it does as the battery runs down,
+  what an empty battery looks like, and how to bring it back.
+- Theme: The Dead Battery at Cheddar Gorge: Professor Nibbles forgets to charge before a
+  long walk. His unit warns him, tells Mabel, then switches itself off. Mabel lends him a
+  power bank; the unit starts by itself. Running joke: "Is the cheese safe?" / "The cheese
+  is always safe." (the battery was not).
+- Part A: charging: plug in USB-C; the charging sign on the status bar; Settings 6
+  Battery (voltage, charge %, average current with + in and - out, status charging /
+  charge done). A port or cable that powers but does not charge shows as a warning in
+  Diagnostics, Check this unit ("USB power, not charging (port / cable?)").
+- Part B: running on USB: Settings 5 Power, "Full power on USB" (on: the unit runs at full
+  power whenever USB is in; off: it keeps the chosen energy mode). Standby when idle still
+  applies on USB. USB drive mode (the SD card shows on the PC) is a separate setting and is
+  only mentioned here; video 13 shows it.
+- Part C: running down: the low-battery notice to one contact (Settings 6, Low-battery
+  notice; it sends once, with the last position); the "PLUG IN USB TO CHARGE" line on the
+  idle screen when the battery is nearly empty ("LOCKED | plug in USB" with a password).
+- Part D: empty: the BATTERY EMPTY banner, why the unit switches itself off and stays off
+  even if the battery recovers a little (it protects the battery and the saved data), and
+  that the e-ink screen keeps that picture with no power. Plug in USB: the unit starts by
+  itself with BOOTING and the firmware version, then the idle screen (locked if a password
+  is set). Messages that arrive while it is off are not received; the sender's outbox
+  keeps trying (see video 20).
+- Part E: battery care: the calibration cycle (charge full, run until it switches itself
+  off, charge full again) and why "time left" is only right after it.
+- Reuses: the how-to clips Charging_and_battery, Low_battery_notice and
+  Battery_empty_wont_turn_on (they keep their own story and names, see THE CAST).
+- Shows: status bar, Settings 5 Power, 6 Battery, Low-battery notice, Diagnostics Check this
+  unit, the empty-battery and BOOTING idle screens.
+- Depends: CAN BE MADE NOW in the simulator, except two things it cannot show in one
+  recording: a real cable being plugged in (needs camera footage of a real unit, as video
+  01) and the start after BOOTING (the simulator cannot restart inside a recording; an
+  overlay box describes it, as in Battery_empty_wont_turn_on).
+- Remake when: Full power only on a strong USB supply lands (Future_steps.txt), the
+  empty-battery screen changes, or groups land (low-battery notice to a group).
+- Open points for the owner: the battery % at which the unit switches itself off and the
+  default % for the low-battery notice should be stated in the video; check them on a unit
+  before recording. Should the video recommend a power bank size for a trip?
+
 
 ==========================================================================================
 ALSO (text only, no video needed)
