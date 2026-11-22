@@ -1,0 +1,20 @@
+# Run after scripts\groups.txt on the same device (no "fresh"): the group, its name and its
+# 7 members are still there after a restart. Then the group is deleted.
+expect 60000 [GRP] 1 groups loaded
+expect 60000 [BOOT] ready
+wait 1500
+serial grp
+expect 3000 [GRP] 1: "FAMILY2"
+expect 3000 a70000000000000000000000000000a7 M7
+expect 3000 [GRP] 1 groups
+key BACK
+wait 800
+key C
+wait 1000
+key G
+expect 3000 [GRP] list (1 groups)
+wait 800
+shot groups-10-after-restart.png
+serial grp del 1
+expect 3000 [GRP] 0 groups
+quit

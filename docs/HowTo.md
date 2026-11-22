@@ -12,7 +12,7 @@ Keys as of 22 Nov 2026.
 |---|---|
 | **M** | Menu. **M** then **H** = Home, **M** then **S** = Settings |
 | **I** | Inbox (your chats) |
-| **C** | Contacts |
+| **C** | Contacts. **G** on Contacts = Groups |
 | **P** | Peers (every radio heard). **R** on Peers = announce this radio |
 | **A** | Atlas, the offline map |
 | **T** / **V** | Up / down in lists |
@@ -85,6 +85,49 @@ Send your own address (or a contact's) to another radio so they can message you.
 The other radio shows **[card] name** in the chat; **Enter** on the empty message line
 saves it as a contact. They can send their card back the same way. Other LXMF apps see
 "Contact card: name" and the address.
+
+## Groups: one message to several contacts
+
+No video yet. Full details: [groups_report.md](groups_report.md).
+
+A group is a name and up to 8 of your contacts, for example "FAMILY". A message to the
+group goes to every member, one after the other (about 4 seconds each on LoRa).
+
+**Make a group**
+
+1. Press **C** for Contacts, then **G** for Groups.
+2. Pick **New group** (or press **N**), **Enter**. Type a name (up to 16 letters), **Enter**.
+3. The list of your contacts opens. **Enter** on a contact puts it in the group, marked
+   **[x]**; **Enter** again takes it out. **^** when done.
+
+**Send to a group**
+
+1. **C**, **G**, pick the group, **Enter**, then **1** (Message). Or press **I**: groups
+   are the first rows of the Inbox.
+2. Type and press **Enter**. Under your message the chat shows how many members have it:
+   "2/3 delivered", "1 to send" (still going out), "1 failed".
+3. **MIC** shows who got your last message, member by member. Any key goes back.
+
+Messages from the others show as "ALEX: text" in the group chat.
+
+**Give the group to its members**
+
+Until a member has the group, your group messages arrive in their chat with you, marked
+**[FAMILY]**, and their answer comes back to you alone.
+
+1. **C**, **G**, pick the group, **Enter**, then **4** (Share).
+2. Pick a member, **Enter**. Do this once for each member.
+3. On their radio the chat with you shows **[group] FAMILY 1/3 ...** lines. When all parts
+   have arrived, **Enter** on the empty message line joins the group. Members they did not
+   know are saved as contacts.
+
+**Change a group**
+
+On the group's page: **2** Members (put contacts in or out), **3** Rename, **5** Delete
+(press **5** twice). A change is on your radio only. Share the group again and the others
+press **Enter** in your chat to take the new member list.
+
+Other LXMF apps (Sideband, MeshChat) show a group message as a normal message from you.
 
 ## Connect to WiFi
 

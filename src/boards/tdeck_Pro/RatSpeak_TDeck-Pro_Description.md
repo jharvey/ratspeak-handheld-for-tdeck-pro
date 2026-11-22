@@ -68,6 +68,22 @@ On a RatSpeak T-Deck Pro the chat shows **[card] Alice** and the compose line of
 **[Enter] save card: Alice**: **Enter** on the empty draft saves it as a contact. Until
 that contact announces (or a path is found), messages to it may wait in the queue.
 
+### 1.2a2 Groups (2026-11-22, simulator)
+
+One message to a named set of up to 8 contacts. Steps for users: `docs/HowTo.md`,
+"Groups"; design, limits and tests: `docs/groups_report.md`.
+
+| What | How |
+|---|---|
+| Open | **C** Contacts, then **G**: the Groups list (last row **New group**, also **N**) |
+| Group page | **1 Message · 2 Members · 3 Rename · 4 Share · 5 Delete** (5 twice) |
+| Members | every saved contact; **Enter** puts it in **[x]** or takes it out; **^** done |
+| Group chat | also the first rows of the Inbox ("group"); incoming shows **NAME: text**; own messages show **2/3 delivered**, **1 to send**, **1 failed**; **MIC** = who got the last one |
+| On the air | one ordinary LXMF message per member through the outbox (about 3.5 s apart), tagged with LXMF field 0x0B = `"<8 hex group id> <8 hex send number> <group name>"`; other clients show a normal direct message |
+| Share | **4**, pick a member: one plain-text message per member, `Group card: <name> #<id> <part>/<parts>`, member name, address. The chat shows **[group] ...**; **Enter** on the empty draft joins (or updates) the group and saves unknown members as contacts |
+| A radio without the group | shows the message in the sender's chat as **[GROUP NAME] text** |
+| Storage | NVS `rs_groups` (up to 8 groups); outbox group marks in `rs_outbox` blob `g2` |
+
 ### 1.2b Long lists: pages and search
 
 Inbox, Contacts and Peers hold up to 48 rows, shown in pages: Contacts 10 rows (digits
@@ -1082,6 +1098,7 @@ the device does not light-sleep.
 | `lock` / `lock now` | password lock status (locked, password set, idle mode, wrong tries, wait) / lock now |
 | `ids` | identity slots (active marked) and TCP hub status |
 | `contact <32 hex> <name>` | bench: save a contact (list tests) |
+| `grp` | groups (§1.2a2): list; `grp new <name>`, `grp add <n> <32 hex>`, `grp rm <n> <32 hex>`, `grp del <n>`, `grp send <n> <text>`, `grp share <n> <32 hex>`, `grp open <n>` (the group chat), `grp who` (who got the last message), `grp hist` (rows of the open chat) |
 | `FORMAT` | erase and format the data partition |
 | `@…` | screen-mirror protocol (§10.3) |
 

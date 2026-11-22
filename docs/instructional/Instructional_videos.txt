@@ -304,7 +304,8 @@ THE SERIES
   (light purple) plan a midnight pantry raid; three units side by side.
 - Needs: three-unit video support in tools/howto/make_video.py.
 - Depends: WAITING ON three-unit video support (make_video.py puts at most two units side by
-  side), and on groups if the three are to share one group chat.
+  side). The group chat itself is built (22 Nov 2026, docs/groups_report.md): the three can
+  share one group.
 - Remake when: groups.
 
 -- 20_Out_of_range_and_back.mp4                                          MADE 22 Nov 2026 (short)
@@ -377,7 +378,9 @@ THE SERIES
   share a group.
 - Theme: A rat family on vacation: family 1 visits family 2, and they share contact
   information to communicate during the visit.
-- Depends: WAITING ON groups (not built yet, see Future_steps.txt, item 12).
+- Depends: CAN BE MADE NOW (groups built 22 Nov 2026: docs/HowTo.md "Groups",
+  docs/groups_report.md). Two units side by side works today; it shows three or more units
+  only once make_video.py can (see video 19).
 
 -- 30_Get_and_install_maps_on_SD_card_overview.mp4                       PLANNED
 - Purpose: show how to format and install an SD card, then how to get map data for it.

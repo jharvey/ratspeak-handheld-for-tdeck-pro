@@ -1704,8 +1704,11 @@ bool usableName(const std::string& n) {
     return true;
 }
 
+bool grpName(const uint8_t h[16], char* out, size_t n);   // a group's row / thread address ("Groups: data")
+
 void peerName(const uint8_t peer[16], char* out, size_t n) {
     if (isSelf(peer)) { snprintf(out, n, "%s", g_selfName); return; }
+    if (grpName(peer, out, n)) return;
     for (const auto& ln : g_localNames)
         if (ln.used && !memcmp(ln.peer, peer, 16)) { snprintf(out, n, "%s", ln.name); return; }
     char hex[33];
@@ -1893,6 +1896,11 @@ bool    g_shareAll = false;        // ... and gets every contact's card (Setting
 bool    g_pickRt = false;          // ... or is the range-test partner (Settings S.8)
 bool    g_pickLowbat = false;      // ... or gets the low-battery notice (Settings S.6)
 uint8_t g_sharePeer[16];
+// Groups screens, open over Contacts (see "Groups: screens").
+enum GrpView : uint8_t { GV_NONE, GV_LIST, GV_PAGE, GV_MEMBERS, GV_SHARE };
+uint8_t  g_gv = GV_NONE;
+int      g_gvSel = 0, g_gvScroll = 0, g_gvGroup = 0;
+uint32_t g_gvDelAt = 0;                // Delete pressed once (again within 3 s deletes)
 
 int hexNib(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -1945,7 +1953,131 @@ bool cardIsSaved(const uint8_t hash[16]) {
 
 bool cardOffered() { return g_threadCard.valid && !cardIsSaved(g_threadCard.hash); }
 
-extern char g_placeLast[28];                 // place search (map F): last place jumped to
+// ---- Groups: data (Contacts > G; docs/HowTo.md "Groups"; docs/groups_report.md) -----------
+// A group is a name, a random 4-byte id and up to kGrpMembers contacts, kept on this radio
+// (NVS "rs_groups"). A message to a group is one ordinary direct message per member through
+// the usual send path / outbox, tagged with LXMF FIELD_GROUP (protocol/LxmfFields.h) so a
+// radio that has a group with the same id shows it in that group's thread. Nothing new goes
+// on the air and there is no server: every radio keeps its own copy of the member list.
+// kGrpMembers = kOutboxCap: one message is 1 send now + the rest in the outbox, 3.5 s apart.
+constexpr int kGrpMax = 8, kGrpMembers = 8;
+struct Group { uint8_t id[4]; char name[17]; uint8_t n; uint8_t m[kGrpMembers][16]; };
+Group g_grp[kGrpMax];
+int g_grpCount = 0;
+
+// A group stands in list rows and as the open thread's "peer" with this made-up address:
+// 12 fixed bytes, then the group id. It is never sent to (sendMessage refuses it).
+const uint8_t kGrpHashMark[12] = {'R', 'a', 't', 'S', 'p', 'e', 'a', 'k', 'G', 'r', 'p', 0};
+bool isGrpHash(const uint8_t h[16]) { return h && !memcmp(h, kGrpHashMark, 12); }
+void grpHash(const uint8_t id[4], uint8_t out[16]) { memcpy(out, kGrpHashMark, 12); memcpy(out + 12, id, 4); }
+int grpFind(const uint8_t id[4]) {
+    for (int i = 0; i < g_grpCount; i++) if (!memcmp(g_grp[i].id, id, 4)) return i;
+    return -1;
+}
+int grpOfHash(const uint8_t h[16]) { return isGrpHash(h) ? grpFind(h + 12) : -1; }
+int grpMember(const Group& g, const uint8_t h[16]) {
+    for (int i = 0; i < g.n; i++) if (!memcmp(g.m[i], h, 16)) return i;
+    return -1;
+}
+bool grpName(const uint8_t h[16], char* out, size_t n) {
+    if (!isGrpHash(h)) return false;
+    const int gi = grpFind(h + 12);
+    snprintf(out, n, "%s", gi >= 0 ? g_grp[gi].name : "(group)");
+    return true;
+}
+
+uint8_t g_grpBlob[2 + sizeof(g_grp)];                 // save / load buffer (main loop only)
+
+void grpSave() {
+    uint8_t* const buf = g_grpBlob;
+    Preferences p;
+    if (!p.begin("rs_groups", false)) { Serial.println("[GRP] save failed (nvs)"); return; }
+    if (g_grpCount) {
+        buf[0] = 1;                                      // format
+        buf[1] = (uint8_t)g_grpCount;
+        memcpy(buf + 2, g_grp, sizeof(Group) * (size_t)g_grpCount);
+        p.putBytes("g1", buf, 2 + sizeof(Group) * (size_t)g_grpCount);
+    } else {
+        p.remove("g1");
+    }
+    p.end();
+}
+
+void grpLoad() {
+    g_grpCount = 0;
+    Preferences p;
+    if (!p.begin("rs_groups", true)) return;
+    uint8_t* const buf = g_grpBlob;
+    const size_t n = p.getBytesLength("g1");
+    if (n >= 2 && n <= sizeof(g_grpBlob) && p.getBytes("g1", buf, n) == n && buf[0] == 1 &&
+        buf[1] <= kGrpMax && n == 2 + sizeof(Group) * (size_t)buf[1]) {
+        g_grpCount = buf[1];
+        memcpy(g_grp, buf + 2, sizeof(Group) * (size_t)g_grpCount);
+        for (int i = 0; i < g_grpCount; i++) {           // never trust stored lengths
+            g_grp[i].name[sizeof(g_grp[i].name) - 1] = 0;
+            if (g_grp[i].n > kGrpMembers) g_grp[i].n = kGrpMembers;
+        }
+    }
+    p.end();
+    if (g_grpCount) Serial.printf("[GRP] %d groups loaded\n", g_grpCount);
+}
+
+// Group card: a group is shared as one plain-text message per member (the sharer included),
+//   "Group card: <group name> #<8 hex id> <part>/<parts>\n<member name>\n<32 hex address>"
+// readable on any LXMF client. This firmware shows "[group] name 2/4 member" and Enter on an
+// empty draft joins the group once every part is in the chat (grpJoinFromThread).
+constexpr const char* kGrpCardPrefix = "Group card: ";
+int grpCardFormat(const Group& g, int part, int parts, const uint8_t hash[16], const char* mname, char* out, size_t n) {
+    char hex[33];
+    hashToHex(hash, hex);
+    return snprintf(out, n, "%s%s #%02x%02x%02x%02x %d/%d\n%.23s\n%s", kGrpCardPrefix, g.name, g.id[0], g.id[1],
+                    g.id[2], g.id[3], part, parts, mname, hex);
+}
+
+bool grpCardParse(const char* s, size_t len, uint8_t id[4], char gname[17], int& part, int& parts,
+                  uint8_t hash[16], char mname[24]) {
+    const size_t pl = strlen(kGrpCardPrefix);
+    if (len < pl + 1 + 2 + 8 + 4 + 1 + 1 + 1 + 32 || strncmp(s, kGrpCardPrefix, pl) != 0) return false;
+    size_t eol = pl;
+    while (eol < len && s[eol] != '\n' && s[eol] != '\r') eol++;
+    size_t hashAt = eol;                                 // the last '#' on the first line
+    for (size_t i = pl; i < eol; i++) if (s[i] == '#') hashAt = i;
+    if (hashAt >= eol || hashAt < pl + 2 || s[hashAt - 1] != ' ' || hashAt + 9 + 3 > eol) return false;
+    size_t gn = 0;
+    for (size_t i = pl; i + 1 < hashAt && gn < 16; i++)
+        if ((uint8_t)s[i] >= 32 && (uint8_t)s[i] < 127) gname[gn++] = s[i];
+    gname[gn] = 0;
+    for (int k = 0; k < 4; k++) {
+        const int h = hexNib(s[hashAt + 1 + 2 * k]), l = hexNib(s[hashAt + 2 + 2 * k]);
+        if (h < 0 || l < 0) return false;
+        id[k] = (uint8_t)((h << 4) | l);
+    }
+    size_t i = hashAt + 9;
+    if (s[i++] != ' ') return false;
+    part = parts = 0;
+    while (i < eol && s[i] >= '0' && s[i] <= '9') part = part * 10 + (s[i++] - '0');
+    if (i >= eol || s[i++] != '/') return false;
+    while (i < eol && s[i] >= '0' && s[i] <= '9') parts = parts * 10 + (s[i++] - '0');
+    if (part < 1 || parts < 2 || part > parts || parts > kGrpMembers + 1 || !gn) return false;
+    i = eol;
+    while (i < len && (s[i] == '\n' || s[i] == '\r')) i++;
+    size_t mn = 0;
+    while (i < len && s[i] != '\n' && s[i] != '\r') {
+        if (mn < 23 && (uint8_t)s[i] >= 32 && (uint8_t)s[i] < 127) mname[mn++] = s[i];
+        i++;
+    }
+    mname[mn] = 0;
+    while (i < len && (s[i] == '\n' || s[i] == '\r' || s[i] == ' ')) i++;
+    if (i + 32 > len || !hexToHash(s + i, hash)) return false;
+    return mn > 0;
+}
+
+// The open chat's newest incoming group item: a message of a group this radio has (Enter on
+// an empty draft opens the group), or a group card (Enter joins / updates the group).
+struct InGrp { bool valid; bool join; uint8_t id[4]; char name[17]; uint8_t parts; uint32_t counter; };
+InGrp g_threadGrp = {};
+
+extern char g_placeLast[28];                // place search (map F): last place jumped to
 // Waypoints + track data (functions in "Waypoints + breadcrumb track" below).
 struct Wpt { float lat, lon; char name[16]; uint32_t at; };
 constexpr int kWptMax = 32;
@@ -2008,10 +2140,17 @@ void gpsPosText(char* out, size_t n);
 int ashareActive();
 void ashareStopAll();
 bool locOffered() { return g_threadLoc.valid && (!cardOffered() || g_threadLoc.counter > g_threadCard.counter); }
+// ... and a group item newer than both wins over them.
+bool grpOffered() {
+    if (!g_threadGrp.valid) return false;
+    if (locOffered()) return g_threadGrp.counter > g_threadLoc.counter;
+    if (cardOffered()) return g_threadGrp.counter > g_threadCard.counter;
+    return true;
+}
 
 // ---- Thread history ------------------------------------------------------------
 constexpr int HIST_ROWS = 6;
-struct HistRow { char text[96]; char status[12]; bool incoming; bool autoLoc; bool voice; uint32_t counter; };   // text wraps (bubbleWrap)
+struct HistRow { char text[96]; char status[36]; bool incoming; bool autoLoc; bool voice; uint32_t counter; };   // text wraps (bubbleWrap)
 HistRow g_hist[HIST_ROWS];
 int  g_histCount = 0;
 char g_histNote[24] = "";
@@ -2034,12 +2173,36 @@ void markReadStart(const char* hex) {
 // finished with a store revision bump, which reloaded the thread, which marked read again: a
 // 330 ms loop every 2.5 s for as long as a thread was open (stress test 2026-11-16).
 uint32_t g_histMarkedAt = UINT32_MAX;   // incomingCommitted() when the open thread was last marked read
+void loadGroupHistory(const uint8_t peer[16], bool markRead);
+
+// The group tag of a stored record, if it has one (a second small read: the fields follow
+// title and content). A fields map longer than a group tag is a voice message.
+bool recordGroupTag(const handheld::storage::RecordKey& key, const handheld::storage::StoredRecordHeader& hdr,
+                    handheld::lxmf::GroupTag& tag) {
+    using namespace handheld::storage;
+    if (!hdr.fieldsLength || hdr.fieldsLength > handheld::lxmf::GroupFieldMax) return false;
+    uint8_t buf[sizeof(StoredRecordHeader) + 64];
+    auto rs = g_msgStore.requestRecord(key, hdr.titleLength + hdr.contentLength, sizeof(buf), true);
+    if (!rs.accepted()) return false;
+    MessageStore::Result rr;
+    size_t got = 0;
+    if (waitResult(rs.ticket, rr) && rr.outcome == Outcome::Committed && rr.error == Error::None) {
+        got = rr.length < sizeof(buf) ? rr.length : sizeof(buf);
+        if (!g_msgStore.readPayload(rs.ticket, buf, got)) got = 0;
+    }
+    g_msgStore.releaseResult(rs.ticket);
+    return got > sizeof(StoredRecordHeader) &&
+           handheld::lxmf::findGroup(buf + sizeof(StoredRecordHeader), got - sizeof(StoredRecordHeader), tag);
+}
+
 void loadHistory(const uint8_t peer[16], bool markRead = true) {
     using namespace handheld::storage;
+    if (isGrpHash(peer)) { loadGroupHistory(peer, markRead); return; }
     g_histCount = 0;
     g_histNote[0] = 0;
     g_threadCard.valid = false;
     g_threadLoc.valid = false;
+    g_threadGrp.valid = false;
     if (!g_storeReady) { snprintf(g_histNote, sizeof(g_histNote), "(store off)"); return; }
 
     char hex[33];
@@ -2094,7 +2257,9 @@ void loadHistory(const uint8_t peer[16], bool markRead = true) {
         StoredRecordHeader hdr;
         memcpy(&hdr, buf, sizeof(hdr));
         h.counter = entries[i].counter;
-        h.voice = hdr.fieldsLength > 0;            // only the audio field is kept: a voice message
+        handheld::lxmf::GroupTag gtag;
+        const bool tagged = recordGroupTag(key, hdr, gtag);
+        h.voice = hdr.fieldsLength > 0 && !tagged; // kept fields: the audio (a voice message) or a group tag
         size_t off = sizeof(hdr) + hdr.titleLength;
         if (off > got) off = got;
         size_t clen = hdr.contentLength;
@@ -2129,10 +2294,41 @@ void loadHistory(const uint8_t peer[16], bool markRead = true) {
             snprintf(h.text, sizeof(h.text), "[voice ~%u s] %.*s", (unsigned)((hdr.fieldsLength + 44) / 88),
                      (int)(clen < 60 ? clen : 60), (const char*)buf + off);
         }
-        if (clen && !isCard && !isLoc && !isWt && !h.voice) {
-            memcpy(h.text, buf + off, clen);
-            h.text[clen] = 0;
-            for (size_t k = 0; k < clen; k++)
+        uint8_t gcId[4], gcHash[16];
+        char gcName[17], gcMember[24];
+        int gcPart = 0, gcParts = 0;
+        const bool isGrpCard = !isCard && !isLoc && !isWt && !h.voice &&
+                               grpCardParse((const char*)buf + off, hdr.contentLength < got - off ? hdr.contentLength : got - off,
+                                            gcId, gcName, gcPart, gcParts, gcHash, gcMember);
+        if (isGrpCard) {
+            snprintf(h.text, sizeof(h.text), "[group] %s %d/%d %s", gcName, gcPart, gcParts, gcMember);
+            // Offer to join unless this radio already has the group with that many members.
+            const int have = grpFind(gcId);
+            const bool same = have >= 0 && g_grp[have].n == gcParts - 1;
+            if (h.incoming && !same && (!g_threadGrp.valid || entries[i].counter >= g_threadGrp.counter)) {
+                g_threadGrp = {};
+                g_threadGrp.valid = true; g_threadGrp.join = true; g_threadGrp.counter = entries[i].counter;
+                g_threadGrp.parts = (uint8_t)gcParts;
+                memcpy(g_threadGrp.id, gcId, 4);
+                strlcpy(g_threadGrp.name, gcName, sizeof(g_threadGrp.name));
+            }
+        }
+        if (clen && !isCard && !isLoc && !isWt && !h.voice && !isGrpCard) {
+            size_t pre = 0;
+            if (tagged) {                            // a group message: "[Family] text"
+                pre = (size_t)snprintf(h.text, sizeof(h.text), "[%s] ", gtag.name);
+                const int have = grpFind(gtag.id);
+                if (h.incoming && have >= 0 && (!g_threadGrp.valid || entries[i].counter >= g_threadGrp.counter)) {
+                    g_threadGrp = {};
+                    g_threadGrp.valid = true; g_threadGrp.counter = entries[i].counter;
+                    memcpy(g_threadGrp.id, gtag.id, 4);
+                    strlcpy(g_threadGrp.name, g_grp[have].name, sizeof(g_threadGrp.name));
+                }
+            }
+            if (clen > sizeof(h.text) - 1 - pre) clen = sizeof(h.text) - 1 - pre;
+            memcpy(h.text + pre, buf + off, clen);
+            h.text[pre + clen] = 0;
+            for (size_t k = pre; k < pre + clen; k++)
                 if ((unsigned char)h.text[k] < 32 || (unsigned char)h.text[k] > 126) h.text[k] = '?';
         }
         if (!h.incoming) {
@@ -2175,6 +2371,10 @@ void loadHistory(const uint8_t peer[16], bool markRead = true) {
     Serial.printf("[HIST] %d messages in %lu ms\n", g_histCount, (unsigned long)tHist);
 }
 
+// A group thread marks its members' chats read one after another (loadGroupHistory).
+char g_grpMarkQ[kGrpMembers][33];
+int  g_grpMarkN = 0;
+
 void markReadTick() {
     if (!g_markReadPending) {
         if (g_markReadRetry[0]) {
@@ -2182,6 +2382,8 @@ void markReadTick() {
             strlcpy(h, g_markReadRetry, sizeof(h));
             g_markReadRetry[0] = 0;
             markReadStart(h);
+        } else if (g_grpMarkN && !g_markReadNext[0]) {
+            markReadStart(g_grpMarkQ[--g_grpMarkN]);
         }
         return;
     }
@@ -2261,8 +2463,10 @@ void txLateTick() {
 }
 
 TxStep txOnce(const uint8_t dest[16], const char* body, size_t n,
-              handheld::outgoing::InitialResult& ir, unsigned& rejection) {
-    auto sub = g_proto.lxmfSubmit(dest, nullptr, 0, (const uint8_t*)body, n, false);
+              handheld::outgoing::InitialResult& ir, unsigned& rejection,
+              const uint8_t* fields = nullptr, size_t fieldsLen = 0) {
+    auto sub = fieldsLen ? g_proto.lxmfSubmitFields(dest, nullptr, 0, (const uint8_t*)body, n, fields, fieldsLen, nullptr, 0, false)
+                         : g_proto.lxmfSubmit(dest, nullptr, 0, (const uint8_t*)body, n, false);
     if (!sub.accepted()) { rejection = (unsigned)sub.rejection; return TxStep::Rejected; }
     for (const uint32_t t0 = millis(); millis() - t0 < kTxWaitMs;) {
         pumpOnce();
@@ -2276,10 +2480,24 @@ TxStep txOnce(const uint8_t dest[16], const char* body, size_t n,
     return TxStep::Timeout;                      // cannot happen: the list is as long as the rows
 }
 
-bool sendMessage(const uint8_t dest[16], const char* text) {
+// gid / gseq: the message is one member's copy of a group message (see "Groups: data"): it
+// carries the group tag while this radio still has that group, else it goes as plain text.
+bool sendMessage(const uint8_t dest[16], const char* text, const uint8_t* gid = nullptr, uint32_t gseq = 0) {
     g_txTransient = false;
     if (!g_protoReady) { snprintf(g_txStr, sizeof(g_txStr), "proto off"); return false; }
     if (isSelf(dest))  { snprintf(g_txStr, sizeof(g_txStr), "pick remote"); return false; }
+    if (isGrpHash(dest)) { snprintf(g_txStr, sizeof(g_txStr), "group?"); return false; }   // a group's row address
+
+    uint8_t fields[handheld::lxmf::FieldHeadMax];
+    size_t fieldsLen = 0;
+    const int gi = gid ? grpFind(gid) : -1;
+    if (gi >= 0 && handheld::lxmf::available()) {
+        handheld::lxmf::GroupTag tag;
+        memcpy(tag.id, gid, 4);
+        tag.seq = gseq;
+        strlcpy(tag.name, g_grp[gi].name, sizeof(tag.name));
+        fieldsLen = handheld::lxmf::makeGroupField(tag, fields, sizeof(fields));
+    }
 
     char body[161];
     size_t n = strlen(text);
@@ -2308,7 +2526,7 @@ bool sendMessage(const uint8_t dest[16], const char* text) {
     for (int attempt = 0; attempt < 2; attempt++) {
         handheld::outgoing::InitialResult ir{};
         unsigned rej = 0;
-        TxStep st = txOnce(dest, body, n, ir, rej);
+        TxStep st = txOnce(dest, body, n, ir, rej, fields, fieldsLen);
         if (st == TxStep::Rejected) {
             g_txTransient = rej == 1 || rej == 8;   // Busy / Recovering
             static uint32_t busySince = 0, toldAt = 0, lastBusy = 0;
@@ -2369,7 +2587,10 @@ power::CheckinPhase checkinNow() {
 // text without padding (a short text costs ~3 NVS entries instead of 6; NVS wear, see
 // Stress_test_plan). Older firmware wrote blob "q" (fixed 177-byte items); it is read once
 // and moved to "q2".
-struct OutboxItem { uint8_t dest[16]; char text[161]; };
+// gid / gseq: a group message's copy (all zero = an ordinary message); kept in blob "g2",
+// 8 bytes per item in the order of "q2" (absent or another length: no item is a group copy).
+struct OutboxItem { uint8_t dest[16]; char text[161]; uint8_t gid[4]; uint32_t gseq; };
+struct OutboxItemV1 { uint8_t dest[16]; char text[161]; };   // blob "q" of old firmware
 constexpr int kOutboxCap = 8;
 OutboxItem g_outbox[kOutboxCap];
 int g_outboxCount = 0;
@@ -2388,8 +2609,18 @@ void outboxSave() {
             n += 17 + len;
         }
         p.putBytes("q2", buf, n);
+        uint8_t g[kOutboxCap * 8];
+        bool any = false;
+        for (int i = 0; i < g_outboxCount; i++) {
+            memcpy(g + i * 8, g_outbox[i].gid, 4);
+            memcpy(g + i * 8 + 4, &g_outbox[i].gseq, 4);
+            any = any || g_outbox[i].gseq || memcmp(g_outbox[i].gid, "\0\0\0", 4);
+        }
+        if (any) p.putBytes("g2", g, (size_t)g_outboxCount * 8);
+        else if (p.isKey("g2")) p.remove("g2");
     } else {
         p.remove("q2");
+        if (p.isKey("g2")) p.remove("g2");
     }
     if (p.isKey("q")) p.remove("q");            // old format, already moved
     p.end();
@@ -2413,24 +2644,43 @@ void outboxLoad() {
                 memcpy(o.text, buf + off + 17, len);
                 off += 17 + len;
             }
+            uint8_t g[kOutboxCap * 8];
+            if (p.getBytesLength("g2") == (size_t)g_outboxCount * 8 && p.getBytes("g2", g, (size_t)g_outboxCount * 8)) {
+                for (int i = 0; i < g_outboxCount; i++) {
+                    memcpy(g_outbox[i].gid, g + i * 8, 4);
+                    memcpy(&g_outbox[i].gseq, g + i * 8 + 4, 4);
+                }
+            }
         }
-    } else if ((n = p.getBytesLength("q")) && n % sizeof(OutboxItem) == 0 && n <= sizeof(g_outbox)) {
-        g_outboxCount = (int)(p.getBytes("q", g_outbox, n) / sizeof(OutboxItem));
-        for (int i = 0; i < g_outboxCount; i++) g_outbox[i].text[sizeof(g_outbox[i].text) - 1] = 0;
-        migrate = true;
+    } else if ((n = p.getBytesLength("q")) && n % sizeof(OutboxItemV1) == 0 && n <= sizeof(OutboxItemV1) * kOutboxCap) {
+        OutboxItemV1* old = (OutboxItemV1*)malloc(sizeof(OutboxItemV1) * kOutboxCap);
+        if (old) {
+            g_outboxCount = (int)(p.getBytes("q", old, n) / sizeof(OutboxItemV1));
+            for (int i = 0; i < g_outboxCount; i++) {
+                memset(&g_outbox[i], 0, sizeof(g_outbox[i]));
+                memcpy(g_outbox[i].dest, old[i].dest, 16);
+                old[i].text[sizeof(old[i].text) - 1] = 0;
+                strlcpy(g_outbox[i].text, old[i].text, sizeof(g_outbox[i].text));
+            }
+            free(old);
+            migrate = true;
+        }
     }
     p.end();
     if (migrate) outboxSave();                  // write "q2", remove "q"
     if (g_outboxCount) Serial.printf("[CHECKIN] outbox restored: %d waiting\n", g_outboxCount);
 }
 
-bool outboxAdd(const uint8_t dest[16], const char* text) {
+// save false: the caller adds several and saves once (a group message: one NVS write, not 8).
+bool outboxAdd(const uint8_t dest[16], const char* text, const uint8_t* gid = nullptr, uint32_t gseq = 0,
+               bool save = true) {
     if (g_outboxCount >= kOutboxCap) return false;
     OutboxItem& o = g_outbox[g_outboxCount++];
     memset(&o, 0, sizeof(o));
     memcpy(o.dest, dest, 16);
     strlcpy(o.text, text, sizeof(o.text));
-    outboxSave();
+    if (gid) { memcpy(o.gid, gid, 4); o.gseq = gseq; }
+    if (save) outboxSave();
     Serial.printf("[CHECKIN] queued \"%s\" (%d waiting)\n", o.text, g_outboxCount);
     return true;
 }
@@ -2439,14 +2689,363 @@ bool outboxAdd(const uint8_t dest[16], const char* text) {
 // outbox retries in the background, see checkinTick). While anything waits in the outbox,
 // new messages queue behind it so they keep their order.
 enum class SendResult { Sent, Queued, Failed };
-SendResult sendOrQueue(const uint8_t dest[16], const char* text) {
+SendResult sendOrQueue(const uint8_t dest[16], const char* text, const uint8_t* gid = nullptr, uint32_t gseq = 0,
+                       bool save = true) {
     if (g_outboxCount == 0) {
-        if (sendMessage(dest, text)) return SendResult::Sent;
+        if (sendMessage(dest, text, gid, gseq)) return SendResult::Sent;
         if (!g_txTransient) return SendResult::Failed;
     }
-    if (!outboxAdd(dest, text)) { snprintf(g_txStr, sizeof(g_txStr), "outbox full"); return SendResult::Failed; }
+    if (!outboxAdd(dest, text, gid, gseq, save)) { snprintf(g_txStr, sizeof(g_txStr), "outbox full"); return SendResult::Failed; }
     return SendResult::Queued;
 }
+
+// ---- Groups: send, share, join, the group thread ------------------------------------------
+// Messages wait for the check-in window (check-in mode, outside the window)?
+bool sendHeld() {
+    if (!g_pwEff.checkin) return false;
+    const power::CheckinPhase ph = checkinNow();
+    return !(ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS);
+}
+
+// The same number on every member's copy of one group message. Clock seconds, never going
+// back or repeating in one session, so nothing has to be saved per message.
+uint32_t grpNextSeq() {
+    static uint32_t last = 0;
+    uint32_t s = (uint32_t)time(nullptr);
+    if (s <= last) s = last + 1;
+    last = s;
+    return s;
+}
+
+// Outbox slots a send of `count` messages needs now (the first goes at once when nothing waits).
+bool outboxRoomFor(int count) {
+    const int need = (sendHeld() || g_outboxCount) ? count : count - 1;
+    return g_outboxCount + need <= kOutboxCap;
+}
+
+// One text to every member of a group: the first copy goes now, the others through the outbox
+// (one send every ~3.5 s, retried while the radio is busy; check-in mode: all wait for the
+// window). All or nothing: with too little room in the outbox nothing is sent. Returns the
+// number of members addressed (0: see g_txStr). Other features that share something with a
+// group (locations, markers) can call this with their own text.
+int groupSend(int gi, const char* text, int* queuedOut = nullptr) {
+    if (queuedOut) *queuedOut = 0;
+    if (gi < 0 || gi >= g_grpCount) { snprintf(g_txStr, sizeof(g_txStr), "no group"); return 0; }
+    const Group g = g_grp[gi];
+    if (!g.n) { snprintf(g_txStr, sizeof(g_txStr), "no members"); return 0; }
+    if (!g_protoReady) { snprintf(g_txStr, sizeof(g_txStr), "proto off"); return 0; }
+    if (!outboxRoomFor(g.n)) { snprintf(g_txStr, sizeof(g_txStr), "radio busy"); return 0; }
+    const bool hold = sendHeld();
+    const uint32_t seq = grpNextSeq();
+    int now = 0, queued = 0, failed = 0;
+    for (int i = 0; i < g.n; i++) {
+        if (hold) { if (outboxAdd(g.m[i], text, g.id, seq, false)) queued++; else failed++; continue; }
+        const SendResult r = sendOrQueue(g.m[i], text, g.id, seq, false);
+        if (r == SendResult::Sent) now++;
+        else if (r == SendResult::Queued) queued++;
+        else failed++;
+    }
+    if (queued) outboxSave();
+    Serial.printf("[GRP] send \"%s\" #%02x%02x%02x%02x seq %08lx \"%s\": %d now, %d queued, %d failed\n", g.name,
+                  g.id[0], g.id[1], g.id[2], g.id[3], (unsigned long)seq, text, now, queued, failed);
+    if (queuedOut) *queuedOut = queued;
+    if (now + queued) snprintf(g_txStr, sizeof(g_txStr), "to %d", now + queued);
+    return now + queued;
+}
+
+// A group to one of its members as group cards: this radio first, then every member.
+bool grpShareTo(int gi, const uint8_t to[16]) {
+    if (gi < 0 || gi >= g_grpCount) return false;
+    const Group g = g_grp[gi];
+    char toName[24];
+    peerName(to, toName, sizeof(toName));
+    if (isSelf(to) || grpMember(g, to) < 0) { toast("Pick a member"); return false; }
+    const int parts = g.n + 1;
+    if (!outboxRoomFor(parts)) { toast("Radio busy: try again soon"); return false; }
+    const bool hold = sendHeld();
+    int ok = 0;
+    for (int i = 0; i < parts; i++) {
+        char body[128], nm[24];
+        const uint8_t* h = i ? g.m[i - 1] : g_selfHash;
+        peerName(h, nm, sizeof(nm));
+        grpCardFormat(g, i + 1, parts, h, nm, body, sizeof(body));
+        if (hold) { if (outboxAdd(to, body, nullptr, 0, false)) ok++; continue; }
+        if (sendOrQueue(to, body, nullptr, 0, false) != SendResult::Failed) ok++;
+    }
+    outboxSave();
+    Serial.printf("[GRP] share \"%s\" to %s: %d of %d cards\n", g.name, toName, ok, parts);
+    if (ok == parts) toast("Group sent to %.12s", toName); else toast("Not sent: %s", g_txStr);
+    return ok == parts;
+}
+
+// One page of a chat's history, oldest first; before `cursor` (counter 0 = the newest page).
+int histPage(const uint8_t peer[16], handheld::storage::HistoryEntry cursor, handheld::storage::HistoryEntry* out, int cap) {
+    using namespace handheld::storage;
+    char hex[33];
+    hashToHex(peer, hex);
+    const std::string peerHex(hex);
+    auto sub = g_msgStore.requestHistoryPage(peerHex, cursor, (uint8_t)cap, HistoryDirection::Before);
+    for (int a = 0; a < 40 && !sub.accepted(); a++) {    // store busy (a write): up to 2 s
+        const unsigned r = (unsigned)sub.rejection;
+        if (r != 1 && r != 8) break;
+        pumpFor(50, 12);
+        sub = g_msgStore.requestHistoryPage(peerHex, cursor, (uint8_t)cap, HistoryDirection::Before);
+    }
+    if (!sub.accepted()) return -1;
+    MessageStore::Result res;
+    size_t n = 0;
+    if (waitResult(sub.ticket, res) && res.outcome == Outcome::Committed && res.error == Error::None &&
+        res.length >= sizeof(HistoryEntry)) {
+        n = res.length / sizeof(HistoryEntry);
+        if (n > (size_t)cap) n = (size_t)cap;
+        if (!g_msgStore.readPayload(sub.ticket, out, n * sizeof(HistoryEntry))) n = 0;
+    }
+    g_msgStore.releaseResult(sub.ticket);
+    return (int)n;
+}
+
+// A stored record's header and the start of its content (NUL-terminated in `text`).
+bool readRecordText(const handheld::storage::RecordKey& key, handheld::storage::StoredRecordHeader& hdr,
+                    char* text, size_t cap, size_t& len) {
+    using namespace handheld::storage;
+    uint8_t buf[256];
+    auto rs = g_msgStore.requestRecord(key, 0, sizeof(buf));
+    if (!rs.accepted()) return false;
+    MessageStore::Result rr;
+    size_t got = 0;
+    if (waitResult(rs.ticket, rr) && rr.outcome == Outcome::Committed && rr.error == Error::None) {
+        got = rr.length < sizeof(buf) ? rr.length : sizeof(buf);
+        if (!g_msgStore.readPayload(rs.ticket, buf, got)) got = 0;
+    }
+    g_msgStore.releaseResult(rs.ticket);
+    if (got < sizeof(hdr)) return false;
+    memcpy(&hdr, buf, sizeof(hdr));
+    size_t off = sizeof(hdr) + hdr.titleLength;
+    if (off > got) off = got;
+    len = hdr.contentLength;
+    if (off + len > got) len = got - off;
+    if (len > cap - 1) len = cap - 1;
+    memcpy(text, buf + off, len);
+    text[len] = 0;
+    return true;
+}
+
+void requestRedraw();
+bool cardIsSaved(const uint8_t hash[16]);
+void saveContactName(const uint8_t peer[16], const char* name);
+
+// Enter on a group card in a chat: collect every part of the newest share of that group from
+// the chat (the newest 24 messages), save members that are not contacts yet, then add the
+// group, or replace this radio's member list when it has the group already.
+bool grpJoinFromThread(const uint8_t peer[16]) {
+    using namespace handheld::storage;
+    if (!g_threadGrp.valid || !g_threadGrp.join) return false;
+    static HistoryEntry e[24];
+    const int n = histPage(peer, HistoryEntry{}, e, 24);
+    if (n <= 0) { toast("Chat busy: try again"); return false; }
+    static uint8_t hashes[kGrpMembers + 1][16];
+    static char names[kGrpMembers + 1][24];
+    bool have[kGrpMembers + 1] = {};
+    int parts = 0, got = 0;
+    char gname[17] = "";
+    for (int i = n - 1; i >= 0 && (!parts || got < parts); i--) {        // newest first
+        if (!e[i].incoming) continue;
+        RecordKey key{};
+        memcpy(key.peer, peer, 16);
+        key.counter = e[i].counter;
+        key.incoming = true;
+        StoredRecordHeader hdr;
+        char text[160];
+        size_t len = 0;
+        if (!readRecordText(key, hdr, text, sizeof(text), len)) continue;
+        uint8_t id[4], h[16];
+        char gn[17], mn[24];
+        int part = 0, total = 0;
+        if (!grpCardParse(text, len, id, gn, part, total, h, mn) || memcmp(id, g_threadGrp.id, 4)) continue;
+        if (!parts) { parts = total; strlcpy(gname, gn, sizeof(gname)); }
+        if (total != parts || have[part - 1]) continue;                  // an older share, or a repeat
+        have[part - 1] = true;
+        memcpy(hashes[part - 1], h, 16);
+        strlcpy(names[part - 1], mn, sizeof(names[0]));
+        got++;
+    }
+    if (!parts || got < parts) {
+        toast("Group: %d of %d parts here yet", got, parts ? parts : (int)g_threadGrp.parts);
+        Serial.printf("[GRP] join waits: %d of %d parts\n", got, parts);
+        return false;
+    }
+    Group g = {};
+    memcpy(g.id, g_threadGrp.id, 4);
+    strlcpy(g.name, gname, sizeof(g.name));
+    for (int i = 0; i < parts; i++) {
+        if (isSelf(hashes[i]) || grpMember(g, hashes[i]) >= 0) continue;
+        if (g.n >= kGrpMembers) { toast("Group too large (max %d)", kGrpMembers); return false; }
+        memcpy(g.m[g.n++], hashes[i], 16);
+    }
+    int gi = grpFind(g.id);
+    const bool update = gi >= 0;
+    if (!update) {
+        if (g_grpCount >= kGrpMax) { toast("Group list full (%d)", kGrpMax); return false; }
+        gi = g_grpCount++;
+    } else {
+        strlcpy(g.name, g_grp[gi].name, sizeof(g.name));                 // this radio's name for it stays
+    }
+    int saved = 0;
+    for (int i = 0; i < g.n; i++)
+        for (int k = 0; k < parts; k++)
+            if (!memcmp(hashes[k], g.m[i], 16) && !cardIsSaved(g.m[i])) { saveContactName(g.m[i], names[k]); saved++; }
+    g_grp[gi] = g;
+    grpSave();
+    g_threadGrp.valid = false;
+    Serial.printf("[GRP] %s \"%s\" #%02x%02x%02x%02x: %d members, %d new contacts\n", update ? "updated" : "joined",
+                  g.name, g.id[0], g.id[1], g.id[2], g.id[3], (int)g.n, saved);
+    toast(update ? "Group updated: %.12s" : "Joined group %.14s", g.name);
+    return true;
+}
+
+// The group thread: every member's chat is searched (its newest HIST_ROWS messages) for
+// messages tagged with this group; the newest HIST_ROWS of them are shown. This radio's own
+// message is one row for all its copies ("2/3 delivered"); g_grpLast keeps who got the newest
+// one (MIC in the thread). Nothing extra is stored: the tagged records are the thread.
+enum : uint8_t { GS_NONE, GS_WAIT, GS_SENT, GS_DELIVERED, GS_FAILED, GS_NOPROOF };
+struct GrpLast { bool valid; uint8_t gid[4]; uint8_t st[kGrpMembers]; char text[40]; };
+GrpLast g_grpLast = {};
+
+void loadGroupHistory(const uint8_t peer[16], bool markRead) {
+    using namespace handheld::storage;
+    g_histCount = 0;
+    g_histNote[0] = 0;
+    g_threadCard.valid = false;
+    g_threadLoc.valid = false;
+    g_threadGrp.valid = false;
+    g_grpLast = {};
+    const int gi = grpOfHash(peer);
+    if (gi < 0) { snprintf(g_histNote, sizeof(g_histNote), "(group deleted)"); return; }
+    if (!g_storeReady) { snprintf(g_histNote, sizeof(g_histNote), "(store off)"); return; }
+    const Group g = g_grp[gi];
+    const uint32_t t0 = millis();
+
+    struct Cand { double ts; uint32_t seq; char text[96]; uint8_t st[kGrpMembers]; uint8_t member; bool incoming, dead; };
+    constexpr int kCand = kGrpMembers * HIST_ROWS + kOutboxCap;
+    Cand* const cand = (Cand*)malloc(sizeof(Cand) * kCand);              // ~7 KB, only while the chat is built
+    if (!cand) { snprintf(g_histNote, sizeof(g_histNote), "(low memory)"); return; }
+    int nc = 0, reads = 0;
+    bool busy = false;
+    for (int m = 0; m < g.n; m++) {
+        HistoryEntry e[HIST_ROWS];
+        const int n = histPage(g.m[m], HistoryEntry{}, e, HIST_ROWS);
+        if (n < 0) { busy = true; continue; }
+        int unread = 0, unreadMine = 0;
+        bool olderUnread = false;
+        for (int i = 0; i < n; i++) {
+            RecordKey key{};
+            memcpy(key.peer, g.m[m], 16);
+            key.counter = e[i].counter;
+            key.incoming = e[i].incoming;
+            StoredRecordHeader hdr;
+            Cand& c = cand[nc];
+            size_t len = 0;
+            if (!readRecordText(key, hdr, c.text, sizeof(c.text), len)) continue;
+            reads++;
+            handheld::lxmf::GroupTag tag;
+            const bool mine = recordGroupTag(key, hdr, tag) && !memcmp(tag.id, g.id, 4);
+            if (hdr.incoming && !hdr.read) {
+                unread++;
+                if (mine) unreadMine++;
+                if (i == 0 && n == HIST_ROWS) olderUnread = true;       // more unread may lie further back
+            }
+            if (!mine) continue;
+            for (size_t k = 0; k < len; k++)
+                if ((unsigned char)c.text[k] < 32 || (unsigned char)c.text[k] > 126) c.text[k] = '?';
+            c.ts = hdr.timestamp;
+            c.seq = tag.seq;
+            c.member = (uint8_t)m;
+            c.incoming = hdr.incoming;
+            c.dead = false;
+            memset(c.st, GS_NONE, sizeof(c.st));
+            if (!hdr.incoming)                       // LXMFStatus, as in loadHistory
+                c.st[m] = hdr.status == 4 ? GS_DELIVERED : hdr.status == 5 ? GS_FAILED : hdr.status == 6 ? GS_NOPROOF
+                        : hdr.status <= 2 ? GS_WAIT : GS_SENT;
+            nc++;
+        }
+        // Their chat is marked read only when everything unread in it was this group's.
+        if (markRead && unread && unread == unreadMine && !olderUnread && g_grpMarkN < kGrpMembers)
+            hashToHex(g.m[m], g_grpMarkQ[g_grpMarkN++]);
+    }
+    for (int i = 0; i < g_outboxCount; i++) {        // copies still waiting in the outbox
+        const int m = grpMember(g, g_outbox[i].dest);
+        if (m < 0 || memcmp(g_outbox[i].gid, g.id, 4)) continue;
+        Cand& c = cand[nc++];
+        c.ts = 4e9 + i;                              // newest
+        c.seq = g_outbox[i].gseq;
+        strlcpy(c.text, g_outbox[i].text, sizeof(c.text));
+        c.member = (uint8_t)m;
+        c.incoming = false;
+        c.dead = false;
+        memset(c.st, GS_NONE, sizeof(c.st));
+        c.st[m] = GS_WAIT;
+    }
+    // This radio's copies of one message (same send number) become one row, at its first copy's time.
+    for (int i = 0; i < nc; i++) {
+        if (cand[i].incoming || cand[i].dead) continue;
+        for (int k = i + 1; k < nc; k++) {
+            if (cand[k].incoming || cand[k].dead || cand[k].seq != cand[i].seq) continue;
+            cand[i].st[cand[k].member] = cand[k].st[cand[k].member];
+            if (cand[k].ts < cand[i].ts) cand[i].ts = cand[k].ts;
+            cand[k].dead = true;
+        }
+    }
+    int pick[HIST_ROWS], np = 0;                     // the newest HIST_ROWS, then oldest first
+    for (; np < HIST_ROWS; np++) {
+        int best = -1;
+        for (int i = 0; i < nc; i++) {
+            if (cand[i].dead) continue;
+            bool taken = false;
+            for (int k = 0; k < np; k++) taken = taken || pick[k] == i;
+            if (!taken && (best < 0 || cand[i].ts > cand[best].ts)) best = i;
+        }
+        if (best < 0) break;
+        pick[np] = best;
+    }
+    for (int k = np - 1; k >= 0; k--) {
+        const Cand& c = cand[pick[k]];
+        HistRow& h = g_hist[g_histCount++];
+        memset(&h, 0, sizeof(h));
+        h.incoming = c.incoming;
+        if (c.incoming) {
+            char nm[24];
+            peerName(g.m[c.member], nm, sizeof(nm));
+            snprintf(h.text, sizeof(h.text), "%.10s: %s", nm, c.text);
+            continue;
+        }
+        strlcpy(h.text, c.text, sizeof(h.text));
+        int total = 0, d = 0, f = 0, w = 0, nr = 0;
+        for (int m = 0; m < g.n; m++) {
+            if (c.st[m] == GS_NONE) continue;
+            total++;
+            d += c.st[m] == GS_DELIVERED;
+            f += c.st[m] == GS_FAILED;
+            w += c.st[m] == GS_WAIT;
+            nr += c.st[m] == GS_NOPROOF;
+        }
+        if (w)       snprintf(h.status, sizeof(h.status), "%d/%d delivered, %d to send", d, total, w);
+        else if (f)  snprintf(h.status, sizeof(h.status), "%d/%d delivered, %d failed", d, total, f);
+        else if (nr) snprintf(h.status, sizeof(h.status), "%d/%d delivered, %d no reply", d, total, nr);
+        else if (d == total) snprintf(h.status, sizeof(h.status), "delivered %d/%d", d, total);
+        else        snprintf(h.status, sizeof(h.status), "%d/%d delivered", d, total);
+        g_grpLast.valid = true;                      // rows go oldest first: the last one set is the newest
+        memcpy(g_grpLast.gid, g.id, 4);
+        memcpy(g_grpLast.st, c.st, sizeof(g_grpLast.st));
+        strlcpy(g_grpLast.text, c.text, sizeof(g_grpLast.text));
+    }
+    free(cand);
+    if (g_histCount == 0) snprintf(g_histNote, sizeof(g_histNote), busy ? "(history busy)" : "(no messages yet)");
+    if (markRead) g_histMarkedAt = g_msgStore.incomingCommitted();
+    g_convValid = false;
+    Serial.printf("[HIST] group \"%s\": %d messages (%d records read) in %lu ms\n", g.name, g_histCount, reads,
+                  (unsigned long)(millis() - t0));
+}
+
 
 // Peer clock adoption (check-in mode, clock not GPS/NTP synchronized this boot):
 //   announce time  - the sender is synchronized: take it (either direction, within a day)
@@ -2545,7 +3144,8 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              PlaceFind,                         // map R: place name
                              FoundText,                         // idle "If found": owner text
                              CheckinTime,                       // S.5.8: hhmm
-                             HaKey };                           // S.3.7: HA encryption key
+                             HaKey,                             // S.3.7: HA encryption key
+                             GroupName };                       // Groups: new group / rename (arg = group, -1 new)
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
 uint8_t g_nameTarget[16];
@@ -3090,7 +3690,7 @@ void label(int x, int y, int w, int h, const char* s, bool bold = false, char ho
 // ---- Touch hit registry (filled while drawing) ------------------------------------
 enum HitAct : uint8_t {
     H_REFRESH, H_MENU, H_MENU_GO, H_TAB, H_ROW, H_BACK, H_ANNOUNCE,
-    H_TILE_AUDIO, H_UP, H_DOWN, H_CARD, H_TMENU, H_NAVKEYS
+    H_TILE_AUDIO, H_UP, H_DOWN, H_CARD, H_TMENU, H_NAVKEYS, H_GRP
 };
 struct Hit { int16_t x, y, w, h; uint8_t act; int8_t arg; };
 constexpr int MAX_HITS = 32;
@@ -4888,6 +5488,12 @@ void rememberSelection() {
 void loadRows(ScreenId s) {
     g_rowCount = 0;
     if (s == SCR_INBOX) {
+        for (int i = 0; i < g_grpCount; i++) {       // group chats first
+            uint8_t h[16];
+            grpHash(g_grp[i].id, h);
+            if (PeerRow* r = addRow(h))
+                snprintf(r->sub, sizeof(r->sub), g_grp[i].n == 1 ? "group, %d member" : "group, %d members", (int)g_grp[i].n);
+        }
         appendConversations(MAX_ROWS);
         appendAnnounced(false, false);     // so a new peer can be messaged
     } else if (s == SCR_CONTACTS) {
@@ -4988,6 +5594,7 @@ void renderList() {
     } else {
         snprintf(hdr, sizeof(hdr), pages > 1 ? "%s %d%s" : "%s (%d)%s", screenName(g_screen), g_rowCount, pg);
         if (g_screen == SCR_PEERS && strlen(hdr) + 13 < sizeof(hdr)) strlcat(hdr, "  R=announce", sizeof(hdr));
+        if (g_screen == SCR_CONTACTS && pages <= 1) strlcat(hdr, "  G=groups", sizeof(hdr));
     }
     drawHeader(hdr, g_listScroll > 0);
 
@@ -5005,7 +5612,9 @@ void renderList() {
         snprintf(title, sizeof(title), "%d : %s%s", rowNumber(g_screen, i), r.name,
                  (g_screen == SCR_PEERS && r.saved) ? " *" : "");
         char right[12] = "";
-        if (g_screen == SCR_INBOX && !r.self)        // every chat: "0 new" .. "9 new", "+9 new"
+        if (g_screen == SCR_INBOX && isGrpHash(r.peer))
+            snprintf(right, sizeof(right), "group");
+        else if (g_screen == SCR_INBOX && !r.self)   // every chat: "0 new" .. "9 new", "+9 new"
             snprintf(right, sizeof(right), r.unread > 9 ? "+9 new" : "%u new", (unsigned)r.unread);
         listRow(y, title, r.sub, i == g_listSel, right);
         addHit(2, y, W - 4, ROW_H, H_ROW, i);
@@ -5060,6 +5669,7 @@ void drawBubble(int y, const char* s, bool incoming, const char* status) {
 
 extern bool g_tmenuOpen;
 void renderThreadMenu(int y);
+void renderGrpWho(int y);
 uint8_t ashareMinsFor(const uint8_t dest[16]);
 int ashareActive();
 
@@ -5067,12 +5677,16 @@ void renderThread() {
     char name[24], hdr[48];
     peerName(g_threadPeer, name, sizeof(name));
     const uint8_t am = ashareMinsFor(g_threadPeer);
+    const int grp = grpOfHash(g_threadPeer);         // a group chat (-1: a contact's)
     if (g_tmenuOpen && g_toast[0]) snprintf(hdr, sizeof(hdr), "%s", g_toast);   // menu: no strip
+    else if (g_tmenuOpen && isGrpHash(g_threadPeer)) snprintf(hdr, sizeof(hdr), "Who got it (any key = back)");
     else if (g_tmenuOpen) snprintf(hdr, sizeof(hdr), "1-5 / Enter, MIC or ^ = back");
+    else if (grp >= 0) snprintf(hdr, sizeof(hdr), g_grp[grp].n == 1 ? ">>> %s (%d member)" : ">>> %s (%d members)", name, (int)g_grp[grp].n);
     else if (am) snprintf(hdr, sizeof(hdr), ">>> %.14s [loc %um]", name, (unsigned)am);
     else snprintf(hdr, sizeof(hdr), ">>> %s", name);
     text(4, HEADER_Y, hdr, true, W - 8);
     int y = HEADER_Y + 20;
+    if (g_tmenuOpen && isGrpHash(g_threadPeer)) { renderGrpWho(y); return; }   // MIC in a group chat
     if (g_tmenuOpen) {                       // MIC: location menu instead of the history
         renderThreadMenu(y);                 // 5 rows down to y + 220 (= 277)
         return;
@@ -5138,8 +5752,11 @@ void renderThread() {
     text(6, STRIP_Y + 1, l1, false, W - 12);
     text(6, STRIP_Y + STRIP_LINE, l2, false, W - 12);
     char hint[40] = "[Enter] send  [MIC] location";
-    const bool offer = !g_bufLen && (locOffered() || cardOffered());
-    if (!g_bufLen && locOffered()) snprintf(hint, sizeof(hint), "[Enter] map %.3f,%.3f", g_threadLoc.lat, g_threadLoc.lon);
+    if (isGrpHash(g_threadPeer)) snprintf(hint, sizeof(hint), "[Enter] send  [MIC] who got it");
+    const bool offer = !g_bufLen && (locOffered() || cardOffered() || grpOffered());
+    if (!g_bufLen && grpOffered())
+        snprintf(hint, sizeof(hint), g_threadGrp.join ? "[Enter] join group: %.14s" : "[Enter] open group: %.14s", g_threadGrp.name);
+    else if (!g_bufLen && locOffered()) snprintf(hint, sizeof(hint), "[Enter] map %.3f,%.3f", g_threadLoc.lat, g_threadLoc.lon);
     else if (!g_bufLen && cardOffered()) snprintf(hint, sizeof(hint), "[Enter] save card: %.14s", g_threadCard.name);
     text(6, STRIP_Y + STRIP_LINE * 2, g_toast[0] ? g_toast : hint, !g_toast[0] && offer, W - 12);
 }
@@ -6325,6 +6942,7 @@ void mapKeyHint();
 void openMapAt(double lat, double lon) {
     if (g_menuOpen) g_menuOpen = false;
     g_cardOpen = false;                      // the map replaces a contact page
+    g_gv = GV_NONE;
     g_mapSel = -1;
     mapview::setReader(mapReadTile);
     g_mapSdTried = false;
@@ -6350,6 +6968,7 @@ void mapKeyHint() {
 
 void openMap() {
     g_cardOpen = false;
+    g_gv = GV_NONE;
     g_mapSel = -1;                           // callers that show a contact select it after
     mapview::setReader(mapReadTile);
     g_mapSdTried = false;
@@ -8014,7 +8633,7 @@ void tmenuAct(int i) {
 }
 
 void tmenuKey(const KeyEvent& ev) {
-    if (ev.up || ev.fn) { g_tmenuOpen = false; requestRedraw(); return; }
+    if (ev.up || ev.fn || isGrpHash(g_threadPeer)) { g_tmenuOpen = false; requestRedraw(); return; }   // group: a read-only page
     if (ev.enter) { tmenuAct(g_tmenuSel); return; }
     const char c = (char)toupper((unsigned char)ev.character);
     if (c >= '1' && c <= '0' + kTmenuRows) { g_tmenuSel = c - '1'; tmenuAct(g_tmenuSel); return; }
@@ -9292,6 +9911,384 @@ int contactsImport() {
     return n;
 }
 
+// ---- Groups: screens (Contacts > G) -----------------------------------------------------
+// Groups list -> a group's page (Message / Members / Rename / Share / Delete) -> members
+// (every saved contact, Enter puts it in or takes it out) or the share picker (a member).
+// Keys as on the other lists: T / V move, digits pick a row, Enter opens, ^ goes back.
+const char* const kGrpActs[5] = {"Message", "Members", "Rename", "Share", "Delete"};
+const char* const kGrpSubs[5] = {"open the group chat", "", "name it on this radio", "send it to a member",
+                                 "remove from this radio"};
+uint8_t g_gvCand[MAX_ROWS + kGrpMembers][16];     // members view: the group's members, then other contacts
+int g_gvCandN = 0;
+
+void grpCandLoad(bool membersOnly) {
+    g_gvCandN = 0;
+    const Group& g = g_grp[g_gvGroup];
+    for (int i = 0; i < g.n; i++) memcpy(g_gvCand[g_gvCandN++], g.m[i], 16);
+    if (membersOnly) return;
+    for (const auto& node : g_announceMgr.nodes()) {
+        if (node.hash.size() != 16 || !node.saved || isSelf(node.hash.data())) continue;
+        if (grpMember(g, node.hash.data()) >= 0 || g_gvCandN >= MAX_ROWS + kGrpMembers) continue;
+        memcpy(g_gvCand[g_gvCandN++], node.hash.data(), 16);
+    }
+}
+
+int grpRowCount() {
+    switch (g_gv) {
+        case GV_LIST:    return g_grpCount + 1;
+        case GV_PAGE:    return 5;
+        case GV_MEMBERS:
+        case GV_SHARE:   return g_gvCandN;
+        default:         return 0;
+    }
+}
+
+void grpOpenList() {
+    g_gv = GV_LIST;
+    g_gvSel = 0;
+    g_gvScroll = 0;
+    requestRedraw();
+    Serial.printf("[GRP] list (%d groups)\n", g_grpCount);
+}
+
+void grpOpenPage(int gi) {
+    g_gvGroup = gi;
+    g_gv = GV_PAGE;
+    g_gvSel = 0;
+    g_gvScroll = 0;
+    g_gvDelAt = 0;
+    requestRedraw();
+}
+
+void grpClose() { g_gv = GV_NONE; requestRedraw(); }
+
+void grpBack() {
+    if (g_gv == GV_MEMBERS || g_gv == GV_SHARE) { const int row = g_gv == GV_MEMBERS ? 1 : 3; grpOpenPage(g_gvGroup); g_gvSel = row; }
+    else if (g_gv == GV_PAGE) { const int gi = g_gvGroup; grpOpenList(); g_gvSel = gi; clampScroll(g_gvSel, g_gvScroll, grpRowCount()); }
+    else grpClose();
+    requestRedraw();
+}
+
+void grpPrint() {
+    for (int i = 0; i < g_grpCount; i++) {
+        const Group& g = g_grp[i];
+        Serial.printf("[GRP] %d: \"%s\" #%02x%02x%02x%02x %d members\n", i + 1, g.name, g.id[0], g.id[1], g.id[2], g.id[3], (int)g.n);
+        for (int k = 0; k < g.n; k++) {
+            char nm[24], hex[33];
+            peerName(g.m[k], nm, sizeof(nm));
+            hashToHex(g.m[k], hex);
+            Serial.printf("[GRP]    %s %s\n", hex, nm);
+        }
+    }
+    Serial.printf("[GRP] %d groups\n", g_grpCount);
+}
+
+int grpCreate(const char* name) {
+    if (g_grpCount >= kGrpMax) { toast("Group list full (%d)", kGrpMax); return -1; }
+    Group g = {};
+    do {
+        const uint32_t r = esp_random();
+        memcpy(g.id, &r, 4);
+    } while (grpFind(g.id) >= 0 || !memcmp(g.id, "\0\0\0", 4));
+    snprintf(g.name, sizeof(g.name), "%.16s", name);
+    g_grp[g_grpCount] = g;
+    grpSave();
+    Serial.printf("[GRP] new \"%s\" #%02x%02x%02x%02x\n", g.name, g.id[0], g.id[1], g.id[2], g.id[3]);
+    return g_grpCount++;
+}
+
+void grpDelete(int gi) {
+    if (gi < 0 || gi >= g_grpCount) return;
+    Serial.printf("[GRP] deleted \"%s\"\n", g_grp[gi].name);
+    for (int i = gi; i < g_grpCount - 1; i++) g_grp[i] = g_grp[i + 1];
+    g_grpCount--;
+    grpSave();
+}
+
+// In or out of the group. Returns 1 added, 0 removed, -1 refused.
+int grpToggleMember(int gi, const uint8_t h[16]) {
+    Group& g = g_grp[gi];
+    char nm[24];
+    peerName(h, nm, sizeof(nm));
+    const int at = grpMember(g, h);
+    if (at >= 0) {
+        for (int i = at; i < g.n - 1; i++) memcpy(g.m[i], g.m[i + 1], 16);
+        g.n--;
+        grpSave();
+        Serial.printf("[GRP] \"%s\" - %s (%d members)\n", g.name, nm, (int)g.n);
+        return 0;
+    }
+    if (isSelf(h) || isGrpHash(h)) return -1;
+    if (g.n >= kGrpMembers) { toast("A group holds %d members", kGrpMembers); return -1; }
+    memcpy(g.m[g.n++], h, 16);
+    grpSave();
+    Serial.printf("[GRP] \"%s\" + %s (%d members)\n", g.name, nm, (int)g.n);
+    return 1;
+}
+
+void openThread(const uint8_t peer[16]);
+void goScreen(ScreenId s);
+void openMenu();
+
+void grpActivate(int i) {
+    if (i < 0 || i >= grpRowCount()) return;
+    g_gvSel = i;
+    switch (g_gv) {
+        case GV_LIST:
+            if (i < g_grpCount) { grpOpenPage(i); break; }
+            if (g_grpCount >= kGrpMax) { toast("Group list full (%d)", kGrpMax); break; }
+            startEntry(Entry::GroupName, "", -1);
+            break;
+        case GV_PAGE: {
+            const int gi = g_gvGroup;
+            if (i != 4) g_gvDelAt = 0;
+            if (i == 0) {
+                if (!g_grp[gi].n) { toast("Add members first (2)"); break; }
+                uint8_t h[16];
+                grpHash(g_grp[gi].id, h);
+                grpClose();
+                openThread(h);
+            } else if (i == 1) {
+                grpCandLoad(false);
+                g_gv = GV_MEMBERS;
+                g_gvSel = g_gvScroll = 0;
+                if (!g_gvCandN) toast("No contacts yet - see Peers");
+            } else if (i == 2) {
+                startEntry(Entry::GroupName, g_grp[gi].name, gi);
+            } else if (i == 3) {
+                if (!g_grp[gi].n) { toast("Add members first (2)"); break; }
+                grpCandLoad(true);
+                g_gv = GV_SHARE;
+                g_gvSel = g_gvScroll = 0;
+                Serial.println("[GRP] pick who gets the group");
+            } else {
+                if (!g_gvDelAt || millis() - g_gvDelAt > 3000) { g_gvDelAt = millis() ? millis() : 1; toast("Press again to delete"); break; }
+                grpDelete(gi);
+                grpOpenList();
+                toast("Group deleted");
+            }
+            break;
+        }
+        case GV_MEMBERS: {
+            const int r = grpToggleMember(g_gvGroup, g_gvCand[i]);
+            if (r >= 0) {
+                char nm[24];
+                peerName(g_gvCand[i], nm, sizeof(nm));
+                toast(r ? "+ %.16s" : "- %.16s", nm);
+            }
+            break;
+        }
+        case GV_SHARE: {
+            uint8_t to[16];
+            memcpy(to, g_gvCand[i], 16);
+            if (grpShareTo(g_gvGroup, to)) { const int gi = g_gvGroup; grpOpenPage(gi); g_gvSel = 3; }
+            break;
+        }
+        default: break;
+    }
+    requestRedraw();
+}
+
+void grpKey(const KeyEvent& ev) {
+    const int n = grpRowCount();
+    if (ev.enter) { grpActivate(g_gvSel); return; }
+    if (ev.del || ev.space) return;
+    const char raw = ev.character;
+    if (raw >= '1' && raw <= '9') {
+        const int idx = (g_gvSel / 9) * 9 + (raw - '1');
+        if (idx >= n) return;
+        g_gvSel = idx;
+        clampScroll(g_gvSel, g_gvScroll, n);
+        if (g_gv == GV_PAGE) grpActivate(idx);       // as on a contact's page: the digit acts
+        requestRedraw();
+        return;
+    }
+    switch (toupper((unsigned char)raw)) {
+        case 'T': if (g_gvSel > 0) g_gvSel--; clampScroll(g_gvSel, g_gvScroll, n); requestRedraw(); break;
+        case 'V': if (g_gvSel < n - 1) g_gvSel++; clampScroll(g_gvSel, g_gvScroll, n); requestRedraw(); break;
+        case 'N': if (g_gv == GV_LIST) grpActivate(g_grpCount); break;      // new group
+        case 'M': grpClose(); openMenu(); break;
+        case 'C': grpClose(); goScreen(SCR_CONTACTS); break;
+        case 'I': grpClose(); goScreen(SCR_INBOX); break;
+        default: break;
+    }
+}
+
+void renderGroups() {
+    char hdr[48], title[40], sub[40];
+    if (g_entry == Entry::GroupName) {               // new group / rename
+        int y = HEADER_Y + 4;
+        text(6, y, g_entryArg < 0 ? "Name the new group" : "Rename the group", true); y += 30;
+        box(2, y - 4, W - 4, 30, 2);
+        snprintf(title, sizeof(title), "%.16s_", g_buf);
+        text(8, y + 2, title, true, W - 16); y += 40;
+        text(6, y, "Enter = save   ^ = cancel"); y += 20;
+        text(6, y, "Alt = change case   max 16");
+        if (g_toast[0]) text(6, y + 24, g_toast, true);
+        return;
+    }
+    const int n = grpRowCount();
+    const Group* g = (g_gv != GV_LIST && g_gvGroup < g_grpCount) ? &g_grp[g_gvGroup] : nullptr;
+    if (g_gv == GV_LIST) snprintf(hdr, sizeof(hdr), "Groups (%d)", g_grpCount);
+    else if (g_gv == GV_PAGE) snprintf(hdr, sizeof(hdr), "Group: %s", g->name);
+    else if (g_gv == GV_MEMBERS) snprintf(hdr, sizeof(hdr), "%.12s: %d of %d", g->name, (int)g->n, kGrpMembers);
+    else snprintf(hdr, sizeof(hdr), "Send %.12s to:", g->name);
+    clampScroll(g_gvSel, g_gvScroll, n);
+    drawHeader(hdr, g_gvScroll > 0);
+    if (!n) text(8, LIST_TOP + 8, "No contacts yet - see Peers");
+    for (int i = g_gvScroll; i < n && i < g_gvScroll + VIS_ROWS; i++) {
+        const int y = LIST_TOP + (i - g_gvScroll) * ROW_H;
+        sub[0] = 0;
+        if (g_gv == GV_LIST) {
+            if (i < g_grpCount) {
+                snprintf(title, sizeof(title), "%d : %s", i + 1, g_grp[i].name);
+                snprintf(sub, sizeof(sub), g_grp[i].n == 1 ? "%d member" : "%d members", (int)g_grp[i].n);
+            } else {
+                snprintf(title, sizeof(title), "%d : New group", i + 1);
+                snprintf(sub, sizeof(sub), "name it, then pick its members");
+            }
+        } else if (g_gv == GV_PAGE) {
+            snprintf(title, sizeof(title), "%d : %s", i + 1, kGrpActs[i]);
+            if (i == 1) snprintf(sub, sizeof(sub), "%d in it (up to %d)", (int)g->n, kGrpMembers);
+            else snprintf(sub, sizeof(sub), "%s", kGrpSubs[i]);
+        } else {
+            char nm[24], hex[33];
+            peerName(g_gvCand[i], nm, sizeof(nm));
+            hashToHex(g_gvCand[i], hex);
+            if (g_gv == GV_MEMBERS)
+                snprintf(title, sizeof(title), "%d : [%c] %s", i % 9 + 1, grpMember(*g, g_gvCand[i]) >= 0 ? 'x' : ' ', nm);
+            else
+                snprintf(title, sizeof(title), "%d : %s", i % 9 + 1, nm);
+            snprintf(sub, sizeof(sub), "%.24s", hex);
+        }
+        listRow(y, title, sub, i == g_gvSel);
+        addHit(2, y, W - 4, ROW_H, H_GRP, i);
+    }
+    const bool more = g_gvScroll + VIS_ROWS < n;     // rows below the last one shown
+    const char* hint = g_gv == GV_LIST    ? (more ? "V more  Ent open  ^ back" : "Ent open  N new  ^ back")
+                     : g_gv == GV_PAGE    ? (more ? "1-5  V more  Ent  ^ back" : "1-5  T/V  Ent  ^ back")
+                     : g_gv == GV_MEMBERS ? (more ? "V more  Ent in/out  ^" : "Ent = in / out  ^ done")
+                                          : (more ? "V more  Ent send  ^" : "Ent = send  ^ cancel");
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : hint);
+}
+
+void grpNameCommit() {
+    char name[17];
+    size_t n = g_bufLen;
+    while (n && g_buf[n - 1] == ' ') n--;
+    if (!n) { toast("Type a name first"); return; }
+    snprintf(name, sizeof(name), "%.*s", (int)(n < 16 ? n : 16), g_buf);
+    const int gi = g_entryArg;
+    endEntry();
+    if (gi < 0) {
+        const int made = grpCreate(name);
+        if (made < 0) return;
+        grpOpenPage(made);
+        grpCandLoad(false);                          // straight to picking members
+        g_gv = GV_MEMBERS;
+        toast("Enter = in or out");
+    } else if (gi < g_grpCount) {
+        strlcpy(g_grp[gi].name, name, sizeof(g_grp[gi].name));
+        grpSave();
+        Serial.printf("[GRP] renamed -> \"%s\"\n", name);
+        toast("Saved \"%.16s\"", name);
+    }
+    requestRedraw();
+}
+
+// MIC in a group chat: who got the newest message sent from this radio.
+void renderGrpWho(int y) {
+    const int gi = grpOfHash(g_threadPeer);
+    if (gi < 0 || !g_grpLast.valid) { text(6, y, "(nothing sent to this group yet)"); return; }
+    char line[48];
+    snprintf(line, sizeof(line), "\"%.26s\"", g_grpLast.text);
+    text(6, y, line, false, W - 12);
+    y += 24;
+    const Group& g = g_grp[gi];
+    for (int m = 0; m < g.n; m++) {
+        char nm[24];
+        peerName(g.m[m], nm, sizeof(nm));
+        const uint8_t st = g_grpLast.st[m];
+        const char* s = st == GS_DELIVERED ? "delivered" : st == GS_FAILED ? "failed" : st == GS_WAIT ? "waiting to send"
+                      : st == GS_SENT ? "sent, no receipt yet" : st == GS_NOPROOF ? "no reply" : "not sent to";
+        snprintf(line, sizeof(line), "%.11s: %s", nm, s);
+        text(6, y, line, st == GS_FAILED, W - 12);
+        y += 20;
+    }
+}
+
+// Enter on an empty draft with a group item offered: join the shared group, or open the
+// group's chat.
+void grpThreadEnter() {
+    if (g_threadGrp.join) {
+        grpJoinFromThread(g_threadPeer);
+        loadHistory(g_threadPeer, false);
+        requestRedraw();
+        return;
+    }
+    uint8_t h[16];
+    grpHash(g_threadGrp.id, h);
+    openThread(h);
+}
+
+// Console (bench / simulator scripts): grp | grp new <name> | grp add <n> <32 hex> |
+// grp rm <n> <32 hex> | grp del <n> | grp send <n> <text> | grp share <n> <32 hex> |
+// grp open <n> | grp who | grp hist     (n = the group's number in the list, from 1)
+void grpConsole(const char* p) {
+    int n = 0;
+    char hx[40] = "";
+    uint8_t h[16];
+    if (!strncmp(p, "new ", 4) && p[4]) {
+        grpCreate(p + 4);
+    } else if (sscanf(p, "add %d %39s", &n, hx) == 2 && n >= 1 && n <= g_grpCount && strlen(hx) >= 32 && hexToHash(hx, h)) {
+        if (grpMember(g_grp[n - 1], h) < 0) grpToggleMember(n - 1, h);
+    } else if (sscanf(p, "rm %d %39s", &n, hx) == 2 && n >= 1 && n <= g_grpCount && strlen(hx) >= 32 && hexToHash(hx, h)) {
+        if (grpMember(g_grp[n - 1], h) >= 0) grpToggleMember(n - 1, h);
+    } else if (sscanf(p, "del %d", &n) == 1 && n >= 1 && n <= g_grpCount) {
+        grpDelete(n - 1);
+    } else if (sscanf(p, "send %d", &n) == 1 && n >= 1 && n <= g_grpCount && strchr(p + 5, ' ')) {
+        const int sent = groupSend(n - 1, strchr(p + 5, ' ') + 1);
+        if (!sent) Serial.printf("[GRP] not sent: %s\n", g_txStr);
+        if (g_threadOpen) loadHistory(g_threadPeer, false);
+    } else if (sscanf(p, "share %d %39s", &n, hx) == 2 && n >= 1 && n <= g_grpCount && strlen(hx) >= 32 && hexToHash(hx, h)) {
+        grpShareTo(n - 1, h);
+    } else if (sscanf(p, "open %d", &n) == 1 && n >= 1 && n <= g_grpCount) {
+        grpHash(g_grp[n - 1].id, h);
+        grpClose();
+        g_menuOpen = false;
+        g_idleActive = false;
+        noteInput();                             // counts as input, like opening it with keys
+        openThread(h);
+    } else if (!strcmp(p, "who")) {
+        const int gi = g_threadOpen ? grpOfHash(g_threadPeer) : -1;
+        if (gi >= 0) loadHistory(g_threadPeer, false);
+        if (gi < 0 || !g_grpLast.valid) { Serial.println("[GRP] who: nothing (open a group chat with a sent message)"); return; }
+        Serial.printf("[GRP] who \"%s\":", g_grpLast.text);
+        for (int m = 0; m < g_grp[gi].n; m++) {
+            char nm[24];
+            peerName(g_grp[gi].m[m], nm, sizeof(nm));
+            const uint8_t st = g_grpLast.st[m];
+            Serial.printf(" %s=%s", nm, st == GS_DELIVERED ? "delivered" : st == GS_FAILED ? "failed" : st == GS_WAIT ? "waiting"
+                                        : st == GS_SENT ? "sent" : st == GS_NOPROOF ? "noreply" : "none");
+        }
+        Serial.println();
+        return;
+    } else if (!strcmp(p, "hist")) {
+        char nm[24] = "-";
+        if (g_threadOpen) { peerName(g_threadPeer, nm, sizeof(nm)); loadHistory(g_threadPeer, false); }
+        Serial.printf("[GRP] hist %s: %d rows%s\n", nm, g_threadOpen ? g_histCount : 0, g_threadOpen ? "" : " (no chat open)");
+        for (int i = 0; g_threadOpen && i < g_histCount; i++)
+            Serial.printf("[GRP] row %d %s \"%s\" [%s]\n", i + 1, g_hist[i].incoming ? "in" : "out", g_hist[i].text, g_hist[i].status);
+        return;
+    } else if (p[0]) {
+        Serial.println("[GRP] grp | new <name> | add <n> <hex> | rm <n> <hex> | del <n> | send <n> <text> | share <n> <hex> | open <n> | who | hist");
+        return;
+    }
+    grpPrint();
+    requestRedraw();
+}
+
 // ---- Setup wizard (fresh device, or Settings S.7 "Run setup wizard") --------------------
 // One screen per step, "Step 3/10" in the header. Enter keeps what is shown and goes on, ^
 // goes back a step, 0 finishes with the rest left as it is. A digit picks a row: on a
@@ -10023,6 +11020,7 @@ void render() {
     else if (g_navOpen)                renderNav();
     else if (g_rtOpen)                 renderRangeTest();
     else if (g_cardOpen)               renderCard();
+    else if (g_gv != GV_NONE)          renderGroups();
     else if (g_libOpen)                renderLibrary();
     else if (g_gameOpen)               renderGame();
     else if (g_chessOpen)              renderChess();
@@ -10485,6 +11483,7 @@ void noteInput() { g_lastInputMs = millis() ? millis() : 1; }
 
 void openThread(const uint8_t peer[16]) {
     if (isSelf(peer)) { toast("Pick a remote peer"); return; }
+    if (isGrpHash(peer) && (grpOfHash(peer) < 0 || !g_grp[grpOfHash(peer)].n)) { toast("Group has no members"); return; }
     memcpy(g_threadPeer, peer, 16);
     g_threadOpen = true;
     g_tmenuOpen = false;
@@ -10497,6 +11496,7 @@ void closeThread() {
     g_threadOpen = false;
     endEntry();
     loadRows(SCR_INBOX);           // unread counts changed
+    if (g_screen == SCR_CONTACTS || g_screen == SCR_PEERS) loadRows(g_screen);   // the list on screen
     requestRedraw();
 }
 
@@ -10529,6 +11529,7 @@ void goScreen(ScreenId s) {
     g_gameOpen = false;
     g_chessOpen = false;
     g_cardOpen = false;
+    g_gv = GV_NONE;
     g_shareActive = false;
     if (mapview::isOpen()) { mapview::close(); mapReadDone(); }
     if (g_threadOpen) { g_threadOpen = false; }
@@ -10598,7 +11599,7 @@ void activateListRow(int idx) {
     if (idx < 0 || idx >= g_rowCount) return;
     g_listSel = idx;
     rememberSelection();
-    if (g_screen == SCR_INBOX) openThread(g_rows[idx].peer);
+    if (g_screen == SCR_INBOX || isGrpHash(g_rows[idx].peer)) openThread(g_rows[idx].peer);
     else if (g_shareActive) shareSendTo(idx);  // picking who gets a contact card
     else openCard(g_rows[idx].peer);           // Contacts + Peers: Message / Rename / Share
 }
@@ -10655,6 +11656,7 @@ void goBack() {
     if (g_navOpen && !entryActive()) { navClose(); return; }
     if (g_navKeysOpen && (mapview::isOpen() || g_libOpen || g_gameOpen || g_chessOpen) && !entryActive()) { navKeysToggle(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
+    if (g_gv != GV_NONE && !entryActive() && !g_threadOpen) { grpBack(); return; }
     if (g_rtOpen && !entryActive()) { rtStop(); return; }
     if (g_shareActive && !entryActive()) {
         g_shareActive = false; g_shareAll = false; g_pickRt = false; g_pickLowbat = false;
@@ -10691,8 +11693,10 @@ bool parseFloat(const char* s, float& out) {
 void commitEntry() {
     switch (g_entry) {
     case Entry::Message: {
-        if (!g_bufLen) {                         // Enter on an empty draft: map or save card
-            if (locOffered()) {
+        if (!g_bufLen) {                         // Enter on an empty draft: group, map or save card
+            if (grpOffered()) {
+                grpThreadEnter();
+            } else if (locOffered()) {
                 const double la = g_threadLoc.lat, lo = g_threadLoc.lon;
                 uint8_t peer[16];
                 memcpy(peer, g_threadPeer, 16);
@@ -10707,6 +11711,20 @@ void commitEntry() {
         }
         char body[BUF_CAP + 1];
         memcpy(body, g_buf, g_bufLen + 1);
+        if (isGrpHash(g_threadPeer)) {           // a group chat: one copy to every member
+            int queued = 0;
+            const bool held = sendHeld();
+            if (groupSend(grpOfHash(g_threadPeer), body, &queued)) {
+                bufClear();
+                if (held) toast("Queued for the check-in");
+                else if (g_cfg.beep) g_audio.playMessage();
+            } else {
+                toast("Not sent: %s", g_txStr);   // keep the draft for retry
+            }
+            loadHistory(g_threadPeer);
+            requestRedraw();
+            return;
+        }
         const power::CheckinPhase ph = checkinNow();
         if (g_pwEff.checkin && !(ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS)) {
             if (outboxAdd(g_threadPeer, body)) {
@@ -10735,6 +11753,9 @@ void commitEntry() {
         requestRedraw();
         return;
     }
+    case Entry::GroupName:
+        grpNameCommit();
+        return;
     case Entry::Name: {
         if (!g_bufLen) { toast("Type a name first"); return; }
         char name[BUF_CAP + 1];
@@ -10967,7 +11988,7 @@ void entryKey(const KeyEvent& ev) {
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) c = '.';
         else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass || passEntry(g_entry) ||
                  g_entry == Entry::Search || g_entry == Entry::WptName || g_entry == Entry::LibFind ||
-                 g_entry == Entry::PlaceFind || g_entry == Entry::FoundText) c = ' ';
+                 g_entry == Entry::PlaceFind || g_entry == Entry::FoundText || g_entry == Entry::GroupName) c = ' ';
     } else if (ev.fn) {
         if (passEntry(g_entry)) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
         if (g_entry == Entry::Message && g_threadOpen) { g_tmenuOpen = true; g_tmenuSel = 0; requestRedraw(); return; }
@@ -10986,6 +12007,7 @@ void entryKey(const KeyEvent& ev) {
         c = isupper((unsigned char)c) ? (char)tolower(c) : (char)toupper(c);   // Alt = case
     }
     if (g_entry == Entry::Name && g_bufLen >= 23) { toast("Max 23 chars"); return; }
+    if (g_entry == Entry::GroupName && g_bufLen >= 16) { toast("Max 16 chars"); return; }
     if (g_entry == Entry::Name && isSelf(g_nameTarget)) {
         // Own name: short enough for the idle screen's second line at its widest,
         // "12/31/2026  <name>  999 NEW", so the name is never cut there.
@@ -11035,6 +12057,7 @@ void menuKey(const KeyEvent& ev) {
 
 void browseKey(const KeyEvent& ev) {
     if (g_cardOpen) { cardKey(ev); return; }
+    if (g_gv != GV_NONE) { grpKey(ev); return; }
     if (ev.enter) { activateCurrent(); return; }
     if (ev.del || ev.space) return;
     const char raw = ev.character;
@@ -11054,6 +12077,9 @@ void browseKey(const KeyEvent& ev) {
                 g_cpos[cposFind(g_rows[g_listSel].peer)].hasPos)
                 mapShowContact(g_rows[g_listSel].peer);
             else openMap();
+            break;
+        case 'G':                                   // Contacts: the groups
+            if (g_screen == SCR_CONTACTS && !g_shareActive) grpOpenList();
             break;
         case 'L':                                   // locate: type to filter the list
             if (isListScreen(g_screen)) { startEntry(Entry::Search, g_filter); }
@@ -11296,6 +12322,11 @@ void handleTouch(int16_t x, int16_t y) {
         case H_UP:         moveSelection(-1); break;
         case H_DOWN:       moveSelection(+1); break;
         case H_CARD:       if (g_cardOpen) { g_cardSel = hit->arg; cardAct(hit->arg); } break;
+        case H_GRP:                                   // groups: tap selects, a second tap (or the page's rows) acts
+            if (g_gv == GV_NONE) break;
+            if (hit->arg == g_gvSel || g_gv == GV_PAGE) grpActivate(hit->arg);
+            else { g_gvSel = hit->arg; requestRedraw(); }
+            break;
         case H_TMENU:      if (g_tmenuOpen) { g_tmenuSel = hit->arg; tmenuAct(hit->arg); } break;
         case H_NAVKEYS:    navKeysToggle(); break;
         case H_TILE_AUDIO:
@@ -11512,7 +12543,8 @@ void checkinTick() {
     if (millis() - lastTry < (flushNow ? 3100u : 3500u)) return;   // 3 s send spacing
     lastTry = millis();
     OutboxItem& o = g_outbox[0];
-    const bool sent = sendMessage(o.dest, o.text);
+    const bool isGrp = o.gseq || memcmp(o.gid, "\0\0\0", 4);
+    const bool sent = sendMessage(o.dest, o.text, isGrp ? o.gid : nullptr, o.gseq);
     // "rejected 1" (busy) and "rejected 8" (store still recovering after boot) are
     // temporary: keep the message for the next try instead of dropping it.
     const bool transient = g_txTransient;
@@ -12846,6 +13878,7 @@ void handleSerialLine(char* p) {
                       g_cfg.wizDone);
         return;
     }
+    if (!strncmp(p, "grp", 3) && (p[3] == 0 || p[3] == ' ')) { grpConsole(p[3] ? p + 4 : ""); return; }
     if (!strncmp(p, "shareall ", 9)) {                     // shareall <32 hex dest>: every contact's card
         uint8_t to[16];
         if (strlen(p + 9) < 32 || !hexToHash(p + 9, to)) { Serial.println("[CARD] shareall <32 hex>"); return; }
@@ -13243,7 +14276,8 @@ void handleSerialLine(char* p) {
     }
     if ((p[0] == 't' || p[0] == 'T') && p[1] == ':') {
         if (!g_threadOpen) { Serial.println("[CMD] open a thread first"); return; }
-        if (sendOrQueue(g_threadPeer, p + 2) != SendResult::Failed) loadHistory(g_threadPeer);
+        if (isGrpHash(g_threadPeer)) { groupSend(grpOfHash(g_threadPeer), p + 2); loadHistory(g_threadPeer); }
+        else if (sendOrQueue(g_threadPeer, p + 2) != SendResult::Failed) loadHistory(g_threadPeer);
         Serial.printf("[CMD] send: %s\n", g_txStr);
         requestRedraw();
     } else if (!strcmp(p, "a")) {
@@ -14272,6 +15306,7 @@ bool begin() {
     sysimg::bootCheck();
     loadConfig();
     outboxLoad();
+    grpLoad();
     power::load(g_pw);
     applyTz();
     ensureClockSeeded();

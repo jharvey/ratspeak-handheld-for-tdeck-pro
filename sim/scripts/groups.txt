@@ -1,0 +1,112 @@
+# Groups on one radio: create, add / remove members, rename, delete, the group chat and the
+# Inbox row. Run fresh, then groups_after.txt on the same device name (a restart keeps groups):
+#   run-script.bat scripts\groups.txt groups fresh
+#   run-script.bat scripts\groups_after.txt groups
+# Sending and sharing between radios: python sim\scripts\groups_net.py
+expect 60000 [BOOT] ready
+serial wiz skip
+serial contact a10000000000000000000000000000a1 Alex
+serial contact a20000000000000000000000000000a2 Sam
+serial contact a30000000000000000000000000000a3 Jo
+expect 10000 "Jo" ok=1
+wait 1500
+# A start ends on the idle screen: this key only wakes it.
+key BACK
+wait 800
+key C
+wait 1500
+shot groups-01-contacts.png
+key G
+expect 3000 [GRP] list (0 groups)
+wait 800
+shot groups-02-empty.png
+# The only row is "New group": Enter, type the name, Enter. The members page opens.
+key ENTER
+wait 500
+type FAMILY
+wait 500
+shot groups-03-name.png
+key ENTER
+expect 3000 [GRP] new "FAMILY"
+wait 1000
+shot groups-04-members.png
+key ENTER
+expect 3000 (1 members)
+key V
+key ENTER
+expect 3000 (2 members)
+wait 800
+shot groups-05-two-in.png
+# Enter again on a member takes it out; then put it back.
+key ENTER
+expect 3000 (1 members)
+key ENTER
+expect 3000 (2 members)
+key BACK
+wait 800
+shot groups-06-page.png
+# 3 Rename: the old name is in the field, typed letters are added.
+key 3
+wait 500
+type 2
+key ENTER
+expect 3000 [GRP] renamed -> "FAMILY2"
+wait 800
+# 1 Message: the group chat (empty), then back to the Groups list.
+key 1
+expect 5000 [HIST] group "FAMILY2": 0 messages
+wait 1000
+shot groups-07-chat.png
+key BACK
+wait 1000
+# The Inbox lists the group first.
+key I
+wait 1500
+shot groups-08-inbox.png
+key 1
+key ENTER
+expect 5000 [HIST] group "FAMILY2"
+key BACK
+wait 800
+# A second group, then delete it: 5 Delete asks for a second press.
+key C
+wait 1000
+key G
+expect 3000 [GRP] list (1 groups)
+key N
+wait 500
+type TEMP
+key ENTER
+expect 3000 [GRP] new "TEMP"
+key BACK
+wait 800
+key 5
+expect 3000 [UI] Press again to delete
+key 5
+expect 3000 [GRP] deleted "TEMP"
+wait 800
+shot groups-09-list.png
+# (Test addresses differ in their first digits: a contact's file is named by them.)
+# A ninth member is refused (console adds 6 more to reach 8, then one more).
+serial contact a40000000000000000000000000000a4 M4
+serial contact a50000000000000000000000000000a5 M5
+serial contact a60000000000000000000000000000a6 M6
+serial contact a70000000000000000000000000000a7 M7
+serial contact a80000000000000000000000000000a8 M8
+serial contact a90000000000000000000000000000a9 M9
+serial contact aa0000000000000000000000000000aa M10
+serial grp add 1 a30000000000000000000000000000a3
+serial grp add 1 a40000000000000000000000000000a4
+serial grp add 1 a50000000000000000000000000000a5
+serial grp add 1 a60000000000000000000000000000a6
+serial grp add 1 a70000000000000000000000000000a7
+serial grp add 1 a80000000000000000000000000000a8
+expect 3000 (8 members)
+serial grp add 1 a90000000000000000000000000000a9
+expect 3000 [UI] A group holds 8 members
+serial grp rm 1 a80000000000000000000000000000a8
+expect 3000 (7 members)
+serial grp
+expect 3000 [GRP] 1: "FAMILY2"
+expect 3000 [GRP] 1 groups
+quit

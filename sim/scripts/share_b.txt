@@ -1,6 +1,8 @@
 # Receive a shared contact card (see share_a.txt): open the chat, Enter on the empty
 # draft saves the card as a contact.
 expect 60000 [BOOT] ready
+# A fresh radio opens the setup wizard: skip it (it would take the keys below).
+serial wiz skip
 expect 120000 [MSG] inbound message
 wait 3000
 # wake the idle splash first (the waking key is consumed)

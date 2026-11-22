@@ -831,10 +831,10 @@ void RustLxmfEngine::onDataFrame(const rs_handheld_local_frame_t& f, uint8_t ifa
     view.title = msg.title; view.titleLength = msg.title_len;
     view.content = msg.content; view.contentLength = msg.content_len;
     view.timestamp = epoch ? double(epoch) : msg.timestamp; view.reaction = msg.is_reaction != 0;
-    // Keep the audio field (voice message); other fields are not stored. Old archives leave
+    // Keep the audio field (voice message) or the group tag; other fields are not stored. Old archives leave
     // fields_len 0 (the struct is zero-initialised below the old size).
     handheld::lxmf::AudioField audio;
-    if (msg.fields_len <= sizeof(msg.fields) && handheld::lxmf::keepAudio(msg.fields, msg.fields_len, audio))
+    if (msg.fields_len <= sizeof(msg.fields) && handheld::lxmf::keepKnown(msg.fields, msg.fields_len, audio))
         view.fields = audio;
     if (msg.timestamp > 0) peerclock::note((uint32_t)msg.timestamp, peerclock::MESSAGE);
     _incoming.accept(view, seed);
@@ -873,7 +873,7 @@ RustIncomingDelivery::ReceiveResult RustLxmfEngine::onDirectPayload(
     view.timestamp = epoch ? double(epoch) : parsed.timestamp; view.reaction = parsed.is_reaction != 0;
     handheld::lxmf::AudioField audio;
     if (parsed.fields_len && parsed.fields_offset <= len && parsed.fields_len <= len - parsed.fields_offset &&
-        handheld::lxmf::keepAudio(packed + parsed.fields_offset, parsed.fields_len, audio))
+        handheld::lxmf::keepKnown(packed + parsed.fields_offset, parsed.fields_len, audio))
         view.fields = audio;
     if (parsed.timestamp > 0) peerclock::note((uint32_t)parsed.timestamp, peerclock::MESSAGE);
     return _incoming.accept(view, seed);

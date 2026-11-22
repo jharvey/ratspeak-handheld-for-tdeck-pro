@@ -433,12 +433,24 @@ Field / test tools
   Validate with the battery-life test (Stress_test_plan.md section 4b, week of
   2026-11-16): those full discharges give the true mAh to compare the learned value with.
 Nice to have
-- 12. Group threads: one message to a named set of contacts. Not started.
+- 12. Group threads: one message to a named set of contacts. BUILT 2026-11-22 (simulator
+  tested with four radios; not yet tried on real units). Report: docs/groups_report.md;
+  how to use: docs/HowTo.md "Groups".
   Asked again 2026-11-21 (group chat): send a message to "my family" or another group set
   up beforehand. Idea for the menu: groups as a sub-menu of Contacts (Contacts / Groups).
   Share a group the way a contact is shared: sharing sends the group and its contacts.
   Open questions from the owner: should there be a group chat option at all, and should
-  groups live under Contacts? Menus and their videos will change when this lands.
+  groups live under Contacts? Answered in the report: yes to both (Contacts, then G).
+  Done: groups of up to 8 contacts (8 groups) kept on the unit; Contacts > G: new, members,
+  rename, delete; a message to a group = one normal message per member through the outbox,
+  tagged with LXMF field 0x0B; group chat (also first in the Inbox) with "NAME: text" and
+  "2/3 delivered" per message, MIC = who got it; share a group with a member (group cards),
+  Enter in the chat joins or updates it and saves unknown members as contacts; a radio or
+  app without the group sees a normal direct message.
+  Not done: test on real units (airtime, the record reads of a busy group chat on flash);
+  unread count on the group's Inbox row; voice messages, locations and walkie-talkie to a
+  group; the low-battery notice to a group; automatic sync of member changes (share again
+  instead); removing yourself from other people's copies; how-to video.
 - 13. Relay mode when plugged in: act as a Reticulum transport node on USB power to extend
   range for nearby units (see also the propagation-node item under Hardware / platform).
 - 14. Notepad: write notes on the device, saved to the Library folder on SD.
@@ -461,7 +473,8 @@ Also asked 2026-11-21 (each one is filed in its section; the owner's order is ke
 - Stress test by random tasks, timed, in different energy modes: see Robustness to verify.
 - Full power only when the USB supply is strong (not on a small solar panel), with a menu
   option: see Hardware / platform.
-- Group chat, groups under Contacts, share a group: see item 12, Group threads, above.
+- Group chat, groups under Contacts, share a group: BUILT 2026-11-22, see item 12, Group
+  threads, above.
 
 Build / devex
 -------------
