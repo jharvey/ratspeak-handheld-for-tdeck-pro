@@ -1,7 +1,7 @@
 env tdeck_pro_standalone
-source 4a62da896b3b1c8277517747630cb7674d17f2f5
-built 2026-11-19 17:39 on debian-build (tools/vm_build.py)
-size 2344544
-sha256 2c5d5a13251677878e9a5639324c05837c4d6041c4c60b057f1a896410f64858
+source 1c890512c1529bee8a122a19f83a839ffb42cb86
+built 2026-11-22 03:34 on debian-build (tools/vm_build.py)
+size 2347184
+sha256 b4df967048048f0e5014be511fbce07c0c8126647ee74caf4ae4f3f8f167d8f7
 uncommitted changes in the build:
   none
