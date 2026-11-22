@@ -23,6 +23,8 @@ uint32_t nowMs() {
                std::chrono::steady_clock::now() - kStart).count();
 }
 Hw& hw() { static Hw h; return h; }
+// Firmware: seconds added to the uptime it shows (sim.ini "uptime = 1d2h").
+uint32_t uptimeOffsetS() { return hw().uptimeOffsetS; }
 // Firmware -> side panel: power mode, sleep share, CPU, radio (declared in StandaloneApp).
 void setPowerInfo(const char* line) {
     std::lock_guard<std::mutex> l(hw().mu);

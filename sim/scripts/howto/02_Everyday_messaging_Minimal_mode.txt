@@ -23,8 +23,8 @@ note 7000 Granny Gouda wants it simple. Her radio is in Minimal mode: wake it, r
 wait 7500
 expect 120000 [MSG] inbound
 wait 2500
-caption A message has come in. The idle screen counts it: 1 NEW, in the second line.
-point 200 22 4000 70 16
+caption A message has come in. The idle screen counts it: 1 NEW, at the right of the top banner.
+point 206 45 4000 66 18
 wait 5000
 caption Any key wakes the radio. In Minimal mode it always wakes on the Inbox.
 wait 1500

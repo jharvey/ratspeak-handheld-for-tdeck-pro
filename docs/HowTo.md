@@ -36,7 +36,8 @@ Video: [send_message.mp4](videos/send_message.mp4)
 2. Pick the chat: **T** / **V**, or hold **SYM** and type its number.
 3. Press **Enter** to open the chat.
 4. Type your message. The keyboard types capitals, which is fine; **Alt** + key gives a
-   small letter, **SYM** + key digits and symbols.
+   small letter, **SYM** + key digits and symbols. The typing box grows to three lines as
+   you write; a longer message shows its last three lines.
 5. Press **Enter** to send. "delivered" shows when the other radio got it.
 6. **^** goes back to the list.
 
@@ -47,7 +48,9 @@ when that radio is heard again.
 
 Video: [read_message.mp4](videos/read_message.mp4)
 
-1. The idle screen shows how many messages are new. Press any key to wake the radio.
+1. The idle screen shows how many messages are new: "1 NEW" at the right of its top
+   banner (the banner also shows the battery, the time and the radio's name, on every idle
+   screen). Press any key to wake the radio.
 2. Press **I** for the Inbox. Chats with new messages are marked.
 3. Pick the chat and press **Enter**. The newest message is at the bottom; **T** / **V**
    scroll through older ones.

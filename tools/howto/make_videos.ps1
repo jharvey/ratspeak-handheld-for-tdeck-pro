@@ -23,7 +23,8 @@ param(
     [string]$SimExe = "",
     [string]$Out = "",
     [string]$Seed = "",
-    [string]$DataRoot = ""     # the radios' folders go here instead of <sim exe dir>\simdata (e.g. off a full C:)
+    [string]$DataRoot = "",    # the radios' folders go here instead of <sim exe dir>\simdata (e.g. off a full C:)
+    [string]$Uptime = "1d2h"   # the uptime every radio starts with (sim.ini "uptime"): the idle screen shows it
 )
 $ErrorActionPreference = "Stop"
 $Only = @($Only | ForEach-Object { $_ -split "," } | Where-Object { $_ })   # "-File" passes "a,b" as one string
@@ -172,7 +173,10 @@ foreach ($v in $videos) {
             if (Test-Path $dir) { Start-Sleep -Milliseconds 500 }
         }
         New-Item -ItemType Directory -Force "$dir\sd" | Out-Null
-        if ($v.ini -and $v.ini[$dev]) { [IO.File]::WriteAllLines("$dir\sim.ini", [string[]]$v.ini[$dev]) }
+        # Every radio has been up about a day (the idle screen shows the uptime), plus the video's own lines.
+        $ini = @("uptime = $Uptime")
+        if ($v.ini -and $v.ini[$dev]) { $ini += $v.ini[$dev] }
+        [IO.File]::WriteAllLines("$dir\sim.ini", [string[]]$ini)
         if ($v.seed -and $v.seed[$dev]) {
             for ($try = 0; ; $try++) {
                 try { Copy-Item -Recurse -Force "$Seed\$($v.seed[$dev])\*" "$dir\sd\"; break }

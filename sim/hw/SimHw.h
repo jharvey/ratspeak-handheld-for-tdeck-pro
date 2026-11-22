@@ -26,6 +26,7 @@ struct Hw {
     // ---- options
     std::string dataDir = "simdata/device1";   // LittleFS / SD / NVS live here
     bool realisticPanel = true;                // emulate e-ink refresh time
+    uint32_t uptimeOffsetS = 0;                // sim.ini "uptime": the uptime shown on screen starts here
     std::string deviceName = "device1";
 
     // ---- display (1 bit per pixel, 1 = black, 240x320 row-major MSB first)

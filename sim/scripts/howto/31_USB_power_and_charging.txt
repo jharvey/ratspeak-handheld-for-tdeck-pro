@@ -23,7 +23,7 @@ rec 31_USB_power_and_charging
 note 7000 Cheddar Gorge. Professor Nibbles is off on a long walk. Did he charge his radio? He did not.
 wait 7500
 caption The idle screen shows the battery at the top: 30 %, and "unplugged".
-point 168 8 3500 86 16
+point 38 18 3500 72 34
 wait 4500
 # --- Part A: charging
 caption Part A: charging. Plug a USB-C charger or a power bank into the radio.
@@ -146,7 +146,7 @@ caption Part D: empty. The battery is nearly flat.
 wait 1500
 battery 3
 wait 4000
-point 168 8 3000 86 16
+point 38 18 3000 72 34
 wait 3500
 caption When it runs out, the radio draws this screen and switches itself off.
 wait 1500

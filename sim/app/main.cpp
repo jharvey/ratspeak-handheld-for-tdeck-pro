@@ -129,8 +129,14 @@ void applyConfig(const QMap<QString, QString>& cfg) {
             h.wifiNets = nets;
         } else if (k == "fast") {
             h.realisticPanel = !onOff(k, v);
+        } else if (k == "uptime") {
+            // uptime = 1d2h | 26h | 90m | 1d2h30m: the uptime the screen shows starts there
+            const QRegularExpressionMatch m =
+                QRegularExpression("^(?:(\\d+)d)?\\s*(?:(\\d+)h)?\\s*(?:(\\d+)m)?$").match(v.trimmed().toLower());
+            if (!m.hasMatch() || v.trimmed().isEmpty()) badConfig(k, v, "a time like 1d2h, 26h or 90m");
+            h.uptimeOffsetS = m.captured(1).toUInt() * 86400u + m.captured(2).toUInt() * 3600u + m.captured(3).toUInt() * 60u;
         } else {
-            fprintf(stderr, "ratspeak-sim: unknown setting \"%s\" (sd battery usb charged gps sats flashkb fast wifi)\n",
+            fprintf(stderr, "ratspeak-sim: unknown setting \"%s\" (sd battery usb charged gps sats flashkb fast wifi uptime)\n",
                     k.toLocal8Bit().constData());
             exit(2);
         }

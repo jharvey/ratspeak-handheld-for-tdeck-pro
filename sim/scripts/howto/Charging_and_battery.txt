@@ -14,7 +14,7 @@ serial idle now
 wait 2500
 rec Charging_and_battery
 caption The idle screen shows the battery at the top: 35 %, and "unplugged".
-point 168 8 3500 86 16
+point 38 18 3500 72 34
 wait 4200
 caption Plug a USB-C charger into the radio.
 wait 1500

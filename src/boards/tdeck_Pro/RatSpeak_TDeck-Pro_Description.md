@@ -256,9 +256,19 @@ Row text is `n : Kind : Name` with the value underneath. Kinds: **Menu** (opens 
 ![Idle splash](images/screen-idle.png)
 
 Pick the idle screen in **S.4.2 row 8 "Idle screen"** (Enter steps through them). Every one
-has the same top strip: time, battery %, unread count, date (MM/DD/YYYY) and the radio's
-name, and the wake / LOCKED line at the bottom. Updates at most once a minute. **Press a key
-to wake** (touch does not wake).
+has the same top banner (one function, `drawIdleTop`; since 2026-11-22):
+
+| Where | Shows |
+|---|---|
+| top left | the battery picture of the status bar (bolt = charging, plug = on USB), the battery % (**+** while charging) and under it the time left on battery (**~12h**) or **USB** |
+| top right | the time with its zone, the date (MM/DD/YYYY) under it |
+| bottom line | the radio's name in bold on the left; new messages on the right (**3 NEW** in bold, else "no new") |
+
+The wake / LOCKED / plug-in line at the bottom is unchanged. The banner is redrawn when the
+minute, the battery % or the new-message count changes, as before (no extra panel
+refreshes). **Press a key to wake** (touch does not wake). The simulator can start with a
+realistic uptime for the Splash: `uptime = 1d2h` in the device's `sim.ini` (the how-to
+videos use that).
 
 - **Splash:** logo, plug status, uptime, time zone.
 - **Map:** the map around you (GPS fix, else the saved position, else the card's home view,
@@ -296,6 +306,11 @@ Per-row **unrd ##** when unread.
 
 ### 4.6 Inbox thread (typing)
 ![Inbox compose](images/screen-inbox-compose.png)
+
+The typing strip wraps at words and grows from 1 to 3 lines as the message needs (the last
+3 lines when it is longer, so the cursor stays in view); the hint line ([Enter] send ...)
+stays under it and the messages above keep the rest of the screen. Contact and group chats.
+A message holds up to 120 characters.
 
 ### 4.7 Settings root
 ![Settings](images/screen-settings.png)

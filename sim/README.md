@@ -70,6 +70,7 @@ Pick how the simulated unit is equipped when it starts:
 | `--sats 9` | `sats = 9` | satellites in the fix. Default 7 |
 | `--flashkb 2048` | `flashkb = 2048` | internal flash size (see below) |
 | `--fast` | `fast = on` | instant e-ink refresh |
+| | `uptime = 1d2h` | the uptime shown on screen (idle Splash) starts there instead of at 0: `1d2h`, `26h`, `90m`. The how-to videos use 1d2h (`tools\howto\make_videos.ps1 -Uptime`) |
 | | `wifi = NAME/RSSI/PASSWORD; NAME2/RSSI` | the WiFi networks in range (no password = open). Default: HomeNet, Coffee-Shop, Neighbour_5G |
 
 Settings are read from `build\simdata\<name>\sim.ini` (that device's own setup, if the file

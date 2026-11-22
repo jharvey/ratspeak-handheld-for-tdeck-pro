@@ -16,7 +16,7 @@ serial idle now
 wait 2500
 rec Battery_empty_wont_turn_on
 caption The battery is almost empty: 3 %. See the top of the idle screen.
-point 168 8 3500 86 16
+point 38 18 3500 72 34
 wait 4500
 caption When it runs out, the radio shows this and switches itself off.
 wait 1500

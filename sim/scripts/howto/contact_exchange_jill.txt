@@ -16,10 +16,10 @@ wait 1500
 serial idle now
 wait 1500
 rec contact_exchange
-point 205 21 4000 70 16
+point 206 45 4000 66 18
 expect 180000 [MSG] inbound
 wait 1500
-point 205 21 4500 70 16
+point 206 45 4500 66 18
 wait 5000
 note 5500 Jill receives his contact and sends her contact to Jack.
 wait 6000

@@ -105,6 +105,7 @@ extern void keyboardSetNumLayer(bool on);
 #if defined(SIMULATOR)
 namespace sim { void setPowerInfo(const char* line); }   // side panel (sim/shim)
 namespace sim { size_t processBytes(); void wearDump(); }   // sim/shim: process memory, flash wear counters
+namespace sim { uint32_t uptimeOffsetS(); }                 // sim.ini "uptime = 1d2h": where the shown uptime starts
 #endif
 
 namespace standalone {
@@ -11103,38 +11104,54 @@ bool paintIdleLibrary();
 void paintIdleFound();
 constexpr int kIdleMapTop = 56, kIdleMapBottom = 300;
 
-// Every idle screen: time, battery and unread across the top, the date and the radio's name
-// under them, and the wake / LOCKED line at the bottom.
+// How long the unit has been up, as shown on screen. The simulator can start it later than 0
+// (sim.ini "uptime = 1d2h") so videos do not show a radio that has run for two minutes.
+uint32_t uptimeShownS() {
+#if defined(SIMULATOR)
+    return millis() / 1000UL + sim::uptimeOffsetS();
+#else
+    return millis() / 1000UL;
+#endif
+}
+
+// The top banner of every idle screen (Splash, If found, Map, Library page; locked or not), the
+// same on all of them, kIdleMapTop px high:
+//   [battery]  100%+           1:45 PM EST      battery icon as in the status bar (bolt =
+//   [ icon  ]  ~12h             11/22/2026      charging, plug = on USB), %, time left on battery
+//   NAME OF THIS RADIO               3 NEW      the name in bold; new messages (bold when any)
+// It is redrawn when the minute, the battery % or the new-message count changes (updateIdle),
+// as the three text lines before it were: no more panel refreshes than before.
 void drawIdleTop() {
-    // Line 1: "1:45 PM EST  100% bat  ~12h"; line 2: "11/14/2026  3 NEW"; line 3: the name. Regular weight (bold
-    // was hard to read). Each line drops its least important part until it fits the width.
-    char t[12], line[64], line2[64], bat[16] = "", left[10] = "", md[12] = "--/--/----", unr[12];
+    char t[12], line[40], bat[16] = "--%", left[10] = "", md[12] = "--/--/----", unr[12];
     fmtTime(t, sizeof(t));
     struct tm lt;
     if (localNow(lt)) snprintf(md, sizeof(md), "%d/%d/%d", lt.tm_mon + 1, lt.tm_mday, lt.tm_year + 1900);
     const int pct = g_bat.valid ? g_bat.pct : -1;
     const int unread = g_storeReady ? g_msgStore.totalUnreadCount() : 0;
     box(0, 0, W, kIdleMapTop, 1);
+    // Left: the battery.
+    drawBatteryIcon(5, 3, 16, 31, pct);
     if (pct >= 0) snprintf(bat, sizeof(bat), "%d%%%s", pct, g_bat.charging ? "+" : "");
+    text(26, 1, bat, true);
     const int h10 = g_bat.usb ? -1 : batHoursLeft10(nullptr);
     if (h10 >= 0) snprintf(left, sizeof(left), h10 < 480 ? "~%dh" : "~%dd", h10 < 480 ? (h10 + 5) / 10 : (h10 + 120) / 240);
+    else if (g_bat.usb) snprintf(left, sizeof(left), "USB");
+    text(26, 18, left);
+    // Right: the time (with the zone when it fits beside the battery) and the date.
+    snprintf(line, sizeof(line), "%s %s", t, tzCur().name);
+    if (textW(line) > W - 4 - 84) snprintf(line, sizeof(line), "%s", t);
+    text(W - 5 - textW(line), 1, line);
+    text(W - 5 - textW(md), 18, md);
+    // Bottom line: the radio's name (how you tell units apart, also on a flat one) and the
+    // new-message count. Only a name too wide to sit beside the count is cut.
     if (unread > 0) snprintf(unr, sizeof(unr), "%d NEW", unread); else snprintf(unr, sizeof(unr), "no new");
-    const int maxW = W - 6;
-    const char* tz = tzCur().name;
-    const char* bw = bat[0] ? " bat" : "";
-    snprintf(line, sizeof(line), "%s %s  %s%s  %s", t, tz, bat, bw, left);
-    if (!left[0] || textW(line) > maxW) snprintf(line, sizeof(line), "%s %s  %s%s", t, tz, bat, bw);
-    if (textW(line) > maxW) snprintf(line, sizeof(line), "%s %s  %s", t, tz, bat);
-    if (textW(line) > maxW) snprintf(line, sizeof(line), "%s  %s", t, bat);
-    label(0, 0, W, 20, line);
-    snprintf(line2, sizeof(line2), "%s  %s", md, unr);
-    label(0, 18, W, 18, line2);
-    // Line 3: the radio's name on its own line (it is how you tell units apart, also on a flat
-    // one), bold. Only a name wider than the screen is cut.
+    const int uw = textW(unr) + (unread > 0 ? 2 : 0);
+    text(W - 5 - uw, 36, unr, unread > 0);
     char nm[sizeof(g_selfName)];
     strlcpy(nm, g_selfName[0] ? g_selfName : "no name", sizeof(nm));
-    for (size_t n = strlen(nm); n > 1 && textW(nm) > maxW; ) nm[--n] = 0;
-    label(0, 36, W, 18, nm, true);
+    const int nameW = W - 5 - uw - 10 - 5;
+    for (size_t n = strlen(nm); n > 1 && textW(nm) + 2 > nameW; ) nm[--n] = 0;
+    text(5, 36, nm, true);
     g_idleShownUnread = unread;
     g_idleShownPct = pct;
     g_idleShownMin = millis() / 60000UL;
@@ -11166,7 +11183,7 @@ void paintIdle() {
     label(0, y0 + step, W, 18,
           g_bat.charging ? (g_bat.usb ? "charging | plugged in" : "charging")
                          : (g_bat.usb ? "plugged in" : "unplugged"));
-    uint32_t s = millis() / 1000UL;
+    uint32_t s = uptimeShownS();
     label(0, y0 + 2 * step + 6, W, 16, "uptime");
     snprintf(line, sizeof(line), "%05luD : %02luH : %02luM", (unsigned long)(s / 86400UL),
              (unsigned long)((s / 3600UL) % 24UL), (unsigned long)((s / 60UL) % 60UL));
@@ -14966,12 +14983,13 @@ void handleSerialLine(char* p) {
         Serial.printf("[FLASH] message cap %s%lu KB (real %u KB)\n", sp.capBytes ? "" : "off, ",
                       (unsigned long)(sp.capBytes >> 10), (unsigned)(g_flash.totalBytes() >> 10));
     } else if (!strncmp(p, "msgfill ", 8)) {
-        // Bench (full-flash test): "msgfill <count> [peers] [bytes]" stores <count> fake incoming
-        // messages spread over [peers] fake conversations through the normal save path. Stops at
-        // the first failed save and prints flash use.
+        // Bench (full-flash test): "msgfill <count> [peers] [bytes] [unread]" stores <count> fake
+        // incoming messages spread over [peers] fake conversations through the normal save path
+        // (unread 1: as new messages, for the idle screen's count). Stops at the first failed save
+        // and prints flash use.
         using namespace handheld::storage;
-        int count = 0, peers = 4, bytes = 200;
-        sscanf(p + 8, "%d %d %d", &count, &peers, &bytes);
+        int count = 0, peers = 4, bytes = 200, unread = 0;
+        sscanf(p + 8, "%d %d %d %d", &count, &peers, &bytes, &unread);
         peers = peers < 1 ? 1 : (peers > 200 ? 200 : peers);
         bytes = bytes < 1 ? 1 : (bytes > 3000 ? 3000 : bytes);
         std::string body(bytes, 'x');
@@ -14983,7 +15001,7 @@ void handleSerialLine(char* p) {
             memcpy(rq.source, rq.key.peer, 16); for (int b = 0; b < 16; b++) { unsigned v = 0; sscanf(g_destHex + 2 * b, "%2x", &v); rq.destination[b] = (uint8_t)v; }
             for (int b = 0; b < 32; b++) rq.messageId[b] = (uint8_t)esp_random();
             rq.hasMessageId = true; rq.timestamp = (double)time(nullptr) + i * 0.001;
-            rq.status = (uint8_t)LXMFStatus::DELIVERED; rq.read = true;
+            rq.status = (uint8_t)LXMFStatus::DELIVERED; rq.read = !unread;
             rq.contentLength = (uint16_t)bytes;
             auto sub = g_msgStore.requestSave(rq, nullptr, body.data());
             MessageStore::Result r;

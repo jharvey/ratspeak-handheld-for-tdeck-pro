@@ -1,0 +1,147 @@
+# The top banner of the idle screens: battery picture and %, time, date, the radio's name and
+# the new-message count, the same on Splash, Map, Library page and If found. Shots on USB, on
+# battery, low battery, with new messages, and locked (password). Run fresh:
+#   run-script.bat scripts\idle_banner.txt idleb fresh
+# The shown uptime: put "uptime = 1d2h" in the device's sim.ini (the how-to videos do).
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+serial name SCOUT 7
+serial found 1 Jane Doe
+serial found 2 207-555-0100
+expect 3000 [FOUND] Phone
+# On USB, battery 87 %.
+usb on
+battery 87
+wait 3000
+serial idlescr 0
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+devshot idleb-01-usb-splash.png
+key T
+expect 3000 [IDLE] wake
+serial idlescr 1
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+devshot idleb-02-usb-map.png
+key T
+expect 3000 [IDLE] wake
+serial idlescr 2
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+devshot idleb-03-usb-library.png
+key T
+expect 3000 [IDLE] wake
+serial idlescr 3
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+devshot idleb-04-usb-found.png
+key T
+expect 3000 [IDLE] wake
+# On battery, 62 %.
+usb off
+battery 62
+wait 4000
+serial idlescr 0
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+devshot idleb-05-bat-splash.png
+key T
+expect 3000 [IDLE] wake
+serial idlescr 1
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+devshot idleb-06-bat-map.png
+key T
+expect 3000 [IDLE] wake
+serial idlescr 3
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+devshot idleb-07-bat-found.png
+# The battery drops while idle: the banner follows (4 %).
+battery 4
+wait 6000
+devshot idleb-08-low-found.png
+key T
+expect 3000 [IDLE] wake
+serial idlescr 0
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+devshot idleb-09-low-splash.png
+key T
+expect 3000 [IDLE] wake
+# Three new messages.
+battery 62
+serial msgfill 3 1 40 1
+wait 4000
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+devshot idleb-10-new-splash.png
+key T
+expect 3000 [IDLE] wake
+serial idlescr 2
+serial idle now
+expect 3000 [IDLE] enter
+wait 1500
+devshot idleb-11-new-library.png
+key T
+expect 3000 [IDLE] wake
+# A password: Settings > Screen > Idle splash, row 3, new password twice.
+key M
+wait 800
+key S
+wait 800
+key 4
+wait 800
+key 2
+wait 800
+key 3
+wait 600
+type FIRST1
+key ENTER
+wait 600
+type FIRST1
+key ENTER
+expect 5000 [LOCK] password set
+serial idlescr 0
+serial lock now
+expect 3000 [LOCK] locked
+wait 1500
+devshot idleb-12-locked-splash.png
+key A
+expect 3000 [IDLE] wake (locked)
+wait 800
+type FIRST1
+key ENTER
+wait 1500
+serial lock
+expect 3000 locked=0
+serial idlescr 3
+serial lock now
+expect 3000 [LOCK] locked
+wait 1500
+devshot idleb-13-locked-found.png
+key A
+expect 3000 [IDLE] wake (locked)
+wait 800
+type FIRST1
+key ENTER
+wait 1500
+serial lock
+expect 3000 locked=0
+# Map and Library page are not shown locked: the Splash is, with the same banner.
+serial idlescr 1
+serial lock now
+expect 3000 [LOCK] locked
+wait 1500
+devshot idleb-14-locked-map-setting.png
+quit
