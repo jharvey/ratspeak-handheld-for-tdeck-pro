@@ -168,9 +168,19 @@ clean-ups (COM6: "removed 0 oldest messages in 154714 ms"), so every outgoing me
 in "saving (slow store)" with the engine rows "store held". COM6's own soak reports had
 already stopped reaching COM8 at 07:12, six hours before the flash.
 
+Second try, after the owner's go-ahead to empty both message stores (`rmconv`): COM9 went
+down to 56 % used. COM6 could not be emptied. It holds only 4 chats, yet its flash reads
+92 to 93 % full, every new message is refused ("flash full (92%): new message refused"),
+each clean-up pass runs about 2.5 minutes and removes 0 messages, and every delete request
+timed out behind it. So something other than messages fills COM6's flash (not looked into:
+the soak log is one candidate), and a unit in that state can neither send nor receive. The
+soak test is still switched on on both units and keeps writing; I did not turn it off. The
+group test was not rerun.
+
 So groups are still unproven on real radios. A clean test needs units with room in the
 message store (or the store emptied, which I did not do: it is the soak test's data).
-Left on the units: group TEST on COM6, and the unsent test messages in its queue.
+Left on the units: group TEST on COM6 and the unsent test messages in its queue; COM9's
+chats were deleted (it has refilled a little from the soak test since).
 
 ## Not done
 
