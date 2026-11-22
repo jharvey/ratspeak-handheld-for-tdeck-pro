@@ -11,7 +11,7 @@ real units (none were flashed).
   through the outbox that already spaces sends and retries.
 - **Group chat**: one chat per group. It shows who said what ("ALEX: text") and, under each
   of your own messages, how many members have it ("2/3 delivered", "1 to send",
-  "1 failed"). **MIC** lists who got your last message, member by member.
+  "1 no reply"). **MIC** lists who got your last message, member by member.
 - **Groups are the first rows of the Inbox**, marked "group".
 - **Share a group** with one of its members. They press Enter in your chat to join. Members
   they did not know are saved as contacts.
@@ -117,7 +117,42 @@ outbox write, not one per member.
 
 ## Test results
 
-Simulator build of this source, 22 Nov 2026. RESULTS_PLACEHOLDER
+All on the simulator (`C:\Users\MyPC\simrun\simb`), final source `4d74d09`, 22 Nov 2026.
+
+| Test | Result |
+|---|---|
+| `sim/scripts/groups.txt`: create a group with the keys, add and remove members, rename, open the group chat, Inbox row, delete a second group, ninth member refused | PASS |
+| `sim/scripts/groups_after.txt`: a restart keeps the group, its name and 7 members | PASS |
+| `sim/scripts/groups_net.py`, four radios (ANN, BOB, CAT, DAN), 8 steps | 8 of 8 PASS, run twice |
+| 1 send to a group of two; members without the group get a direct message; "delivered 2/2" | PASS |
+| 2 share a group (once by console, once with the keys) and join; an unknown member is saved as a contact | PASS |
+| 3 a group message shows as "ANN: text" in the members' group chat; "[TEAM] text" in ANN's own chat and Enter opens the group | PASS |
+| 4 reply to the group: the other two see "BOB: text" | PASS |
+| 5 send to a group of three: "delivered 3/3"; a radio without the group shows "[TEAM] text" | PASS |
+| 6 a member added, group shared again: the other radio's copy is updated, its next message reaches the new member | PASS |
+| 7 a member switched off: the others show delivered, the missing one never does | PASS, see note |
+| 8 a restart keeps a joined group | PASS |
+| Existing scripts: smoke, lists, lock, lock_boot, lock_button (3 scripts), standby, standby_after, share_a | PASS |
+| `share_b.txt` (receive a contact card) | FAILED as it was: the script did not skip the setup wizard, so its keys went to the wizard. Not caused by groups. I added the skip line; PASS after that |
+| `inbox_pages.txt` | PASS on the first run, FAILED once on the second (14 of 20 test chats made in time: the PC was busy with other simulators and the script's fixed waits were too short), then PASS twice when run alone. A timing weakness of the script; the firmware did the right thing |
+| `standby_pair.py` | not run |
+| `tools/stress/monkey.py`, 2 rounds, 5959 random keys | PASS, 0 failed |
+| Firmware build on VM100 | SUCCESS, RAM 65.3 %, flash 56.4 %. Image commit `4540845` (build of `4d74d09`) |
+
+Note on step 7 (member not reachable): while the copy is still being tried the row reads
+"2/3 delivered, 1 to send"; after that "2/3 delivered, 1 no reply", and MIC shows "DAN: no
+reply". In the 7 minutes the test watched, the message engine never marked the copy
+"failed", so in practice an out-of-range member shows as "no reply", not "failed".
+
+One thing found on the way: the device compiler refused one line the simulator's compiler
+accepted (fixed before the commit). The groups code adds about 4.5 KB of permanent RAM;
+the group chat borrows about 7 KB more only while it is being built.
+
+No unit was flashed.
+
+A slip to know about: my report commit `a2c52bd` also carried three lines that another
+session had just written into `docs/HowTo.md` (the `point` command under "Making the videos
+again"). They are that session's text, unchanged; nothing was lost.
 
 ## Not done
 

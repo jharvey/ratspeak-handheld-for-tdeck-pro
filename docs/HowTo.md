@@ -105,7 +105,7 @@ group goes to every member, one after the other (about 4 seconds each on LoRa).
 1. **C**, **G**, pick the group, **Enter**, then **1** (Message). Or press **I**: groups
    are the first rows of the Inbox.
 2. Type and press **Enter**. Under your message the chat shows how many members have it:
-   "2/3 delivered", "1 to send" (still going out), "1 failed".
+   "2/3 delivered", "1 to send" (still going out), "1 no reply" (out of range or off).
 3. **MIC** shows who got your last message, member by member. Any key goes back.
 
 Messages from the others show as "ALEX: text" in the group chat.
