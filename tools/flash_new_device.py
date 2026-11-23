@@ -10,7 +10,7 @@ A new unit needs four things, all in the repo:
   python tools/flash_new_device.py COM7             # one unit
   python tools/flash_new_device.py COM7 COM10       # several, one after the other
   python tools/flash_new_device.py --all            # every serial port that is not listed in --skip
-  python tools/flash_new_device.py --erase COM7     # wipe the whole flash first (a used unit: settings,
+  python tools/flash_new_device.py --erase COM7     # blank settings and data first (a used unit: settings,
                                                     # identity and messages are LOST)
   python tools/flash_new_device.py --dry-run COM7   # print what would be written, touch nothing
 
@@ -47,6 +47,26 @@ def esptool(port, args, tries=4):
         time.sleep(3)
     print(out.strip().splitlines()[-1] if out.strip() else "no answer")
     return None
+
+
+ERASE = [(0x9000, 0x7000)] + [(0x810000 + i * 0x100000, 0x100000) for i in range(7)] + [(0xF10000, 0xF0000)]
+
+
+def erase_data(port):
+    """Blank NVS, OTA data, LittleFS and the core dump (everything after the boot files but the apps)."""
+    import tempfile
+    tmp = tempfile.mkdtemp()
+    for off, size in ERASE:
+        blank = os.path.join(tmp, "ff_%x.bin" % size)
+        if not os.path.exists(blank):
+            with open(blank, "wb") as f:
+                f.write(b"\xff" * size)
+        out = esptool(port, ["write_flash", "--flash_size", "16MB", "0x%x" % off, blank])
+        if not out or "Hash of data verified" not in out:
+            print("%s FAILED blanking 0x%x" % (port, off))
+            return False
+        print("%s 0x%x blank" % (port, off))
+    return True
 
 
 def flash_boot(port):
@@ -133,8 +153,11 @@ def main():
                   "let go of the top one, then run this again." % port)
             bad.append(port); continue
         if a.erase:
-            print("%s erasing everything (about a minute)" % port)
-            if not esptool(port, ["erase_flash"], tries=1):
+            # The ESP32-S3 ROM loader (the stub fails on these boards) has no erase_flash, so the
+            # settings (NVS + OTA data) and the data partition (LittleFS + core dump) are overwritten
+            # with blank (0xFF) pieces; compressed, so each piece is quick to send.
+            print("%s erasing settings and data (a few minutes)" % port)
+            if not erase_data(port):
                 print("%s erase FAILED" % port)
                 bad.append(port); continue
         # the app first (highest piece first), the boot files last: the unit only becomes

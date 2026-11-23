@@ -1,5 +1,8 @@
 # WiFi: scan, join HomeNet with a typed password, check it saved + encrypted.
-wait 6000
+expect 60000 [BOOT] ready
+wait 1500
+serial wiz skip
+wait 1000
 # A boot ends on the idle screen: this key only wakes it (it does nothing on Home).
 key BACK
 wait 800

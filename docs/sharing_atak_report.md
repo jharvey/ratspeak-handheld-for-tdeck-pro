@@ -1,8 +1,8 @@
 # Status sharing and ATAK-style markers: report
 
-State on 2026-11-23: Part 1 (status sharing) passes every simulator test, including the
-three late edits; firmware built on VM100, no unit flashed yet. Part 2 (markers) is
-drafted but not in the tree.
+State on 2026-11-23: Part 1 (status sharing) passes every simulator test and is on all five
+units (image `92c596b`). Part 2 (markers) and part 3 (ATAK feed over WiFi) are built and
+pass their simulator tests; not tried on real radios or with a real ATAK phone.
 
 ## Part 1: share position and battery with a contact or a group
 
@@ -77,32 +77,103 @@ passes step 8.
 **Three small edits made after the first simulator build, now compiled and tested:** the fix above; a battery-only chat row showing `[bat] 61%` and not the raw text;
 one comment.
 
-## Part 2: markers (items of interest): NOT in the tree
+## Part 2: markers (items of interest)
 
-Drafted, never compiled. The draft is outside the repo, in the sessions' shared notes
-folder, subfolder `sharing-atak-part2-draft`:
+Built 2026-11-23 from the part 2 draft. Only two draft files survived (the marker code and
+its patch script, now kept in `backups/atak_p2_draft`); the map triangle and the three
+tests were lost with the old notes folder and were written again.
 
-- `marks_block.cpp`: the marker code (data, send, receive, pages, console).
-- `p2.py`: a patch script that puts the block and its hooks into `StandaloneApp.cpp`.
-- `mapview_p2.patch`: the triangle marker for `MapView.cpp` and `MapView.h` (`git apply`).
-- `marks.txt`, `marks_after.txt`, `marks_net.py`: the tests, to go into `sim\scripts`.
+### What was built
 
-Design: Atlas **J** lists markers nearest first, **Alt+J** makes one at the map cross or by
-distance and direction from my position, with a type and a note. It is sent to a contact or
-a group as `Marker: hazard at 43.64012, -70.92011 (bridge out)`. The receiver stores it,
-draws a triangle on the Atlas and shows `[marker] hazard 640 m NE of you: bridge out` in the
-chat. **J** in the list shows contacts by distance with direction.
+- A marker is a place with a type (hazard, person, vehicle, camp, water, meet-up, other) and
+  a note of up to 23 characters. 24 are kept (NVS `rs_mark`); when full, a new one replaces
+  the oldest received one, or the oldest when all are your own.
+- Atlas **J**: the marker list, nearest first, with distance, direction, note, maker and age.
+  The last row makes a new one. **Alt+J**: a new marker at the map cross.
+- The form: **1** type, **2** where (map cross, or from my position), **3** distance,
+  **4** direction (N, NE, E ...), **5** note, **6** save.
+- One marker: **1** show it on the map, **2** send it to a contact or a group (groups
+  first), **3** twice within 3 s removes it.
+- On the map a marker is a black triangle in a white halo. Selected: hollow with a ring, a
+  dashed line from you, and the bottom line `water 299 m E spring`.
+- **J** in the list: the contacts who shared a position, nearest first. **Enter** shows one
+  on the map.
+- Sent as text any LXMF client reads: `Marker: hazard at 43.64012, -70.92011 (bridge out)`.
+  The receiver keeps it and draws it. The chat shows
+  `[marker] hazard 640 m NE of you: bridge out`, measured from the receiver's own position.
+  **Enter** on the empty draft opens the map on it.
+- The same marker sent again (same maker, same type, within 15 m) updates the note and
+  adds no copy.
+- The Atlas keys card now reads `P Alt+P wpt, add` and `J Alt+J marker, add`.
+- Console: `mark`, `mark new <type> <lat> <lon> [note]`, `mark rel <type> <metres>
+  <degrees> [note]`, `mark send <n> <hex32|g<n>>`, `mark del <n|all>`, `mark list`,
+  `mark near`.
 
-Not started: the docs for part 2, the WAITING ON ATAK video entries, the gateway to phones
-running ATAK.
+### Tests (simulator build of this commit, 2026-11-23)
+
+| Test | Result |
+|---|---|
+| `sim\scripts\marks.txt` (Atlas J, one marker, show on map, Alt+J form, save, nearby, 8 screenshots) | PASS |
+| `sim\scripts\marks_after.txt` (a restart keeps the markers) | PASS |
+| `sim\scripts\marks_net.py` (three radios: make, send to a contact, chat row, update, send to a group, the pages, restart, full) | PASS (8 of 8) |
+
+## Part 3: ATAK feed (Cursor-on-Target over WiFi)
+
+Built 2026-11-23. Phones running ATAK (also WinTAK, iTAK) see the units without a TAK
+server.
+
+- **S, 3 (WiFi), last row "ATAK feed (CoT)"**: off by default. When it is on and WiFi is up,
+  every 30 s the unit sends CoT XML events over UDP to ATAK's default "SA" multicast group,
+  239.2.3.1:6969. ATAK on the same WiFi listens there out of the box.
+- What goes out:
+  - the unit itself, as a friendly ground unit (`a-f-G-U-C`) with its name and battery;
+  - each contact's last shared position, until it is an hour old (same type, their
+    battery when known);
+  - each marker, as a spot on ATAK's map (`b-m-p-s-m`), named `hazard: bridge out` and
+    coloured by type (hazard red, person cyan, vehicle blue, camp green, water light blue,
+    meet-up yellow, other white).
+- Each item keeps a stable uid (`RatSpeak-<first 16 of its address>`, `RatSpeak-mk-<hash>`),
+  so ATAK moves the same icon and does not add a new one.
+- Console: `cot`, `cot on|off`, `cot to <a.b.c.d> [port]` (a phone's own address),
+  `cot to default`, `cot every <s>`, `cot now`, `cot listen <port|0>` (bench: print the events
+  that arrive). `wifi join <ssid> [password]` was added for tests.
+- Code: `src/boards/tdeck_Pro/CotFeed.cpp/.h` (XML and the UDP socket, kept apart because
+  the simulator's socket shim defines `bind` and `close` as macros), the rest in
+  `StandaloneApp.cpp` ("ATAK feed").
+
+### Tests
+
+| Test | Result |
+|---|---|
+| `sim\scripts\cot_net.py` (two radios on the simulated WiFi: off by default; `cot now` sends self, contact and marker as well-formed XML with the right type, callsign, point, battery, colour and escaping; on = every interval, off = stops; restart keeps the settings) | PASS (4 of 4) |
+
+The simulated WiFi only delivers to one unit's address, so the test sends to the listener's
+address. Multicast to 239.2.3.1 was not tried (it needs real WiFi). **Not tried with a real
+ATAK phone.**
+
+### Not done
+
+- Receiving from ATAK (phones' own positions and their markers onto the Atlas).
+- A TAK server connection (TCP / TLS, port 8087 / 8089).
+- The feed over LoRa (only WiFi; a unit without WiFi is seen through a unit that has it,
+  because contacts' positions are passed on).
 
 ## Next steps
 
-1. Flash the units with the new image (none flashed yet).
-2. Apply the part 2 draft, build, test, write its docs, build the firmware again.
+1. Flash the units with the markers + ATAK feed image; send a marker between two real radios.
+2. Try the ATAK feed with a phone running ATAK on the same WiFi (multicast 239.2.3.1:6969).
+3. Receive from ATAK: phones' positions and their markers onto the Atlas.
+4. Videos for the share menu, markers and the ATAK feed (videos are on hold).
 
 ## Decisions for the owner
 
 - Keep "send at every second interval when nothing changed", or send less often?
 - Is 50 m and 5 battery points the right threshold?
 - Should a one-time share default to position + battery (as built) or position only?
+- Markers: are the seven types right? 24 markers and a 23-character note enough?
+- ATAK feed: every 30 s to the multicast group (as built), or another interval?
+
+Recommendation for the open sharing choices (kept as built while the owner was away): keep
+the keep-alive at every second interval, 50 m and 5 points, and position + battery as the
+default; they passed the tests and cost one message per hour at most when nothing changes
+on a 30-minute interval.

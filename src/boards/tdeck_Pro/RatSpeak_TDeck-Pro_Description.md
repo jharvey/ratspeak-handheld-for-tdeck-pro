@@ -160,6 +160,34 @@ nothing else is unread. The sender's newest position and battery are kept per co
 age). Not done: reading Sideband's telemetry field on receive (the engine stores only the
 audio and group fields); a stored record per update (the store has no single-record delete).
 
+### 1.2e Markers (items of interest, ATAK-style)
+
+A marker is a place with a type (hazard, person, vehicle, camp, water, meet-up, other) and a
+note of up to 23 characters. On the Atlas **J** lists them nearest first with distance and
+direction (`1 : hazard 640 m NE`, the note, who made it, its age); the last row makes a new
+one. **Alt+J** makes one at the map cross. The form: **1** type, **2** where (the map cross
+or from my position), **3** distance and **4** direction (N, NE, E ...) from my position,
+**5** note, **6** save. One marker: **1** show it on the map (a black triangle; selected:
+hollow with a ring and a dashed line from me), **2** send it to a contact or a group
+(groups first), **3** twice within 3 s removes it. **J** in the list shows the contacts with
+a shared position nearest first; **Enter** shows one on the map.
+
+Sent as text any LXMF client reads: `Marker: hazard at 43.64012, -70.92011 (bridge out)`.
+The receiving unit keeps it (from the sender), draws it and shows the chat row
+`[marker] hazard 640 m NE of you: bridge out`, measured from its own position; **Enter** on
+the empty draft opens the map on it. The same marker again (same maker and type, within
+15 m) updates the note instead of adding a copy. Kept in NVS rs_mark, 24 at most: a new one
+replaces the oldest received one, or the oldest when all are own. Console: `mark`,
+`mark new <type> <lat> <lon> [note]`, `mark rel <type> <metres> <degrees> [note]`,
+`mark send <n> <hex32|g<n>>`, `mark del <n|all>`, `mark list`, `mark near`.
+
+**ATAK feed** (S.3 WiFi, last row; off by default): while WiFi is up, every 30 s the unit
+sends Cursor-on-Target XML over UDP to ATAK's SA multicast 239.2.3.1:6969: itself
+(`a-f-G-U-C`, name, battery), each contact's shared position up to an hour old, and each
+marker as a coloured spot (`b-m-p-s-m`). ATAK / WinTAK / iTAK on the same WiFi show them
+with no TAK server. Console `cot` (on, off, to <ip> [port], every <s>, now, listen <port>);
+code in CotFeed.cpp. Not tried with a real ATAK phone yet; nothing is received from ATAK.
+
 ### 1.3 First-boot setup: the setup wizard
 
 A new device (no settings saved and no identity from an earlier boot) opens the **setup
@@ -871,7 +899,7 @@ Tiles can go onto the card over USB with the card left in the unit:
 **T F V H** move up / left / down / right half a screen (a diamond around G), **D** or
 **Enter** back to your position (following again), **Z** zoom in, **W** zoom out (wider),
 **N** next contact, **P** next waypoint, **Alt+P** add a waypoint, **Alt+SYM** (twice) delete
-the selected waypoint, **L** locate a place, **G** arrow + distance (§8.1b), **B** track back,
+the selected waypoint, **J** the marker list, **Alt+J** a new marker at the map cross (§1.2e), **L** locate a place, **G** arrow + distance (§8.1b), **B** track back,
 a number + **Enter** opens that contact's chat,
 **M** the MENU, **Shift (^)** closes. **C I H** leave the map for Contacts / Inbox / Home;
 Peers is **M → P** from the Atlas (P is next waypoint there). **A** does nothing on the Atlas

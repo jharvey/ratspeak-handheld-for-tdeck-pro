@@ -75,6 +75,9 @@ START HERE (handoff 2026-11-11)
   (find) in lists / Atlas / reader. Home N = Announce. Atlas: T F V H (up/left/down/right; no global H - Home is M then H), D centre, Z/W, N next contact, P next waypoint,
   Alt+P add, Alt+SYM (Keyboard.cpp emits alt+opt with no char; isAltSym) delete twice, A nothing, K card (7 rows/col).
   Rat Trap: T F V H, D/Enter open, Alt+P mark, Q new, K card.
+  Markers (2026-11-23, ATAK-style items of interest): Atlas J list (g_mk MK_LIST/ONE/NEW/SEND/NEAR, renderMarks), Alt+J new at the
+  cross; NVS rs_mark (24, struct Mark); text "Marker: <type> at lat, lon (note)"; MapView kind 2 = triangle; console mark ...;
+  tests sim/scripts/marks.txt, marks_after.txt, marks_net.py. Report docs/sharing_atak_report.md.
   Chess (Library, row after Rat Trap; Chess.cpp rules + engine, perft-checked): T F V H /
   trackball cursor, D/Enter pick + drop, 1-4 promotion, U take back, L level 1-4, C swap
   sides, Q Q new, K card. Engine in a task on core 0 (sleep waits for it), ~10k nodes/s on

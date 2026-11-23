@@ -1,0 +1,6 @@
+# After marks.txt (same device name): a restart keeps the three markers.
+expect 60000 [BOOT] ready
+wait 1500
+serial mark
+expect 3000 [MARK] 3 markers
+quit

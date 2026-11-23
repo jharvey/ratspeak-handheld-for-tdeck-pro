@@ -16,4 +16,15 @@ Arrival alerts: M, S, 9 (Alerts), 5. "Tell me when Alice is within 500 m of me (
 
 Range test: M, S, 8 (LoRa), 6, pick the other radio (it does the same). Both ping each other and log signal strength and GPS position to the SD card (ratdeckpro/rangetest). The screen shows pings, replies and lost ones; 1-4 sets 10/15/30/60 s, ^ stops. On a PC, tools/rangetest/rangetest_map.py turns the file into a map for Google Earth.
 
+MARKERS (items of interest)
+
+On the map, J lists the markers, nearest first, with distance and direction. Alt+J makes one at the map cross.
+The form: 1 type (hazard, person, vehicle, camp, water, meet-up, other), 2 at the map cross or from my position, 3 distance, 4 direction (N, NE, E...), 5 a short note, 6 save.
+A marker: 1 shows it on the map (a triangle, with a line from you), 2 sends it to a contact or a group, 3 twice removes it.
+A marker you receive is kept and drawn on the map. The chat shows "[marker] hazard 640 m NE of you: bridge out", measured from where you are. Enter on the empty message line opens it on the map.
+In the marker list, J shows the contacts who shared a position, nearest first. Enter shows one on the map.
+Other apps see the marker as text: "Marker: hazard at 43.64012, -70.92011 (bridge out)".
+
+ATAK: phones running ATAK on the same WiFi can see this unit, your contacts' shared positions and the markers. M, S, 3 (WiFi), last row: ATAK feed on. It sends every 30 s to ATAK's usual address (239.2.3.1:6969), no server needed.
+
 GPS needs open sky. Indoors it often gets no fix.

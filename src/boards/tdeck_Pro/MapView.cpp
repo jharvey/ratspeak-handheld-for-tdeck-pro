@@ -664,6 +664,36 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
         }
     }
 
+    // Markers (items of interest): black triangle, point up, in a white halo; selected:
+    // hollow centre and an outer black triangle ring. `s` = how far a pixel is inside the
+    // triangle's edge (0 = on it, negative = outside).
+    for (int i = 0; i < g_markerCount; i++) {
+        if (g_markers[i].kind != 2) continue;
+        int cx, cy;
+        toView(g_markers[i].lat, g_markers[i].lon, cx, cy);
+        g_markerX[i] = cx; g_markerY[i] = cy;
+        g_markerOn[i] = cx >= 0 && cy >= 0 && cx < w && cy < h;
+        const bool sel = g_markers[i].selected;
+        const int grow = sel ? 5 : 2;
+        for (int yy = -12 - grow; yy <= 5 + grow; yy++) {
+            for (int xx = -10 - grow; xx <= 10 + grow; xx++) {
+                const int vx = cx + xx, vy = cy + yy;
+                if (vx < 0 || vy < 0 || vx >= w || vy >= h) continue;
+                // edges: bottom y = 5, sides from the apex (0,-9) to (+-8, 5); slope 8/14
+                const int sBottom = 5 - yy;
+                const int sSide = ((yy + 9) * 8 - abs(xx) * 14) / 16;   // about pixels inside
+                const int s = sBottom < sSide ? sBottom : sSide;
+                if (s < -grow) continue;
+                bool black;
+                if (s >= 0) black = !(sel && s >= 3);              // triangle (hollow centre if selected)
+                else if (sel && s == -1) black = false;
+                else if (sel && s >= -3) black = true;             // selected: outer ring
+                else black = false;                                // white halo
+                px(x0 + vx, y0 + vy, black != dark);
+            }
+        }
+    }
+
     // Own position: black ring with a white halo and a centre dot, visible on any tile.
     if (g_posValid) {
         double ppx, ppy;

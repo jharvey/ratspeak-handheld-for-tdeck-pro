@@ -48,6 +48,7 @@
 #include "Eink/LvglPort.h"
 #include "Eink/RatSpeakLogo.h"
 #include "MapView.h"
+#include "CotFeed.h"
 #include "Chess.h"
 #include "audio/AudioNotify.h"
 #include "voice/HaVoice.h"
@@ -2110,6 +2111,8 @@ int  g_tbIdx = 0;                    // the track point being walked to
 bool tbStart();
 void tbStop(const char* why);
 int  trackExportGpx();
+enum MarkView : uint8_t { MK_NONE, MK_LIST, MK_ONE, MK_NEW, MK_SEND, MK_NEAR };
+MarkView g_mk = MK_NONE;            // marker pages (J on the Atlas)
 bool g_navOpen = false;              // bearing + distance screen (G on the Atlas)
 int  batHoursLeft10(int* dataMin);
 void batLeftText(char* out, size_t n);
@@ -2147,6 +2150,17 @@ InLoc g_threadLoc = {};
 bool locParse(const char* s, size_t len, double& lat, double& lon, bool* autoUpdate = nullptr);
 bool batParse(const char* s, size_t len, int& pct, bool* autoUpdate = nullptr);
 void batNote(const uint8_t dest[16], int pct, uint32_t at);
+bool markRowText(const char* s, size_t len, char* out, size_t n, double* lat = nullptr, double* lon = nullptr);
+void markIncoming(const uint8_t from[16], const char* text, uint32_t at);
+bool markInfo(char* out, size_t n);
+extern int g_markSel;
+// ATAK feed (see "ATAK feed" below)
+struct CotCfg { uint8_t on; uint8_t pad; uint16_t port; uint32_t ip; uint16_t every; uint16_t pad2; };
+CotCfg g_cot = {0, 0, cot::kSaPort, cot::kSaGroup, 30, 0};
+uint32_t g_cotLast = 0, g_cotSent = 0;
+bool g_cotListen = false;
+void cotSave();
+void cotIp(uint32_t ip, char* out, size_t n);
 void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at);
 uint32_t msgEpoch(double ts);
 // Enter on an empty draft: the newest of an unsaved card / a location wins.
@@ -2310,6 +2324,10 @@ void loadHistory(const uint8_t peer[16], bool markRead = true) {
             if (autoBat) h.autoLoc = true;
             if (h.incoming) batNote(peer, batPct, msgEpoch(hdr.timestamp));
         }
+        double mkLa = 0, mkLo = 0;               // a shared marker: "[marker] hazard 640 m NE of you: note"
+        const bool isMark = !isCard && !isLoc && markRowText((const char*)buf + off, clen, h.text, sizeof(h.text), &mkLa, &mkLo);
+        if (isMark && h.incoming && (!g_threadLoc.valid || entries[i].counter >= g_threadLoc.counter))
+            g_threadLoc = {true, mkLa, mkLo, entries[i].counter};
         if (clen >= sizeof(h.text)) clen = sizeof(h.text) - 1;
         const size_t wtLen = strlen(walkie::kInvitePrefix);   // walkie-talkie invite: not its key
         const bool isWt = !isCard && !isLoc && clen >= wtLen && !memcmp(buf + off, walkie::kInvitePrefix, wtLen);
@@ -2337,7 +2355,7 @@ void loadHistory(const uint8_t peer[16], bool markRead = true) {
                 strlcpy(g_threadGrp.name, gcName, sizeof(g_threadGrp.name));
             }
         }
-        if (clen && !isCard && !isLoc && !isBat && !isWt && !h.voice && !isGrpCard) {
+        if (clen && !isCard && !isLoc && !isBat && !isMark && !isWt && !h.voice && !isGrpCard) {
             size_t pre = 0;
             if (tagged) {                            // a group message: "[Family] text"
                 pre = (size_t)snprintf(h.text, sizeof(h.text), "[%s] ", gtag.name);
@@ -2994,6 +3012,8 @@ void loadGroupHistory(const uint8_t peer[16], bool markRead) {
                 locParse(c.text, len, la, lo, &autoL);
                 batParse(c.text, len, bp, &autoB);
                 if (autoL || autoB) continue;
+                char row[96];
+                if (markRowText(c.text, len, row, sizeof(row))) { strlcpy(c.text, row, sizeof(c.text)); len = strlen(c.text); }
             }
             for (size_t k = 0; k < len; k++)
                 if ((unsigned char)c.text[k] < 32 || (unsigned char)c.text[k] > 126) c.text[k] = '?';
@@ -3179,6 +3199,7 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              Search,                            // list filter (Inbox / Contacts / Peers)
                              TcpHost, TcpPort,
                              MapNum,                            // contact page: map number
+                             MarkDist, MarkNote,                // new marker: distance, note
                              WptName,                           // map P: waypoint name
                              LibFind,                           // library: find text
                              PlaceFind,                         // map R: place name
@@ -3199,7 +3220,7 @@ bool browseMode()  { return !entryActive(); }
 bool entryNumeric() {
     return g_entry == Entry::RtcField || g_entry == Entry::IdleSecs || g_entry == Entry::TcpPort ||
            g_entry == Entry::CheckinTime ||
-           g_entry == Entry::MapNum ||
+           g_entry == Entry::MapNum || g_entry == Entry::MarkDist ||
            g_entry == Entry::Latitude || g_entry == Entry::Longitude;
 }
 
@@ -3730,7 +3751,7 @@ void label(int x, int y, int w, int h, const char* s, bool bold = false, char ho
 // ---- Touch hit registry (filled while drawing) ------------------------------------
 enum HitAct : uint8_t {
     H_REFRESH, H_MENU, H_MENU_GO, H_TAB, H_ROW, H_BACK, H_ANNOUNCE,
-    H_TILE_AUDIO, H_UP, H_DOWN, H_CARD, H_TMENU, H_NAVKEYS, H_GRP
+    H_TILE_AUDIO, H_UP, H_DOWN, H_CARD, H_TMENU, H_NAVKEYS, H_GRP, H_MARK
 };
 struct Hit { int16_t x, y, w, h; uint8_t act; int8_t arg; };
 constexpr int MAX_HITS = 32;
@@ -4442,6 +4463,9 @@ void buildSettingsRows(Page p) {
         if (!g_cfg.meshWifi) srow(RK_TOGGLE, "Mesh over WiFi", "OFF");
         else if (meshPeers() < 0) srow(RK_TOGGLE, "Mesh over WiFi", "ON (starts with WiFi)");
         else srow(RK_TOGGLE, "Mesh over WiFi", "ON, %d unit%s seen", meshPeers(), meshPeers() == 1 ? "" : "s");
+        if (!g_cot.on) srow(RK_TOGGLE, "ATAK feed (CoT)", "OFF");
+        else if (g_cot.ip == cot::kSaGroup) srow(RK_TOGGLE, "ATAK feed (CoT)", "ON, every %us, %lu sent", (unsigned)g_cot.every, (unsigned long)g_cotSent);
+        else { char ip[16]; cotIp(g_cot.ip, ip, sizeof(ip)); srow(RK_TOGGLE, "ATAK feed (CoT)", "ON, to %s", ip); }
         break;
 
     case PG_HAVOICE: {                               // S.3.7: on / off, the encryption key
@@ -5075,6 +5099,13 @@ void activateSetting(int idx) {
             g_cfg.meshWifi = !g_cfg.meshWifi;
             saveConfig();
             toast(g_cfg.meshWifi ? "Mesh over WiFi on" : "Mesh over WiFi off");
+            requestRedraw();
+        } else if (idx == 8) {
+            g_cot.on = !g_cot.on;
+            g_cotLast = 0;
+            cotSave();
+            Serial.printf("[COT] feed %s\n", g_cot.on ? "on" : "off");
+            toast(g_cot.on ? (wifiConnected() ? "ATAK feed on" : "ATAK feed on with WiFi") : "ATAK feed off");
             requestRedraw();
         }
         break;
@@ -6750,6 +6781,7 @@ void drawTopBar() {
 // Atlas letters (also used by mapKey and wptMapKey).
 // Alt+P adds a waypoint (and marks a trap in the game); Alt+SYM deletes the selected waypoint.
 constexpr char kKeyNav = 'K', kKeyFind = 'L', kKeyWpt = 'P', kKeyContact = 'N';
+constexpr char kKeyMark = 'J';                 // markers: J list, Alt+J new at the cross
 constexpr char kKeyGo = 'G', kKeyBack = 'B';   // bearing + distance screen, track back
 bool isAltSym(const KeyEvent& ev) {
     return ev.alt && ev.opt && !ev.character && !ev.enter && !ev.del && !ev.space && !ev.fn;
@@ -6761,7 +6793,7 @@ constexpr const char* kMoves4 = "T up   F left   V down   H right";
 const NavCard kAtlasKeys = {"Atlas keys", kMoves4, {
     {"D", "centre on me"},   {"Z", "zoom in"},       {"W", "zoom out"},
     {"L", "locate a place"}, {"N", "next contact"},  {"G", "go: arrow"},
-    {"P", "next wpt"},       {"Alt+P", "add wpt"},   {"Alt+SYM", "del wpt"},
+    {"P Alt+P", "wpt, add"},  {"J Alt+J", "marker, add"}, {"Alt+SYM", "del wpt"},
     {"B", "track back"},     {"12 Ent", "chat #12"}, {"M  ^", "menu, close"},
 }};
 // Library reader and list (K there too).
@@ -7040,6 +7072,8 @@ void mapKeyHint() {
 void openMap() {
     g_cardOpen = false;
     g_gv = GV_NONE;
+    g_mk = MK_NONE;
+    g_markSel = -1;
     g_mapSel = -1;                           // callers that show a contact select it after
     mapview::setReader(mapReadTile);
     g_mapSdTried = false;
@@ -7190,6 +7224,7 @@ void renderMapHeader() {
     }
     else if (g_mapSel >= 0) snprintf(st, sizeof(st), "N next  #+Enter chat  D me");   // what to press
     else if (g_wptSel >= 0) snprintf(st, sizeof(st), "P next  Alt+SYM del  D me");
+    else if (g_markSel >= 0) snprintf(st, sizeof(st), "J list  Alt+J new  D me");
     else {
         mapview::status(st, sizeof(st));
         for (int s = 1; s <= 2 && textW(st) > W - 8; s++) mapview::status(st, sizeof(st), s);
@@ -7200,6 +7235,7 @@ void renderMapHeader() {
     if (g_entry == Entry::WptName) snprintf(pos, sizeof(pos), "Name: %s_", g_buf);
     else if (g_entry == Entry::PlaceFind) snprintf(pos, sizeof(pos), "Find place: %s_", g_buf);
     else if (g_toast[0]) snprintf(pos, sizeof(pos), "%s", g_toast);               // key hints
+    else if (markInfo(pos, sizeof(pos))) {}
     else if (wptInfo(pos, sizeof(pos))) {}
     else if (g_mapNum) snprintf(pos, sizeof(pos), "open chat #%d_  (Enter)", g_mapNum);
     else if (!mapContactInfo(pos, sizeof(pos))) gpsPosText(pos, sizeof(pos));
@@ -8162,6 +8198,7 @@ void inboundTick() {
         bool autoL = false, autoB = false;
         if (locParse(text, strlen(text), la, lo, &autoL)) cposNote(key.peer, la, lo, msgEpoch(ts));
         if (batParse(text, strlen(text), bp, &autoB)) batNote(key.peer, bp, msgEpoch(ts));
+        markIncoming(key.peer, text, msgEpoch(ts));
         if (!autoL && !autoB) notifyInbound();
         else if (g_inQn == 1 && g_msgStore.totalUnreadCount() == 1) {   // the only unread message is this one
             if (g_markReadPending) { if (!g_markReadNext[0]) strlcpy(g_markReadNext, from, sizeof(g_markReadNext)); }
@@ -8258,6 +8295,7 @@ void mapCycleContact() {
 // Markers for every known contact position; name tags (LVGL labels on a white box)
 // drawn over the stamped map, so only those small areas are redrawn.
 int wptFeed(mapview::Marker* m, int n);
+int markFeed(mapview::Marker* m, int n);
 
 void mapContactsFeed() {
     mapview::Marker m[mapview::kMaxMarkers];
@@ -8269,6 +8307,7 @@ void mapContactsFeed() {
         m[n++] = {g_cpos[i].lat, g_cpos[i].lon, i == g_mapSel, g_cpos[i].num, fresh, false, 0};
     }
     n = wptFeed(m, n);                       // waypoints (diamonds), track, guide line
+    n = markFeed(m, n);                      // items of interest (triangles)
     mapview::setMarkers(m, n);
 }
 
@@ -8863,6 +8902,718 @@ void renderVoiceMsg() {
     }
     box(0, FOOT_Y, W, FOOT_H, 1);
     label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "Codec2 700C, max 20 s, LoRa ok");
+}
+
+void openMenu();
+bool parseLong(const char* s, long& out);
+
+// ---- Markers: items of interest (ATAK-style) -------------------------------------------
+// A marker is a place with a type and a short note. Made on the Atlas (Alt+J: at the map
+// cross, or by distance and direction from the own position), kept in NVS rs_mark (24; a
+// new one replaces the oldest received one when full), drawn on the Atlas as a triangle and
+// listed nearest first (Atlas J) with distance and compass direction from this radio. Sent
+// to a contact or a group as text any LXMF client can read:
+//   "Marker: hazard at 43.64012, -70.92011 (bridge out)"
+// The receiving radio stores it (from = the sender) and shows it in the chat as
+// "[marker] hazard 640 m NE of you: bridge out"; Enter on the empty draft opens the map there.
+// J on the marker list is "Nearby": the contacts with a shared position, nearest first.
+constexpr const char* kMarkPrefix = "Marker: ";
+constexpr int kMarkMax = 24;
+constexpr int kMarkTypes = 7;
+const char* const kMarkType[kMarkTypes] = {"hazard", "person", "vehicle", "camp", "water", "meet-up", "other"};
+struct Mark { float lat, lon; uint32_t at; uint8_t type, mine, pad[2]; char note[24]; uint8_t from[16]; };
+Mark g_mark[kMarkMax];
+int g_markCount = 0;
+int g_markSel = -1;                          // selected on the map (bottom line, guide line)
+
+void markSave() {
+    Preferences p;
+    if (!p.begin("rs_mark", false)) return;
+    p.putBytes("list", g_mark, sizeof(Mark) * g_markCount);
+    p.putUChar("n", (uint8_t)g_markCount);
+    p.end();
+}
+
+void markLoad() {
+    Preferences p;
+    g_markCount = 0;
+    if (!p.begin("rs_mark", true)) return;
+    const int n = p.getUChar("n", 0);
+    if (n > 0 && n <= kMarkMax && p.getBytes("list", g_mark, sizeof(Mark) * n) == sizeof(Mark) * (size_t)n)
+        g_markCount = n;
+    p.end();
+    for (int i = 0; i < g_markCount; i++) {
+        g_mark[i].note[sizeof(g_mark[i].note) - 1] = 0;
+        if (g_mark[i].type >= kMarkTypes) g_mark[i].type = kMarkTypes - 1;
+    }
+}
+
+bool markParse(const char* s, size_t len, int& type, double& lat, double& lon, char* note, size_t noteCap) {
+    char t[120];
+    if (len >= sizeof(t)) len = sizeof(t) - 1;
+    memcpy(t, s, len);
+    t[len] = 0;
+    if (strncmp(t, kMarkPrefix, strlen(kMarkPrefix))) return false;
+    const char* p = t + strlen(kMarkPrefix);
+    const char* at = strstr(p, " at ");
+    if (!at) return false;
+    type = kMarkTypes - 1;                   // a type this firmware does not know: "other"
+    for (int i = 0; i < kMarkTypes; i++)
+        if ((size_t)(at - p) == strlen(kMarkType[i]) && !strncasecmp(p, kMarkType[i], (size_t)(at - p))) type = i;
+    if (sscanf(at + 4, "%lf, %lf", &lat, &lon) != 2) return false;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return false;
+    if (note && noteCap) {
+        note[0] = 0;
+        const char* o = strchr(at, '(');
+        const char* c = o ? strrchr(o, ')') : nullptr;
+        if (o && c && c > o + 1) {
+            size_t n = (size_t)(c - o - 1);
+            if (n >= noteCap) n = noteCap - 1;
+            memcpy(note, o + 1, n);
+            note[n] = 0;
+            for (size_t k = 0; k < n; k++) if ((unsigned char)note[k] < 32 || (unsigned char)note[k] > 126) note[k] = '?';
+        }
+    }
+    return true;
+}
+
+void markFormat(const Mark& m, char* out, size_t n) {
+    if (m.note[0]) snprintf(out, n, "%s%s at %.5f, %.5f (%s)", kMarkPrefix, kMarkType[m.type], m.lat, m.lon, m.note);
+    else snprintf(out, n, "%s%s at %.5f, %.5f", kMarkPrefix, kMarkType[m.type], m.lat, m.lon);
+}
+
+// "640 m NE of you" from this radio's position; the coordinates when it has none.
+void markWhere(double lat, double lon, char* out, size_t n, bool ofYou = true) {
+    double la, lo;
+    if (!ownPosition(la, lo)) { snprintf(out, n, "%.4f,%.4f", lat, lon); return; }
+    char d[16];
+    fmtDist(metersBetween(la, lo, lat, lon), d, sizeof(d));
+    snprintf(out, n, "%s %s%s", d, compass8(bearingDeg(la, lo, lat, lon)), ofYou ? " of you" : "");
+}
+
+// A chat row for a marker message: "[marker] hazard 640 m NE of you: bridge out".
+bool markRowText(const char* s, size_t len, char* out, size_t n, double* lat, double* lon) {
+    int type = 0;
+    double la = 0, lo = 0;
+    char note[24], where[40];
+    if (!markParse(s, len, type, la, lo, note, sizeof(note))) return false;
+    markWhere(la, lo, where, sizeof(where));
+    if (note[0]) snprintf(out, n, "[marker] %s %s: %s", kMarkType[type], where, note);
+    else snprintf(out, n, "[marker] %s %s", kMarkType[type], where);
+    if (lat) *lat = la;
+    if (lon) *lon = lo;
+    return true;
+}
+
+// from = nullptr: made on this radio. The same marker again (same maker, same type, within
+// 15 m) updates the note instead of adding a second one. Returns its index.
+int markAdd(int type, double lat, double lon, const char* note, const uint8_t* from, uint32_t at) {
+    if (type < 0 || type >= kMarkTypes) type = kMarkTypes - 1;
+    int i = -1;
+    for (int k = 0; k < g_markCount && i < 0; k++) {
+        const Mark& m = g_mark[k];
+        if (m.type != type || (m.mine != 0) != (from == nullptr)) continue;
+        if (from && memcmp(m.from, from, 16)) continue;
+        if (metersBetween(m.lat, m.lon, lat, lon) < 15.0f) i = k;
+    }
+    if (i < 0) {
+        if (g_markCount < kMarkMax) i = g_markCount++;
+        else {                               // full: the oldest received one makes room, else the oldest
+            for (int k = 0; k < kMarkMax; k++)
+                if (!g_mark[k].mine && (i < 0 || g_mark[k].at < g_mark[i].at)) i = k;
+            if (i < 0) { i = 0; for (int k = 1; k < kMarkMax; k++) if (g_mark[k].at < g_mark[i].at) i = k; }
+        }
+    }
+    Mark& m = g_mark[i];
+    memset(&m, 0, sizeof(m));
+    m.lat = (float)lat; m.lon = (float)lon; m.type = (uint8_t)type; m.at = at;
+    m.mine = from ? 0 : 1;
+    if (from) memcpy(m.from, from, 16);
+    strlcpy(m.note, note ? note : "", sizeof(m.note));
+    markSave();
+    char who[24] = "this radio", where[40];
+    if (from) peerName(from, who, sizeof(who));
+    markWhere(lat, lon, where, sizeof(where));
+    Serial.printf("[MARK] #%d %s at %.5f,%.5f \"%s\" from %s: %s\n", i + 1, kMarkType[type], lat, lon, m.note, who, where);
+    requestRedraw();
+    return i;
+}
+
+void markRemove(int i) {
+    if (i < 0 || i >= g_markCount) return;
+    Serial.printf("[MARK] removed #%d %s\n", i + 1, kMarkType[g_mark[i].type]);
+    for (int k = i; k < g_markCount - 1; k++) g_mark[k] = g_mark[k + 1];
+    g_markCount--;
+    g_markSel = -1;
+    markSave();
+    requestRedraw();
+}
+
+// A point `metres` away from the own position in compass direction `deg` (0 = north).
+bool markPointFromMe(double metres, double deg, double& lat, double& lon) {
+    double la, lo;
+    if (!ownPosition(la, lo)) return false;
+    const double r = 3.14159265358979 / 180.0;
+    lat = la + metres * cos(deg * r) / 111320.0;
+    const double c = cos(la * r);
+    lon = lo + metres * sin(deg * r) / (111320.0 * (c < 0.01 ? 0.01 : c));
+    return lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+}
+
+// To a contact, or to every member of a group (dest = the group's row address).
+bool markSend(int i, const uint8_t dest[16]) {
+    if (i < 0 || i >= g_markCount) return false;
+    char body[120], nm[24];
+    markFormat(g_mark[i], body, sizeof(body));
+    peerName(dest, nm, sizeof(nm));
+    const SendResult r = statusSend(dest, body);
+    Serial.printf("[MARK] send #%d to %s: %s\n", i + 1, nm, r == SendResult::Sent ? "sent" : r == SendResult::Queued ? "queued" : "failed");
+    if (r == SendResult::Failed) toast("Not sent: %s", g_txStr);
+    else toast("Marker %s: %.12s", r == SendResult::Sent ? "sent" : "queued", nm);
+    return r != SendResult::Failed;
+}
+
+// An incoming message (inboundTick): a marker from a contact is stored and drawn.
+void markIncoming(const uint8_t from[16], const char* text, uint32_t at) {
+    int type = 0;
+    double la = 0, lo = 0;
+    char note[24];
+    if (!markParse(text, strlen(text), type, la, lo, note, sizeof(note))) return;
+    markAdd(type, la, lo, note, from, at);
+    if (mapview::isOpen()) mapContactsFeed();
+}
+
+int markFeed(mapview::Marker* m, int n) {
+    for (int i = 0; i < g_markCount && n < mapview::kMaxMarkers; i++)
+        m[n++] = {g_mark[i].lat, g_mark[i].lon, i == g_markSel, (uint8_t)(i + 1), true, false, 2};
+    if (g_markSel >= 0 && g_markSel < g_markCount && !g_tbOn) mapview::setGuide(true, g_mark[g_markSel].lat, g_mark[g_markSel].lon);
+    return n;
+}
+
+// The map's bottom line for the selected marker.
+bool markInfo(char* out, size_t n) {
+    if (g_markSel < 0 || g_markSel >= g_markCount) return false;
+    const Mark& m = g_mark[g_markSel];
+    char where[32];
+    markWhere(m.lat, m.lon, where, sizeof(where), false);
+    snprintf(out, n, "%s %s %.12s", kMarkType[m.type], where, m.note);
+    return true;
+}
+
+// ---- Markers: screens -------------------------------------------------------------------
+// MK_LIST nearest first, last row "New marker"; MK_ONE one marker (show / send / delete);
+// MK_NEW the form; MK_SEND who gets it (groups, then saved contacts); MK_NEAR contacts by distance.
+int g_mkSel = 0, g_mkScroll = 0;
+int g_mkIdx = -1;                            // the marker MK_ONE / MK_SEND is about
+int g_mkOrder[kMarkMax];                     // MK_LIST rows -> g_mark index
+uint8_t g_mkCand[kGrpMax + MAX_ROWS][16];    // MK_SEND rows
+int g_mkCandN = 0;
+int g_mkNear[kCPosMax];                      // MK_NEAR rows -> g_cpos index
+int g_mkNearN = 0;
+uint32_t g_mkDelAt = 0;
+struct MarkDraft { uint8_t type; bool fromMe; uint16_t dir; float distM; double crossLat, crossLon; bool haveCross; char note[24]; };
+MarkDraft g_mkNew = {};
+const char* const kMkDir[8] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+
+void markSort() {
+    double la = 0, lo = 0;
+    const bool own = ownPosition(la, lo);
+    for (int i = 0; i < g_markCount; i++) g_mkOrder[i] = i;
+    for (int a = 1; a < g_markCount; a++) {
+        for (int b = a; b > 0; b--) {
+            const Mark& x = g_mark[g_mkOrder[b]];
+            const Mark& y = g_mark[g_mkOrder[b - 1]];
+            const bool before = own ? metersBetween(la, lo, x.lat, x.lon) < metersBetween(la, lo, y.lat, y.lon) : x.at > y.at;
+            if (!before) break;
+            std::swap(g_mkOrder[b], g_mkOrder[b - 1]);
+        }
+    }
+}
+
+void markNearLoad() {
+    double la = 0, lo = 0;
+    const bool own = ownPosition(la, lo);
+    g_mkNearN = 0;
+    for (int i = 0; i < g_cposCount; i++) if (g_cpos[i].hasPos) g_mkNear[g_mkNearN++] = i;
+    for (int a = 1; a < g_mkNearN; a++) {
+        for (int b = a; b > 0; b--) {
+            const CPos& x = g_cpos[g_mkNear[b]];
+            const CPos& y = g_cpos[g_mkNear[b - 1]];
+            const bool before = own ? metersBetween(la, lo, x.lat, x.lon) < metersBetween(la, lo, y.lat, y.lon) : x.at > y.at;
+            if (!before) break;
+            std::swap(g_mkNear[b], g_mkNear[b - 1]);
+        }
+    }
+}
+
+int markRowCount() {
+    switch (g_mk) {
+        case MK_LIST: return g_markCount + 1;
+        case MK_ONE:  return 3;
+        case MK_NEW:  return 6;
+        case MK_SEND: return g_mkCandN;
+        case MK_NEAR: return g_mkNearN;
+        default:      return 0;
+    }
+}
+
+void markOpenList() {
+    g_mk = MK_LIST;
+    g_mkSel = 0;
+    g_mkScroll = 0;
+    markSort();
+    Serial.printf("[MARK] list (%d markers)\n", g_markCount);
+    requestRedraw();
+}
+
+void markOpenOne(int i) {
+    g_mkIdx = i;
+    g_mk = MK_ONE;
+    g_mkSel = 0;
+    g_mkScroll = 0;
+    g_mkDelAt = 0;
+    requestRedraw();
+}
+
+// atCross: the form starts at the map cross (Alt+J on the Atlas), else from the own position.
+void markOpenNew(bool atCross) {
+    g_mkNew = {};
+    g_mkNew.distM = 200.0f;
+    g_mkNew.haveCross = mapview::isOpen();
+    if (g_mkNew.haveCross) mapview::getCentre(g_mkNew.crossLat, g_mkNew.crossLon);
+    double la, lo;
+    g_mkNew.fromMe = !(atCross && g_mkNew.haveCross) && ownPosition(la, lo);
+    if (!g_mkNew.fromMe && !g_mkNew.haveCross) { toast("No position yet"); return; }
+    g_mk = MK_NEW;
+    g_mkSel = 0;
+    g_mkScroll = 0;
+    Serial.printf("[MARK] new (%s)\n", g_mkNew.fromMe ? "from my position" : "at the map cross");
+    requestRedraw();
+}
+
+void markClose() {
+    g_mk = MK_NONE;
+    if (mapview::isOpen()) { mapContactsFeed(); g_fullRefreshReq = true; }
+    requestRedraw();
+}
+
+void markBack() {
+    if (g_mk == MK_SEND) markOpenOne(g_mkIdx);
+    else if (g_mk == MK_ONE || g_mk == MK_NEW || g_mk == MK_NEAR) markOpenList();
+    else markClose();
+}
+
+void markSaveNew() {
+    double lat = g_mkNew.crossLat, lon = g_mkNew.crossLon;
+    if (g_mkNew.fromMe && !markPointFromMe(g_mkNew.distM, g_mkNew.dir * 45.0, lat, lon)) { toast("No position yet"); return; }
+    const time_t now = time(nullptr);
+    const int i = markAdd(g_mkNew.type, lat, lon, g_mkNew.note, nullptr, now > 1600000000 ? (uint32_t)now : 0);
+    toast("Marker saved: 2 sends it");
+    markOpenOne(i);
+}
+
+void markActivate(int row) {
+    const int n = markRowCount();
+    if (row < 0 || row >= n) return;
+    g_mkSel = row;
+    switch (g_mk) {
+        case MK_LIST:
+            if (row == g_markCount) markOpenNew(false);
+            else markOpenOne(g_mkOrder[row]);
+            break;
+        case MK_ONE:
+            if (g_mkIdx < 0 || g_mkIdx >= g_markCount) { markOpenList(); break; }
+            if (row == 0) {                  // show it on the map
+                const int i = g_mkIdx;
+                g_mk = MK_NONE;
+                if (!mapview::isOpen()) openMapAt(g_mark[i].lat, g_mark[i].lon);
+                else { mapview::centreOn(g_mark[i].lat, g_mark[i].lon); mapview::fitZoom(); }
+                g_markSel = i; g_wptSel = -1; g_mapSel = -1;
+                mapContactsFeed();
+                Serial.printf("[MARK] show #%d on the map\n", i + 1);
+                g_fullRefreshReq = true;
+            } else if (row == 1) {           // who gets it
+                g_mkCandN = 0;
+                for (int g = 0; g < g_grpCount; g++) grpHash(g_grp[g].id, g_mkCand[g_mkCandN++]);
+                for (const auto& node : g_announceMgr.nodes()) {
+                    if (node.hash.size() != 16 || !node.saved || isSelf(node.hash.data())) continue;
+                    if (g_mkCandN >= kGrpMax + MAX_ROWS) break;
+                    memcpy(g_mkCand[g_mkCandN++], node.hash.data(), 16);
+                }
+                if (!g_mkCandN) { toast("No contacts yet - see Peers"); break; }
+                g_mk = MK_SEND;
+                g_mkSel = 0;
+                g_mkScroll = 0;
+            } else {                         // delete: Enter twice within 3 s
+                if (g_mkDelAt && millis() - g_mkDelAt < 3000) { markRemove(g_mkIdx); toast("Marker removed"); markOpenList(); }
+                else { g_mkDelAt = millis(); toast("Enter again: remove it"); }
+            }
+            break;
+        case MK_NEW:
+            if (row == 0) g_mkNew.type = (uint8_t)((g_mkNew.type + 1) % kMarkTypes);
+            else if (row == 1) {
+                double la, lo;
+                if (g_mkNew.fromMe && !g_mkNew.haveCross) toast("Open from the Atlas for the cross");
+                else if (!g_mkNew.fromMe && !ownPosition(la, lo)) toast("No position yet");
+                else g_mkNew.fromMe = !g_mkNew.fromMe;
+            } else if (row == 2) {
+                if (!g_mkNew.fromMe) { toast("Row 2: from my position first"); break; }
+                char cur[12];
+                snprintf(cur, sizeof(cur), "%d", (int)(g_mkNew.distM * (g_cfg.imperial ? 3.28084f : 1.0f) + 0.5f));
+                startEntry(Entry::MarkDist, cur);
+                g_entryReplace = true;
+            } else if (row == 3) {
+                if (!g_mkNew.fromMe) { toast("Row 2: from my position first"); break; }
+                g_mkNew.dir = (uint16_t)((g_mkNew.dir + 1) % 8);
+            } else if (row == 4) startEntry(Entry::MarkNote, g_mkNew.note);
+            else markSaveNew();
+            break;
+        case MK_SEND:
+            if (markSend(g_mkIdx, g_mkCand[row])) markOpenOne(g_mkIdx);
+            break;
+        case MK_NEAR: {
+            const int ci = g_mkNear[row];
+            uint8_t peer[16];
+            memcpy(peer, g_cpos[ci].dest, 16);
+            g_mk = MK_NONE;
+            mapShowContact(peer);
+            break;
+        }
+        default: break;
+    }
+    requestRedraw();
+}
+
+void markKey(const KeyEvent& ev) {
+    const int n = markRowCount();
+    if (ev.enter) { markActivate(g_mkSel); return; }
+    if (ev.del || ev.space) return;
+    const char raw = ev.character;
+    if (raw >= '1' && raw <= '9') {
+        const int idx = (g_mkSel / 9) * 9 + (raw - '1');
+        if (idx >= n) return;
+        g_mkSel = idx;
+        clampScroll(g_mkSel, g_mkScroll, n);
+        if (g_mk == MK_ONE || g_mk == MK_NEW) markActivate(idx);   // a page of actions: the digit acts
+        requestRedraw();
+        return;
+    }
+    switch (toupper((unsigned char)raw)) {
+        case 'T': if (g_mkSel > 0) g_mkSel--; clampScroll(g_mkSel, g_mkScroll, n); requestRedraw(); break;
+        case 'V': if (g_mkSel < n - 1) g_mkSel++; clampScroll(g_mkSel, g_mkScroll, n); requestRedraw(); break;
+        case 'N': if (g_mk == MK_LIST) markOpenNew(false); break;
+        case 'J':                            // list <-> contacts by distance
+            if (g_mk == MK_LIST) { markNearLoad(); g_mk = MK_NEAR; g_mkSel = 0; g_mkScroll = 0; Serial.printf("[MARK] nearby (%d contacts)\n", g_mkNearN); requestRedraw(); }
+            else if (g_mk == MK_NEAR) markOpenList();
+            break;
+        case 'M': markClose(); openMenu(); break;
+        default: break;
+    }
+}
+
+void markCommitEntry() {                     // Enter in the distance / note field of the form
+    if (g_entry == Entry::MarkDist) {
+        long v = 0;
+        if (!parseLong(g_buf, v) || v < 1 || v > 99999) { toast("Distance 1 - 99999"); return; }
+        g_mkNew.distM = (float)v / (g_cfg.imperial ? 3.28084f : 1.0f);
+    } else {
+        strlcpy(g_mkNew.note, g_buf, sizeof(g_mkNew.note));
+    }
+    endEntry();
+    requestRedraw();
+}
+
+void renderMarks() {
+    char hdr[48], title[44], sub[48];
+    const int n = markRowCount();
+    clampScroll(g_mkSel, g_mkScroll, n);
+    const Mark* one = (g_mkIdx >= 0 && g_mkIdx < g_markCount) ? &g_mark[g_mkIdx] : nullptr;
+    if (g_mk == MK_LIST) snprintf(hdr, sizeof(hdr), "Markers (%d)", g_markCount);
+    else if (g_mk == MK_NEW) snprintf(hdr, sizeof(hdr), "New marker");
+    else if (g_mk == MK_NEAR) snprintf(hdr, sizeof(hdr), "Nearby contacts (%d)", g_mkNearN);
+    else if (g_mk == MK_SEND && one) snprintf(hdr, sizeof(hdr), "Send %s to:", kMarkType[one->type]);
+    else if (one) { char w[32]; markWhere(one->lat, one->lon, w, sizeof(w), false); snprintf(hdr, sizeof(hdr), "%s %s", kMarkType[one->type], w); }
+    else snprintf(hdr, sizeof(hdr), "Marker");
+    drawHeader(hdr, g_mkScroll > 0);
+    if (!n) text(8, LIST_TOP + 8, g_mk == MK_NEAR ? "No contact has shared a position" : "Nothing here");
+    const time_t now = time(nullptr);
+    for (int i = g_mkScroll; i < n && i < g_mkScroll + VIS_ROWS; i++) {
+        const int y = LIST_TOP + (i - g_mkScroll) * ROW_H;
+        sub[0] = 0;
+        if (g_mk == MK_LIST) {
+            if (i < g_markCount) {
+                const Mark& m = g_mark[g_mkOrder[i]];
+                char w[32], who[24] = "mine", age[12] = "?";
+                markWhere(m.lat, m.lon, w, sizeof(w), false);
+                if (!m.mine) peerName(m.from, who, sizeof(who));
+                if (m.at) fmtAge(now > (time_t)m.at ? (uint32_t)(now - m.at) : 0, age, sizeof(age));
+                snprintf(title, sizeof(title), "%d : %s %s", i % 9 + 1, kMarkType[m.type], w);
+                if (m.note[0]) snprintf(sub, sizeof(sub), "%.14s (%.8s, %s)", m.note, who, age);
+                else snprintf(sub, sizeof(sub), "%.12s, %s old", who, age);
+            } else {
+                snprintf(title, sizeof(title), "%d : New marker", i % 9 + 1);
+                snprintf(sub, sizeof(sub), "from me or the map cross");
+            }
+        } else if (g_mk == MK_ONE) {
+            static const char* const kAct[3] = {"Show on the map", "Send", "Delete"};
+            snprintf(title, sizeof(title), "%d : %s", i + 1, kAct[i]);
+            if (i == 0 && one) {
+                char who[24] = "mine";
+                if (!one->mine) peerName(one->from, who, sizeof(who));
+                if (one->note[0]) snprintf(sub, sizeof(sub), "%.20s (%.10s)", one->note, who);
+                else snprintf(sub, sizeof(sub), "from: %s", who);
+            } else if (i == 1) snprintf(sub, sizeof(sub), "to a contact or a group");
+            else snprintf(sub, sizeof(sub), "remove from this radio");
+        } else if (g_mk == MK_NEW) {
+            static const char* const kRow[6] = {"Type", "Where", "Distance", "Direction", "Note", "Save"};
+            snprintf(title, sizeof(title), "%d : %s", i + 1, kRow[i]);
+            if (i == 0) snprintf(sub, sizeof(sub), "%s  (Enter: next)", kMarkType[g_mkNew.type]);
+            else if (i == 1) {
+                if (g_mkNew.fromMe) snprintf(sub, sizeof(sub), "from my position");
+                else snprintf(sub, sizeof(sub), "map cross %.4f,%.4f", g_mkNew.crossLat, g_mkNew.crossLon);
+            } else if (i == 2) {
+                if (g_entry == Entry::MarkDist) snprintf(sub, sizeof(sub), ">%s_ %s, Enter", g_buf, g_cfg.imperial ? "ft" : "m");
+                else if (g_mkNew.fromMe) fmtDist(g_mkNew.distM, sub, sizeof(sub));
+                else snprintf(sub, sizeof(sub), "-");
+            } else if (i == 3) snprintf(sub, sizeof(sub), "%s", g_mkNew.fromMe ? kMkDir[g_mkNew.dir % 8] : "-");
+            else if (i == 4) {
+                if (g_entry == Entry::MarkNote) snprintf(sub, sizeof(sub), ">%s_", g_buf);
+                else snprintf(sub, sizeof(sub), "%s", g_mkNew.note[0] ? g_mkNew.note : "(none; Enter: type it)");
+            } else snprintf(sub, sizeof(sub), "keep it; then 2 sends it");
+        } else if (g_mk == MK_SEND) {
+            char nm[24];
+            peerName(g_mkCand[i], nm, sizeof(nm));
+            const int gi = grpOfHash(g_mkCand[i]);
+            snprintf(title, sizeof(title), "%d : %s", i % 9 + 1, nm);
+            if (gi >= 0) snprintf(sub, sizeof(sub), g_grp[gi].n == 1 ? "group, %d member" : "group, %d members", (int)g_grp[gi].n);
+            else { char hex[33]; hashToHex(g_mkCand[i], hex); snprintf(sub, sizeof(sub), "%.24s", hex); }
+        } else {                             // MK_NEAR
+            const CPos& c = g_cpos[g_mkNear[i]];
+            char nm[24], w[32], age[12] = "?";
+            peerName(c.dest, nm, sizeof(nm));
+            markWhere(c.lat, c.lon, w, sizeof(w), false);
+            if (c.at) fmtAge(now > (time_t)c.at ? (uint32_t)(now - c.at) : 0, age, sizeof(age));
+            snprintf(title, sizeof(title), "%d : %.10s %s", i % 9 + 1, nm, w);
+            if (c.bat) snprintf(sub, sizeof(sub), "#%u, %s old, battery %u%%", (unsigned)c.num, age, (unsigned)(c.bat - 1));
+            else snprintf(sub, sizeof(sub), "#%u on the map, %s old", (unsigned)c.num, age);
+        }
+        listRow(y, title, sub, i == g_mkSel);
+        addHit(2, y, W - 4, ROW_H, H_MARK, i);
+    }
+    const bool more = g_mkScroll + VIS_ROWS < n;
+    const char* hint = g_mk == MK_LIST ? (more ? "V more  N new  J nearby" : "Ent  N new  J nearby  ^")
+                     : g_mk == MK_ONE  ? "1-3  T/V  Ent  ^ back"
+                     : g_mk == MK_NEW  ? (more ? "1-6  V more  Ent  ^ back" : "1-6  T/V  Ent  ^ back")
+                     : g_mk == MK_SEND ? (more ? "V more  Ent send  ^" : "Ent = send  ^ cancel")
+                                       : (more ? "V more  Ent map  J markers" : "Ent = map  J markers  ^");
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : hint);
+}
+
+// Atlas keys: J = the marker list, Alt+J = a new marker at the map cross.
+bool markMapKey(const KeyEvent& ev) {
+    const char c = (char)toupper((unsigned char)ev.character);
+    if (c != kKeyMark) {
+        if (c == 'D' || ev.enter || c == kKeyWpt || c == kKeyContact) g_markSel = -1;
+        return false;
+    }
+    if (ev.alt) markOpenNew(true); else markOpenList();
+    return true;
+}
+
+// Console: mark | mark new <type> <lat> <lon> [note] | mark rel <type> <metres> <degrees> [note]
+//          mark send <n> <hex32 | g<group n>> | mark del <n | all> | mark list | mark near
+void markConsole(const char* p) {
+    char ty[12] = "", rest[64] = "";
+    double a = 0, b = 0;
+    int n = 0;
+    auto typeOf = [](const char* s) { for (int i = 0; i < kMarkTypes; i++) if (!strcasecmp(s, kMarkType[i])) return i; return kMarkTypes - 1; };
+    const time_t now = time(nullptr);
+    const uint32_t at = now > 1600000000 ? (uint32_t)now : 0;
+    if (sscanf(p, "new %11s %lf %lf %63[^\n]", ty, &a, &b, rest) >= 3) {
+        markAdd(typeOf(ty), a, b, rest, nullptr, at);
+    } else if (sscanf(p, "rel %11s %lf %lf %63[^\n]", ty, &a, &b, rest) >= 3) {
+        double la, lo;
+        if (!markPointFromMe(a, b, la, lo)) { Serial.println("[MARK] no own position"); return; }
+        markAdd(typeOf(ty), la, lo, rest, nullptr, at);
+    } else if (sscanf(p, "send %d %63s", &n, rest) == 2 && n >= 1 && n <= g_markCount) {
+        uint8_t dest[16];
+        if (rest[0] == 'g' && atoi(rest + 1) >= 1 && atoi(rest + 1) <= g_grpCount) grpHash(g_grp[atoi(rest + 1) - 1].id, dest);
+        else if (strlen(rest) < 32 || !hexToHash(rest, dest)) { Serial.println("[MARK] need <hex32> or g<n>"); return; }
+        markSend(n - 1, dest);
+    } else if (!strcmp(p, "del all")) {
+        g_markCount = 0; g_markSel = -1; markSave();
+    } else if (sscanf(p, "del %d", &n) == 1) {
+        markRemove(n - 1);
+    } else if (!strcmp(p, "list")) {
+        if (g_threadOpen) closeThread();   // a chat's draft would take the keys
+        markOpenList();
+        return;
+    } else if (!strcmp(p, "near")) {
+        markNearLoad();
+        for (int i = 0; i < g_mkNearN; i++) {
+            const CPos& c = g_cpos[g_mkNear[i]];
+            char nm[24], w[32];
+            peerName(c.dest, nm, sizeof(nm));
+            markWhere(c.lat, c.lon, w, sizeof(w), false);
+            Serial.printf("[MARK] near %d: %s %s\n", i + 1, nm, w);
+        }
+        Serial.printf("[MARK] near: %d contacts\n", g_mkNearN);
+        return;
+    }
+    markSort();
+    for (int k = 0; k < g_markCount; k++) {
+        const Mark& m = g_mark[g_mkOrder[k]];
+        char who[24] = "mine", w[40];
+        if (!m.mine) peerName(m.from, who, sizeof(who));
+        markWhere(m.lat, m.lon, w, sizeof(w));
+        Serial.printf("[MARK] %d: #%d %s %.5f,%.5f \"%s\" %s, %s\n", k + 1, g_mkOrder[k] + 1, kMarkType[m.type], m.lat, m.lon, m.note, who, w);
+    }
+    Serial.printf("[MARK] %d markers\n", g_markCount);
+}
+
+// ---- ATAK feed: Cursor-on-Target over WiFi (CotFeed.cpp) ---------------------------------
+// When on and WiFi is up, every g_cot.every seconds this unit sends CoT events over UDP:
+// itself (friendly ground unit, with battery), each contact's last shared position (until
+// an hour old) and each marker (a spot on ATAK's map, coloured by type, note in the name).
+// Default target: ATAK's SA multicast 239.2.3.1:6969, so ATAK phones on the same WiFi show
+// them with no TAK server. Off by default (S.3 WiFi, last row; console "cot").
+
+void cotSave() {
+    Preferences p;
+    if (!p.begin("rs_cot", false)) return;
+    p.putBytes("cfg", &g_cot, sizeof(g_cot));
+    p.end();
+}
+
+void cotLoad() {
+    Preferences p;
+    if (!p.begin("rs_cot", true)) return;
+    CotCfg c;
+    if (p.getBytes("cfg", &c, sizeof(c)) == sizeof(c)) g_cot = c;
+    p.end();
+    if (g_cot.every < 5) g_cot.every = 30;
+    if (!g_cot.port) g_cot.port = cot::kSaPort;
+}
+
+void cotIp(uint32_t ip, char* out, size_t n) {
+    snprintf(out, n, "%u.%u.%u.%u", (unsigned)(ip >> 24), (unsigned)(ip >> 16 & 255), (unsigned)(ip >> 8 & 255), (unsigned)(ip & 255));
+}
+
+// Marker colours on ATAK (ARGB): hazard red, person cyan, vehicle blue, camp green,
+// water light blue, meet-up yellow, other white.
+const int32_t kCotMarkArgb[kMarkTypes] = {(int32_t)0xFFFF0000, (int32_t)0xFF00FFFF, (int32_t)0xFF0000FF,
+    (int32_t)0xFF00FF00, (int32_t)0xFF7FBFFF, (int32_t)0xFFFFFF00, (int32_t)0xFFFFFFFF};
+
+int cotSendAll(bool log) {
+    const time_t now = time(nullptr);
+    if (now < 1600000000) { if (log) Serial.println("[COT] no clock yet"); return 0; }
+    const uint32_t t = (uint32_t)now;
+    static char xml[900];
+    char uid[48], cs[48], hex[33], rem[64];
+    int sent = 0;
+    auto go = [&](const cot::Item& it) {
+        const size_t n = cot::format(it, xml, sizeof(xml));
+        if (n && cot::send(xml, n, g_cot.ip, g_cot.port)) sent++;
+    };
+    double la, lo;
+    if (g_haveSelf && ownPosition(la, lo)) {     // this unit
+        hashToHex(g_selfHash, hex);
+        snprintf(uid, sizeof(uid), "RatSpeak-%.16s", hex);
+        cot::Item it;
+        it.lat = la; it.lon = lo; it.at = t; it.stale = t + 3u * g_cot.every + 60u;
+        it.uid = uid; it.type = "a-f-G-U-C"; it.callsign = g_selfName; it.battery = g_bat.pct;
+        go(it);
+    }
+    for (int i = 0; i < g_cposCount; i++) {      // contacts' last shared positions
+        const CPos& c = g_cpos[i];
+        if (!c.hasPos || !c.at || c.at + 3600u < t) continue;
+        hashToHex(c.dest, hex);
+        snprintf(uid, sizeof(uid), "RatSpeak-%.16s", hex);
+        peerName(c.dest, cs, sizeof(cs));
+        cot::Item it;
+        it.lat = c.lat; it.lon = c.lon; it.at = c.at; it.stale = c.at + 3600u;
+        it.uid = uid; it.type = "a-f-G-U-C"; it.callsign = cs; it.battery = c.bat ? c.bat - 1 : -1;
+        go(it);
+    }
+    for (int i = 0; i < g_markCount; i++) {      // markers
+        const Mark& m = g_mark[i];
+        uint32_t h = 2166136261u;                // uid from what the marker is, not its slot
+        auto mix = [&](const void* d, size_t n) { for (size_t k = 0; k < n; k++) h = (h ^ ((const uint8_t*)d)[k]) * 16777619u; };
+        mix(&m.lat, sizeof(m.lat)); mix(&m.lon, sizeof(m.lon)); mix(&m.type, 1); mix(m.from, 16);
+        snprintf(uid, sizeof(uid), "RatSpeak-mk-%08lx", (unsigned long)h);
+        if (m.note[0]) snprintf(cs, sizeof(cs), "%s: %s", kMarkType[m.type], m.note);
+        else snprintf(cs, sizeof(cs), "%s", kMarkType[m.type]);
+        char who[24] = "this unit";
+        if (!m.mine) peerName(m.from, who, sizeof(who));
+        snprintf(rem, sizeof(rem), "RatSpeak marker from %s", who);
+        cot::Item it;
+        it.lat = m.lat; it.lon = m.lon; it.at = m.at ? m.at : t; it.stale = t + 86400u;
+        it.uid = uid; it.type = "b-m-p-s-m"; it.callsign = cs; it.argb = kCotMarkArgb[m.type]; it.remarks = rem;
+        go(it);
+    }
+    g_cotSent += (uint32_t)sent;
+    if (log) { char ip[16]; cotIp(g_cot.ip, ip, sizeof(ip)); Serial.printf("[COT] sent %d events to %s:%u\n", sent, ip, (unsigned)g_cot.port); }
+    return sent;
+}
+
+void cotTick() {
+    if (g_cotListen) {                           // bench: print what arrives
+        static char buf[1024];
+        uint32_t from = 0;
+        while (cot::poll(buf, sizeof(buf), &from) > 0) {
+            char ip[16], cs[40] = "?", uid[48] = "?", ty[24] = "?";
+            double la = 0, lo = 0;
+            cotIp(from, ip, sizeof(ip));
+            const char* q;
+            if ((q = strstr(buf, "callsign=\""))) sscanf(q + 10, "%39[^\"]", cs);
+            if ((q = strstr(buf, " uid=\""))) sscanf(q + 6, "%47[^\"]", uid);
+            if ((q = strstr(buf, " type=\""))) sscanf(q + 7, "%23[^\"]", ty);
+            if ((q = strstr(buf, "<point lat=\""))) sscanf(q + 12, "%lf\" lon=\"%lf", &la, &lo);
+            const char* b = strstr(buf, "battery=\"");
+            Serial.printf("[COT] rx from %s %s %s \"%s\" %.5f,%.5f%s%.3s\n", ip, uid, ty, cs, la, lo,
+                          b ? " bat " : "", b ? b + 9 : "");
+            Serial.printf("[COT] xml %s\n", buf);
+        }
+    }
+    if (!g_cot.on || !wifiConnected() || !g_pwEff.wifi) return;
+    if (g_cotLast && millis() - g_cotLast < (uint32_t)g_cot.every * 1000u) return;
+    g_cotLast = millis() | 1;
+    cotSendAll(false);
+}
+
+// Console: cot | cot on|off | cot to <a.b.c.d> [port] | cot to default | cot every <s> |
+//          cot now | cot listen <port|0> (bench: print the CoT events that arrive)
+void cotConsole(const char* p) {
+    char ip[16];
+    unsigned a, b, c, d, port = cot::kSaPort, s = 0;
+    if (!strcmp(p, "on") || !strcmp(p, "off")) {
+        g_cot.on = p[1] == 'n';
+        g_cotLast = 0;
+        cotSave();
+    } else if (sscanf(p, "to %u.%u.%u.%u %u", &a, &b, &c, &d, &port) >= 4 && a < 256 && b < 256 && c < 256 && d < 256) {
+        g_cot.ip = a << 24 | b << 16 | c << 8 | d;
+        g_cot.port = (uint16_t)(port ? port : cot::kSaPort);
+        cotSave();
+    } else if (!strcmp(p, "to default")) {
+        g_cot.ip = cot::kSaGroup; g_cot.port = cot::kSaPort;
+        cotSave();
+    } else if (sscanf(p, "every %u", &s) == 1 && s >= 5 && s <= 3600) {
+        g_cot.every = (uint16_t)s;
+        cotSave();
+    } else if (!strcmp(p, "now")) {
+        if (!wifiConnected()) { Serial.println("[COT] WiFi is not connected"); return; }
+        cotSendAll(true);
+        return;
+    } else if (sscanf(p, "listen %u", &port) == 1) {
+        g_cotListen = port && cot::listen((uint16_t)port);
+        if (!port) cot::listen(0);
+        Serial.printf("[COT] listen %s\n", g_cotListen ? "on" : "off");
+        return;
+    }
+    cotIp(g_cot.ip, ip, sizeof(ip));
+    Serial.printf("[COT] feed %s, every %u s, to %s:%u, %lu events sent, WiFi %s\n", g_cot.on ? "on" : "off",
+                  (unsigned)g_cot.every, ip, (unsigned)g_cot.port, (unsigned long)g_cotSent, wifiConnected() ? "up" : "down");
 }
 
 // ---- Thread menu (MIC in a conversation) -----------------------------------------------
@@ -11329,6 +12080,7 @@ void render() {
     else if (g_navOpen)                renderNav();
     else if (g_rtOpen)                 renderRangeTest();
     else if (g_cardOpen)               renderCard();
+    else if (g_mk != MK_NONE)          renderMarks();
     else if (g_gv != GV_NONE)          renderGroups();
     else if (g_libOpen)                renderLibrary();
     else if (g_gameOpen)               renderGame();
@@ -11343,7 +12095,7 @@ void render() {
     drawBottomBar();
     drawMenuOverlay();
     lv_refr_now(nullptr);
-    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_chessOpen && !g_placeOpen && !g_navOpen)
+    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_chessOpen && !g_placeOpen && !g_navOpen && g_mk == MK_NONE)
         stampMap();   // after LVGL's clear
     if (g_chessOpen && !g_menuOpen && !g_threadOpen && !g_libOpen && !g_usbDrive && !g_cardOpen && !g_navOpen && !g_rtOpen &&
         !g_wizOpen && g_entry != Entry::Name)
@@ -11981,6 +12733,7 @@ void goBack() {
     if (g_navOpen && !entryActive()) { navClose(); return; }
     if (g_navKeysOpen && (mapview::isOpen() || g_libOpen || g_gameOpen || g_chessOpen) && !entryActive()) { navKeysToggle(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
+    if (g_mk != MK_NONE && !entryActive()) { markBack(); return; }
     if (g_gv != GV_NONE && !entryActive() && !g_threadOpen) { grpBack(); return; }
     if (g_rtOpen && !entryActive()) { rtStop(); return; }
     if (g_shareActive && !entryActive()) {
@@ -12028,6 +12781,9 @@ void commitEntry() {
                 closeThread();
                 openMapAt(la, lo);
                 g_mapSel = cposFind(peer);            // their marker selected (name + age below)
+                for (int k = 0; k < g_markCount; k++)  // a shared marker there: select it instead
+                    if (metersBetween(g_mark[k].lat, g_mark[k].lon, la, lo) < 15.0f) { g_markSel = k; g_mapSel = -1; }
+                mapContactsFeed();
                 Serial.printf("[LOC] show %.5f,%.5f on the map\n", la, lo);
             } else {
                 saveThreadCard();
@@ -12123,6 +12879,10 @@ void commitEntry() {
         toast("Waypoint W%d", g_wptCount);
         return;
     }
+    case Entry::MarkDist:
+    case Entry::MarkNote:
+        markCommitEntry();
+        return;
     case Entry::MapNum: {
         long v;
         if (!parseLong(g_buf, v) || v < 1 || v > 99) { toast("Map number 1-99"); return; }
@@ -12312,7 +13072,7 @@ void entryKey(const KeyEvent& ev) {
     if (ev.space) {
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) c = '.';
         else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass || passEntry(g_entry) ||
-                 g_entry == Entry::Search || g_entry == Entry::WptName || g_entry == Entry::LibFind ||
+                 g_entry == Entry::Search || g_entry == Entry::WptName || g_entry == Entry::MarkNote || g_entry == Entry::LibFind ||
                  g_entry == Entry::PlaceFind || g_entry == Entry::FoundText || g_entry == Entry::GroupName) c = ' ';
     } else if (ev.fn) {
         if (passEntry(g_entry)) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
@@ -12343,11 +13103,13 @@ void entryKey(const KeyEvent& ev) {
     if (g_entry == Entry::WifiPass && g_bufLen >= WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
     if (passEntry(g_entry) && g_bufLen >= kLockPassMax) { toast("Max 32 chars"); return; }
     if (g_entry == Entry::Search && g_bufLen >= sizeof(g_filter) - 1) return;
-    if ((g_entry == Entry::WptName || g_entry == Entry::FoundText || g_entry == Entry::CheckinTime) &&
+    if ((g_entry == Entry::WptName || g_entry == Entry::FoundText || g_entry == Entry::CheckinTime || g_entry == Entry::MarkDist) &&
         g_entryReplace) {                                                                  // typing replaces the default
         bufClear(); g_entryReplace = false;
     }
     if (g_entry == Entry::WptName && g_bufLen >= 15) { toast("Max 15 chars"); return; }
+    if (g_entry == Entry::MarkNote && g_bufLen >= 23) { toast("Max 23 chars"); return; }
+    if (g_entry == Entry::MarkDist && g_bufLen >= 5) return;
     if (g_entry == Entry::TcpHost && g_bufLen >= sizeof(g_tcpCfg.host) - 1) { toast("Max 63 chars"); return; }
     if (g_entry == Entry::HaKey && g_bufLen >= havoice::kKeyB64Len) { toast("Key: 44 chars"); return; }
     if (g_entry == Entry::FoundText && g_bufLen >= sizeof(g_cfg.found[0]) - 1) { toast("Max 40 chars"); return; }
@@ -12468,6 +13230,7 @@ void handleKey(const KeyEvent& ev) {
         return;
     }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
+    if (g_mk != MK_NONE) { markKey(ev); return; }
     if (g_rtOpen) { rtKey(ev); return; }
     if (g_navOpen) { navKey(ev); return; }
     if (mapview::isOpen()) { mapKey(ev); return; }
@@ -12492,6 +13255,7 @@ void mapKey(const KeyEvent& ev) {
     if (mc == kKeyBack) { if (g_tbOn) tbStop("stopped"); else tbStart(); requestRedraw(); return; }
     if (mc == kKeyGo) { navOpen(); return; }
     if (mc == kKeyFind) { startEntry(Entry::PlaceFind); return; }   // locate a place
+    if (markMapKey(ev)) return;                           // J marker list / Alt+J new marker
     if (wptMapKey(ev)) return;                            // P next / Alt+P add / Alt+SYM delete
     if (mc == kKeyContact) { mapCycleContact(); return; } // next contact's last position
     if (mc == 'D' || ev.enter) g_mapSel = -1;             // back to own position
@@ -12647,6 +13411,11 @@ void handleTouch(int16_t x, int16_t y) {
         case H_UP:         moveSelection(-1); break;
         case H_DOWN:       moveSelection(+1); break;
         case H_CARD:       if (g_cardOpen) { g_cardSel = hit->arg; cardAct(hit->arg); } break;
+        case H_MARK:                                  // marker pages: as the keys
+            if (g_mk == MK_NONE) break;
+            if (hit->arg == g_mkSel || g_mk == MK_ONE || g_mk == MK_NEW) markActivate(hit->arg);
+            else { g_mkSel = hit->arg; requestRedraw(); }
+            break;
         case H_GRP:                                   // groups: tap selects, a second tap (or the page's rows) acts
             if (g_gv == GV_NONE) break;
             if (hit->arg == g_gvSel || g_gv == GV_PAGE) grpActivate(hit->arg);
@@ -14897,6 +15666,13 @@ void handleSerialLine(char* p) {
         else if (!strncmp(p + 5, "move ", 5)) g_fakeNorthM = atof(p + 10);
         Serial.printf("[FAKE] bat %d (now %d%%) north %.0f m\n", g_fakeBat, g_bat.pct, g_fakeNorthM);
 #endif
+    } else if (!strcmp(p, "cot") || !strncmp(p, "cot ", 4)) {
+        cotConsole(p[3] ? p + 4 : "");
+    } else if (!strncmp(p, "wifi join ", 10)) {         // wifi join <ssid> [password] (bench)
+        char ssid[33] = "", pass[65] = "";
+        if (sscanf(p + 10, "%32s %64s", ssid, pass) >= 1) { wifiConnect(ssid, pass, false, false); Serial.printf("[WIFI] joining \"%s\"\n", ssid); }
+    } else if (!strcmp(p, "mark") || !strncmp(p, "mark ", 5)) {
+        markConsole(p[4] ? p + 5 : "");
     } else if (!strncmp(p, "locshare ", 9) || !strncmp(p, "ashare ", 7)) {
         // Bench: locshare <to> [p|b|pb] = share once (default: position)
         //        ashare <to> <minutes, 0 = off> [p|b|pb] (default: both) | ashare off
@@ -15788,6 +16564,8 @@ bool begin() {
     if (vault::unlocked()) wifiLoad();    // else after unlock (lockTry)
     tcpLoad();
     ashareLoad();
+    markLoad();
+    cotLoad();
     cposLoad();
     wptLoad();
     geofLoad();
@@ -15881,6 +16659,7 @@ void loop() {
     SLOW_STEP("g_audio.loop", g_audio.loop());
     SLOW_STEP("havoice", haVoiceTick());
     SLOW_STEP("walkie", walkieTick());
+    SLOW_STEP("cot", cotTick());
     SLOW_STEP("vm", vmTick());
     SLOW_STEP("gpsPoll", gpsPoll());
     SLOW_STEP("gpsWatchLink", gpsWatchLink());

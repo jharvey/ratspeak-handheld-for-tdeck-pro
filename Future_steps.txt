@@ -314,7 +314,10 @@ Team awareness, ATAK-style (user asked 2026-11-12, longer term)
   possible); later a gateway to ATAK / TAK (Cursor-on-Target XML) so phones running ATAK
   see the T-Deck units and their markers.
 - Asked again 2026-11-21: "Add ATAK, can we add this? Share items of interest to other
-  devices." Not started (nothing in the code yet). Sharing items of interest is the
+  devices." BUILT 2026-11-23 (simulator): markers (Atlas J / Alt+J, send to a contact or
+  group, triangle on the map, "[marker] hazard 640 m NE of you") and an ATAK feed (CoT XML
+  over WiFi UDP to 239.2.3.1:6969: self, contacts, markers). Report:
+  docs/sharing_atak_report.md. Not done: receiving from ATAK, a TAK server connection. Sharing items of interest is the
   relative-markers item above. Menus and their videos will change when this lands.
 - Units setting: DONE (S.2 Time & Location: m / km or ft / mi; coordinates decimal,
   deg-min-sec or MGRS, S.2.12).

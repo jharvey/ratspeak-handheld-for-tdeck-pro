@@ -1,0 +1,63 @@
+# Markers (items of interest, ATAK-style) on the Atlas: J = the marker list (nearest first),
+# Alt+J = a new marker at the map cross; the form; one marker; the triangle on the map.
+# Uses the simulator's GPS position. marks_after.txt (same device name) checks a restart.
+expect 60000 [BOOT] ready
+wait 1500
+serial wiz skip
+wait 1000
+key BACK
+wait 800
+serial mark del all
+serial mark new hazard 43.65800 -79.38300 bridge out
+expect 3000 [MARK] #1 hazard
+serial mark rel water 300 90 spring
+expect 3000 [MARK] #2 water
+serial map 43.65400 -79.38100 15
+expect 5000 [MAP] open
+wait 2000
+key J
+expect 3000 [MARK] list (2 markers)
+wait 1000
+shot marks-01-list.png
+# row 1 = the nearest (the spring, 300 m E): one marker, show it on the map
+key ENTER
+wait 800
+shot marks-02-one.png
+key 1
+expect 3000 [MARK] show #2 on the map
+wait 2000
+shot marks-03-map-selected.png
+# Alt+J on the map: a new marker at the map cross
+key ALT+J
+expect 3000 [MARK] new (at the map cross)
+wait 800
+key 1
+key 1
+key 1
+wait 500
+shot marks-04-form-cross.png
+# row 2 switches to "from my position"; row 4 the direction (N -> NE -> E)
+key 2
+key 4
+key 4
+wait 500
+shot marks-05-form-from-me.png
+key 6
+expect 3000 [MARK] #3 camp
+wait 800
+shot marks-06-saved.png
+key BACK
+wait 800
+key J
+expect 3000 [MARK] nearby
+wait 800
+shot marks-07-nearby.png
+key J
+expect 3000 [MARK] list (3 markers)
+key BACK
+wait 800
+serial mark
+expect 3000 [MARK] 3 markers
+wait 2000
+shot marks-08-map.png
+quit

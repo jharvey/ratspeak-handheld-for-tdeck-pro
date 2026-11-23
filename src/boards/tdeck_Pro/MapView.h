@@ -81,7 +81,7 @@ bool key(char c, bool enter);
 // relative to the draw rectangle; false when hidden or off the view.
 constexpr int kMaxMarkers = 48;           // 16 contacts + 32 waypoints
 struct Marker { double lat, lon; bool selected; uint8_t number; bool fresh; bool more;
-                uint8_t kind; };              // kind 0 = contact tag, 1 = waypoint (diamond)
+                uint8_t kind; };              // kind 0 = contact tag, 1 = waypoint (diamond), 2 = marker (triangle)
 void setMarkers(const Marker* m, int n);
 bool markerScreen(int i, int& x, int& y);
 // Centre the view on a point without following the own position (zoom kept).
