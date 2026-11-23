@@ -1,0 +1,57 @@
+ATAK FEED (CURSOR ON TARGET)
+
+WHAT ATAK IS
+ATAK (Android Team Awareness Kit) is a free map app used by search
+and rescue, fire crews, police and the military. iPhone has iTAK,
+Windows has WinTAK. Each shows the team on a map: who is where, and
+markers such as hazards or meeting points. The apps talk in "Cursor
+on Target" (CoT): short XML messages with a position, a name and a
+type.
+
+WHAT THIS RADIO DOES WITH IT
+- Sends: itself (name, position, battery), the last shared position
+  of each contact, and your markers. ATAK shows the radio and its
+  contacts as friendly units, markers as map points.
+- Receives: ATAK users show on the Atlas as squares, with their
+  name. Their markers become markers here (triangles), "from ATAK".
+- A bridge: contacts that reach you only over LoRa (no phone, no
+  WiFi, miles away) still show up in ATAK through this radio.
+
+TURN IT ON
+M, S, 3 (WiFi), last row "ATAK feed (CoT)", Enter = on / off.
+Off by default. It sends every 30 s, to ATAK's standard address
+239.2.3.1 port 6969, so ATAK finds it with no setup and no server.
+
+DOES IT NEED WIFI?
+Yes. The feed only runs on WiFi: the radio and the phone must be on
+the same WiFi network (a phone hotspot works: join the radio to the
+phone's hotspot). LoRa carries the messages, positions and markers
+between radios; WiFi carries them to and from ATAK.
+- It never turns WiFi on by itself. In an energy mode with WiFi off
+  (Saver, Check-in) the feed waits.
+- Off, it costs no power. On, the cost is WiFi itself.
+
+STRENGTHS
+- No TAK server, no internet, no account: same WiFi is enough.
+- LoRa radios with no phone join the ATAK picture.
+- ATAK users' positions and markers reach the Atlas; a marker from
+  ATAK can be sent on to your LoRa contacts like any other.
+- Small: one short message per item every 30 s.
+
+WEAKNESSES
+- WiFi range only between radio and phone: tens of metres, not the
+  miles LoRa reaches.
+- Not encrypted: anyone on the same WiFi can see the positions, and
+  can send fake ones. Use it on your own network or hotspot only.
+- Positions of contacts are only as fresh as their last share.
+- Limits: 16 ATAK users kept (oldest dropped), at most 12 of the 24
+  markers come from ATAK, so your contacts' markers are never pushed
+  out. Markers from ATAK are not sent back to ATAK.
+- Some networks (guest WiFi, a PC network set to Public) block the
+  multicast address; then nothing arrives.
+
+GOOD TO KNOW
+- Tested 23 Nov 2026: a PC on the WiFi received every event as valid
+  CoT (units and markers). Not yet tried with a real ATAK phone.
+- Hostile units (red, a-h) from ATAK show as hazard markers.
+- Markers: Help-6-Map, Atlas J. Sharing your position: Help-5.
