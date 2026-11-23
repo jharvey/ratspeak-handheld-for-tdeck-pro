@@ -7519,6 +7519,20 @@ SendResult statusSend(const uint8_t dest[16], const char* body) {
 
 // One-time share: position, battery % or both (what = SH_POS | SH_BAT). With no position to
 // send, "both" sends the battery alone.
+// Incoming telemetry (Sideband's FIELD_TELEMETRY, also sent by RatSpeak radios with a one-time
+// share): the sender's position and battery go where a shared position goes (Atlas, contact
+// page), so Sideband users show on the map without any text to read.
+void onTelemetry(const uint8_t src[16], const handheld::lxmf::Telemetry& t) {
+    if (isSelf(src)) return;
+    const time_t now = time(nullptr);
+    const uint32_t at = t.positionTime ? t.positionTime : t.time ? t.time : (now > 1600000000 ? (uint32_t)now : 0);
+    char nm[24];
+    peerName(src, nm, sizeof(nm));
+    Serial.printf("[LOC] telemetry from %s:%s%s\n", nm, t.hasPosition ? " position" : "", t.hasBattery ? " battery" : "");
+    if (t.hasPosition) cposNote(src, t.latitude, t.longitude, at);
+    if (t.hasBattery) batNote(src, t.percent, t.time ? t.time : at);
+}
+
 void shareMyStatus(const uint8_t dest[16], uint8_t what) {
     char body[128] = "", hhmm[8], age[16];
     if (!(what & (SH_POS | SH_BAT))) what = SH_POS;
@@ -15571,6 +15585,25 @@ void handleSerialLine(char* p) {
         Serial.printf("[HAV] voice %s\n", g_cfg.haVoice ? "on" : "off");
         return;
     }
+    if (!strncmp(p, "telesend ", 9)) {                // bench: telesend <hex32> <lat> <lon> <pct>: a message with
+        char hex[40] = "";                              // only a telemetry field (as Sideband sends), no position text
+        double la = 0, lo = 0; int pct = 0;
+        uint8_t dest[16];
+        if (sscanf(p + 9, "%39s %lf %lf %d", hex, &la, &lo, &pct) != 4 || !hexToHash(hex, dest)) {
+            Serial.println("[LOC] telesend <hex32> <lat> <lon> <pct>");
+            return;
+        }
+        handheld::lxmf::Telemetry tm;
+        const time_t now = time(nullptr);
+        tm.time = now > 1600000000 ? (uint32_t)now : 1;
+        tm.hasPosition = true; tm.latitude = la; tm.longitude = lo; tm.positionTime = tm.time; tm.accuracyM = 8;
+        tm.hasBattery = true; tm.percent = (uint8_t)pct;
+        g_txExtraLen = handheld::lxmf::makeTelemetryEntry(tm, g_txExtra, sizeof(g_txExtra));
+        const SendResult r = statusSend(dest, "telemetry test");
+        g_txExtraLen = 0;
+        Serial.printf("[LOC] telesend: %s\n", r == SendResult::Sent ? "sent" : r == SendResult::Queued ? "queued" : "failed");
+        return;
+    }
     if (!strcmp(p, "hawake") || !strncmp(p, "hawake ", 7)) {   // hawake [0|1|2] (off, on USB power only, always)
         if (p[6]) { g_cfg.haWake = (uint8_t)constrain(atoi(p + 7), 0, 2); saveConfig(); }
         Serial.printf("[HAV] wake word setting: %s\n", kHaWakeName[g_cfg.haWake]);
@@ -16926,6 +16959,7 @@ bool begin() {
     markLoad();
     cotLoad();
     layLoad();
+    handheld::lxmf::g_onTelemetry = onTelemetry;
     cposLoad();
     wptLoad();
     geofLoad();

@@ -836,6 +836,8 @@ void RustLxmfEngine::onDataFrame(const rs_handheld_local_frame_t& f, uint8_t ifa
     handheld::lxmf::AudioField audio;
     if (msg.fields_len <= sizeof(msg.fields) && handheld::lxmf::keepKnown(msg.fields, msg.fields_len, audio))
         view.fields = audio;
+    if (msg.fields_len && msg.fields_len <= sizeof(msg.fields))   // Sideband telemetry: position / battery
+        handheld::lxmf::noteTelemetry(msg.source_hash, msg.fields, msg.fields_len);
     if (msg.timestamp > 0) peerclock::note((uint32_t)msg.timestamp, peerclock::MESSAGE);
     _incoming.accept(view, seed);
 }
@@ -875,6 +877,8 @@ RustIncomingDelivery::ReceiveResult RustLxmfEngine::onDirectPayload(
     if (parsed.fields_len && parsed.fields_offset <= len && parsed.fields_len <= len - parsed.fields_offset &&
         handheld::lxmf::keepKnown(packed + parsed.fields_offset, parsed.fields_len, audio))
         view.fields = audio;
+    if (parsed.fields_len && parsed.fields_offset <= len && parsed.fields_len <= len - parsed.fields_offset)
+        handheld::lxmf::noteTelemetry(parsed.source_hash, packed + parsed.fields_offset, parsed.fields_len);
     if (parsed.timestamp > 0) peerclock::note((uint32_t)parsed.timestamp, peerclock::MESSAGE);
     return _incoming.accept(view, seed);
 }

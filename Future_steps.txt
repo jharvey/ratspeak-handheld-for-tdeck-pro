@@ -301,8 +301,9 @@ Team awareness, ATAK-style (user asked 2026-11-12, longer term)
   starts with both; sends on a 50 m move or a 5-point battery change, else every second
   interval; battery alone when there is no GPS fix). The receiver keeps each contact's
   position and battery with their age (Atlas, contact page); one-time shares carry
-  Sideband's telemetry field. Report: docs/sharing_atak_report.md. Not done: reading
-  Sideband's telemetry on receive; removing the stored record of each automatic update.
+  Sideband's telemetry field. Report: docs/sharing_atak_report.md. Reading Sideband's telemetry
+  on receive DONE 2026-11-23 (position, battery). Not done:
+  removing the stored record of each automatic update.
 - Waypoints / navigation: "go to" a marker: distance + bearing on screen; heading from GPS
   course over ground (no magnetometer, see Map heading).
 - Navigate to a contact (user asked 2026-11-12, e.g. hunting: "son is over that way 900 ft"):

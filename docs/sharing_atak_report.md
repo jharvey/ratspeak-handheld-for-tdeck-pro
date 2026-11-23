@@ -51,7 +51,10 @@ Keys 1 to 5 of the menu mean what they meant before, so the existing videos stil
 
 ### Limits
 
-- This radio does not read Sideband's telemetry field. It reads the text.
+- Since 23 Nov 2026 this radio also reads Sideband's telemetry field (FIELD_TELEMETRY 0x02:
+  position, battery) on any incoming message, so Sideband users show on the Atlas and the
+  contact page without position text (`sim/scripts/telemetry_net.py`, bench `telesend`). Not
+  yet tried with a real Sideband.
 - Each automatic update is still a stored message on both radios. The message store cannot
   delete one message.
 - A copy that waits in the outbox goes without the telemetry field. The text is the same.

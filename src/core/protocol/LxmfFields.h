@@ -242,6 +242,119 @@ inline size_t makeTelemetryEntry(const Telemetry& t, uint8_t* out, size_t capaci
     return n;
 }
 
+// ---- Reading an incoming telemetry field (Sideband, or another RatSpeak radio) ----------------
+// A small msgpack reader: enough for the fields map and Sideband's Telemeter.packed layout
+// (see makeTelemetryEntry). Unknown sensors are skipped. Returns false when there is no
+// telemetry field or it does not parse.
+struct Mp {
+    const uint8_t* p; size_t n; size_t i = 0;
+    bool ok() const { return i <= n; }
+    bool need(size_t k) const { return i + k <= n; }
+    uint64_t be(size_t k) { uint64_t v = 0; for (size_t j = 0; j < k; j++) v = v << 8 | p[i + j]; i += k; return v; }
+    // Map / array header: count, or -1 when the next item is not one.
+    long mapLen() { if (!need(1)) return -1; const uint8_t c = p[i];
+        if ((c & 0xF0) == 0x80) { i++; return c & 15; }
+        if (c == 0xDE && need(3)) { i++; return (long)be(2); } return -1; }
+    long arrLen() { if (!need(1)) return -1; const uint8_t c = p[i];
+        if ((c & 0xF0) == 0x90) { i++; return c & 15; }
+        if (c == 0xDC && need(3)) { i++; return (long)be(2); } return -1; }
+    // A number (int, uint, float) as double; false when the item is not a number.
+    bool num(double& v) { if (!need(1)) return false; const uint8_t c = p[i];
+        if (c <= 0x7F) { i++; v = c; return true; }
+        if (c >= 0xE0) { i++; v = (int8_t)c; return true; }
+        size_t k = 0; bool sgn = false;
+        switch (c) { case 0xCC: k = 1; break; case 0xCD: k = 2; break; case 0xCE: k = 4; break; case 0xCF: k = 8; break;
+                     case 0xD0: k = 1; sgn = true; break; case 0xD1: k = 2; sgn = true; break;
+                     case 0xD2: k = 4; sgn = true; break; case 0xD3: k = 8; sgn = true; break;
+                     case 0xCA: { if (!need(5)) return false; i++; uint32_t b = (uint32_t)be(4); float f; __builtin_memcpy(&f, &b, 4); v = f; return true; }
+                     case 0xCB: { if (!need(9)) return false; i++; uint64_t b = be(8); double d; __builtin_memcpy(&d, &b, 8); v = d; return true; }
+                     default: return false; }
+        if (!need(1 + k)) return false;
+        i++;
+        const uint64_t u = be(k);
+        if (!sgn) { v = (double)u; return true; }
+        const int shift = 64 - int(k * 8);
+        v = (double)((int64_t)(u << shift) >> shift);
+        return true; }
+    // A bin (or str) item: its bytes; false when not one.
+    bool bin(const uint8_t*& b, size_t& len) { if (!need(1)) return false; const uint8_t c = p[i];
+        size_t k = 0;
+        if (c == 0xC4 || c == 0xD9) k = 1; else if (c == 0xC5 || c == 0xDA) k = 2;
+        else if ((c & 0xE0) == 0xA0) { i++; len = c & 31; if (!need(len)) return false; b = p + i; i += len; return true; }
+        else return false;
+        if (!need(1 + k)) return false;
+        i++; len = (size_t)be(k);
+        if (!need(len)) return false;
+        b = p + i; i += len; return true; }
+    // Skip any one item (nesting bounded).
+    bool skip(int depth = 0) { if (!need(1) || depth > 8) return false; const uint8_t c = p[i];
+        double d; const uint8_t* b; size_t l;
+        if (num(d) || bin(b, l)) return true;
+        if (c == 0xC0 || c == 0xC2 || c == 0xC3) { i++; return true; }
+        long m = mapLen();
+        if (m >= 0) { for (long j = 0; j < 2 * m; j++) if (!skip(depth + 1)) return false; return true; }
+        long a = arrLen();
+        if (a >= 0) { for (long j = 0; j < a; j++) if (!skip(depth + 1)) return false; return true; }
+        return false; }
+};
+
+inline bool parseTelemetry(const uint8_t* fields, size_t length, Telemetry& t) {
+    t = Telemetry();
+    if (!fields || !length) return false;
+    Mp f{fields, length};
+    const long entries = f.mapLen();
+    for (long e = 0; e < entries && f.ok(); e++) {
+        double key = -1;
+        if (!f.num(key)) return false;
+        const uint8_t* tb = nullptr; size_t tl = 0;
+        if ((int)key != FieldTelemetry) { if (!f.skip()) return false; continue; }
+        if (!f.bin(tb, tl)) return false;
+        Mp m{tb, tl};
+        const long sensors = m.mapLen();
+        if (sensors < 0) return false;
+        for (long k = 0; k < sensors && m.ok(); k++) {
+            double sid = -1;
+            if (!m.num(sid)) return false;
+            if ((int)sid == 0x01) {                                   // time
+                double v; if (!m.num(v)) return false; t.time = (uint32_t)v;
+            } else if ((int)sid == 0x02) {                            // location
+                const long items = m.arrLen();
+                if (items < 2) { if (!m.skip()) return false; continue; }
+                int32_t raw[2] = {0, 0};
+                for (long it = 0; it < items; it++) {
+                    const uint8_t* vb; size_t vl; double v;
+                    if (it < 2 && m.bin(vb, vl) && vl == 4) raw[it] = (int32_t)((uint32_t)vb[0] << 24 | (uint32_t)vb[1] << 16 | (uint32_t)vb[2] << 8 | vb[3]);
+                    else if (it == 5 && m.bin(vb, vl) && vl == 2) t.accuracyM = (float)((vb[0] << 8 | vb[1]) / 100.0);
+                    else if (it == 6 && m.num(v)) t.positionTime = (uint32_t)v;
+                    else if (!m.skip()) return false;
+                }
+                t.latitude = raw[0] / 1e6; t.longitude = raw[1] / 1e6;
+                t.hasPosition = t.latitude >= -90 && t.latitude <= 90 && t.longitude >= -180 && t.longitude <= 180 &&
+                                !(raw[0] == 0 && raw[1] == 0);
+            } else if ((int)sid == 0x04) {                            // battery
+                const long items = m.arrLen();
+                if (items < 1) { if (!m.skip()) return false; continue; }
+                for (long it = 0; it < items; it++) {
+                    double v;
+                    if (it == 0 && m.num(v)) { t.percent = (uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v + 0.5); t.hasBattery = true; }
+                    else if (it == 1 && m.need(1) && (m.p[m.i] == 0xC3 || m.p[m.i] == 0xC2)) { t.charging = m.p[m.i] == 0xC3; m.i++; }
+                    else if (!m.skip()) return false;
+                }
+            } else if (!m.skip()) return false;
+        }
+        return t.hasPosition || t.hasBattery;
+    }
+    return false;
+}
+
+// Set by the app: called on the main loop for each incoming message that carries telemetry
+// (before the message itself is stored), with the sender's address.
+inline void (*g_onTelemetry)(const uint8_t source[16], const Telemetry& t) = nullptr;
+inline void noteTelemetry(const uint8_t source[16], const uint8_t* fields, size_t length) {
+    Telemetry t;
+    if (g_onTelemetry && source && parseTelemetry(fields, length, t)) g_onTelemetry(source, t);
+}
+
 // Add one entry (from makeTelemetryEntry) to a small fields map (fixmap, or empty: length 0).
 inline size_t appendFieldEntry(uint8_t* fields, size_t length, size_t capacity, const uint8_t* entry, size_t entryLength) {
     if (!fields || !entry || !entryLength) return length;
