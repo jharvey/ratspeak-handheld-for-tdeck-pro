@@ -13862,7 +13862,15 @@ void sosTargetText(char* out, size_t n) {
 
 int sosTargets(uint8_t (*d)[16], int max) {
     int k = 0;
-    if (g_sos.to && g_sos.to <= g_grpCount) { grpHash(g_grp[g_sos.to - 1].id, d[k++]); return k; }
+    if (g_sos.to && g_sos.to <= g_grpCount) {
+        // Each member gets a plain message, not a group message: the group fields make it too
+        // big for one LoRa packet, so the first one waited ~2.5 min for a link (real radios,
+        // 2026-11-23); a plain SOS goes as a single packet.
+        const Group& g = g_grp[g_sos.to - 1];
+        for (int i = 0; i < g.n && k < max; i++)
+            if (!isSelf(g.m[i])) memcpy(d[k++], g.m[i], 16);
+        return k;
+    }
     for (const auto& node : g_announceMgr.nodes()) {
         if (node.hash.size() != 16 || !node.saved || isSelf(node.hash.data())) continue;
         if (k >= max) break;
