@@ -694,6 +694,25 @@ void draw(PixelFn px, int x0, int y0, int w, int h, bool dark) {
         }
     }
 
+    // ATAK units (phones on the ATAK feed): a hollow black square (7 px from the centre, 2 px
+    // line) in a white halo.
+    for (int i = 0; i < g_markerCount; i++) {
+        if (g_markers[i].kind != 3) continue;
+        int cx, cy;
+        toView(g_markers[i].lat, g_markers[i].lon, cx, cy);
+        g_markerX[i] = cx; g_markerY[i] = cy;
+        g_markerOn[i] = cx >= 0 && cy >= 0 && cx < w && cy < h;
+        for (int yy = -9; yy <= 9; yy++) {
+            for (int xx = -9; xx <= 9; xx++) {
+                const int vx = cx + xx, vy = cy + yy;
+                if (vx < 0 || vy < 0 || vx >= w || vy >= h) continue;
+                const int r = abs(xx) > abs(yy) ? abs(xx) : abs(yy);   // square "radius"
+                const bool black = r == 6 || r == 7 || (xx == 0 && yy == 0);
+                px(x0 + vx, y0 + vy, black != dark);   // r <= 9 and not black: white halo / inside
+            }
+        }
+    }
+
     // Own position: black ring with a white halo and a centre dot, visible on any tile.
     if (g_posValid) {
         double ppx, ppy;

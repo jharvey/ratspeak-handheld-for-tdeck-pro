@@ -77,7 +77,7 @@ bool send(const char* data, size_t n, uint32_t ip, uint16_t port) {
     return sendto(g_tx, data, n, 0, (const sockaddr*)&a, sizeof(a)) == (int)n;
 }
 
-bool listen(uint16_t port) {
+bool listen(uint16_t port, uint32_t group) {
     if (g_rx >= 0) { close(g_rx); g_rx = -1; }
     if (!port) return true;
     g_rx = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -88,6 +88,18 @@ bool listen(uint16_t port) {
     a.sin_port = htons(port);
     a.sin_addr.s_addr = htonl(INADDR_ANY);
     if (bind(g_rx, (sockaddr*)&a, sizeof(a)) < 0) { close(g_rx); g_rx = -1; return false; }
+#ifdef IP_ADD_MEMBERSHIP
+    // Also take ATAK's SA multicast group (the simulator's WiFi has no multicast: unicast only).
+    if (group) {
+        struct ip_mreq m;
+        memset(&m, 0, sizeof(m));
+        m.imr_multiaddr.s_addr = htonl(group);
+        m.imr_interface.s_addr = htonl(INADDR_ANY);
+        setsockopt(g_rx, IPPROTO_IP, IP_ADD_MEMBERSHIP, &m, sizeof(m));
+    }
+#else
+    (void)group;
+#endif
     return true;
 }
 

@@ -29,8 +29,9 @@ struct Item {
 size_t format(const Item& it, char* out, size_t cap);
 // Send one datagram; ip / port in host order. False: no socket or send failed.
 bool send(const char* data, size_t n, uint32_t ip, uint16_t port);
-// Bench / test: receive CoT on a port (non-blocking poll). listen(0) stops.
-bool listen(uint16_t port);
+// Receive CoT on a port (non-blocking poll), also on multicast group `group` (host order,
+// 0 = none) where the network stack has multicast. listen(0) stops.
+bool listen(uint16_t port, uint32_t group = 0);
 int poll(char* buf, size_t cap, uint32_t* fromIp);   // bytes, or -1 = nothing
 void stop();
 

@@ -25,6 +25,6 @@ A marker you receive is kept and drawn on the map. The chat shows "[marker] haza
 In the marker list, J shows the contacts who shared a position, nearest first. Enter shows one on the map.
 Other apps see the marker as text: "Marker: hazard at 43.64012, -70.92011 (bridge out)".
 
-ATAK: phones running ATAK on the same WiFi can see this unit, your contacts' shared positions and the markers. M, S, 3 (WiFi), last row: ATAK feed on. It sends every 30 s to ATAK's usual address (239.2.3.1:6969), no server needed.
+ATAK: phones running ATAK on the same WiFi can see this unit, your contacts' shared positions and the markers. M, S, 3 (WiFi), last row: ATAK feed on. It sends every 30 s to ATAK's usual address (239.2.3.1:6969), no server needed. It also listens there: ATAK phones show on the map as squares, and their markers join your marker list (from ATAK).
 
 GPS needs open sky. Indoors it often gets no fix.

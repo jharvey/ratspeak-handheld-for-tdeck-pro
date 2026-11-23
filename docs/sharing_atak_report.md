@@ -163,8 +163,10 @@ ATAK phone.**
 
 COM3, COM5, COM8 on USB and WiFi, COM6 and COM9 on the air; 20 rounds of 45 s: each USB
 unit made a marker and sent it to the next unit, to COM6 / COM9, or to a group of all five;
-the ATAK feed every 10 s; the PC listened on 239.2.3.1:6969 (`M:atspeak-soaktak_stress.py`,
-logs in `M:atspeak-soak6-11-23_atak`).
+the ATAK feed every 10 s; the PC listened on 239.2.3.1:6969 (`M:
+atspeak-soaktak_stress.py`,
+logs in `M:
+atspeak-soak6-11-23_atak`).
 
 | What | Result |
 |---|---|
@@ -178,9 +180,26 @@ To run it again usefully: free the message stores on COM3 and COM5 (or use units
 full), and let the PC receive UDP 6969 (network set to Private plus a rule for Python, or
 listen on a phone running ATAK instead).
 
+### Receive (added 23 Nov 2026)
+
+While the feed is on (or the bench listener `cot listen <port>`), the unit also listens on
+UDP 6969 and joins 239.2.3.1 where the network stack has multicast (not in the simulator).
+
+- A phone's own position (CoT type `a-...`, not hostile) is kept per uid, 16 at most, and
+  drawn on the Atlas as a hollow square; it goes when its stale time passes or after an
+  hour. Console `cot atak` lists them.
+- Its markers (`b-m-p...`, `u-d-p`, hostile `a-h-...`) become markers "from ATAK": the type
+  from a callsign like "camp: river camp" (else hazard for hostile, other for the rest), the
+  rest as the note. The same marker again (same uid, type, note, within 15 m) changes
+  nothing, so a feed repeating every few seconds does not wear the flash.
+- Events from RatSpeak units (uid `RatSpeak-...`) are skipped, and markers that came from
+  ATAK are not sent back out on the feed.
+- Bench: `cot fake <ip|local> <u|m> <callsign> <lat> <lon>` sends (or feeds locally) an event
+  the way a phone running ATAK does. Tests: `cot_net.py` step 4, `sim/scripts/atak_map.txt`.
+
 ### Not done
 
-- Receiving from ATAK (phones' own positions and their markers onto the Atlas).
+- A TAK server connection (TCP / TLS, port 8087 / 8089).
 - A TAK server connection (TCP / TLS, port 8087 / 8089).
 - The feed over LoRa (only WiFi; a unit without WiFi is seen through a unit that has it,
   because contacts' positions are passed on).

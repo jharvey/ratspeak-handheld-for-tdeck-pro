@@ -186,7 +186,8 @@ sends Cursor-on-Target XML over UDP to ATAK's SA multicast 239.2.3.1:6969: itsel
 (`a-f-G-U-C`, name, battery), each contact's shared position up to an hour old, and each
 marker as a coloured spot (`b-m-p-s-m`). ATAK / WinTAK / iTAK on the same WiFi show them
 with no TAK server. Console `cot` (on, off, to <ip> [port], every <s>, now, listen <port>);
-code in CotFeed.cpp. Not tried with a real ATAK phone yet; nothing is received from ATAK.
+code in CotFeed.cpp. It also receives on 6969: ATAK units as squares on the Atlas (`cot atak`),
+their markers as markers from ATAK. Not tried with a real ATAK phone yet.
 
 ### 1.3 First-boot setup: the setup wizard
 

@@ -1,0 +1,21 @@
+# ATAK receive on the Atlas: a unit (square) and an ATAK marker (triangle) near this radio.
+# "cot fake local" feeds an event as a phone running ATAK sends it (no WiFi needed).
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+key BACK
+wait 800
+serial mark del all
+serial cot fake local u ALPHA_1 43.65450 -79.38050
+expect 3000 [COT] ATAK unit "ALPHA 1"
+serial cot fake local m hazard:_ice 43.65250 -79.38450
+expect 3000 [MARK] #1 hazard at 43.65250,-79.38450 "ice" from ATAK
+serial map 43.65350 -79.38300 15
+expect 5000 [MAP] open
+wait 2000
+shot atak-01-map.png
+key J
+expect 3000 [MARK] list (1 markers)
+wait 800
+shot atak-02-list.png
+quit

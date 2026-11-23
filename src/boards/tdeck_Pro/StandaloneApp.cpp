@@ -8309,6 +8309,7 @@ void mapCycleContact() {
 // drawn over the stamped map, so only those small areas are redrawn.
 int wptFeed(mapview::Marker* m, int n);
 int markFeed(mapview::Marker* m, int n);
+int takFeed(mapview::Marker* m, int n);
 
 void mapContactsFeed() {
     mapview::Marker m[mapview::kMaxMarkers];
@@ -8321,6 +8322,7 @@ void mapContactsFeed() {
     }
     n = wptFeed(m, n);                       // waypoints (diamonds), track, guide line
     n = markFeed(m, n);                      // items of interest (triangles)
+    n = takFeed(m, n);                       // ATAK units (squares)
     mapview::setMarkers(m, n);
 }
 
@@ -8939,6 +8941,14 @@ Mark g_mark[kMarkMax];
 int g_markCount = 0;
 int g_markSel = -1;                          // selected on the map (bottom line, guide line)
 
+// A marker that came from ATAK (the feed's receive side) has from = A7 AC + a hash of its uid.
+bool markFromAtak(const uint8_t from[16]) { return from[0] == 0xA7 && from[1] == 0xAC; }
+void markWho(const Mark& m, char* out, size_t n) {
+    if (m.mine) strlcpy(out, "mine", n);
+    else if (markFromAtak(m.from)) strlcpy(out, "ATAK", n);
+    else peerName(m.from, out, n);
+}
+
 void markSave() {
     Preferences p;
     if (!p.begin("rs_mark", false)) return;
@@ -9045,7 +9055,8 @@ int markAdd(int type, double lat, double lon, const char* note, const uint8_t* f
     strlcpy(m.note, note ? note : "", sizeof(m.note));
     markSave();
     char who[24] = "this radio", where[40];
-    if (from) peerName(from, who, sizeof(who));
+    if (from && markFromAtak(from)) strlcpy(who, "ATAK", sizeof(who));
+    else if (from) peerName(from, who, sizeof(who));
     markWhere(lat, lon, where, sizeof(where));
     Serial.printf("[MARK] #%d %s at %.5f,%.5f \"%s\" from %s: %s\n", i + 1, kMarkType[type], lat, lon, m.note, who, where);
     requestRedraw();
@@ -9358,7 +9369,7 @@ void renderMarks() {
                 const Mark& m = g_mark[g_mkOrder[i]];
                 char w[32], who[24] = "mine", age[12] = "?";
                 markWhere(m.lat, m.lon, w, sizeof(w), false);
-                if (!m.mine) peerName(m.from, who, sizeof(who));
+                markWho(m, who, sizeof(who));
                 if (m.at) fmtAge(now > (time_t)m.at ? (uint32_t)(now - m.at) : 0, age, sizeof(age));
                 snprintf(title, sizeof(title), "%d : %s %s", i % 9 + 1, kMarkType[m.type], w);
                 if (m.note[0]) snprintf(sub, sizeof(sub), "%.14s (%.8s, %s)", m.note, who, age);
@@ -9372,7 +9383,7 @@ void renderMarks() {
             snprintf(title, sizeof(title), "%d : %s", i + 1, kAct[i]);
             if (i == 0 && one) {
                 char who[24] = "mine";
-                if (!one->mine) peerName(one->from, who, sizeof(who));
+                markWho(*one, who, sizeof(who));
                 if (one->note[0]) snprintf(sub, sizeof(sub), "%.20s (%.10s)", one->note, who);
                 else snprintf(sub, sizeof(sub), "from: %s", who);
             } else if (i == 1) snprintf(sub, sizeof(sub), "to a contact or a group");
@@ -9478,7 +9489,7 @@ void markConsole(const char* p) {
     for (int k = 0; k < g_markCount; k++) {
         const Mark& m = g_mark[g_mkOrder[k]];
         char who[24] = "mine", w[40];
-        if (!m.mine) peerName(m.from, who, sizeof(who));
+        markWho(m, who, sizeof(who));
         markWhere(m.lat, m.lon, w, sizeof(w));
         Serial.printf("[MARK] %d: #%d %s %.5f,%.5f \"%s\" %s, %s\n", k + 1, g_mkOrder[k] + 1, kMarkType[m.type], m.lat, m.lon, m.note, who, w);
     }
@@ -9557,6 +9568,7 @@ int cotSendAll(bool log) {
         snprintf(uid, sizeof(uid), "RatSpeak-mk-%08lx", (unsigned long)h);
         if (m.note[0]) snprintf(cs, sizeof(cs), "%s: %s", kMarkType[m.type], m.note);
         else snprintf(cs, sizeof(cs), "%s", kMarkType[m.type]);
+        if (markFromAtak(m.from)) continue;       // came from ATAK: do not send it back
         char who[24] = "this unit";
         if (!m.mine) peerName(m.from, who, sizeof(who));
         snprintf(rem, sizeof(rem), "RatSpeak marker from %s", who);
@@ -9570,11 +9582,149 @@ int cotSendAll(bool log) {
     return sent;
 }
 
+// ---- ATAK feed, receive side: phones running ATAK (and TAK devices) on the same WiFi ----------
+// Their own position ("a-..." events) is kept per uid (16 at most, gone when stale or an hour
+// old) and drawn on the Atlas as a square; their markers (b-m-p..., u-d-p, hostile a-h-...)
+// become markers from "ATAK". Events from RatSpeak units (uid RatSpeak-...) are skipped: those
+// are this radio's own or come over LoRa anyway.
+struct TakUnit { char uid[40]; char cs[24]; float lat, lon; uint32_t at, stale; };
+constexpr int kTakMax = 16;
+TakUnit g_tak[kTakMax];
+int g_takCount = 0;
+uint32_t g_takRx = 0;                        // CoT events taken in
+bool g_cotRxOpen = false;
+uint16_t g_cotListenPort = 0;                // bench "cot listen <port>": print what arrives
+
+bool cotAttr(const char* xml, const char* name, char* out, size_t n) {
+    char key[24];
+    snprintf(key, sizeof(key), " %s=\"", name);
+    const char* q = strstr(xml, key);
+    if (!q) return false;
+    q += strlen(key);
+    size_t k = 0;
+    for (; *q && *q != '"' && k + 1 < n; q++) out[k++] = *q;
+    out[k] = 0;
+    return true;
+}
+
+// "2026-11-23T14:32:00Z" (or with .sss) -> UTC seconds, 0 when it does not parse.
+uint32_t cotTime(const char* t) {
+    int y, mo, d, h, mi, se;
+    if (sscanf(t, "%4d-%2d-%2dT%2d:%2d:%2d", &y, &mo, &d, &h, &mi, &se) != 6) return 0;
+    y -= mo <= 2;                                // days from civil (H. Hinnant)
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = (unsigned)(y - era * 400);
+    const unsigned doy = (153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    const long days = (long)era * 146097 + (long)doe - 719468;
+    return days < 0 ? 0 : (uint32_t)(days * 86400L + h * 3600 + mi * 60 + se);
+}
+
+// XML entities back to characters (in place), the few CoT uses.
+void cotUnescape(char* s) {
+    static const char* const kEnt[5][2] = {{"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""}, {"&apos;", "'"}};
+    char* w = s;
+    for (const char* r = s; *r;) {
+        bool hit = false;
+        for (auto& e : kEnt)
+            if (!strncmp(r, e[0], strlen(e[0]))) { *w++ = e[1][0]; r += strlen(e[0]); hit = true; break; }
+        if (!hit) *w++ = *r++;
+    }
+    *w = 0;
+}
+
+void cotReceive(const char* xml) {
+    char uid[48] = "", ty[24] = "", cs[48] = "", la[24] = "", lo[24] = "", ts[32] = "", st[32] = "";
+    if (!cotAttr(xml, "uid", uid, sizeof(uid)) || !cotAttr(xml, "type", ty, sizeof(ty))) return;
+    if (!strncmp(uid, "RatSpeak-", 9)) return;
+    const char* pt = strstr(xml, "<point ");
+    if (!pt || !cotAttr(pt, "lat", la, sizeof(la)) || !cotAttr(pt, "lon", lo, sizeof(lo))) return;
+    const double lat = atof(la), lon = atof(lo);
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180 || (lat == 0 && lon == 0)) return;
+    const char* c = strstr(xml, "<contact ");
+    if (c) cotAttr(c, "callsign", cs, sizeof(cs));
+    cotUnescape(cs);
+    if (!cs[0]) strlcpy(cs, uid, sizeof(cs));
+    cotAttr(xml, "time", ts, sizeof(ts));
+    cotAttr(xml, "stale", st, sizeof(st));
+    const time_t now = time(nullptr);
+    uint32_t at = cotTime(ts);
+    if (!at) at = now > 1600000000 ? (uint32_t)now : 0;
+    g_takRx++;
+    const bool hostile = !strncmp(ty, "a-h", 3);
+    if (ty[0] == 'a' && ty[1] == '-' && !hostile) {           // a unit: its position
+        int i = -1;
+        for (int k = 0; k < g_takCount && i < 0; k++) if (!strcmp(g_tak[k].uid, uid)) i = k;
+        if (i < 0) {
+            if (g_takCount < kTakMax) i = g_takCount++;
+            else { i = 0; for (int k = 1; k < kTakMax; k++) if (g_tak[k].at < g_tak[i].at) i = k; }
+            Serial.printf("[COT] ATAK unit \"%s\" %.5f,%.5f\n", cs, lat, lon);
+        }
+        TakUnit& u = g_tak[i];
+        strlcpy(u.uid, uid, sizeof(u.uid));
+        strlcpy(u.cs, cs, sizeof(u.cs));
+        u.lat = (float)lat; u.lon = (float)lon; u.at = at; u.stale = cotTime(st);
+        if (mapview::isOpen()) mapContactsFeed();
+        return;
+    }
+    if (ty[0] != 'b' && ty[0] != 'u' && !hostile) return;      // tasks, sensors ...: not shown
+    int type = hostile ? 0 : kMarkTypes - 1;                    // hazard / other
+    char note[24] = "";
+    for (int k = 0; k < kMarkTypes; k++) {                      // "camp: tents" -> camp, tents
+        const size_t l = strlen(kMarkType[k]);
+        if (!strncasecmp(cs, kMarkType[k], l) && (cs[l] == ':' || cs[l] == 0)) {
+            type = k;
+            strlcpy(note, cs[l] == ':' ? cs + l + 1 + (cs[l + 1] == ' ') : "", sizeof(note));
+        }
+    }
+    if (!note[0] && strcmp(cs, uid)) strlcpy(note, cs, sizeof(note));
+    for (char* q = note; *q; q++) if ((unsigned char)*q < 32 || (unsigned char)*q > 126) *q = '?';
+    uint8_t from[16] = {0xA7, 0xAC};
+    uint32_t h = 2166136261u;
+    for (const char* q = uid; *q; q++) h = (h ^ (uint8_t)*q) * 16777619u;
+    for (int k = 2; k < 16; k++) { h = h * 1103515245u + 12345u; from[k] = (uint8_t)(h >> 16); }
+    for (int k = 0; k < g_markCount; k++) {                     // already have it, unchanged: nothing
+        const Mark& m = g_mark[k];
+        if (!memcmp(m.from, from, 16) && m.type == type && !strcmp(m.note, note) &&
+            metersBetween(m.lat, m.lon, lat, lon) < 15.0f) return;
+    }
+    markAdd(type, lat, lon, note, from, at);
+    if (mapview::isOpen()) mapContactsFeed();
+}
+
+// The Atlas: ATAK units as squares (kind 3).
+int takFeed(mapview::Marker* m, int n) {
+    for (int i = 0; i < g_takCount && n < mapview::kMaxMarkers; i++)
+        m[n++] = {g_tak[i].lat, g_tak[i].lon, false, (uint8_t)(i + 1), true, false, 3};
+    return n;
+}
+
+void takPrune() {
+    const time_t now = time(nullptr);
+    if (now < 1600000000) return;
+    for (int i = 0; i < g_takCount;) {
+        const TakUnit& u = g_tak[i];
+        const bool old = (u.stale && u.stale < (uint32_t)now) || (u.at && u.at + 3600u < (uint32_t)now);
+        if (old) {
+            Serial.printf("[COT] ATAK unit \"%s\" gone (stale)\n", u.cs);
+            g_tak[i] = g_tak[--g_takCount];
+        } else i++;
+    }
+}
+
 void cotTick() {
-    if (g_cotListen) {                           // bench: print what arrives
+    // Receive while the feed is on and WiFi is up, or while the bench listener is on.
+    const bool want = g_cotListenPort || (g_cot.on && wifiConnected() && g_pwEff.wifi);
+    if (want && !g_cotRxOpen) g_cotRxOpen = cot::listen(g_cotListenPort ? g_cotListenPort : cot::kSaPort, cot::kSaGroup);
+    if (!want && g_cotRxOpen) { cot::listen(0); g_cotRxOpen = false; }
+    static uint32_t pruned = 0;
+    if (millis() - pruned > 30000) { pruned = millis(); takPrune(); }
+    if (g_cotRxOpen) {
         static char buf[1024];
         uint32_t from = 0;
-        while (cot::poll(buf, sizeof(buf), &from) > 0) {
+        for (int k = 0; k < 8 && cot::poll(buf, sizeof(buf), &from) > 0; k++) {
+            cotReceive(buf);
+            if (!g_cotListen) continue;              // bench: also print what arrives
             char ip[16], cs[40] = "?", uid[48] = "?", ty[24] = "?";
             double la = 0, lo = 0;
             cotIp(from, ip, sizeof(ip));
@@ -9619,9 +9769,38 @@ void cotConsole(const char* p) {
         cotSendAll(true);
         return;
     } else if (sscanf(p, "listen %u", &port) == 1) {
-        g_cotListen = port && cot::listen((uint16_t)port);
-        if (!port) cot::listen(0);
-        Serial.printf("[COT] listen %s\n", g_cotListen ? "on" : "off");
+        if (g_cotRxOpen) { cot::listen(0); g_cotRxOpen = false; }
+        g_cotListenPort = (uint16_t)port;
+        g_cotListen = port != 0;
+        if (port) g_cotRxOpen = cot::listen((uint16_t)port, cot::kSaGroup);
+        Serial.printf("[COT] listen %s\n", g_cotListen && g_cotRxOpen ? "on" : "off");
+        return;
+    } else if (!strcmp(p, "atak")) {             // the ATAK units heard
+        takPrune();
+        const time_t now = time(nullptr);
+        for (int i = 0; i < g_takCount; i++)
+            Serial.printf("[COT] atak %d: \"%s\" %.5f,%.5f %lus old\n", i + 1, g_tak[i].cs, g_tak[i].lat, g_tak[i].lon,
+                          (unsigned long)(now > (time_t)g_tak[i].at ? now - g_tak[i].at : 0));
+        Serial.printf("[COT] atak: %d units, %lu events taken in\n", g_takCount, (unsigned long)g_takRx);
+        return;
+    } else if (!strncmp(p, "fake ", 5)) {        // bench: cot fake <a.b.c.d|local> <u|m> <callsign> <lat> <lon>
+        char where[16] = "", kind[4] = "", cs[40] = "";   // an event as a phone running ATAK sends it
+        double la = 0, lo = 0;
+        if (sscanf(p + 5, "%15s %3s %39s %lf %lf", where, kind, cs, &la, &lo) != 5) { Serial.println("[COT] fake <ip|local> <u|m> <callsign> <lat> <lon>"); return; }
+        for (char* q = cs; *q; q++) if (*q == '_') *q = ' ';
+        const time_t now = time(nullptr);
+        char uid[48];
+        snprintf(uid, sizeof(uid), "ANDROID-%s", cs);
+        for (char* q = uid; *q; q++) if (*q == ' ') *q = '-';
+        cot::Item it;
+        it.lat = la; it.lon = lo; it.at = (uint32_t)now; it.stale = (uint32_t)now + 300;
+        it.uid = uid; it.callsign = cs;
+        it.type = kind[0] == 'u' ? "a-f-G-U-C" : "b-m-p-s-m";
+        static char xml[900];
+        const size_t n = cot::format(it, xml, sizeof(xml));
+        if (!strcmp(where, "local")) { cotReceive(xml); return; }
+        if (sscanf(where, "%u.%u.%u.%u", &a, &b, &c, &d) == 4)
+            Serial.printf("[COT] fake sent: %s\n", cot::send(xml, n, a << 24 | b << 16 | c << 8 | d, cot::kSaPort) ? "yes" : "no");
         return;
     }
     cotIp(g_cot.ip, ip, sizeof(ip));

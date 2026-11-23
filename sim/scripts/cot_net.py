@@ -12,7 +12,10 @@ Steps:
  2 "cot now": ANN itself (friendly unit, battery), a contact's shared position and a marker
    arrive; every event is well-formed CoT XML with the right type, callsign and point
  3 the feed on: events come every interval by themselves; off: they stop
- 4 a restart keeps the settings
+ 4 receive: a phone running ATAK (played by "cot fake" on ANN) is listed on BOB with its
+   position; its marker becomes a marker from ATAK (a repeat adds nothing); BOB does not
+   send that marker back to ATAK
+ 5 a restart keeps the settings
 Takes about 4 minutes. Exit 0 = all steps passed. Logs: %TEMP%\\rs_cot_net\\<name>.log
 """
 import os, re, sys, tempfile, time
@@ -57,7 +60,7 @@ def main():
         b.send("contact %s ANN" % h["ann"])
         a.send("wifi join HomeNet password123")
         b.send("wifi join HomeNet password123")
-        a.expect(r'\[WIFI\] connected "HomeNet"', 30)
+        aip = a.expect(r'\[WIFI\] connected "HomeNet" ip (\d+\.\d+\.\d+\.\d+)', 30).group(1)
         bip = b.expect(r'\[WIFI\] connected "HomeNet" ip (\d+\.\d+\.\d+\.\d+)', 30).group(1)
         print("BOB ip", bip, flush=True)
         b.send("cot listen 6969")
@@ -111,13 +114,38 @@ def main():
         G.step(3, "on: events every interval; off: they stop", s3)
 
         def s4():
+            b.mark()
+            a.send("cot fake %s u ALPHA_1 43.65500 -79.38000" % bip)
+            b.expect(r'\[COT\] ATAK unit "ALPHA 1" 43\.65500,-79\.38000', 20)
+            b.ask("cot atak", r'\[COT\] atak 1: "ALPHA 1" 43\.65500,-79\.38000', 10)
+            b.mark()
+            a.send("cot fake %s m camp:_river_camp 43.66000 -79.39000" % bip)
+            b.expect(r'\[MARK\] #\d+ camp at 43\.66000,-79\.39000 "river camp" from ATAK', 20)
+            b.mark()
+            a.send("cot fake %s m camp:_river_camp 43.66000 -79.39000" % bip)   # the same again
+            b.expect(r'\[COT\] rx from .* ANDROID-camp:-river-camp', 20)
+            absent(b, r'\[MARK\] #\d+ camp', 5)
+            b.ask("mark", r'\[MARK\] \d+: #\d+ camp 43\.66000,-79\.39000 "river camp" ATAK', 10)
+            # BOB's own feed (to ANN) must not carry the marker that came from ATAK
+            a.send("cot listen 6969")
+            a.expect(r"\[COT\] listen on", 10)
+            b.send("cot to %s 6969" % aip)
+            a.mark()
+            b.send("cot now")
+            b.expect(r"\[COT\] sent \d+ events", 10)
+            a.expect(r'\[COT\] rx from .* a-f-G-U-C "BOB"', 20)
+            absent(a, r'river camp', 6)
+            a.send("cot listen 0")
+        G.step(4, "receive: an ATAK unit and an ATAK marker; not sent back", s4)
+
+        def s5():
             a.close()
             time.sleep(3)
             na = G.Sim("cot_ann", 5691, fresh=False)
             sims["ann"] = na
             na.ident()
             na.ask("cot", r"\[COT\] feed off, every 5 s, to " + re.escape(bip) + r":6969", 30)
-        G.step(4, "a restart keeps the settings", s4)
+        G.step(5, "a restart keeps the settings", s5)
     except Exception as e:
         G.results.append((0, "setup", False, str(e)))
         print("FAIL setup:", e, flush=True)
