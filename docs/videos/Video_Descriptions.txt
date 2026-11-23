@@ -646,6 +646,80 @@ Overlays:
 End: both units are on the idle screen.
 
 
+-- SOS_and_quick_replies.mp4
+
+Status: MADE 23 Nov 2026 (sim/scripts/howto/SOS_and_quick_replies.txt,
+  SOS_and_quick_replies_sage.txt), 93 s.
+Depends: CAN BE MADE NOW (the button hold is the console "btn hold" in the simulator; on a
+  real unit film the hand holding the top side button).
+Remake when: the SOS text, the countdown, the alarm or the quick replies change.
+
+Purpose: call for help with one button; get an SOS and answer it in one key.
+
+Setup:
+- Two units side by side: "ROBIN" left at the Alamo, "SAGE" right about 1 km away, contacts
+  of each other. Splash idle screens. No password. SOS sends to: saved contacts (default).
+
+Steps:
+1. Robin holds the top side button 3 s: the 5 s countdown ("SOS in 5 s - any key cancels").
+2. The SOS goes out: "SOS! ROBIN needs help." with position and battery.
+3. Sage's radio wakes and sounds the alarm; a key silences it.
+4. Sage: I, Enter on Robin's chat, MIC, Q (the quick replies), 4 "On my way".
+5. Robin holds the button 3 s again: "SOS cancelled" reaches Sage.
+6. Robin: M, S, 9 Alerts, row 7 "SOS sends to".
+7. Both go back to the idle screen.
+
+Overlays:
+- Start: "SOS: hold the top side button for 3 seconds. The radio counts down 5 seconds, then
+  calls for help".
+- After step 2: "Then a position update every 2 minutes, and the full SOS every 10 minutes,
+  until Robin ends it".
+
+End: both units are on the idle screen.
+
+
+-- Notes_in_the_Library.mp4
+
+Status: MADE 23 Nov 2026 (sim/scripts/howto/Notes_in_the_Library.txt), 66 s.
+Depends: CAN BE MADE NOW.
+Remake when: the Library rows or the note file name change.
+
+Purpose: write a short note on the radio and find it again.
+
+Setup: one unit, "ROBIN", the help files on the SD card (seed "library").
+
+Steps:
+1. A key, M, R: the Library. V down to the last row, "New note". Enter.
+2. Type MEET AT THE OLD MILL 5PM, Enter: saved as Note-<date>-<time>.txt.
+3. The note is in the list; Enter opens it. ^ back, ^ closes the Library.
+
+End: the idle screen.
+
+
+-- Map_layers.mp4
+
+Status: MADE 23 Nov 2026 (sim/scripts/howto/Map_layers.txt), 54 s.
+Depends: CAN BE MADE NOW (seed "tn" with coverage tiles in maps/coverage).
+Remake when: the layers page or the layer list changes.
+
+Purpose: switch map layers on and off, including the radio coverage overlay.
+
+Setup: one unit, "JACK", at Cave Spring Hollow, Lynchburg, Tennessee; map and coverage tiles
+on the SD card.
+
+Steps:
+1. A key, A: the Atlas. O: the layers page.
+2. 7: radio coverage on. ^: the map with the overlay.
+3. O, 2: contour lines off. ^: the map without them.
+4. O, 2, 7: back as it was. ^ closes the map.
+
+Overlays:
+- "The layers stay as set. The coverage overlay is made on a PC from elevation data
+  (tools/maptiles/rf_coverage.py)".
+
+End: the idle screen.
+
+
 -- ATAK_feed.mp4
 
 Status: PROPOSED.

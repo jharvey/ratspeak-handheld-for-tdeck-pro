@@ -13871,7 +13871,8 @@ int sosTargets(uint8_t (*d)[16], int max) {
     return k;
 }
 
-bool sosActive() { return g_sos.on; }
+uint32_t g_sosHoldUntil = 0;                 // after a cancel: LoRa stays on until it is out
+bool sosActive() { return g_sos.on || g_sosHoldUntil; }
 bool sosBtnOn() { return g_sos.btn; }
 
 void sosToggleBtn() {                        // Alerts page row 8
@@ -13894,7 +13895,38 @@ void sosPosText(char* out, size_t n) {
     else snprintf(out, n, "position unknown");
 }
 
+// The outbox and an SOS (found on real radios: the SOS queued behind other messages and took
+// minutes; updates still queued went out after "SOS cancelled"). Remove queued SOS texts
+// (all, or only the updates), and move the SOS texts to the front so they go first.
+int sosOutboxDrop(bool updatesOnly) {
+    int k = 0, dropped = 0;
+    for (int i = 0; i < g_outboxCount; i++) {
+        const char* t = g_outbox[i].text;
+        const bool upd = !strncmp(t, kSosUpdPrefix, strlen(kSosUpdPrefix));
+        const bool full = !strncmp(t, kSosPrefix, strlen(kSosPrefix));
+        if (upd || (!updatesOnly && full)) { dropped++; continue; }
+        if (k != i) g_outbox[k] = g_outbox[i];
+        k++;
+    }
+    g_outboxCount = k;
+    if (dropped) { outboxSave(); Serial.printf("[SOS] %d queued SOS texts dropped\n", dropped); }
+    return dropped;
+}
+
+void sosOutboxFront() {
+    OutboxItem tmp[kOutboxCap];
+    int n = 0;
+    for (int i = 0; i < g_outboxCount; i++)
+        if (!strncmp(g_outbox[i].text, "SOS", 3)) tmp[n++] = g_outbox[i];
+    if (!n || n == g_outboxCount) return;
+    for (int i = 0; i < g_outboxCount; i++)
+        if (strncmp(g_outbox[i].text, "SOS", 3)) tmp[n++] = g_outbox[i];
+    memcpy(g_outbox, tmp, sizeof(OutboxItem) * (size_t)g_outboxCount);
+    outboxSave();
+}
+
 void sosSend(int kind) {                     // 0 = full SOS, 1 = position update, 2 = cancelled
+    sosOutboxDrop(kind != 2);                // a newer position replaces a queued one; cancel drops all
     char pos[48], bs[16] = "", body[140], tgt[40];
     sosPosText(pos, sizeof(pos));
     if (g_bat.valid) snprintf(bs, sizeof(bs), " Bat %d%%", (int)g_bat.pct);
@@ -13906,6 +13938,7 @@ void sosSend(int kind) {                     // 0 = full SOS, 1 = position updat
     int ok = 0;
     for (int i = 0; i < n; i++)
         if (statusSend(d[i], body) != SendResult::Failed) ok++;
+    sosOutboxFront();
     g_sosSent++;
     sosTargetText(tgt, sizeof(tgt));
     Serial.printf("[SOS] %s to %d of %d (%s): %s\n", kind == 0 ? "sent" : kind == 1 ? "update" : "cancel", ok, n, tgt, body);
@@ -13916,9 +13949,10 @@ void sosStart() {
     g_sos.on = true;
     g_sos.startedAt = (uint32_t)time(nullptr);
     sosSave();
+    powerApply(true);                        // LoRa on now, also in Check-in mode
     g_sosLastUpd = g_sosLastFull = millis();
     sosSend(0);
-    toast("SOS sent. Hold top button 3 s = cancel");
+    toast("SOS sent. Hold 3 s = stop");
     vibrate(400);
     requestRedraw();
 }
@@ -13929,6 +13963,7 @@ void sosStop(const char* why) {
     g_sos.on = false;
     g_sosResumeAt = 0;
     sosSave();
+    g_sosHoldUntil = millis() + 120000;      // sosTick: back to the chosen mode once it is sent
     Serial.printf("[SOS] off (%s)\n", why);
     toast("SOS cancelled");
     requestRedraw();
@@ -13950,7 +13985,8 @@ void sosHold(const char* src) {
     g_sosArmSec = 0;
     Serial.printf("[SOS] countdown started (%s)\n", src);
     if (g_idleActive) { g_idleActive = false; g_fullRefreshReq = true; }   // show the countdown
-    toast("SOS in 5 s - any key cancels");
+    noteInput();                             // and keep it shown (no idle timeout right away)
+    toast("SOS in 5 s, a key cancels");
     vibrate(80);
     requestRedraw();
 }
@@ -13967,19 +14003,27 @@ void sosAlarmBeep() {                        // loud, whatever the beep / quiet 
 
 void sosTick() {
     const uint32_t now = millis();
+    if (g_sosHoldUntil && !g_sos.on) {
+        bool queued = false;
+        for (int i = 0; i < g_outboxCount; i++) queued |= !strncmp(g_outbox[i].text, "SOS", 3);
+        if (!queued || (int32_t)(now - g_sosHoldUntil) >= 0) {
+            g_sosHoldUntil = 0;
+            powerApply(true);                // back to the chosen energy mode
+        }
+    }
     if (g_sosArmAt) {
         const uint32_t el = now - g_sosArmAt;
-        if (el >= kSosCountMs) { g_sosArmAt = 0; sosStart(); }
+        if (el >= kSosCountMs) { g_sosArmAt = 0; sosStart(); return; }   // "now" is older than the send
         else if (el / 1000 > g_sosArmSec) {
             g_sosArmSec = (uint8_t)(el / 1000);
             vibrate(60);
-            toast("SOS in %u s - any key cancels", (unsigned)((kSosCountMs - el + 999) / 1000));
+            toast("SOS in %u s, a key cancels", (unsigned)((kSosCountMs - el + 999) / 1000));
             requestRedraw();
         }
     }
     if (g_sosResumeAt && (int32_t)(now - g_sosResumeAt) >= 0) {
         g_sosResumeAt = 0;
-        if (g_sos.on) { g_sosLastUpd = g_sosLastFull = now; sosSend(0); toast("SOS still active"); }
+        if (g_sos.on) { powerApply(true); g_sosLastUpd = g_sosLastFull = now; sosSend(0); toast("SOS still active"); }
     }
     if (g_sos.on && !g_sosResumeAt) {
         if (now - g_sosLastFull >= kSosFullMs) { g_sosLastFull = g_sosLastUpd = now; sosSend(0); }
@@ -13998,7 +14042,7 @@ bool sosKey() {
     if (g_sosRxUntil) {
         g_sosRxUntil = 0;
         Serial.println("[SOS] alarm silenced (key)");
-        toast("SOS from %.14s: see the chat", g_sosRxFrom);
+        toast("SOS from %.12s: see chat", g_sosRxFrom);
         requestRedraw();
         return true;
     }
@@ -14031,7 +14075,8 @@ void sosIncoming(const uint8_t from[16], const char* text) {
         g_sosRxUntil = millis() + 60000;
         g_sosRxBeepAt = 0;
         if (g_idleActive) { g_idleActive = false; g_fullRefreshReq = true; }
-        toast("SOS from %.14s! Any key = silence", nm);
+        noteInput();                         // stay awake: no idle timeout right away
+        toast("SOS from %.10s! Key = quiet", nm);
     } else {
         toast("SOS update from %.14s", nm);
     }
@@ -14345,6 +14390,7 @@ void powerApply(bool force) {
                                          (g_lastInputMs && millis() - g_lastInputMs < power::kLoraOnUseMs)))
         want.lora = true;                        // on demand: LoRa on for 2 min after a key
     if (want.checkin && !want.lora && checkinNow().inWindow) want.lora = true;   // check-in window
+    if (sosActive()) { want.lora = true; want.checkin = false; }   // an SOS: LoRa on, no waiting for a window
     const bool onUsb = usb && g_pw.fullOnUsb && g_pw.mode != power::MODE_FULL && !g_standby;
     if (!force && power::sameProfile(want, g_pwEff) && onUsb == g_pwOnUsb) return;
     const power::Profile old = g_pwEff;

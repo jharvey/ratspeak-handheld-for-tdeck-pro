@@ -1,0 +1,81 @@
+# How-to video: SOS (top side button held 3 s) and a quick reply. Device hv_robin (recorded),
+# companion SOS_and_quick_replies_sage.txt (hv_sage, recorded too: side by side).
+# "serial btn hold" = the top side button held 3 s (the simulator's console).
+gps on
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact {SAGE} SAGE
+wait 2000
+serial sos off
+serial sos to all
+serial a
+expect 60000 {SAGE16}
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec SOS_and_quick_replies
+note 6500 SOS: hold the top side button for 3 seconds. The radio counts down 5 seconds, then calls for help.
+wait 7000
+caption Robin holds the top side button for 3 seconds.
+wait 2000
+serial btn hold
+expect 5000 [SOS] countdown started
+wait 1000
+caption The countdown: any key in these 5 seconds cancels it.
+expect 8000 [SOS] sent to
+wait 3000
+caption Sent: "SOS! ROBIN needs help." with position and battery, to every saved contact.
+wait 5000
+note 6000 Then a position update every 2 minutes, and the full SOS every 10 minutes, until Robin ends it.
+wait 6500
+expect 400000 [MSG] in from {SAGE}
+wait 4000
+caption Sage answers: "On my way". Robin holds the top button 3 seconds again: that ends the SOS.
+wait 1500
+key SPACE
+wait 2500
+serial btn hold
+expect 5000 [SOS] off
+wait 4000
+caption "SOS cancelled" goes to the same contacts.
+wait 5000
+caption Who gets the SOS: M, S, 9 Alerts, row 7 "SOS sends to": all saved contacts or one group.
+wait 1500
+key SPACE
+wait 1500
+key M
+wait 900
+key S
+wait 2000
+key 9
+wait 2500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 500
+key V
+wait 4000
+caption Enter steps through: saved contacts, group 1, group 2 ...
+wait 4000
+key BACK
+wait 1200
+key BACK
+wait 1200
+key I
+wait 1500
+serial idle now
+wait 10000
+rec off
+quit

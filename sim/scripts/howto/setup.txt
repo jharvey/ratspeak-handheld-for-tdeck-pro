@@ -2,9 +2,11 @@
 # device (ht_alex = ALEX, ht_sam = SAM, ht_jo = JO) and puts the addresses into the other scripts.
 expect 60000 [BOOT] ready
 serial wiz skip
-wait 1000
+wait 3000
 serial name {NAME}
-wait 1000
+wait 2000
 serial id
-wait 1500
+wait 5000
+serial id
+wait 3000
 quit

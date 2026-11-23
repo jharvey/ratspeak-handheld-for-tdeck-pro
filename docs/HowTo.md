@@ -56,6 +56,8 @@ too.
 
 ## SOS
 
+Video: [SOS_and_quick_replies.mp4](videos/SOS_and_quick_replies.mp4) (two radios, side by side)
+
 Hold the **top side button** for 3 seconds. The radio buzzes and counts down 5 seconds
 ("SOS in 5 s - any key cancels"); any key or a short press of the button stops it. Then it
 sends "SOS! <your name> needs help." with your position (GPS, the last fix or the saved
@@ -67,7 +69,10 @@ that sends "SOS cancelled".
 A radio that gets an SOS wakes up and sounds an alarm every 3 seconds for a minute, loud,
 even in quiet hours or with the beep off. Any key silences it; the sender shows on the map.
 
-A short press of the top button still locks the radio (it now acts when you let go).
+A short press of the top button still locks the radio (it now acts when you let go). To
+turn the SOS hold off: Alerts row 8 "SOS button (hold 3 s)"; a long hold is then just a press.
+An SOS goes to the front of the send queue; in Check-in mode LoRa turns on for it instead of
+waiting for the next window.
 
 ## Read a message
 
@@ -208,7 +213,7 @@ In Minimal, Settings shows only row 1, so you can always get back: **M**, **S**,
 
 ## Open the Atlas (offline map)
 
-Video: [atlas.mp4](videos/atlas.mp4)
+Video: [atlas.mp4](videos/atlas.mp4); map layers: [Map_layers.mp4](videos/Map_layers.mp4)
 
 The Atlas needs map files on the SD card; without them the menu has no Atlas.
 
@@ -450,7 +455,8 @@ Video: [Range_test.mp4](videos/Range_test.mp4)
 
 ## Library and games
 
-Video: [Library_and_games.mp4](videos/Library_and_games.mp4)
+Video: [Library_and_games.mp4](videos/Library_and_games.mp4); notes:
+[Notes_in_the_Library.mp4](videos/Notes_in_the_Library.mp4)
 
 1. **M**, **R** (Library): the text files on the SD card, here the help pages.
 2. A file's number opens it. **Space** or **N** next page, **B** back a page, **L** finds a

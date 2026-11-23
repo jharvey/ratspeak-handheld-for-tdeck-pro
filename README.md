@@ -76,6 +76,7 @@ a short setup wizard. Maps go on the SD card: see [tools/maptiles](tools/maptile
 
 | | |
 |---|---|
+| [docs/User_Manual.md](docs/User_Manual.md) ([PDF](docs/User_Manual.pdf)) | The user manual: install, first start, every feature, Settings reference, troubleshooting, limits |
 | [docs/HowTo.md](docs/HowTo.md) | Step-by-step guides, each with a video ([docs/videos](docs/videos)) |
 | [RatSpeak_TDeck-Pro_Description.md](src/boards/tdeck_Pro/RatSpeak_TDeck-Pro_Description.md) | The full description: every screen, key and setting |
 | [docs/sharing_atak_report.md](docs/sharing_atak_report.md) | Status sharing, markers and the ATAK feed: design, tests, open questions |

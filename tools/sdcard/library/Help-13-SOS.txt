@@ -13,6 +13,9 @@ SOS
 WHO GETS IT
 - All saved contacts (at most 8), or one group.
 - M, S, Alerts, row 7 "SOS sends to": Enter steps through them.
+- Alerts row 8 "SOS button (hold 3 s)": OFF = a long hold is just a
+  press (lock). A running SOS can still be ended with a hold.
+- In Check-in mode LoRa turns on for the SOS; no waiting for a window.
 
 GETTING AN SOS
 - The radio wakes up and sounds a loud alarm every 3 s for a minute,

@@ -1,0 +1,100 @@
+# How-to video: write a note in the Library. Device hv_robin, the help files of
+# tools\sdcard\library on its SD card (seed "library").
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+key SPACE
+wait 800
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Notes_in_the_Library
+caption Any key wakes the radio. M opens the Menu; R is the Library.
+wait 1500
+key SPACE
+wait 1500
+key M
+wait 2000
+key R
+expect 5000 [LIB]
+wait 3000
+caption The last row is New note. V moves down (T up).
+wait 2000
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 350
+key V
+wait 2500
+caption Enter: type the note at the bottom.
+wait 1500
+key ENTER
+wait 2000
+type MEET AT THE OLD MILL 5PM
+wait 2000
+caption Enter saves it on the SD card as Note-date-time.txt.
+wait 1500
+key ENTER
+expect 5000 [LIB] note saved
+wait 4000
+caption The note is in the list like any other file. Its number or Enter opens it.
+wait 2000
+key V
+wait 300
+key V
+wait 300
+key V
+wait 800
+key T
+wait 600
+key T
+wait 600
+key T
+wait 2000
+key ENTER
+expect 5000 [LIB] open
+wait 6000
+caption ^ (Shift) goes back to the list, ^ again closes the Library.
+wait 1500
+key BACK
+wait 1500
+key BACK
+wait 1500
+key I
+wait 1500
+serial idle now
+wait 8000
+rec off
+quit

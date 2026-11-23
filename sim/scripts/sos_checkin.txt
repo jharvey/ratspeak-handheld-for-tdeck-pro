@@ -1,0 +1,31 @@
+# SOS in Check-in mode: the radio is normally off between windows and messages wait for the
+# next window; an SOS turns LoRa on and goes out now. Ending it goes back to Check-in.
+usb off
+expect 20000 [BOOT] ready
+serial wiz skip
+wait 1500
+serial contact 0123456789abcdef0123456789abcdef HELPER
+wait 800
+key M
+key S
+key 5
+key 6
+key 1
+expect 3000 [POWER] Check-in
+key BACK
+wait 500
+key BACK
+wait 500
+key BACK
+wait 800
+serial sos now
+expect 5000 lora on
+expect 5000 [SOS] sent to 1 of 1
+serial sos
+expect 3000 [SOS] ACTIVE
+serial sos off
+expect 5000 [SOS] cancel to 1 of 1
+expect 5000 [SOS] off (console)
+expect 30000 [TX] sent "SOS cancelled
+expect 10000 lora off
+quit

@@ -126,6 +126,15 @@ $videos = @(
     @{ name = "Range_test"; title = "Range test"; main = "hv_robin"
        devices = [ordered]@{ hv_robin = "ROBIN"; hv_sage = "SAGE" }
        comps = @("Range_test_sage.txt@hv_sage"); seed = @{ hv_robin = "library" } },
+    @{ name = "SOS_and_quick_replies"; title = "SOS and quick replies"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN"; hv_sage = "SAGE" }
+       comps = @("SOS_and_quick_replies_sage.txt@hv_sage"); rec2 = "hv_sage"; labels = @("Robin", "Sage")
+       ini = @{ hv_robin = @($alamo); hv_sage = @("gps = 29.43500,-98.48000") } },
+    @{ name = "Notes_in_the_Library"; title = "Write a note in the Library"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" }; seed = @{ hv_robin = "library" } },
+    @{ name = "Map_layers"; title = "Atlas: map layers"; main = "hv_jack"
+       devices = [ordered]@{ hv_jack = "JACK" }
+       ini = @{ hv_jack = @("gps = 35.28330,-86.37000") }; seed = @{ hv_jack = "tn" } },
     @{ name = "Library_and_games"; title = "Library and games"; main = "hv_robin"
        devices = [ordered]@{ hv_robin = "ROBIN" }; seed = @{ hv_robin = "library" } },
     @{ name = "Settings_tour"; title = "A tour of Settings"; main = "hv_robin"

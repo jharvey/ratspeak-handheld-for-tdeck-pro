@@ -1,0 +1,56 @@
+# Companion for SOS_and_quick_replies.txt: Sage's radio (recorded too) gets the SOS, the
+# alarm sounds, a key silences it, Sage answers with a quick reply (MIC, Q, 4 "On my way").
+gps on
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+key SPACE
+wait 800
+serial contact {ROBIN} ROBIN
+wait 2000
+wait 3000
+serial a
+expect 60000 {ROBIN16}
+wait 2000
+key I
+wait 1500
+serial idle now
+wait 1500
+rec SOS_and_quick_replies
+expect 400000 [SOS] ALARM from
+wait 3000
+caption Sage's radio wakes up and sounds an alarm, loud, even in quiet hours. Any key silences it.
+wait 4000
+key SPACE
+expect 5000 [SOS] alarm silenced
+wait 3000
+caption Sage opens the chat: I, then Enter on Robin.
+wait 1500
+key I
+wait 1500
+key ENTER
+wait 4000
+caption A quick reply: MIC, then Q. Eight short answers; a digit sends one at once.
+wait 1500
+key MIC
+wait 1500
+key Q
+wait 4000
+caption 4 = "On my way".
+wait 1500
+key 4
+expect 5000 [MSG] quick reply 4
+wait 4000
+expect 400000 [SOS] ROBIN: cancelled
+wait 2000
+caption Robin ended the SOS: "SOS cancelled".
+wait 6000
+key BACK
+wait 1500
+key I
+wait 1500
+serial idle now
+wait 30000
+rec off
+wait 2000
+quit

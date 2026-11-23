@@ -1,0 +1,66 @@
+# How-to video: the Atlas map layers (O). Device hv_jack at Cave Spring Hollow, Lynchburg TN
+# (seed "tn": map tiles and radio coverage tiles in maps/coverage).
+gps on
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+key SPACE
+wait 800
+serial maplayers 63
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Map_layers
+caption Any key wakes the radio. A opens the Atlas.
+wait 1500
+key SPACE
+wait 1500
+key A
+expect 8000 [MAP] open
+wait 5000
+caption O opens the map layers: names, contour lines, woods, hill shading, radio coverage ...
+wait 1500
+key O
+expect 3000 [MAP] layers page
+wait 5000
+caption A layer's number turns it on or off. 7: the radio coverage overlay.
+wait 1500
+key 7
+expect 3000 [MAP] layer Radio coverage on
+wait 3000
+caption ^ (Shift) goes back to the map, with the new layer drawn.
+wait 1500
+key BACK
+wait 6000
+caption O, 2 turns the contour lines off.
+wait 1500
+key O
+wait 2000
+key 2
+expect 3000 [MAP] layer Contour lines off
+wait 2500
+key BACK
+wait 6000
+note 6000 The layers stay as set. The coverage overlay is made on a PC from elevation data (tools/maptiles/rf_coverage.py).
+wait 6500
+caption O, 2 and O, 7 put it back the way it was. ^ closes the map.
+wait 1500
+key O
+wait 1500
+key 2
+wait 1500
+key 7
+wait 1500
+key BACK
+wait 3000
+key BACK
+expect 3000 [MAP] closed
+wait 1500
+key I
+wait 1500
+serial idle now
+wait 8000
+rec off
+quit
