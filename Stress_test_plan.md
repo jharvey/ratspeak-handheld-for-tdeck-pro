@@ -314,3 +314,17 @@ a real unit (`--port`). First runs (simulator): a step is one e-ink partial refr
 | 2026-11-23 | 73780f7 | tools/stress/tasks.py on COM3 and COM5, 8 min each, Full / Balanced / Saver | 0.3 | timing | a normal step ~850 ms (one partial refresh); Atlas open and some pan / zoom 2.4-2.8 s (full refresh ~2.5 s on the panel); back from the marker list up to 3.0 s; one Library page 6.5 s. Heap flat (COM3 ~35 KB, COM5 ~38 KB). Back to the map now uses a partial refresh (2495741) |
 | 2026-11-23 | a7dfadc | Full regression (all screen scripts incl. fullflash_*, all network tests incl. relay_net, monkey x2) | - | PASS | |
 
+
+### 2026-11-23 evening: SOS, ATAK memory full, PSRAM threshold
+
+| Date | Build | Test | Hours | Result | Notes |
+|---|---|---|---|---|---|
+| 2026-11-23 | 330f0a4+ | Simulator: `sos_net.py` (3 radios), `sos_checkin.txt`, `lock_button*.txt`, full regression incl. monkey x2 | - | PASS | 8/8; Check-in: LoRa on for the SOS, back to Check-in after "SOS cancelled" is out |
+| 2026-11-23 | 330f0a4 | `atak_full.txt`, checked build: 40 ATAK units, 12 own + 30 ATAK markers, 4,000 broken CoT events (cut, noise, bad numbers, huge callsign, no uid) | - | PASS after 2 fixes | Tables held at 16 units / 24 markers, no crash. Found: ATAK markers could push out every other marker, and each was a flash write (a flood = one NVS write per event). Now ATAK gets at most 12 of the 24, saved at most every 30 s; 4,000 events 2.2 s -> 0.5 s |
+| 2026-11-23 | 7e1... (psramth 1024) | COM8 under the marker / ATAK stress + timed tasks | 0.7 | PASS | lowest internal free 33.9 KB (COM3 17 KB, COM5 22 KB at the old 4096; COM8 5.9 KB before); UI steps unchanged (~840 ms). 1024 is now the default |
+| 2026-11-23 | 25fba8a | Real radios, `M:\ratspeak-soak\sos_hw.py` COM3 -> group (COM5, COM8 + COM6, COM9 on the air) | 0.3 | 4/7 -> fixed | First SOS reached COM5 5 min late, after an update; updates queued before a cancel arrived after it; first SOS sent twice. Fixed: SOS first in the outbox, newer position replaces a queued one, cancel drops queued SOS texts, duplicate removed |
+| 2026-11-23 | 8cc1e32 | Same, rerun | 0.3 | PASS 7/7 | countdown cancel 400 ms; first SOS 149 s to both (a group message needs a link on LoRa: link setup ~2 min at this bitrate); update 1-7 s, cancel 4-7 s, quick reply OK |
+
+Open: an SOS to a group sets up a link first (~2 min on LoRa); to saved contacts it goes as
+one packet. Consider sending the SOS to each member as a plain message (no group fields) so it
+fits one packet. Battery-life runs (4b) are still not done.
