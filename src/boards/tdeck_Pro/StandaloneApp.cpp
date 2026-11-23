@@ -9300,7 +9300,7 @@ void markOpenNew(bool atCross) {
 
 void markClose() {
     g_mk = MK_NONE;
-    if (mapview::isOpen()) { mapContactsFeed(); g_fullRefreshReq = true; }
+    if (mapview::isOpen()) mapContactsFeed();   // partial refresh back to the map (MIC = full refresh)
     requestRedraw();
 }
 
@@ -9338,7 +9338,7 @@ void markActivate(int row) {
                 g_markSel = i; g_wptSel = -1; g_mapSel = -1;
                 mapContactsFeed();
                 Serial.printf("[MARK] show #%d on the map\n", i + 1);
-                g_fullRefreshReq = true;
+                // openMapAt() asks for a full refresh itself; back to an open map: partial (MIC = full)
             } else if (row == 1) {           // who gets it
                 g_mkCandN = 0;
                 for (int g = 0; g < g_grpCount; g++) grpHash(g_grp[g].id, g_mkCand[g_mkCandN++]);
@@ -9631,7 +9631,7 @@ void layOpen() {
 
 void layClose() {
     g_layOpen = false;
-    if (mapview::isOpen()) { mapContactsFeed(); g_fullRefreshReq = true; }
+    if (mapview::isOpen()) mapContactsFeed();   // partial refresh back to the map (MIC = full refresh)
     requestRedraw();
 }
 
