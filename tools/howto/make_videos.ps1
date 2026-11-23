@@ -107,6 +107,11 @@ $videos = @(
        devices = [ordered]@{ hv_robin = "ROBIN" }; ini = @{ hv_robin = @($alamo) }; seed = @{ hv_robin = "atlas" } },
     @{ name = "Arrival_alerts"; title = "Arrival alerts"; main = "hv_robin"
        devices = [ordered]@{ hv_robin = "ROBIN" }; ini = @{ hv_robin = @($alamo) }; seed = @{ hv_robin = "atlas" } },
+    @{ name = "Markers"; title = "Markers: mark a place and send it"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN"; hv_sage = "SAGE" }
+       comps = @("Markers_sage.txt@hv_sage"); rec2 = "hv_sage"; labels = @("Robin", "Sage")
+       ini = @{ hv_robin = @($alamo); hv_sage = @("gps = 29.43500,-98.48000") }
+       seed = @{ hv_robin = "atlas"; hv_sage = "atlas" } },
     # seed "library" = tools\sdcard\library\*.txt in <seed>\library\ratdeckpro\library;
     # seed "fw" = a firmware .bin (firmware\tdeck_pro_standalone.bin) in <seed>\fw\firmware
     @{ name = "SD_backup_and_restore"; title = "SD card: back up and restore"; main = "hv_robin"

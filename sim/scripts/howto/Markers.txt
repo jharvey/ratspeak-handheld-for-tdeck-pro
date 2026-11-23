@@ -1,0 +1,82 @@
+# How-to video: markers (items of interest). Device hv_robin (recorded) at the Alamo,
+# companion Markers_sage.txt (hv_sage, recorded too: both side by side), about 1 km away.
+gps on
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact {SAGE} SAGE
+wait 2000
+serial mark del all
+serial a
+expect 60000 {SAGE16}
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Markers
+note 6500 A marker is a place with a type and a short note: a hazard, a camp, water, a meet-up. Robin marks a washed-out bridge and tells Sage.
+wait 7000
+caption Robin wakes the radio and opens the Atlas: A.
+wait 1500
+key SPACE
+wait 1500
+key A
+expect 8000 [MAP] open
+wait 4000
+caption J lists the markers, nearest first. The last row makes a new one.
+wait 1500
+key J
+expect 3000 [MARK] list
+wait 3500
+key ENTER
+expect 3000 [MARK] new
+wait 3000
+note 6000 Row 1 is the type: Enter steps through hazard, person, vehicle, camp, water, meet-up, other. Hazard it is.
+wait 6500
+caption Row 2: from my position (or at the map cross). Row 3: 200 m. Row 4: 4 steps the direction N, NE, E.
+wait 2500
+key 4
+wait 1200
+key 4
+wait 2500
+caption 5: a short note. Type it, then Enter.
+wait 1500
+key 5
+wait 1200
+type BRIDGE OUT
+wait 1200
+key ENTER
+wait 2500
+caption 6 saves it.
+wait 1500
+key 6
+expect 3000 [MARK] #1 hazard
+wait 3500
+caption 2: send it, to a contact or a group. Enter sends it to Sage.
+wait 1500
+key 2
+wait 3000
+key ENTER
+expect 30000 [MARK] send #1
+wait 4000
+caption 1: show it on the map: a triangle, with a dashed line from you.
+wait 1500
+key 1
+expect 3000 [MARK] show
+wait 8000
+note 6000 Alt+J on the map makes a marker right at the map cross. K shows all the Atlas keys.
+wait 6500
+caption ^ (Shift) closes the map. Later the radio sleeps again.
+wait 1500
+key BACK
+wait 1500
+key I
+wait 1500
+serial idle now
+wait 12000
+rec off
+quit

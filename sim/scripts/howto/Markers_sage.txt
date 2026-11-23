@@ -1,0 +1,50 @@
+# Companion for Markers.txt: Sage's radio (recorded too) gets the marker, reads it in the
+# chat (distance and direction from Sage) and opens it on the map.
+gps on
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact {ROBIN} ROBIN
+wait 2000
+serial mark del all
+wait 3000
+serial a
+expect 60000 {ROBIN16}
+wait 2000
+key I
+wait 1500
+serial idle now
+wait 1500
+rec Markers
+expect 400000 [MARK] #1 hazard
+wait 4000
+caption Sage gets it: the chat says what it is and how far and which way it is from Sage.
+wait 1500
+key SPACE
+wait 1500
+key I
+wait 1500
+key ENTER
+wait 6000
+caption Enter on the empty message line opens the map on the marker.
+wait 1500
+key ENTER
+wait 8000
+caption J on the map lists every marker Sage has, nearest first.
+wait 1500
+key J
+wait 6000
+key BACK
+wait 1500
+key BACK
+wait 1500
+key I
+wait 1500
+serial idle now
+wait 40000
+rec off
+wait 2000
+quit

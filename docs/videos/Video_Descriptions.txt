@@ -561,6 +561,56 @@ Overlays:
 End: both units are on the idle screen.
 
 
+-- Markers.mp4
+
+Status: MADE 23 Nov 2026 (sim/scripts/howto/Markers.txt, Markers_sage.txt), 99 s.
+Depends: CAN BE MADE NOW.
+Remake when: the marker pages or the Atlas keys change.
+
+Purpose: mark a place (a hazard, a camp, water, a meet-up) with a short note and send it to
+a contact; read a marker you got, with its distance and direction, and open it on the map.
+
+Setup:
+- Two units side by side, each labeled: "ROBIN" left, at the Alamo in San Antonio, Texas;
+  "SAGE" right, about 1 km away. They are contacts of each other. Both SD cards hold the
+  maps. No markers yet. Splash idle screens. No password.
+
+Steps:
+1. Robin presses a key, then A: the Atlas.
+2. J: the marker list (empty, the last row is "New marker"). Enter: the new-marker form.
+3. Row 1, the type, stays hazard. Row 2: from my position. Row 3: 200 m. 4 twice: the
+   direction N, NE, E.
+4. 5, type BRIDGE OUT, Enter: the note. 6 saves it: the marker's page.
+5. 2: who gets it. Enter sends it to Sage.
+6. 1: show it on the map: a black triangle with a dashed line from Robin.
+7. Sage presses a key, I, Enter: the chat with Robin shows
+   "[marker] hazard ... of you: BRIDGE OUT", measured from Sage. Enter on the empty message
+   line opens the map on the marker. J lists Sage's markers.
+8. Both go back with ^ and I.
+
+Overlays:
+- Start: "A marker is a place with a type and a short note: a hazard, a camp, water, a
+  meet-up. Robin marks a washed-out bridge and tells Sage".
+- Step 3: "Row 1 is the type: Enter steps through hazard, person, vehicle, camp, water,
+  meet-up, other. Hazard it is".
+- After step 6: "Alt+J on the map makes a marker right at the map cross. K shows all the
+  Atlas keys".
+
+End: both units are on the idle screen.
+
+
+-- ATAK_feed.mp4
+
+Status: PROPOSED.
+Depends: WAITING ON a phone running ATAK on the same WiFi (camera or screen recording of
+the phone). The unit's side (S, 3 WiFi, last row "ATAK feed (CoT)" on) can be recorded on the
+simulator now.
+Remake when: the ATAK feed gets settings of its own, or receiving from ATAK is added.
+
+Purpose: turn on the ATAK feed and see this unit, its contacts and its markers on a phone
+running ATAK, with no TAK server.
+
+
 -- Atlas_waypoints.mp4
 
 Status: MADE 22 Nov 2026.

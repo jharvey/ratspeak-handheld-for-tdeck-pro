@@ -318,6 +318,25 @@ line (the newest). Your position is on their Atlas; your battery % and its age a
 contact page (row 1) and in their share menu (row 4). Sideband and other LXMF apps show a
 one-time share as readable text; Sideband also gets it as telemetry.
 
+## Markers (items of interest)
+
+Video: [Markers.mp4](videos/Markers.mp4) (two radios, side by side)
+
+Mark a place with a type and a short note (a hazard, a camp, water, a meet-up) and send it.
+
+1. **A** (Atlas), **J**: the marker list, nearest first. The last row is **New marker**,
+   **Enter**. (**Alt+J** on the map makes one at the map cross.)
+2. The form: **1** type (Enter steps through them), **2** where (my position or the map
+   cross), **3** distance, **4** direction, **5** a note (type it, **Enter**), **6** save.
+3. On the marker's page: **1** show it on the map (a triangle), **2** send it (pick the
+   contact or group, **Enter**), **3** twice removes it.
+4. A marker you get shows in the chat as "[marker] hazard 640 m NE of you: bridge out".
+   **Enter** on the empty message line opens the map on it.
+5. **J** in the marker list shows the contacts who shared a position, nearest first.
+
+ATAK: phones running ATAK on the same WiFi can see this unit, its contacts and the markers:
+**M**, **S**, **3** (WiFi), last row "ATAK feed (CoT)", **Enter** turns it on.
+
 ## Waypoints
 
 Video: [Atlas_waypoints.mp4](videos/Atlas_waypoints.mp4)
