@@ -329,3 +329,13 @@ Open: an SOS to a group sets up a link first (~2 min on LoRa); to saved contacts
 one packet. Consider sending the SOS to each member as a plain message (no group fields) so it
 fits one packet. Battery-life runs (4b) are still not done.
 | 2026-11-23 | d88ee78 | Real radios, group SOS as plain messages: COM8 -> group (COM6, COM9); ATAK feed COM8 -> PC | 0.3 | PASS (6/7, see notes) | COM6 alarm after 10 s (was ~150 s as a group message); COM9 164 s: its first packet failed CRC (units side by side, RSSI -22..-35 dBm, SNR 1-4: receiver overload) and the retry got through; update 73 s, cancel 2-16 s, quick reply OK. The failed check is the test's order (COM6's 60 s alarm ended while it waited for COM9). ATAK: after the PC allowed Python on the network, the PC got 201 events, all valid CoT (9 units, 192 markers) |
+
+### 2026-11-23 17:15: battery run 1 started (4b)
+
+COM3 + COM5, firmware 4b38139, Balanced (`pm1`), both 100 % (4.13 V) on USB before unplugging.
+Traffic: the on-device soak (`soak on 30 <other>`: a message about every 30 min, most answered),
+logged to each unit's SD card (`ratdeckpro/soak.log`, COM3's card re-seated and working).
+Status reports ("PS ... mV pct ma heap ...") every 5 min, and "dark" just before the
+switch-off, to the listener COM8 on USB (`M:\ratspeak-soak\2026-11-17\COM8_listener.log`);
+`batcap` started the learned-capacity count. Units apart, unplugged by the owner.
+Result to fill in: hours to shutdown, mAh/day, messages sent / delivered, gauge % vs real time.
