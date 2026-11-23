@@ -61,7 +61,7 @@ def main():
             a.send("k x")
             a.expect(r"\[SOS\] countdown cancelled \(key\)", 10)
             time.sleep(6)
-            a.ask("sos", r"\[SOS\] off; sends to saved contacts .* 0 sent", 10)
+            a.ask("sos", r"\[SOS\] off; button on; sends to saved contacts .* 0 sent", 10)
         G.step(1, "a hold starts the countdown; a key cancels it", s1)
 
         def s2():
@@ -82,7 +82,7 @@ def main():
             a.expect(r"\[SOS\] update to 2 of 2 .*SOS update: ", 10)
             b.expect(r"\[SOS\] update from ANN", 150)
             c.expect(r"\[SOS\] update from ANN", 150)
-            a.ask("sos", r"\[SOS\] ACTIVE; sends to saved contacts", 10)
+            a.ask("sos", r"\[SOS\] ACTIVE; button on; sends to saved contacts", 10)
         G.step(3, "a position update reaches the contacts", s3)
 
         def s4():
@@ -114,7 +114,7 @@ def main():
             a2.ask("grp", r'\[GRP\] 1: "TEAM" #[0-9a-f]{8} 1 members', 20)
             time.sleep(3)
             a2.send("sos to g1")
-            a2.expect(r"\[SOS\] off; sends to group TEAM", 10)
+            a2.expect(r"\[SOS\] off; button on; sends to group TEAM", 10)
             a2.mark(); b.mark(); c.mark()
             a2.send("sos now")
             a2.expect(r"\[SOS\] sent to 1 of 1 \(group TEAM\)", 15)

@@ -5,16 +5,20 @@
 
 void setup() {
 #if !defined(SIMULATOR)
-    // Experiment (off by default): allocations from this size up go to PSRAM instead of the
-    // scarce internal RAM (framework default 4096). Saved by the console "psramth <bytes>"
-    // (0 = default); read before anything else allocates. See docs in Stress_test_plan.md.
+    // Allocations from 1024 bytes up go to PSRAM instead of the scarce internal RAM (framework
+    // default 4096): on COM8 the lowest internal free went 5.9 KB -> 33.9 KB under the ATAK /
+    // marker stress, same UI speed (Stress_test_plan.md, 2026-11-23). Console "psramth <bytes>"
+    // overrides it (4096 = the framework default, 0 = back to 1024); read before anything
+    // else allocates.
     {
+        uint32_t th = 1024;
         Preferences p;
         if (p.begin("rs_mem", true)) {
-            const uint32_t th = p.getUInt("extmem", 0);
+            const uint32_t v = p.getUInt("extmem", 0);
             p.end();
-            if (th >= 256 && th < 4096) heap_caps_malloc_extmem_enable(th);
+            if (v) th = v;
         }
+        if (th >= 256 && th < 4096) heap_caps_malloc_extmem_enable(th);
     }
 #endif
 #if !defined(SIMULATOR) && ARDUINO_USB_CDC_ON_BOOT && ARDUINO_USB_MODE

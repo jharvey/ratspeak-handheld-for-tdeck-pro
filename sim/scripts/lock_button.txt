@@ -36,6 +36,22 @@ wait 600
 key X
 expect 3000 [SOS] countdown cancelled (key)
 wait 800
+# SOS button off (Alerts row 8): a long hold is just a press, acted on when let go.
+serial sos btn off
+expect 3000 [SOS] button hold off
+menu Device > Hold BOOT
+wait 4000
+menu Device > Hold BOOT
+expect 3000 [BTN] top button (button): idle screen (no password)
+expect 3000 [IDLE] enter
+wait 800
+serial sos
+expect 3000 [SOS] off; button off;
+serial sos btn on
+expect 3000 [SOS] button hold on
+key T
+expect 3000 [IDLE] wake
+wait 800
 serial lock
 expect 3000 locked=0 password=0
 wait 800

@@ -2195,6 +2195,8 @@ void sosIncoming(const uint8_t from[16], const char* text);
 void sosTargetText(char* out, size_t n);
 bool sosActive();
 void sosNextTarget();
+bool sosBtnOn();
+void sosToggleBtn();
 bool markInfo(char* out, size_t n);
 extern int g_markSel;
 extern bool g_layOpen;
@@ -4894,6 +4896,7 @@ void buildSettingsRows(Page p) {
             char t[40];
             sosTargetText(t, sizeof(t));
             srow(RK_PICK, "SOS sends to", "%s%s", t, sosActive() ? " (ACTIVE)" : "");
+            srow(RK_TOGGLE, "SOS button (hold 3 s)", "%s", sosBtnOn() ? "ON" : "OFF");
         }
         break;
 
@@ -5565,6 +5568,9 @@ void activateSetting(int idx) {
             requestRedraw();
         } else if (idx == 6) {
             sosNextTarget();
+            requestRedraw();
+        } else if (idx == 7) {
+            sosToggleBtn();
             requestRedraw();
         }
         break;
@@ -13816,8 +13822,8 @@ constexpr const char* kSosPrefix = "SOS! ";
 constexpr const char* kSosUpdPrefix = "SOS update: ";
 constexpr const char* kSosEndPrefix = "SOS cancelled";
 constexpr uint32_t kSosHoldMs = 3000, kSosCountMs = 5000, kSosUpdMs = 120000, kSosFullMs = 600000;
-struct SosState { bool on; uint8_t to; uint32_t startedAt; };   // to: 0 = saved contacts, n = group n
-SosState g_sos = {false, 0, 0};
+struct SosState { bool on; uint8_t to; uint32_t startedAt; bool btn; };   // to: 0 = saved contacts, n = group n
+SosState g_sos = {false, 0, 0, true};      // btn: the 3 s hold starts an SOS (Alerts row 8)
 uint32_t g_sosArmAt = 0, g_sosLastUpd = 0, g_sosLastFull = 0, g_sosResumeAt = 0;
 uint8_t  g_sosArmSec = 0;
 uint32_t g_sosRxUntil = 0, g_sosRxBeepAt = 0;
@@ -13830,6 +13836,7 @@ void sosSave() {
     p.putBool("on", g_sos.on);
     p.putUChar("to", g_sos.to);
     p.putULong("at", g_sos.startedAt);
+    p.putBool("btn", g_sos.btn);
     p.end();
 }
 
@@ -13839,6 +13846,7 @@ void sosLoad() {
         g_sos.on = p.getBool("on", false);
         g_sos.to = p.getUChar("to", 0);
         g_sos.startedAt = p.getULong("at", 0);
+        g_sos.btn = p.getBool("btn", true);
         p.end();
     }
     if (g_sos.on) {
@@ -13864,6 +13872,13 @@ int sosTargets(uint8_t (*d)[16], int max) {
 }
 
 bool sosActive() { return g_sos.on; }
+bool sosBtnOn() { return g_sos.btn; }
+
+void sosToggleBtn() {                        // Alerts page row 8
+    g_sos.btn = !g_sos.btn;
+    sosSave();
+    Serial.printf("[SOS] button hold %s\n", g_sos.btn ? "on" : "off");
+}
 
 void sosNextTarget() {                       // Alerts page: saved contacts, group 1, group 2, ...
     g_sos.to = (uint8_t)((g_sos.to + 1) % (g_grpCount + 1));
@@ -14179,7 +14194,10 @@ void sideButtonAction(const char* src) {
 
 void sideButtonTick() {
     sideButtonPoll();
-    if (g_btnDown && !g_btnHoldDone && millis() - g_btnDownAt >= kSosHoldMs) { g_btnHoldDone = true; sosHold("button"); }
+    if (g_btnDown && !g_btnHoldDone && (g_sos.btn || g_sos.on || g_sosArmAt) && millis() - g_btnDownAt >= kSosHoldMs) {
+        g_btnHoldDone = true;
+        sosHold("button");
+    }
     sosTick();
     if (!g_btnPressed) return;
     g_btnPressed = false;
@@ -16070,18 +16088,18 @@ void handleSerialLine(char* p) {
         Serial.printf("[LOC] telesend: %s\n", r == SendResult::Sent ? "sent" : r == SendResult::Queued ? "queued" : "failed");
         return;
     }
-    if (!strcmp(p, "psramth") || !strncmp(p, "psramth ", 8)) {   // psramth [bytes]: PSRAM threshold (main.cpp), 0 = default
+    if (!strcmp(p, "psramth") || !strncmp(p, "psramth ", 8)) {   // psramth [bytes]: PSRAM threshold (main.cpp), 0 = default 1024, 4096 = framework
         Preferences pr;
         if (p[7] && pr.begin("rs_mem", false)) {
             const long v = atol(p + 8);
-            pr.putUInt("extmem", v >= 256 && v < 4096 ? (uint32_t)v : 0u);
+            pr.putUInt("extmem", v >= 256 && v <= 4096 ? (uint32_t)v : 0u);
             pr.end();
             Serial.println("[MEM] saved: restart to apply");
         }
         uint32_t th = 0;
         if (pr.begin("rs_mem", true)) { th = pr.getUInt("extmem", 0); pr.end(); }
         Serial.printf("[MEM] PSRAM threshold %s%lu; internal free %u, lowest %u, biggest block %u\n",
-                      th ? "" : "default (4096), saved ", (unsigned long)th,
+                      th ? "" : "default 1024, saved ", (unsigned long)th,
                       (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                       (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
                       (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
@@ -16243,6 +16261,9 @@ void handleSerialLine(char* p) {
         if (!strcmp(p, "sos now")) { g_sosArmAt = 0; if (!g_sos.on) sosStart(); else sosSend(0); }
         else if (!strcmp(p, "sos off")) { g_sosArmAt = 0; sosStop("console"); }
         else if (!strcmp(p, "sos update")) { if (g_sos.on) sosSend(1); }
+        else if (!strcmp(p, "sos btn on") || !strcmp(p, "sos btn off")) {
+            if (g_sos.btn != (p[8] == 'o' && p[9] == 'n')) sosToggleBtn();
+        }
         else if (!strncmp(p, "sos to ", 7)) {
             const char* a = p + 7;
             if (!strcmp(a, "all")) g_sos.to = 0;
@@ -16251,7 +16272,8 @@ void handleSerialLine(char* p) {
         }
         char t[40];
         sosTargetText(t, sizeof(t));
-        Serial.printf("[SOS] %s; sends to %s; %u sent; countdown %s; alarm %s\n", g_sos.on ? "ACTIVE" : "off", t,
+        Serial.printf("[SOS] %s; button %s; sends to %s; %u sent; countdown %s; alarm %s\n", g_sos.on ? "ACTIVE" : "off",
+                      g_sos.btn ? "on" : "off", t,
                       (unsigned)g_sosSent, g_sosArmAt ? "running" : "no", g_sosRxUntil ? g_sosRxFrom : "none");
         return;
     }
