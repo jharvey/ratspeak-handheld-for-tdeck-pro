@@ -1,0 +1,11 @@
+# Companion for Group_messages.txt: Wren's radio (not shown), the third member.
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+key SPACE
+wait 800
+serial contact {ROBIN} ROBIN
+wait 7000
+serial a
+wait 400000
+quit

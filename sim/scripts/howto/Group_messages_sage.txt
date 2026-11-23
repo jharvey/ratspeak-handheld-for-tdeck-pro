@@ -1,0 +1,67 @@
+# Companion for Group_messages.txt: Sage's radio (recorded too) gets the group's card, joins,
+# reads Robin's group message and answers the group.
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact {ROBIN} ROBIN
+wait 5000
+serial a
+expect 60000 {ROBIN16}
+wait 2000
+key I
+wait 1500
+serial idle now
+wait 1500
+rec Group_messages
+# the card comes in two parts (one member)
+expect 400000 Group card: TRAIL CREW
+expect 400000 Group card: TRAIL CREW
+wait 4000
+caption Sage gets the group's card in the chat with Robin. Enter on the empty message line joins it.
+wait 1500
+key SPACE
+wait 1500
+key I
+wait 1500
+key ENTER
+wait 4000
+key ENTER
+expect 10000 [GRP] joined "TRAIL CREW"
+wait 4000
+caption Sage is in: the group is now on her radio too.
+wait 2500
+key BACK
+wait 1500
+key BACK
+wait 1500
+expect 400000 MEET AT THE NORTH GATE
+wait 3000
+caption Robin's message to the group. In the chat with Robin it is marked [TRAIL CREW]: Enter opens the group chat.
+wait 1500
+key SPACE
+wait 1500
+key I
+wait 1500
+key ENTER
+wait 4000
+key ENTER
+expect 10000 [HIST] group "TRAIL CREW"
+wait 4000
+caption Sage answers the whole group.
+wait 1500
+type ON MY WAY
+wait 1500
+key ENTER
+wait 8000
+key BACK
+wait 1500
+key I
+wait 1500
+serial idle now
+wait 30000
+rec off
+wait 2000
+quit

@@ -1,0 +1,90 @@
+# How-to video: a group. Device hv_robin (recorded) makes the group TRAIL CREW with Sage and
+# Wren, shares it with Sage and writes to it. Companions: Group_messages_sage.txt (hv_sage,
+# recorded too: side by side) joins and answers; Group_messages_wren.txt (hv_wren, not shown).
+expect 60000 [BOOT] ready
+serial wiz skip
+# wake it (a start ends on the idle screen): the first key does nothing else
+wait 1500
+key SPACE
+wait 800
+serial contact {SAGE} SAGE
+wait 2000
+serial a
+expect 60000 {SAGE16}
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec Group_messages
+note 6500 A group sends one message to everyone in it. Robin makes a group for the trail crew.
+wait 7000
+caption Robin wakes the radio: C (Contacts), then G: the groups.
+wait 1500
+key SPACE
+wait 1500
+key C
+wait 1500
+key G
+expect 3000 [GRP] list
+wait 2500
+caption Enter on New group, type its name, Enter.
+wait 1500
+key ENTER
+wait 1200
+type TRAIL CREW
+wait 1200
+key ENTER
+expect 3000 [GRP] new "TRAIL CREW"
+wait 2500
+caption Who is in it: Enter puts a contact in (Enter again takes it out). V moves down.
+wait 1500
+key ENTER
+expect 3000 (1 members)
+wait 2500
+key BACK
+wait 2500
+caption The group's page. 4 shares the group with a member, so their radio has it too. Enter: Sage.
+wait 2000
+key 4
+wait 2500
+key ENTER
+expect 30000 [GRP] share "TRAIL CREW" to SAGE
+# give Sage time to get the three card parts and join before the first group message
+wait 60000
+# Wren joins the crew later (added here from the console: the video does not show it)
+serial contact {WREN} WREN
+wait 1500
+serial grp add 1 {WREN}
+expect 3000 (2 members)
+wait 30000
+note 5000 Wren has joined the crew too: the group now has Sage and Wren.
+wait 5500
+# the long wait let the screen go idle: this key only wakes it
+key SPACE
+wait 2000
+caption 1: the group chat. Type, then Enter: it goes to Sage and Wren.
+wait 1500
+key 1
+wait 2000
+type MEET AT THE NORTH GATE
+wait 1500
+key ENTER
+wait 4000
+expect 400000 in from {SAGE}
+wait 3000
+# the screen went idle while waiting: a key wakes it back to the group chat
+key SPACE
+wait 3000
+caption Sage's answer shows in the group chat, with her name in front.
+wait 9000
+note 6000 MIC in a group chat shows who got the last message. Later, the Inbox lists the group like a chat.
+wait 6500
+key BACK
+wait 1500
+key I
+wait 1500
+serial idle now
+wait 12000
+rec off
+quit

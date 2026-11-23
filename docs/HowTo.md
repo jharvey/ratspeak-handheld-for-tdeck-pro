@@ -91,7 +91,9 @@ saves it as a contact. They can send their card back the same way. Other LXMF ap
 
 ## Groups: one message to several contacts
 
-No video yet. Full details: [groups_report.md](groups_report.md).
+Video: [Group_messages.mp4](videos/Group_messages.mp4) (two radios, side by side)
+
+Full details: [groups_report.md](groups_report.md).
 
 A group is a name and up to 8 of your contacts, for example "FAMILY". A message to the
 group goes to every member, one after the other (about 4 seconds each on LoRa).

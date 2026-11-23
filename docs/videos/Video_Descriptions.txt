@@ -564,6 +564,46 @@ Overlays:
 End: both units are on the idle screen.
 
 
+-- Group_messages.mp4
+
+Status: MADE 23 Nov 2026 (sim/scripts/howto/Group_messages.txt, Group_messages_sage.txt,
+Group_messages_wren.txt), 138 s.
+Depends: CAN BE MADE NOW.
+Remake when: the group pages or the group chat change.
+
+Purpose: make a group, share it with a member so their radio has it too, and write to
+everyone at once; a member answers the whole group.
+
+Setup:
+- Two units side by side, each labeled: "ROBIN" left, "SAGE" right; a third radio, WREN, is
+  not shown. Robin and Sage are contacts of each other. Splash idle screens. No password.
+
+Steps:
+1. Robin presses a key, C (Contacts), G: the groups. Enter on New group, type TRAIL CREW,
+   Enter.
+2. The members page: Enter puts Sage in. ^ back: the group's page.
+3. 4 (Share), Enter: Sage. The group's card goes to Sage in two parts.
+4. Sage presses a key, I, Enter: the card in the chat with Robin. Enter on the empty message
+   line joins the group.
+5. (Wren is added to the group from the console; a note box says Wren joined the crew.)
+6. Robin: 1 (the group chat), type MEET AT THE NORTH GATE, Enter: "delivered 2/2".
+7. Sage: I, Enter, Enter opens the group chat: "ROBIN: MEET AT THE NORTH GATE". Sage types
+   ON MY WAY, Enter: it goes to the group.
+8. Robin's group chat shows Sage's answer with her name in front.
+
+Overlays:
+- Start: "A group sends one message to everyone in it. Robin makes a group for the trail
+  crew".
+- End: "MIC in a group chat shows who got the last message. Later, the Inbox lists the group
+  like a chat".
+
+Note: Wren is added from the console because the order of the share list follows the
+radios' addresses, which are new on every run; with only Sage in the group at step 3 the
+script picks the right row every time.
+
+End: both units are on the idle screen.
+
+
 -- Markers.mp4
 
 Status: MADE 23 Nov 2026 (sim/scripts/howto/Markers.txt, Markers_sage.txt), 99 s.

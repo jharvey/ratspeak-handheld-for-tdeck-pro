@@ -112,6 +112,10 @@ $videos = @(
        comps = @("Markers_sage.txt@hv_sage"); rec2 = "hv_sage"; labels = @("Robin", "Sage")
        ini = @{ hv_robin = @($alamo); hv_sage = @("gps = 29.43500,-98.48000") }
        seed = @{ hv_robin = "atlas"; hv_sage = "atlas" } },
+    @{ name = "Group_messages"; title = "Groups: one message to everyone"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN"; hv_sage = "SAGE"; hv_wren = "WREN" }
+       comps = @("Group_messages_sage.txt@hv_sage", "Group_messages_wren.txt@hv_wren")
+       rec2 = "hv_sage"; labels = @("Robin", "Sage") },
     # seed "library" = tools\sdcard\library\*.txt in <seed>\library\ratdeckpro\library;
     # seed "fw" = a firmware .bin (firmware\tdeck_pro_standalone.bin) in <seed>\fw\firmware
     @{ name = "SD_backup_and_restore"; title = "SD card: back up and restore"; main = "hv_robin"
