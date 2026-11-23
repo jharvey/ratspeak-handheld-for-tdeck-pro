@@ -154,3 +154,19 @@ quadruples the last level.
 The header shows zoom, centre and the scale-bar length; `*` means the view is not
 following your position. Missing tiles show a dotted grid. Console: `map`,
 `map <lat> <lon> [zoom]`, `map close`.
+
+## Radio coverage overlay (`rf_coverage.py`)
+
+Where a site (a repeater, a base camp radio) has line of sight, from the USGS 1 arc-second
+elevation on the NAS (`M:atspeak-maps\dem`). Writes dot-pattern tiles to
+`<out>/maps/coverage/<z>/<x>/<y>.rmt`; copy `maps/coverage` into `ratdeckpro/maps/` on the SD
+card and turn on Atlas **O**, row 7. Line of sight with 4/3 earth curvature only (no
+Longley-Rice, Fresnel zone or foliage).
+
+```
+MAPROOT=/mnt/maps/ratspeak-maps ~/mapvenv/bin/python3 rf_coverage.py     --site 35.28330,-86.37000 --height 10 --radius 8 --zooms 11-14 --out /mnt/maps/ratspeak-video/cov_tn
+```
+
+(Needs numpy and tifffile: on VM100 the map venv has both.) Example: 8 km around Cave Spring
+Hollow, antenna 10 m up: 12 % of the circle covered, 33 tiles at zoom 11-14.
+

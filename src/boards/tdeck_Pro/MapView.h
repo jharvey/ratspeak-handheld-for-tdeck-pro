@@ -35,6 +35,9 @@ void setReader(TileReader reader);
 // Looked up before the single-layer packs and the loose tiles. The mask picks the overlays.
 constexpr uint32_t kLayerLabels = 1, kLayerContours = 2, kLayerWoods = 4, kLayerVeg = 8,
                    kLayerHill = 16, kLayerOther = 32, kLayerAll = 63;
+// Radio coverage (tools/maptiles/rf_coverage.py): loose 1-bit tiles in maps/coverage/<z>/<x>/<y>.rmt,
+// a dot pattern where a site is in line of sight, merged into the map tile. Off by default.
+constexpr uint32_t kLayerCoverage = 64;
 void setLayers(uint32_t mask);       // drops the cached tiles when it changes
 uint32_t layers();
 void forget();                       // drop every cached tile and pack index (card changed)

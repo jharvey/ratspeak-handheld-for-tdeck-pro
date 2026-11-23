@@ -408,6 +408,18 @@ void wrapCentre() {
     if (g_cy > s - 1) g_cy = s - 1;
 }
 
+// The coverage layer: merge maps/coverage/<z>/<x>/<y>.rmt (8192 bytes, 1 = black dot) into a
+// loaded tile. g_io is free again here (the tile has been copied out of it).
+uint32_t g_covTiles = 0;
+void addCoverage(int z, int x, int y, uint8_t* bits) {
+    if (!(g_layerMask & kLayerCoverage) || !g_reader || !g_io) return;
+    char path[56];
+    snprintf(path, sizeof(path), "/maps/coverage/%d/%d/%d.rmt", z, x, y);
+    if (g_reader(path, 0, g_io, kTileBytes) != kTileBytes) return;
+    for (size_t i = 0; i < kTileBytes; i++) bits[i] |= g_io[i];
+    ++g_covTiles;
+}
+
 Tile* tile(int z, int x, int y) {
     const int n = 1 << z;
     if (y < 0 || y >= n) return nullptr;
@@ -435,6 +447,7 @@ Tile* tile(int z, int x, int y) {
         victim->present = true;
         ++g_loaded;
         ++g_packed;
+        addCoverage(z, x, y, victim->bits);
         return victim;
     }
     char path[48];
@@ -452,6 +465,7 @@ Tile* tile(int z, int x, int y) {
     } else {
         ++g_missing;
     }
+    if (victim->present) addCoverage(z, x, y, victim->bits);
     return victim;
 }
 

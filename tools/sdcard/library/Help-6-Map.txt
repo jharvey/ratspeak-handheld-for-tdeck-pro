@@ -10,6 +10,7 @@ Z = zoom in, W = zoom out (wider)
 N = next contact, L = locate a place
 P = next waypoint, Alt+P = add a waypoint, Alt+SYM twice = delete it (Help-7)
 J = markers (hazard, camp, water...) nearest first, Alt+J = a new marker at the map cross (Help-5)
+O = map layers: 1-7 turn place names, contours, woods, marsh marks, hill shading, other and radio coverage on or off (layered map packs only; coverage tiles from rf_coverage.py)
 M = menu, ^ = close the map
 G = big arrow + distance to the selected contact or waypoint (or the track-back point). Moving, the arrow is relative to where you are going; standing, north is up. G or ^ goes back.
 B = track back: follow your recorded track back to where it started (B again stops).

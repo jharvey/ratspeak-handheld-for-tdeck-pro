@@ -2159,6 +2159,11 @@ bool markRowText(const char* s, size_t len, char* out, size_t n, double* lat = n
 void markIncoming(const uint8_t from[16], const char* text, uint32_t at);
 bool markInfo(char* out, size_t n);
 extern int g_markSel;
+extern bool g_layOpen;
+void renderLayers();
+void layClose();
+void layKey(const KeyEvent& ev);
+void layOpen();
 // ATAK feed (see "ATAK feed" below)
 struct CotCfg { uint8_t on; uint8_t pad; uint16_t port; uint32_t ip; uint16_t every; uint16_t pad2; };
 CotCfg g_cot = {0, 0, cot::kSaPort, cot::kSaGroup, 30, 0};
@@ -6807,7 +6812,7 @@ const NavCard kAtlasKeys = {"Atlas keys", kMoves4, {
     {"D", "centre on me"},   {"Z", "zoom in"},       {"W", "zoom out"},
     {"L", "locate a place"}, {"N", "next contact"},  {"G", "go: arrow"},
     {"P Alt+P", "wpt, add"},  {"J Alt+J", "marker, add"}, {"Alt+SYM", "del wpt"},
-    {"B", "track back"},     {"12 Ent", "chat #12"}, {"M  ^", "menu, close"},
+    {"B  O", "back, layers"}, {"12 Ent", "chat #12"}, {"M  ^", "menu, close"},
 }};
 // Library reader and list (K there too).
 const NavCard kReaderKeys = {"Reader keys", "T V half page   F H pan", {
@@ -7086,6 +7091,7 @@ void openMap() {
     g_cardOpen = false;
     g_gv = GV_NONE;
     g_mk = MK_NONE;
+    g_layOpen = false;
     g_markSel = -1;
     g_mapSel = -1;                           // callers that show a contact select it after
     mapview::setReader(mapReadTile);
@@ -8921,6 +8927,7 @@ void renderVoiceMsg() {
 
 void openMenu();
 bool parseLong(const char* s, long& out);
+void laySave();
 
 // ---- Markers: items of interest (ATAK-style) -------------------------------------------
 // A marker is a place with a type and a short note. Made on the Atlas (Alt+J: at the map
@@ -9494,6 +9501,89 @@ void markConsole(const char* p) {
         Serial.printf("[MARK] %d: #%d %s %.5f,%.5f \"%s\" %s, %s\n", k + 1, g_mkOrder[k] + 1, kMarkType[m.type], m.lat, m.lon, m.note, who, w);
     }
     Serial.printf("[MARK] %d markers\n", g_markCount);
+}
+
+// ---- Map layers (Atlas O) ------------------------------------------------------------------
+// The layered map packs carry overlays (names, contours, woods, marsh marks, hill shading,
+// other); the coverage layer comes from tools/maptiles/rf_coverage.py. O on the Atlas lists
+// them: a row's number (or Enter) turns it on / off, ^ goes back to the map. Kept in NVS
+// rs_map "layers" (default: all pack layers on, coverage off).
+bool g_layOpen = false;
+int g_laySel = 0;
+struct LayRow { uint32_t bit; const char* name; const char* sub; };
+const LayRow kLayRows[7] = {
+    {mapview::kLayerLabels, "Place names", "towns, peaks, water"},
+    {mapview::kLayerContours, "Contour lines", "height lines"},
+    {mapview::kLayerWoods, "Woods", "forest shading"},
+    {mapview::kLayerVeg, "Marsh marks", "wetland, scrub"},
+    {mapview::kLayerHill, "Hill shading", "relief"},
+    {mapview::kLayerOther, "Other", "anything else"},
+    {mapview::kLayerCoverage, "Radio coverage", "line of sight dots"},
+};
+
+void laySave() {
+    Preferences p;
+    if (!p.begin("rs_map", false)) return;
+    p.putUInt("layers", mapview::layers());
+    p.end();
+}
+
+void layLoad() {
+    Preferences p;
+    if (!p.begin("rs_map", true)) return;
+    const uint32_t m = p.getUInt("layers", mapview::kLayerAll);
+    p.end();
+    mapview::setLayers(m & (mapview::kLayerAll | mapview::kLayerCoverage));
+}
+
+void layToggle(int row) {
+    if (row < 0 || row >= 7) return;
+    const uint32_t m = mapview::layers() ^ kLayRows[row].bit;
+    mapview::setLayers(m);
+    laySave();
+    Serial.printf("[MAP] layer %s %s (layers %lu)\n", kLayRows[row].name, (m & kLayRows[row].bit) ? "on" : "off",
+                  (unsigned long)m);
+    requestRedraw();
+}
+
+void layOpen() {
+    g_layOpen = true;
+    g_laySel = 0;
+    Serial.printf("[MAP] layers page (layers %lu)\n", (unsigned long)mapview::layers());
+    requestRedraw();
+}
+
+void layClose() {
+    g_layOpen = false;
+    if (mapview::isOpen()) { mapContactsFeed(); g_fullRefreshReq = true; }
+    requestRedraw();
+}
+
+void layKey(const KeyEvent& ev) {
+    if (ev.enter) { layToggle(g_laySel); return; }
+    const char raw = ev.character;
+    if (raw >= '1' && raw <= '7') { g_laySel = raw - '1'; layToggle(g_laySel); return; }
+    switch (toupper((unsigned char)raw)) {
+        case 'T': if (g_laySel > 0) g_laySel--; requestRedraw(); break;
+        case 'V': if (g_laySel < 6) g_laySel++; requestRedraw(); break;
+        case 'O': layClose(); break;
+        default: break;
+    }
+}
+
+void renderLayers() {
+    drawHeader("Map layers", false);
+    const uint32_t m = mapview::layers();
+    char title[44], sub[48];
+    int scroll = g_laySel >= VIS_ROWS ? g_laySel - VIS_ROWS + 1 : 0;
+    for (int i = scroll; i < 7 && i < scroll + VIS_ROWS; i++) {
+        const int y = LIST_TOP + (i - scroll) * ROW_H;
+        snprintf(title, sizeof(title), "%d : %s", i + 1, kLayRows[i].name);
+        snprintf(sub, sizeof(sub), "%s  %s", (m & kLayRows[i].bit) ? "ON " : "off", kLayRows[i].sub);
+        listRow(y, title, sub, i == g_laySel);
+    }
+    box(0, FOOT_Y, W, FOOT_H, 1);
+    label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : (scroll + VIS_ROWS < 7 ? "1-7 on/off  V more  ^ map" : "1-7 on/off  T/V Ent  ^ map"));
 }
 
 // ---- ATAK feed: Cursor-on-Target over WiFi (CotFeed.cpp) ---------------------------------
@@ -12273,6 +12363,7 @@ void render() {
     else if (g_rtOpen)                 renderRangeTest();
     else if (g_cardOpen)               renderCard();
     else if (g_mk != MK_NONE)          renderMarks();
+    else if (g_layOpen)                renderLayers();
     else if (g_gv != GV_NONE)          renderGroups();
     else if (g_libOpen)                renderLibrary();
     else if (g_gameOpen)               renderGame();
@@ -12287,7 +12378,7 @@ void render() {
     drawBottomBar();
     drawMenuOverlay();
     lv_refr_now(nullptr);
-    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_chessOpen && !g_placeOpen && !g_navOpen && g_mk == MK_NONE)
+    if (mapview::isOpen() && !g_threadOpen && !g_menuOpen && !g_libOpen && !g_gameOpen && !g_chessOpen && !g_placeOpen && !g_navOpen && g_mk == MK_NONE && !g_layOpen)
         stampMap();   // after LVGL's clear
     if (g_chessOpen && !g_menuOpen && !g_threadOpen && !g_libOpen && !g_usbDrive && !g_cardOpen && !g_navOpen && !g_rtOpen &&
         !g_wizOpen && g_entry != Entry::Name)
@@ -12926,6 +13017,7 @@ void goBack() {
     if (g_navKeysOpen && (mapview::isOpen() || g_libOpen || g_gameOpen || g_chessOpen) && !entryActive()) { navKeysToggle(); return; }
     if (g_cardOpen && !entryActive()) { closeCard(); return; }
     if (g_mk != MK_NONE && !entryActive()) { markBack(); return; }
+    if (g_layOpen) { layClose(); return; }
     if (g_gv != GV_NONE && !entryActive() && !g_threadOpen) { grpBack(); return; }
     if (g_rtOpen && !entryActive()) { rtStop(); return; }
     if (g_shareActive && !entryActive()) {
@@ -13423,6 +13515,7 @@ void handleKey(const KeyEvent& ev) {
     }
     if (ev.fn) { g_fullRefreshReq = true; requestRedraw(); return; }   // MIC = full refresh
     if (g_mk != MK_NONE) { markKey(ev); return; }
+    if (g_layOpen) { layKey(ev); return; }
     if (g_rtOpen) { rtKey(ev); return; }
     if (g_navOpen) { navKey(ev); return; }
     if (mapview::isOpen()) { mapKey(ev); return; }
@@ -13447,6 +13540,7 @@ void mapKey(const KeyEvent& ev) {
     if (mc == kKeyBack) { if (g_tbOn) tbStop("stopped"); else tbStart(); requestRedraw(); return; }
     if (mc == kKeyGo) { navOpen(); return; }
     if (mc == kKeyFind) { startEntry(Entry::PlaceFind); return; }   // locate a place
+    if (toupper((unsigned char)ev.character) == 'O' && !ev.alt) { layOpen(); return; }   // O: map layers
     if (markMapKey(ev)) return;                           // J marker list / Alt+J new marker
     if (wptMapKey(ev)) return;                            // P next / Alt+P add / Alt+SYM delete
     if (mc == kKeyContact) { mapCycleContact(); return; } // next contact's last position
@@ -15743,8 +15837,8 @@ void handleSerialLine(char* p) {
     } else if (!strcmp(p, "maplayers") || !strncmp(p, "maplayers ", 10)) {
         // maplayers [mask]: overlay layers of the layered map packs. 1 labels, 2 contours,
         // 4 woods, 8 marsh marks, 16 hillshading, 32 any other; 63 = all, 0 = base map only.
-        if (p[9]) { mapview::setLayers((uint32_t)atoi(p + 10) & mapview::kLayerAll); requestRedraw(); }
-        Serial.printf("[MAP] layers %lu (1 labels 2 contours 4 woods 8 marsh 16 hillshade 32 other)\n",
+        if (p[9]) { mapview::setLayers((uint32_t)atoi(p + 10) & (mapview::kLayerAll | mapview::kLayerCoverage)); laySave(); requestRedraw(); }
+        Serial.printf("[MAP] layers %lu (1 labels 2 contours 4 woods 8 marsh 16 hillshade 32 other 64 coverage)\n",
                       (unsigned long)mapview::layers());
     } else if (!strncmp(p, "maptest ", 8)) {
         // Bench: write labelled grid test tiles (3x3 at z14 and z15) around <lat> <lon> on the SD card.
@@ -16763,6 +16857,7 @@ bool begin() {
     ashareLoad();
     markLoad();
     cotLoad();
+    layLoad();
     cposLoad();
     wptLoad();
     geofLoad();

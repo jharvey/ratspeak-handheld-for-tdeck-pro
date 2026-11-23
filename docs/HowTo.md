@@ -17,7 +17,7 @@ Keys as of 23 Nov 2026.
 | **I** | Inbox (your chats) |
 | **C** | Contacts. **G** on Contacts = Groups |
 | **P** | Peers (every radio heard). **R** on Peers = announce this radio |
-| **A** | Atlas, the offline map. **J** on the Atlas = markers, **Alt+J** = new marker |
+| **A** | Atlas, the offline map. **J** on the Atlas = markers, **Alt+J** = new marker, **O** = map layers |
 | **T** / **V** | Up / down in lists |
 | **Enter** | Open, send, save |
 | **^** (Shift, tapped alone) | Back |

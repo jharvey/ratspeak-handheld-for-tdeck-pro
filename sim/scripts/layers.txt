@@ -1,0 +1,33 @@
+# Atlas O: the map layers page; row 7 turns on the radio coverage overlay
+# (tools/maptiles/rf_coverage.py tiles in sd/ratdeckpro/maps/coverage). Needs map tiles and
+# coverage tiles around Cave Spring Hollow, Lynchburg TN on the device's SD card.
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+key BACK
+wait 800
+serial maplayers 63
+serial map 35.28330 -86.37000 13
+expect 5000 [MAP] open
+wait 2500
+shot layers-01-map.png
+key O
+expect 3000 [MAP] layers page
+wait 800
+shot layers-02-page.png
+key 7
+expect 3000 [MAP] layer Radio coverage on
+wait 800
+shot layers-03-coverage-on.png
+key BACK
+wait 2500
+shot layers-04-map-coverage.png
+key O
+key 2
+expect 3000 [MAP] layer Contour lines off
+key BACK
+wait 2500
+shot layers-05-no-contours.png
+serial maplayers
+expect 3000 [MAP] layers 125
+quit
