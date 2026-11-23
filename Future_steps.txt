@@ -468,6 +468,12 @@ Nice to have
   unread count on the group's Inbox row; voice messages, locations and walkie-talkie to a
   group; the low-battery notice to a group; automatic sync of member changes (share again
   instead); removing yourself from other people's copies; how-to video.
+- 13. BLOCKED 2026-11-23 (protocol core): relay mode built (setting Off / On USB power /
+  Always, node reopened with transport_enabled, LoRa FULL mode while relaying; work saved in
+  backups/relay_mode_wip.patch + backups/relay_net.py, sim air_deny.txt test aid) but announces
+  and path requests are never rebroadcast: rsReticulumLite excludes the receiving interface
+  from AnnounceRebroadcast / PathRequestForward targets, and a T-Deck has one interface (LoRa)
+  (upstream Reticulum sends on all). Needs an owner decision to change rsReticulumLite.
 - 13. Relay mode when plugged in: act as a Reticulum transport node on USB power to extend
   range for nearby units (see also the propagation-node item under Hardware / platform).
 - 14. Notepad: write notes on the device, saved to the Library folder on SD.
