@@ -16,6 +16,9 @@ ON THE UNIT
    6 Name in Home Assistant: the device name HA shows, port 6053.
    7 Wake word: Enter steps Off (MIC to talk) -> On USB power only -> Always.
      Off by default. See WAKE WORD below.
+   8 Sensors for HA: Off (default) / Battery / Battery + position. HA then shows the
+     unit's battery %, and with position its latitude and longitude, as sensors on the
+     device page (HA reconnects to the unit when this changes).
    Row 1 then shows what it is doing: waiting for Home Assistant, ready: press MIC
    to talk, listening, thinking, speaking.
 
@@ -47,6 +50,11 @@ WAKE WORD
   WiFi and the microphone stay on and the unit never sleeps, so the battery lasts hours,
   not days. It does not listen while the unit is locked or during a walkie-talkie call.
 - Console: "hawake" shows the setting, "hawake 0|1|2" sets it.
+
+ANNOUNCEMENTS
+- HA can announce to the unit (Assist satellite "announce" action): the text shows at the
+  bottom with a chime. The unit cannot play HA's audio file (no MP3 player), so the words
+  are shown, not spoken. During quiet hours (S.9, last row) there is no chime.
 
 NOTES
 - WiFi only: voice is too big for LoRa.

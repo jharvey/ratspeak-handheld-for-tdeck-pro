@@ -314,6 +314,11 @@ def frame(payload):
 WAKE = "--wake" in sys.argv
 if WAKE:
     sys.argv.remove("--wake")
+# --extras: sensors for HA (console hasensors 2: battery, latitude, longitude entities and their
+# states after SubscribeStates) and an announcement (VoiceAssistantAnnounceRequest text -> done).
+EXTRAS = "--extras" in sys.argv
+if EXTRAS:
+    sys.argv.remove("--extras")
 
 
 def settle(ser):
@@ -352,6 +357,9 @@ def main():
     settle(t.s)
     if key == "auto":
         key = read_key(t.s)
+    if EXTRAS:
+        t.s.write(b"havoice 1\r\nhasensors 2\r\n")
+        time.sleep(1)
     psk = base64.b64decode(key)
     assert len(psk) == 32
     t.cmd("apitunnel off")
@@ -400,15 +408,48 @@ def main():
     print("DeviceInfo: name %r mac %r model %r friendly %r va_flags %r encryption %r" % (
         info.get(2), info.get(3), info.get(6), info.get(13), info.get(17), info.get(19)))
     send(11)                                                          # ListEntitiesRequest
-    mt, d = recv()
-    assert mt == 19, mt
-    print("ListEntitiesDone")
+    sensors = []
+    while True:
+        mt, d = recv()
+        if mt == 16:                                                  # ListEntitiesSensorResponse
+            f = dict(pb_fields(d))
+            sensors.append((f.get(1, b"").decode(), f.get(6, b"").decode(errors="replace")))
+            continue
+        assert mt == 19, mt
+        break
+    print("ListEntitiesDone; sensors:", sensors)
     send(7)                                                           # PingRequest
     mt, d = recv()
     assert mt == 8, mt
     print("Ping OK")
     send(89, b"\x08\x01\x10\x01")                                     # SubscribeVoiceAssistant(subscribe, API_AUDIO)
     time.sleep(0.5)
+    if EXTRAS:
+        ok = [n for n, u in sensors] == ["battery", "latitude", "longitude"]
+        print(("ok   " if ok else "FAIL ") + "1 three sensor entities listed: %r" % sensors)
+        send(20)                                                      # SubscribeStatesRequest
+        states = {}
+        end = time.time() + 6
+        while time.time() < end and len(states) < 3:
+            try:
+                mt, d = recv(timeout=1.0)
+            except TimeoutError:
+                continue
+            if mt == 25:
+                f = dict(pb_fields(d))
+                val = struct.unpack("<f", f[2])[0] if 2 in f else None
+                states[struct.unpack("<I", f[1])[0]] = (val, bool(f.get(3, 0)))
+        ok2 = len(states) == 3
+        print(("ok   " if ok2 else "FAIL ") + "2 states after SubscribeStates: %r" % states)
+        send(119, b"\x0a\x00" + b"\x12\x0fDinner is ready")             # announce: media_id "", text
+        mt, d = recv()
+        ok3 = mt == 120 and dict(pb_fields(d)).get(1) == 1
+        print(("ok   " if ok3 else "FAIL ") + "3 announcement acknowledged: message %d %r" % (mt, pb_fields(d)))
+        t.cmd("hasensors 0")
+        t.cmd("apitunnel off")
+        allok = ok and ok2 and ok3
+        print("PASS" if allok else "FAIL")
+        return 0 if allok else 1
 
     def event(et, **data):
         body = varint(8) + varint(et) if et else b""

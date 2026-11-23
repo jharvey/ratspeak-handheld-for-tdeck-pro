@@ -8,6 +8,7 @@
 #include <ESPmDNS.h>
 #include <WiFi.h>
 #include <esp_random.h>
+#include <math.h>
 #include <mbedtls/ecp.h>
 #include <mbedtls/md.h>
 
@@ -31,9 +32,13 @@ enum : uint16_t {
     GET_TIME_REQ = 36, GET_TIME_RESP = 37, SUBSCRIBE_HA_STATES = 38, VA_SUBSCRIBE = 89, VA_REQUEST = 90,
     VA_RESPONSE = 91, VA_EVENT = 92, VA_AUDIO = 106, VA_ANNOUNCE_REQ = 119, VA_ANNOUNCE_DONE = 120,
     VA_CONFIG_REQ = 121, VA_CONFIG_RESP = 122,
+    LIST_ENTITIES_SENSOR = 16, SENSOR_STATE = 25,
 };
-// VoiceAssistantFeature (aioesphomeapi): VOICE_ASSISTANT | SPEAKER | API_AUDIO.
-constexpr uint32_t kVaFeatures = 1 | 2 | 4;
+// Sensor entities offered to HA (opt-in): keys are fixed per entity.
+constexpr uint32_t kKeyBattery = 0x52535001, kKeyLat = 0x52535002, kKeyLon = 0x52535003;
+// VoiceAssistantFeature (aioesphomeapi): VOICE_ASSISTANT | SPEAKER | API_AUDIO | ANNOUNCE.
+// Announcements: the unit shows the text (it cannot play HA's media URL: no MP3 decoder).
+constexpr uint32_t kVaFeatures = 1 | 2 | 4 | 16;
 enum VaEvent : uint32_t {
     EV_ERROR = 0, EV_RUN_START = 1, EV_RUN_END = 2, EV_STT_START = 3, EV_STT_END = 4, EV_INTENT_START = 5,
     EV_INTENT_END = 6, EV_TTS_START = 7, EV_TTS_END = 8, EV_WAKE_WORD_START = 9, EV_WAKE_WORD_END = 10,
@@ -82,6 +87,17 @@ uint32_t g_talkStart = 0;
 bool g_runActive = false;
 uint32_t g_runAt = 0;
 bool g_playing = false;
+// Sensors for HA (0 off, 1 battery, 2 battery + position) and their values from the app.
+uint8_t g_sensors = 0;
+bool g_statesSubscribed = false;
+float g_batPct = -1;
+bool g_havePos = false;
+double g_lat = 0, g_lon = 0;
+uint32_t g_statesAt = 0;
+float g_sentBat = -2;
+double g_sentLat = 999, g_sentLon = 999;
+bool g_quiet = false;                // quiet hours: an announcement shows, no chime
+uint32_t g_announcedAt = 0;
 // Wake word (Home Assistant's wake word engine, e.g. openWakeWord): while wanted and HA is
 // connected, a run that starts at the wake word stage stays open and the mic streams to it.
 bool g_wakeWanted = false;
@@ -210,6 +226,7 @@ bool writeNoiseFrame(const uint8_t* d, size_t n) {
 }
 
 void closeConn(const char* why);
+void listSensors();
 
 bool sendMessage(uint16_t type, const uint8_t* data, size_t n) {
     uint8_t* buf = g_txBuf;
@@ -248,6 +265,7 @@ struct PbOut {
         if (n + len <= sizeof(b)) { memcpy(b + n, d, len); n += len; }
     }
     void str(int f, const char* s) { if (s && *s) bytes(f, s, strlen(s)); }
+    void fixed32(int f, uint32_t v) { key(f, 5); for (int i = 0; i < 4; i++) if (n < sizeof(b)) b[n++] = (uint8_t)(v >> (8 * i)); }
     void f32(int f, float v) { key(f, 5); uint32_t u; memcpy(&u, &v, 4); for (int i = 0; i < 4; i++) if (n < sizeof(b)) b[n++] = (uint8_t)(u >> (8 * i)); }
 };
 
@@ -390,8 +408,9 @@ void handleMessage(uint16_t type, const uint8_t* d, size_t n) {
         case DISCONNECT_REQ: sendEmpty(DISCONNECT_RESP); closeConn("HA disconnected"); break;
         case PING_REQ: sendEmpty(PING_RESP); break;
         case DEVICE_INFO_REQ: sendDeviceInfo(); break;
-        case LIST_ENTITIES_REQ: sendEmpty(LIST_ENTITIES_DONE); break;
-        case SUBSCRIBE_STATES: case SUBSCRIBE_LOGS: case SUBSCRIBE_HA_SERVICES: case SUBSCRIBE_HA_STATES:
+        case LIST_ENTITIES_REQ: listSensors(); sendEmpty(LIST_ENTITIES_DONE); break;
+        case SUBSCRIBE_STATES: g_statesSubscribed = true; g_statesAt = 0; g_sentBat = -2; g_sentLat = 999; break;
+        case SUBSCRIBE_LOGS: case SUBSCRIBE_HA_SERVICES: case SUBSCRIBE_HA_STATES:
         case GET_TIME_RESP: break;
         case VA_SUBSCRIBE: {
             PbIn in(d, n);
@@ -427,8 +446,20 @@ void handleMessage(uint16_t type, const uint8_t* d, size_t n) {
             sendMessage(VA_CONFIG_RESP, o.b, o.n);
             break;
         }
-        case VA_ANNOUNCE_REQ: {                  // not offered (no ANNOUNCE feature): say done
+        case VA_ANNOUNCE_REQ: {                  // HA announces: show the text (no media player here)
+            PbIn in(d, n);
+            int f, wt; uint64_t v = 0; const uint8_t* s = nullptr; size_t len = 0;
+            char text[96] = "";
+            while (in.next(f, wt, v, s, len))
+                if (f == 2 && wt == 2) { const size_t k = len < sizeof(text) - 1 ? len : sizeof(text) - 1; memcpy(text, s, k); text[k] = 0; }
+            strlcpy(g_answer, text[0] ? text : "(announcement without text)", sizeof(g_answer));
+            g_heard[0] = 0;
+            g_announcedAt = millis() | 1;
+            g_changed = millis() | 1;
+            Serial.printf("[HAV] announcement: %s%s\n", g_answer, g_quiet ? " (quiet hours: no chime)" : "");
+            if (!g_quiet) g_audio->playMessage();
             PbOut o;
+            o.boolean(1, true);                  // success
             sendMessage(VA_ANNOUNCE_DONE, o.b, o.n);
             break;
         }
@@ -564,7 +595,61 @@ void processRx() {
     }
 }
 
+// ListEntitiesSensorResponse for each offered sensor (before ListEntitiesDone).
+void listSensor(uint32_t key, const char* id, const char* name, const char* unit, int decimals, const char* devClass,
+                const char* icon) {
+    PbOut o;
+    o.str(1, id);
+    o.fixed32(2, key);
+    o.str(3, name);
+    char uid[64];
+    snprintf(uid, sizeof(uid), "%s%s", g_node, id);
+    o.str(4, uid);
+    o.str(5, icon);
+    o.str(6, unit);
+    o.u32(7, (uint32_t)decimals);
+    o.str(9, devClass);
+    o.u32(10, 1);                                // state_class measurement
+    sendMessage(LIST_ENTITIES_SENSOR, o.b, o.n);
+}
+
+void listSensors() {
+    if (g_sensors >= 1) listSensor(kKeyBattery, "battery", "Battery", "%", 0, "battery", "");
+    if (g_sensors >= 2) {
+        listSensor(kKeyLat, "latitude", "Latitude", "\xc2\xb0", 5, "", "mdi:latitude");
+        listSensor(kKeyLon, "longitude", "Longitude", "\xc2\xb0", 5, "", "mdi:longitude");
+    }
+}
+
+void sendState(uint32_t key, float v, bool missing) {
+    PbOut o;
+    o.fixed32(1, key);
+    o.f32(2, v);
+    o.boolean(3, missing);
+    sendMessage(SENSOR_STATE, o.b, o.n);
+}
+
+// States: when HA subscribes, then on a change (1 point battery, ~20 m) or every 5 minutes.
+void sendStates() {
+    if (!g_sensors || !g_statesSubscribed) return;
+    const bool due = !g_statesAt || millis() - g_statesAt > 300000;
+    const bool batCh = g_batPct >= 0 && (g_sentBat < -1 || fabsf(g_batPct - g_sentBat) >= 1.0f);
+    const bool posCh = g_sensors >= 2 && g_havePos && (fabs(g_lat - g_sentLat) > 0.0002 || fabs(g_lon - g_sentLon) > 0.0002);
+    if (!due && !batCh && !posCh) return;
+    if (!due && g_statesAt && millis() - g_statesAt < 10000) return;   // at most every 10 s
+    sendState(kKeyBattery, g_batPct < 0 ? 0 : g_batPct, g_batPct < 0);
+    g_sentBat = g_batPct;
+    if (g_sensors >= 2) {
+        sendState(kKeyLat, (float)g_lat, !g_havePos);
+        sendState(kKeyLon, (float)g_lon, !g_havePos);
+        g_sentLat = g_lat; g_sentLon = g_lon;
+    }
+    g_statesAt = millis() | 1;
+    Serial.printf("[HAV] sensors sent: battery %.0f%%%s\n", g_batPct, g_sensors >= 2 ? (g_havePos ? ", position" : ", no position") : "");
+}
+
 void closeConn(const char* why) {
+    g_statesSubscribed = false;
     if (g_talking || g_wakeListen) { g_talking = false; g_wakeListen = false; g_audio->micStop(); }
     g_pendingTalk = false;
     if (g_client) g_client.stop();
@@ -654,6 +739,7 @@ bool startWakeListen();
 // The voice run: mic streaming, time limits, the push-to-talk that waits for the wake word
 // run to end, and listening for the wake word again (WiFi and the USB tunnel alike).
 void runTick() {
+    sendStates();
     if (g_talking) {
         streamMic();
         if (millis() - g_talkStart > kMaxTalkMs) stopTalk("15 s limit");
@@ -810,6 +896,20 @@ bool startTalk() {
     if (g_runActive) { setStatus("busy: HA is still answering"); return false; }   // one run at a time
     return beginTalk();
 }
+
+void setSensors(uint8_t mode) {
+    if (mode > 2) mode = 0;
+    if (mode == g_sensors) return;
+    g_sensors = mode;
+    Serial.printf("[HAV] sensors for HA: %s\n", mode == 0 ? "off" : mode == 1 ? "battery" : "battery + position");
+    // The entity list changes: drop the connection, HA reconnects and lists them again.
+    if (g_conn != Conn::None && !g_tunnel) closeConn("sensors changed: HA reconnects");
+}
+void setSensorValues(float batPct, bool havePos, double lat, double lon) {
+    g_batPct = batPct; g_havePos = havePos; g_lat = lat; g_lon = lon;
+}
+void setQuiet(bool on) { g_quiet = on; }
+uint32_t announcedAt() { return g_announcedAt; }
 
 void setWakeWord(bool on) {
     if (on == g_wakeWanted) return;

@@ -343,7 +343,9 @@ Home Assistant integration (user asked 2026-11-12)
   DONE 2026-11-15: ESPHome native API voice satellite (encrypted, S.3.7, tap MIC to talk, HA
   answers on the speaker); works with the user's HA (Help-10). Wake word DONE 2026-11-23
   (S.3.7 row 7, off by default: HA's wake word engine listens; bench 9/9 over the USB tunnel,
-  not yet with a real HA wake word engine). Still to do: HA
+  not yet with a real HA wake word engine). DONE 2026-11-23: HA announcements shown as text with
+  a chime (no MP3 player for the audio), sensors for HA (battery, position; opt-in, S.3.7 row 8),
+  quiet hours (S.9 last row). Still to do: HA
   announcements / notifications read aloud, LoRa text-to-speech, quiet hours.
   - Speak to HA: hold MIC, talk, release -> HA Assist pipeline (wake word optional later).
     On home WiFi: stream audio as an ESPHome-style voice satellite (HA Assist API) or the

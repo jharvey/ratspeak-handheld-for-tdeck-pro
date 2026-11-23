@@ -44,6 +44,28 @@ def main():
             b.ask("cpos", r"\[LOC\] cpos #\d+ " + h["ann"] + r" ANN 43\.70000,-79\.40000", 20)
             b.ask("cpos", r"\[LOC\] cbat #\d+ " + h["ann"] + r" 55% at \d+", 20)
         G.step(1, "telemetry only: position and battery stored", s1)
+
+        def s2():                                    # quiet hours 22-7 on BOB, a message at "23:00"
+            b.send("quiet 1")
+            b.send("quiet hour 23")
+            b.ask("quiet", r"\[ALERT\] quiet hours: 22-7, now quiet", 10)
+            a.send("chat " + h["bob"])
+            time.sleep(2)
+            b.mark()
+            a.send("t:late message")
+            b.expect(r'\[MSG\] in from ' + h["ann"] + r': "late message"', 150)
+            b.expect(r"\[ALERT\] quiet hours: no sound", 10)
+            b.send("quiet hour 12")                  # midday: sound again
+            b.mark()
+            a.send("t:noon message")
+            b.expect(r'\[MSG\] in from ' + h["ann"] + r': "noon message"', 150)
+            try:
+                b.expect(r"\[ALERT\] quiet hours: no sound", 5)
+                raise RuntimeError("quiet at noon")
+            except RuntimeError as e:
+                if "quiet at noon" in str(e):
+                    raise
+        G.step(2, "quiet hours: no sound at 23:00, sound at noon", s2)
     except Exception as e:
         G.results.append((0, "setup", False, str(e)))
         print("FAIL setup:", e, flush=True)

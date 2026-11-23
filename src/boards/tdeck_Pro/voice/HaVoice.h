@@ -73,6 +73,13 @@ void stopTalk(const char* why);   // MIC released (or HA heard the end of speech
 // Assistant's wake word stage stays open and the mic streams to it; HA's wake word engine
 // (e.g. openWakeWord) listens. MIC still works (it ends that run and starts push-to-talk).
 void setWakeWord(bool on);
+// Sensors offered to HA as ESPHome sensor entities (opt-in): 0 off, 1 battery %, 2 battery and
+// latitude / longitude. A change drops the connection so HA lists them again.
+void setSensors(uint8_t mode);
+void setSensorValues(float batPct, bool havePos, double lat, double lon);   // call each loop
+// Quiet hours: an HA announcement still shows its text, without the chime.
+void setQuiet(bool on);
+uint32_t announcedAt();     // millis() of the last announcement (0 none); its text is answer()
 bool wakeListening();      // the mic streams to HA waiting for the wake word
 const char* status();       // one line for Settings / the screen
 const char* heard();        // last speech-to-text result ("" none)
@@ -93,6 +100,10 @@ inline bool busy() { return false; }
 inline bool startTalk() { return false; }
 inline void stopTalk(const char*) {}
 inline void setWakeWord(bool) {}
+inline void setSensors(uint8_t) {}
+inline void setSensorValues(float, bool, double, double) {}
+inline void setQuiet(bool) {}
+inline uint32_t announcedAt() { return 0; }
 inline bool wakeListening() { return false; }
 inline const char* status() { return "simulator: no audio"; }
 inline const char* heard() { return ""; }
