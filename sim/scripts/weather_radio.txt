@@ -1,0 +1,32 @@
+# Library: "Weather-radio-near-me.txt" is written when the Library opens, from
+# Weather-radio-stations.csv and this radio's position. Needs the library files of
+# tools/sdcard/library in the device's sd/ratdeckpro/library and a GPS position (sim.ini gps).
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+key BACK
+wait 800
+key M
+wait 800
+key R
+expect 5000 [LIB] weather radio near me: 15 stations
+wait 1000
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+key V
+wait 500
+key ENTER
+expect 3000 [LIB] open Weather-radio-near-me.txt
+wait 1500
+shot weather-01-near-me.png
+quit

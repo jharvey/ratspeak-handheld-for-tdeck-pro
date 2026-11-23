@@ -1,0 +1,87 @@
+QUICK FREQUENCY REFERENCE (USA)                         compiled 2026-11-12
+================================================================================
+Compiled from FCC rules (47 CFR Part 95 / 97 / 80) and the sources listed at the
+end. CHECK YOUR LICENCE before transmitting: some services need one (GMRS, amateur),
+some are receive-only for you (marine/aviation/public safety outside an emergency).
+Real distress (imminent danger to life): any means of communication is allowed.
+
+RATSPEAK / RETICULUM LoRa (this project)
+  915.000 MHz, BW 250 kHz, SF 11, CR 4/5 (T-Deck Pro default). 902-928 MHz ISM band,
+  licence-free (Part 15). Bench units on unknown antennas run -9 dBm.
+  Meshtastic US default (LongFast) 906.875 MHz - different modulation/settings.
+
+FRS / GMRS (UHF, MHz)   FRS: no licence. GMRS: FCC licence, no exam, covers family.
+  ch  MHz       FRS max   GMRS max      ch  MHz       FRS max   GMRS max
+   1  462.5625  2 W       5 W           12  467.6625  0.5 W     0.5 W
+   2  462.5875  2 W       5 W           13  467.6875  0.5 W     0.5 W
+   3  462.6125  2 W       5 W           14  467.7125  0.5 W     0.5 W
+   4  462.6375  2 W       5 W           15  462.5500  2 W       50 W
+   5  462.6625  2 W       5 W           16  462.5750  2 W       50 W
+   6  462.6875  2 W       5 W           17  462.6000  2 W       50 W
+   7  462.7125  2 W       5 W           18  462.6250  2 W       50 W
+   8  467.5625  0.5 W     0.5 W         19  462.6500  2 W       50 W
+   9  467.5875  0.5 W     0.5 W         20  462.6750  2 W       50 W
+  10  467.6125  0.5 W     0.5 W         21  462.7000  2 W       50 W
+  11  467.6375  0.5 W     0.5 W         22  462.7250  2 W       50 W
+  GMRS repeaters: output on ch 15-22, input +5 MHz (467.550-467.725), GMRS licence only.
+  Common use: ch 1 / ch 3 for general calling; ch 20 (462.675) often used for
+  emergency/traveller assistance on GMRS.
+
+MURS (VHF, licence by rule, 2 W)
+  1 151.820   2 151.880   3 151.940   (narrowband 11.25 kHz)
+  4 154.570   5 154.600   (wideband allowed, "Blue Dot" / "Green Dot")
+
+CB (HF 27 MHz, no licence, 4 W AM / 12 W PEP SSB)
+   1 26.965   9 27.065 EMERGENCY / traveller help   17 27.165   25 27.245   33 27.335
+   2 26.975  10 27.075   18 27.175   26 27.265   34 27.345
+   3 26.985  11 27.085   19 27.185 HIGHWAY / truckers 27 27.275   35 27.355
+   4 27.005  12 27.105   20 27.205   28 27.285   36 27.365
+   5 27.015  13 27.115   21 27.215   29 27.295   37 27.375
+   6 27.025  14 27.125   22 27.225   30 27.305   38 27.385 (LSB calling)
+   7 27.035  15 27.135   23 27.255   31 27.315   39 27.395
+   8 27.055  16 27.155   24 27.235   32 27.325   40 27.405
+
+NOAA WEATHER RADIO (receive only)
+  162.400  162.425  162.450  162.475  162.500  162.525  162.550 MHz
+  Nearest transmitters by state: noaa-weather-radio\nwr_route_states.txt
+  (e.g. 04095 area: KDO95 Falmouth 162.550).
+
+MARINE VHF (licence/permit rules apply; receive anytime)
+  ch 16 156.800 DISTRESS / safety / calling     ch 9 156.450 boater calling
+  ch 13 156.650 bridge-to-bridge                ch 22A 157.100 Coast Guard liaison
+  ch 6 156.300 ship-to-ship safety
+
+AVIATION (receive only)   121.500 MHz emergency (guard)   122.750 air-to-air (GA)
+
+AMATEUR RADIO (licence required: Technician and up; HF needs General for most)
+  National simplex calling:  2 m 146.520 FM   70 cm 446.000 FM   1.25 m 223.500 FM
+                             6 m 52.525 FM    10 m 29.600 FM
+  JS8Call (dial freq, USB):  80 m 3.578  40 m 7.078  30 m 10.130  20 m 14.078
+                             17 m 18.104  15 m 21.078  12 m 24.922  10 m 28.078  6 m 50.318
+  GhostNet (S2 Underground, from GhostNet_Version_1.5.pdf pp. 12-14; full text in
+  ghostnet\GhostNet_Version_1.5.txt):
+    North America weekly net: THURSDAY NIGHT 0100-0300 UTC Friday
+      = Thu 8-10 PM EST (winter) / 9-11 PM EDT (summer)
+      JS8Call 40 m 7.107 MHz (NOT the standard JS8 7.078 - change the freq!), any clear
+        offset; heartbeats below 1000 Hz offset. Monitor groups @GHOSTNET and @GSTFLASH;
+        state groups @GN<country><state>, e.g. Maine @GNUSAME, Tennessee @GNUSATN,
+        North Carolina @GNUSANC.
+      Winlink P2P (VARA HF, USB) 7.107 MHz from 0135Z (peer-to-peer, not Winlink nodes)
+      RTTY 7.077 MHz (45.45 baud) for stations that missed check-in
+      HF voice LSB 7.190 MHz - DIRE EMERGENCY ONLY; monitored last 5 min of each window
+    Saturday data bridges: NA-Europe 1800-1900 UTC JS8 20 m 14.107, Ion2G ALE 1900-2000;
+      NA-Australia 1200-1300 UTC JS8 14.107, ALE 1300-1330, JS8 80 m 3.575 1330-1400.
+    Ion2G ALE: use ghostnet\ghostnet-codeplug (frequency list / settings).
+  APRS (US) 144.390 MHz.  Winlink / VARA: per gateway listings.
+  Maine / New England ARES & SKYWARN: check the section websites for current net times.
+
+NATIONAL INTEROPERABILITY (public safety; you may LISTEN - transmit needs authorization)
+  VHF: VCALL10 155.7525  VTAC11 151.1375  VTAC12 154.4525  VTAC13 158.7375  VTAC14 159.4725
+  UHF: UCALL40 453.2125  UTAC41 453.4625  UTAC42 453.7125  UTAC43 453.8625
+  Full plan: CISA NIFOG v2.02 (see interop\README.txt for where to download it).
+
+SOURCES
+  FCC 47 CFR Part 95 (FRS/GMRS/MURS/CB), Part 80 (marine), Part 97 (amateur);
+  weather.gov/nwr (NOAA Weather Radio, public domain); JS8Call user guide;
+  S2 Underground GhostNet repository (github.com/s2underground/GhostNet, CC BY-NC-SA 4.0);
+  CISA SAFECOM NIFOG. Verify against the official documents before relying on this list.

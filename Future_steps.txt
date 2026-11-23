@@ -151,8 +151,10 @@ UI / UX
 - DONE (screen) - Reference library on the device (user asked 2026-11-12): the "Library"
   screen (MENU, Library) reads plain-text files from <SD>/ratdeckpro/library/, paged, with
   find (sim/scripts/library.txt; help files Help-1..12 in tools/sdcard/library).
-  Still to do (content): frequency quick reference, NOAA Weather Radio list nearest to the
-  GPS position, GhostNet / JS8Call notes, first aid etc. Source copies are on the NAS
+  DONE 2026-11-23: Ref-Frequencies.txt (the frequency quick reference; W wraps off for its
+  tables) and Weather-radio-stations.csv (1,035 NOAA transmitters) in tools/sdcard/library;
+  opening the Library writes Weather-radio-near-me.txt (the 15 nearest from the GPS position).
+  Still to do (content): GhostNet / JS8Call notes, first aid etc. Source copies are on the NAS
   (M:\ratspeak-info; PDFs need a text extract first - the e-ink panel cannot render PDF).
   Push them with push_tiles-style sdput.
 - How-to pages in the Library (user asked 2026-11-21): explain the less obvious things.

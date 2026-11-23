@@ -10039,10 +10039,78 @@ bool g_libWrap = true;                       // false: one file line per screen 
 int g_libCol = 0;                            // wrap off: first character shown
 constexpr int kLibPanCols = 12;              // S / F: about half a screen
 
+// NOAA Weather Radio near me: when the station list (Weather-radio-stations.csv, made from
+// weather.gov/nwr by hand, see tools/sdcard/library) is in the Library, opening the Library
+// writes Weather-radio-near-me.txt there: the 15 nearest transmitters from this radio's
+// position, with frequency, distance and direction.
+void nwrNearMe() {
+    char path[96];
+    snprintf(path, sizeof(path), "%s/Weather-radio-stations.csv", kLibDir);
+    File f = g_sdStore.openFile(path, FILE_READ);
+    if (!f) return;
+    double la = 0, lo = 0;
+    const bool have = ownPosition(la, lo);
+    struct Near { float km; char line[88]; };
+    static Near best[15];
+    int n = 0;
+    if (have) {
+        char ln[160];
+        size_t k = 0;
+        bool first = true;
+        while (true) {
+            const int c = f.read();
+            if (c < 0 || c == '\n') {
+                ln[k] = 0;
+                k = 0;
+                if (first) { first = false; if (c < 0) break; continue; }   // the header
+                char st[4] = "", call[8] = "", mhz[10] = "", site[32] = "", status[20] = "";
+                double sla = 0, slo = 0;
+                if (sscanf(ln, "%3[^,],%7[^,],%9[^,],%31[^,],%lf,%lf,%19[^\r]", st, call, mhz, site, &sla, &slo, status) >= 6) {
+                    const float km = metersBetween(la, lo, sla, slo) / 1000.0f;
+                    if (n < 15 || km < best[n - 1].km) {
+                        int i = n < 15 ? n++ : 14;
+                        while (i > 0 && best[i - 1].km > km) { best[i] = best[i - 1]; i--; }
+                        char d[16];
+                        fmtDist(km * 1000.0, d, sizeof(d));
+                        best[i].km = km;
+                        snprintf(best[i].line, sizeof(best[i].line), "%s %s %s\n  %s %s, %s%s", mhz, d,
+                                 compass8(bearingDeg(la, lo, sla, slo)), call, site, st,
+                                 strcmp(status, "NORMAL") && status[0] ? " (OUT OF SERVICE)" : "");
+                    }
+                }
+                if (c < 0) break;
+            } else if (c != '\r' && k + 1 < sizeof(ln)) {
+                ln[k++] = (char)c;
+            }
+        }
+    }
+    f.close();
+    snprintf(path, sizeof(path), "%s/Weather-radio-near-me.txt", kLibDir);
+    File o = g_sdStore.openFile(path, FILE_WRITE);
+    if (!o) return;
+    o.print("NOAA WEATHER RADIO NEAR YOU\n\n");
+    if (!have) {
+        o.print("No position yet: get a GPS fix (or set a manual location, S.2) and open the\n"
+                "Library again. The full list is Weather-radio-stations.csv.\n");
+    } else {
+        char hdr[160];
+        snprintf(hdr, sizeof(hdr), "The %d nearest to %.4f, %.4f (made when the Library opened): MHz, distance, "
+                 "direction; call sign, site.\n\n", n, la, lo);
+        o.print(hdr);
+        for (int i = 0; i < n; i++) { o.print(best[i].line); o.print("\n"); }
+        o.print("\nWeather radio channels: 162.400 162.425 162.450 162.475 162.500 162.525\n"
+                "162.550 MHz (WX1-WX7, numbering differs by radio). Receive only.\n"
+                "Source: weather.gov/nwr, public domain. Full list: Weather-radio-stations.csv.\n");
+    }
+    o.close();
+    Serial.printf("[LIB] weather radio near me: %d stations%s\n", n, have ? "" : " (no position)");
+}
+
 void libScan() {
     g_libCount = 0;
     if (!sdMount()) return;
     g_sdStore.ensureDir(kLibDir);
+    nwrNearMe();
     File d = g_sdStore.openDir(kLibDir);
     if (!d) return;
     for (File e = d.openNextFile(); e && g_libCount < kLibMaxFiles; e = d.openNextFile()) {
