@@ -1,0 +1,185 @@
+# ATAK memory full + fuzz: 40 ATAK units (table holds 16, the oldest goes), 30 ATAK markers
+# (12 own markers first; ATAK gets at most half of the 24), 4,000 broken events into the parser, then the Atlas with everything on it.
+# Pass = no crash, the tables stay at their limits, the map still draws.
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+key BACK
+wait 800
+serial mark del all
+serial mark new camp 43.65000 -79.38000 own 00
+wait 60
+serial mark new camp 43.65050 -79.38000 own 01
+wait 60
+serial mark new camp 43.65100 -79.38000 own 02
+wait 60
+serial mark new camp 43.65150 -79.38000 own 03
+wait 60
+serial mark new camp 43.65200 -79.38000 own 04
+wait 60
+serial mark new camp 43.65250 -79.38000 own 05
+wait 60
+serial mark new camp 43.65300 -79.38000 own 06
+wait 60
+serial mark new camp 43.65350 -79.38000 own 07
+wait 60
+serial mark new camp 43.65400 -79.38000 own 08
+wait 60
+serial mark new camp 43.65450 -79.38000 own 09
+wait 60
+serial mark new camp 43.65500 -79.38000 own 10
+wait 60
+serial mark new camp 43.65550 -79.38000 own 11
+wait 60
+serial hb
+serial cot fake local u UNIT_00 43.64000 -79.40000
+serial cot fake local u UNIT_01 43.64100 -79.39800
+serial cot fake local u UNIT_02 43.64200 -79.39600
+serial cot fake local u UNIT_03 43.64300 -79.39400
+serial cot fake local u UNIT_04 43.64400 -79.39200
+serial cot fake local u UNIT_05 43.64500 -79.39000
+serial cot fake local u UNIT_06 43.64600 -79.38800
+serial cot fake local u UNIT_07 43.64700 -79.40000
+serial cot fake local u UNIT_08 43.64800 -79.39800
+serial cot fake local u UNIT_09 43.64900 -79.39600
+serial cot fake local u UNIT_10 43.65000 -79.39400
+serial cot fake local u UNIT_11 43.65100 -79.39200
+serial cot fake local u UNIT_12 43.65200 -79.39000
+serial cot fake local u UNIT_13 43.65300 -79.38800
+serial cot fake local u UNIT_14 43.65400 -79.40000
+serial cot fake local u UNIT_15 43.65500 -79.39800
+serial cot fake local u UNIT_16 43.65600 -79.39600
+serial cot fake local u UNIT_17 43.65700 -79.39400
+serial cot fake local u UNIT_18 43.65800 -79.39200
+serial cot fake local u UNIT_19 43.65900 -79.39000
+serial cot fake local u UNIT_20 43.66000 -79.38800
+serial cot fake local u UNIT_21 43.66100 -79.40000
+serial cot fake local u UNIT_22 43.66200 -79.39800
+serial cot fake local u UNIT_23 43.66300 -79.39600
+serial cot fake local u UNIT_24 43.66400 -79.39400
+serial cot fake local u UNIT_25 43.66500 -79.39200
+serial cot fake local u UNIT_26 43.66600 -79.39000
+serial cot fake local u UNIT_27 43.66700 -79.38800
+serial cot fake local u UNIT_28 43.66800 -79.40000
+serial cot fake local u UNIT_29 43.66900 -79.39800
+serial cot fake local u UNIT_30 43.67000 -79.39600
+serial cot fake local u UNIT_31 43.67100 -79.39400
+serial cot fake local u UNIT_32 43.67200 -79.39200
+serial cot fake local u UNIT_33 43.67300 -79.39000
+serial cot fake local u UNIT_34 43.67400 -79.38800
+serial cot fake local u UNIT_35 43.67500 -79.40000
+serial cot fake local u UNIT_36 43.67600 -79.39800
+serial cot fake local u UNIT_37 43.67700 -79.39600
+serial cot fake local u UNIT_38 43.67800 -79.39400
+serial cot fake local u UNIT_39 43.67900 -79.39200
+wait 500
+serial cot atak
+expect 3000 [COT] atak: 16 units
+serial cot fake local m hazard:_spot_00 43.64500 -79.39200
+wait 60
+serial cot fake local m camp:_spot_01 43.64620 -79.39200
+wait 60
+serial cot fake local m water:_spot_02 43.64740 -79.39200
+wait 60
+serial cot fake local m person:_spot_03 43.64860 -79.39200
+wait 60
+serial cot fake local m vehicle:_spot_04 43.64980 -79.39200
+wait 60
+serial cot fake local m other:_spot_05 43.65100 -79.39200
+wait 60
+serial cot fake local m hazard:_spot_06 43.64500 -79.39050
+wait 60
+serial cot fake local m camp:_spot_07 43.64620 -79.39050
+wait 60
+serial cot fake local m water:_spot_08 43.64740 -79.39050
+wait 60
+serial cot fake local m person:_spot_09 43.64860 -79.39050
+wait 60
+serial cot fake local m vehicle:_spot_10 43.64980 -79.39050
+wait 60
+serial cot fake local m other:_spot_11 43.65100 -79.39050
+wait 60
+serial cot fake local m hazard:_spot_12 43.64500 -79.38900
+wait 60
+serial cot fake local m camp:_spot_13 43.64620 -79.38900
+wait 60
+serial cot fake local m water:_spot_14 43.64740 -79.38900
+wait 60
+serial cot fake local m person:_spot_15 43.64860 -79.38900
+wait 60
+serial cot fake local m vehicle:_spot_16 43.64980 -79.38900
+wait 60
+serial cot fake local m other:_spot_17 43.65100 -79.38900
+wait 60
+serial cot fake local m hazard:_spot_18 43.64500 -79.38750
+wait 60
+serial cot fake local m camp:_spot_19 43.64620 -79.38750
+wait 60
+serial cot fake local m water:_spot_20 43.64740 -79.38750
+wait 60
+serial cot fake local m person:_spot_21 43.64860 -79.38750
+wait 60
+serial cot fake local m vehicle:_spot_22 43.64980 -79.38750
+wait 60
+serial cot fake local m other:_spot_23 43.65100 -79.38750
+wait 60
+serial cot fake local m hazard:_spot_24 43.64500 -79.38600
+wait 60
+serial cot fake local m camp:_spot_25 43.64620 -79.38600
+wait 60
+serial cot fake local m water:_spot_26 43.64740 -79.38600
+wait 60
+serial cot fake local m person:_spot_27 43.64860 -79.38600
+wait 60
+serial cot fake local m vehicle:_spot_28 43.64980 -79.38600
+wait 60
+serial cot fake local m other:_spot_29 43.65100 -79.38600
+wait 60
+wait 500
+serial mark
+expect 3000 [MARK] 24 markers
+serial cot junk 2000 7
+expect 20000 [COT] junk: 2000 events
+serial cot junk 2000 99
+expect 20000 [COT] junk: 2000 events
+serial cot atak
+expect 3000 [COT] atak: 16 units
+serial mark
+expect 3000 [MARK] 24 markers
+serial map 43.65500 -79.39000 15
+expect 5000 [MAP] open
+wait 2000
+shot atakfull-01-map.png
+key T
+wait 700
+key F
+wait 700
+key V
+wait 700
+key H
+wait 700
+key Z
+wait 700
+key W
+wait 700
+key T
+wait 700
+key F
+wait 700
+key J
+expect 3000 [MARK] list (24 markers)
+wait 800
+shot atakfull-02-list.png
+key BACK
+wait 800
+key BACK
+expect 3000 [MAP] closed
+serial hb
+expect 3000 [HB] up=
+serial id
+expect 3000 [ID] dest=
+# the batched ATAK save happens within ~30 s
+wait 32000
+serial mark
+expect 3000 [MARK] 24 markers
+quit

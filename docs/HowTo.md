@@ -49,6 +49,26 @@ Video: [send_message.mp4](videos/send_message.mp4)
 If the other radio is out of range the message waits in a queue and goes out by itself
 when that radio is heard again.
 
+Quick reply: in a chat, **MIC** then **Q** shows eight short answers (OK, Yes, No, On my
+way, Where are you?, Call me, I'm safe, Wait for me). Its number sends it at once, any other
+key closes the list. In a group chat **MIC** shows who got the last message; **Q** works there
+too.
+
+## SOS
+
+Hold the **top side button** for 3 seconds. The radio buzzes and counts down 5 seconds
+("SOS in 5 s - any key cancels"); any key or a short press of the button stops it. Then it
+sends "SOS! <your name> needs help." with your position (GPS, the last fix or the saved
+position) and battery to all your saved contacts (at most 8), or to one group: **M**, **S**,
+Alerts, row 7 "SOS sends to". After that it sends a position update every 2 minutes and the
+full SOS every 10 minutes, also after a restart, until you hold the button 3 seconds again:
+that sends "SOS cancelled".
+
+A radio that gets an SOS wakes up and sounds an alarm every 3 seconds for a minute, loud,
+even in quiet hours or with the beep off. Any key silences it; the sender shows on the map.
+
+A short press of the top button still locks the radio (it now acts when you let go).
+
 ## Read a message
 
 Video: [read_message.mp4](videos/read_message.mp4)
@@ -435,7 +455,9 @@ Video: [Library_and_games.mp4](videos/Library_and_games.mp4)
 1. **M**, **R** (Library): the text files on the SD card, here the help pages.
 2. A file's number opens it. **Space** or **N** next page, **B** back a page, **L** finds a
    word, **K** shows all the reader keys, **^** back to the list.
-3. The last two rows are games. Rat Trap: **T F V H** move, **D** or **Enter** opens a
+3. The last rows are the games and **New note**: type the note, **Enter** saves it on the SD
+   card as Note-<date>-<time>.txt, which then opens like any other file.
+4. The games. Rat Trap: **T F V H** move, **D** or **Enter** opens a
    square. Chess: **Enter** picks a piece up and puts it down, **U** takes a move back,
    **L** sets the level.
 

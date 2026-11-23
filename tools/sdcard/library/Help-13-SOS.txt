@@ -1,0 +1,37 @@
+SOS, QUICK REPLIES AND NOTES
+
+SOS
+1. Hold the TOP side button for 3 seconds.
+2. The radio buzzes and counts down: "SOS in 5 s - any key cancels".
+   Any key, or a short press of the button, stops it. Nothing is sent.
+3. After 5 s it sends "SOS! <your name> needs help." with your position
+   (GPS, last fix or saved position) and battery %.
+4. Then a position update every 2 minutes, the full SOS every 10 minutes,
+   also after a restart.
+5. Hold the top button 3 s again to end it: "SOS cancelled" is sent.
+
+WHO GETS IT
+- All saved contacts (at most 8), or one group.
+- M, S, Alerts, row 7 "SOS sends to": Enter steps through them.
+
+GETTING AN SOS
+- The radio wakes up and sounds a loud alarm every 3 s for a minute,
+  even in quiet hours or with the beep off. Any key silences it.
+- The sender shows on the map (Atlas) at the position in the SOS.
+
+QUICK REPLIES
+- In a chat: MIC, then Q. A digit sends at once:
+  1 OK  2 Yes  3 No  4 On my way  5 Where are you?
+  6 Call me  7 I'm safe  8 Wait for me
+- Any other key closes the list. Works in group chats too.
+
+NOTES
+- M, R (Library), last row "New note": type, Enter saves it.
+- Saved on the SD card as Note-<date>-<time>.txt; it opens like any
+  other file in the Library.
+
+GOOD TO KNOW
+- A short press of the top button still locks the radio; it now acts
+  when you let go, so a long hold does not lock first.
+- Over LoRa an SOS to 8 contacts takes a while to reach them all; one
+  out of range gets it from the queue when it is heard again.

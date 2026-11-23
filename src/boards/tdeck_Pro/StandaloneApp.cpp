@@ -2191,6 +2191,10 @@ bool batParse(const char* s, size_t len, int& pct, bool* autoUpdate = nullptr);
 void batNote(const uint8_t dest[16], int pct, uint32_t at);
 bool markRowText(const char* s, size_t len, char* out, size_t n, double* lat = nullptr, double* lon = nullptr);
 void markIncoming(const uint8_t from[16], const char* text, uint32_t at);
+void sosIncoming(const uint8_t from[16], const char* text);
+void sosTargetText(char* out, size_t n);
+bool sosActive();
+void sosNextTarget();
 bool markInfo(char* out, size_t n);
 extern int g_markSel;
 extern bool g_layOpen;
@@ -3244,6 +3248,7 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              TcpHost, TcpPort,
                              MapNum,                            // contact page: map number
                              MarkDist, MarkNote,                // new marker: distance, note
+                             Note,                              // Library: a new note
                              WptName,                           // map P: waypoint name
                              LibFind,                           // library: find text
                              PlaceFind,                         // map R: place name
@@ -4885,6 +4890,11 @@ void buildSettingsRows(Page p) {
         if (!g_cfg.quiet || g_cfg.quiet >= kQuietN) srow(RK_TOGGLE, "Quiet hours", "Off");
         else srow(RK_TOGGLE, "Quiet hours", "%02u:00-%02u:00 no sound%s", (unsigned)kQuiet[g_cfg.quiet][0],
                   (unsigned)kQuiet[g_cfg.quiet][1], quietNow() ? " (now)" : "");
+        {
+            char t[40];
+            sosTargetText(t, sizeof(t));
+            srow(RK_PICK, "SOS sends to", "%s%s", t, sosActive() ? " (ACTIVE)" : "");
+        }
         break;
 
     case PG_GEOFS:
@@ -5553,6 +5563,9 @@ void activateSetting(int idx) {
             Serial.printf("[ALERT] quiet hours: %u-%u%s\n", (unsigned)kQuiet[g_cfg.quiet][0], (unsigned)kQuiet[g_cfg.quiet][1],
                           g_cfg.quiet ? "" : " (off)");
             requestRedraw();
+        } else if (idx == 6) {
+            sosNextTarget();
+            requestRedraw();
         }
         break;
 
@@ -5820,6 +5833,8 @@ void drawBubble(int y, const char* s, bool incoming, const char* status) {
 
 extern bool g_tmenuOpen;
 void renderThreadMenu(int y);
+void renderQuickReplies(int y);
+extern bool g_qrOpen;
 void renderGrpWho(int y);
 
 // The message being typed, wrapped at words to the typing strip's width, cursor "_" at the
@@ -5867,14 +5882,16 @@ void renderThread() {
     const uint8_t am = ashareMinsFor(g_threadPeer);
     const int grp = grpOfHash(g_threadPeer);         // a group chat (-1: a contact's)
     if (g_tmenuOpen && g_toast[0]) snprintf(hdr, sizeof(hdr), "%s", g_toast);   // menu: no strip
-    else if (g_tmenuOpen && isGrpHash(g_threadPeer) && !g_tmenuGrpShare) snprintf(hdr, sizeof(hdr), "Who got it  L = share  key = back");
+    else if (g_tmenuOpen && g_qrOpen) snprintf(hdr, sizeof(hdr), "Quick reply: 1-8 sends, ^ back");
+    else if (g_tmenuOpen && isGrpHash(g_threadPeer) && !g_tmenuGrpShare) snprintf(hdr, sizeof(hdr), "Who got it  L share  Q reply");
     else if (g_tmenuOpen && isGrpHash(g_threadPeer)) snprintf(hdr, sizeof(hdr), "1-3 Enter, B what, ^ back");
-    else if (g_tmenuOpen) snprintf(hdr, sizeof(hdr), "1-5 Enter, B what, ^ back");
+    else if (g_tmenuOpen) snprintf(hdr, sizeof(hdr), "1-5, B what, Q reply, ^ back");
     else if (am) snprintf(hdr, sizeof(hdr), ">>> %.12s [%s %um]", name, ashareMarkFor(g_threadPeer), (unsigned)am);   // sharing on
     else if (grp >= 0) snprintf(hdr, sizeof(hdr), g_grp[grp].n == 1 ? ">>> %s (%d member)" : ">>> %s (%d members)", name, (int)g_grp[grp].n);
     else snprintf(hdr, sizeof(hdr), ">>> %s", name);
     text(4, HEADER_Y, hdr, true, W - 8);
     int y = HEADER_Y + 20;
+    if (g_tmenuOpen && g_qrOpen) { renderQuickReplies(y + 4); return; }                          // Q: quick replies
     if (g_tmenuOpen && isGrpHash(g_threadPeer) && !g_tmenuGrpShare) { renderGrpWho(y); return; }   // MIC in a group chat
     if (g_tmenuOpen) {                       // MIC: location menu instead of the history
         renderThreadMenu(y);                 // 5 rows down to y + 220 (= 277)
@@ -8294,6 +8311,7 @@ void inboundTick() {
         if (locParse(text, strlen(text), la, lo, &autoL)) cposNote(key.peer, la, lo, msgEpoch(ts));
         if (batParse(text, strlen(text), bp, &autoB)) batNote(key.peer, bp, msgEpoch(ts));
         markIncoming(key.peer, text, msgEpoch(ts));
+        sosIncoming(key.peer, text);
         if (!autoL && !autoB) notifyInbound();
         else if (g_inQn == 1 && g_msgStore.totalUnreadCount() == 1) {   // the only unread message is this one
             if (g_markReadPending) { if (!g_markReadNext[0]) strlcpy(g_markReadNext, from, sizeof(g_markReadNext)); }
@@ -9023,6 +9041,10 @@ struct Mark { float lat, lon; uint32_t at; uint8_t type, mine, pad[2]; char note
 Mark g_mark[kMarkMax];
 int g_markCount = 0;
 int g_markSel = -1;                          // selected on the map (bottom line, guide line)
+// Markers from ATAK (WiFi, anyone on the network): at most half the store, so a busy or
+// hostile network cannot push out the ones contacts sent; saved at most every 30 s.
+constexpr int kMarkAtakMax = kMarkMax / 2;
+uint32_t g_markDirtyAt = 0;
 
 // A marker that came from ATAK (the feed's receive side) has from = A7 AC + a hash of its uid.
 bool markFromAtak(const uint8_t from[16]) { return from[0] == 0xA7 && from[1] == 0xAC; }
@@ -9033,6 +9055,7 @@ void markWho(const Mark& m, char* out, size_t n) {
 }
 
 void markSave() {
+    g_markDirtyAt = 0;
     Preferences p;
     if (!p.begin("rs_mark", false)) return;
     p.putBytes("list", g_mark, sizeof(Mark) * g_markCount);
@@ -9122,6 +9145,13 @@ int markAdd(int type, double lat, double lon, const char* note, const uint8_t* f
         if (from && memcmp(m.from, from, 16)) continue;
         if (metersBetween(m.lat, m.lon, lat, lon) < 15.0f) i = k;
     }
+    const bool atak = from && markFromAtak(from);
+    if (i < 0 && atak) {                     // ATAK's share full: its oldest one makes room
+        int n = 0, old = -1;
+        for (int k = 0; k < g_markCount; k++)
+            if (!g_mark[k].mine && markFromAtak(g_mark[k].from)) { n++; if (old < 0 || g_mark[k].at < g_mark[old].at) old = k; }
+        if (n >= kMarkAtakMax) i = old;
+    }
     if (i < 0) {
         if (g_markCount < kMarkMax) i = g_markCount++;
         else {                               // full: the oldest received one makes room, else the oldest
@@ -9136,7 +9166,8 @@ int markAdd(int type, double lat, double lon, const char* note, const uint8_t* f
     m.mine = from ? 0 : 1;
     if (from) memcpy(m.from, from, 16);
     strlcpy(m.note, note ? note : "", sizeof(m.note));
-    markSave();
+    if (atak) { if (!g_markDirtyAt) g_markDirtyAt = millis() ? millis() : 1; }   // cotTick saves it
+    else markSave();
     char who[24] = "this radio", where[40];
     if (from && markFromAtak(from)) strlcpy(who, "ATAK", sizeof(who));
     else if (from) peerName(from, who, sizeof(who));
@@ -9695,56 +9726,69 @@ void cotIp(uint32_t ip, char* out, size_t n) {
 const int32_t kCotMarkArgb[kMarkTypes] = {(int32_t)0xFFFF0000, (int32_t)0xFF00FFFF, (int32_t)0xFF0000FF,
     (int32_t)0xFF00FF00, (int32_t)0xFF7FBFFF, (int32_t)0xFFFFFF00, (int32_t)0xFFFFFFFF};
 
-int cotSendAll(bool log) {
-    const time_t now = time(nullptr);
-    if (now < 1600000000) { if (log) Serial.println("[COT] no clock yet"); return 0; }
-    const uint32_t t = (uint32_t)now;
+// Each send takes a WiFi buffer in internal RAM until the radio has sent it (multicast goes
+// at the lowest rate), so a burst of one event per marker and contact every interval took
+// internal RAM down to ~6 KB on COM8. The feed now sends one event at a time (cotTick paces
+// them) and skips one while internal RAM is low.
+constexpr size_t kCotMinInternal = 24 * 1024;
+uint32_t g_cotSkipped = 0;
+
+// Event k of the feed: 0 = this unit, then each contact with a position, then each marker.
+// Returns 1 sent, 0 nothing to send for k (skip), 2 skipped (low memory / send failed),
+// -1 past the end.
+int cotSendItem(int k, uint32_t t) {
     static char xml[900];
     char uid[48], cs[48], hex[33], rem[64];
-    int sent = 0;
-    auto go = [&](const cot::Item& it) {
-        const size_t n = cot::format(it, xml, sizeof(xml));
-        if (n && cot::send(xml, n, g_cot.ip, g_cot.port)) sent++;
-    };
-    double la, lo;
-    if (g_haveSelf && ownPosition(la, lo)) {     // this unit
+    cot::Item it;
+    if (k == 0) {                                // this unit
+        double la, lo;
+        if (!g_haveSelf || !ownPosition(la, lo)) return 0;
         hashToHex(g_selfHash, hex);
         snprintf(uid, sizeof(uid), "RatSpeak-%.16s", hex);
-        cot::Item it;
         it.lat = la; it.lon = lo; it.at = t; it.stale = t + 3u * g_cot.every + 60u;
         it.uid = uid; it.type = "a-f-G-U-C"; it.callsign = g_selfName; it.battery = g_bat.pct;
-        go(it);
-    }
-    for (int i = 0; i < g_cposCount; i++) {      // contacts' last shared positions
-        const CPos& c = g_cpos[i];
-        if (!c.hasPos || !c.at || c.at + 3600u < t) continue;
+    } else if (k - 1 < g_cposCount) {            // contacts' last shared positions
+        const CPos& c = g_cpos[k - 1];
+        if (!c.hasPos || !c.at || c.at + 3600u < t) return 0;
         hashToHex(c.dest, hex);
         snprintf(uid, sizeof(uid), "RatSpeak-%.16s", hex);
         peerName(c.dest, cs, sizeof(cs));
-        cot::Item it;
         it.lat = c.lat; it.lon = c.lon; it.at = c.at; it.stale = c.at + 3600u;
         it.uid = uid; it.type = "a-f-G-U-C"; it.callsign = cs; it.battery = c.bat ? c.bat - 1 : -1;
-        go(it);
-    }
-    for (int i = 0; i < g_markCount; i++) {      // markers
-        const Mark& m = g_mark[i];
+    } else if (k - 1 - g_cposCount < g_markCount) {   // markers
+        const Mark& m = g_mark[k - 1 - g_cposCount];
+        if (markFromAtak(m.from)) return 0;      // came from ATAK: do not send it back
         uint32_t h = 2166136261u;                // uid from what the marker is, not its slot
-        auto mix = [&](const void* d, size_t n) { for (size_t k = 0; k < n; k++) h = (h ^ ((const uint8_t*)d)[k]) * 16777619u; };
+        auto mix = [&](const void* d, size_t n) { for (size_t q = 0; q < n; q++) h = (h ^ ((const uint8_t*)d)[q]) * 16777619u; };
         mix(&m.lat, sizeof(m.lat)); mix(&m.lon, sizeof(m.lon)); mix(&m.type, 1); mix(m.from, 16);
         snprintf(uid, sizeof(uid), "RatSpeak-mk-%08lx", (unsigned long)h);
         if (m.note[0]) snprintf(cs, sizeof(cs), "%s: %s", kMarkType[m.type], m.note);
         else snprintf(cs, sizeof(cs), "%s", kMarkType[m.type]);
-        if (markFromAtak(m.from)) continue;       // came from ATAK: do not send it back
         char who[24] = "this unit";
         if (!m.mine) peerName(m.from, who, sizeof(who));
         snprintf(rem, sizeof(rem), "RatSpeak marker from %s", who);
-        cot::Item it;
         it.lat = m.lat; it.lon = m.lon; it.at = m.at ? m.at : t; it.stale = t + 86400u;
         it.uid = uid; it.type = "b-m-p-s-m"; it.callsign = cs; it.argb = kCotMarkArgb[m.type]; it.remarks = rem;
-        go(it);
+    } else {
+        return -1;
     }
-    g_cotSent += (uint32_t)sent;
-    if (log) { char ip[16]; cotIp(g_cot.ip, ip, sizeof(ip)); Serial.printf("[COT] sent %d events to %s:%u\n", sent, ip, (unsigned)g_cot.port); }
+    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < kCotMinInternal) { g_cotSkipped++; return 2; }
+    const size_t n = cot::format(it, xml, sizeof(xml));
+    if (!n || !cot::send(xml, n, g_cot.ip, g_cot.port)) return 2;
+    g_cotSent++;
+    return 1;
+}
+
+// All events now (bench "cot now").
+int cotSendAll(bool log) {
+    const time_t now = time(nullptr);
+    if (now < 1600000000) { if (log) Serial.println("[COT] no clock yet"); return 0; }
+    int sent = 0, skipped = 0, r;
+    for (int k = 0; (r = cotSendItem(k, (uint32_t)now)) >= 0; k++) { if (r == 1) sent++; if (r == 2) skipped++; }
+    if (log) {
+        char ip[16]; cotIp(g_cot.ip, ip, sizeof(ip));
+        Serial.printf("[COT] sent %d events to %s:%u%s\n", sent, ip, (unsigned)g_cot.port, skipped ? " (some skipped: low memory)" : "");
+    }
     return sent;
 }
 
@@ -9885,6 +9929,7 @@ void cotTick() {
     if (!want && g_cotRxOpen) { cot::listen(0); g_cotRxOpen = false; }
     static uint32_t pruned = 0;
     if (millis() - pruned > 30000) { pruned = millis(); takPrune(); }
+    if (g_markDirtyAt && millis() - g_markDirtyAt > 30000) markSave();     // ATAK markers, batched
     if (g_cotRxOpen) {
         static char buf[1024];
         uint32_t from = 0;
@@ -9905,10 +9950,30 @@ void cotTick() {
             Serial.printf("[COT] xml %s\n", buf);
         }
     }
-    if (!g_cot.on || !wifiConnected() || !g_pwEff.wifi) return;
-    if (g_cotLast && millis() - g_cotLast < (uint32_t)g_cot.every * 1000u) return;
-    g_cotLast = millis() | 1;
-    cotSendAll(false);
+    static int next = -1;                        // the event a running round sends next (-1: none)
+    static uint32_t roundT = 0, stepAt = 0, lowNoted = 0;
+    if (!g_cot.on || !wifiConnected() || !g_pwEff.wifi) { next = -1; return; }
+    if (next < 0) {                              // start a round every interval
+        if (g_cotLast && millis() - g_cotLast < (uint32_t)g_cot.every * 1000u) return;
+        const time_t now = time(nullptr);
+        if (now < 1600000000) return;
+        g_cotLast = millis() | 1;
+        roundT = (uint32_t)now;
+        next = 0;
+    }
+    if (millis() - stepAt < 100) return;         // one event per 100 ms: no burst of WiFi buffers
+    stepAt = millis();
+    for (int tries = 0; tries < 64; tries++) {   // skip the slots with nothing to send
+        const int r = cotSendItem(next, roundT);
+        if (r < 0) { next = -1; break; }
+        next++;
+        if (r == 2 && (!lowNoted || millis() - lowNoted > 60000)) {
+            lowNoted = millis() | 1;
+            Serial.printf("[COT] low memory (%u B internal): events skipped (%lu so far)\n",
+                          (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned long)g_cotSkipped);
+        }
+        if (r != 0) break;
+    }
 }
 
 // Console: cot | cot on|off | cot to <a.b.c.d> [port] | cot to default | cot every <s> |
@@ -9968,6 +10033,43 @@ void cotConsole(const char* p) {
         if (sscanf(where, "%u.%u.%u.%u", &a, &b, &c, &d) == 4)
             Serial.printf("[COT] fake sent: %s\n", cot::send(xml, n, a << 24 | b << 16 | c << 8 | d, cot::kSaPort) ? "yes" : "no");
         return;
+    } else if (!strncmp(p, "junk ", 5)) {        // bench: cot junk <n> [seed]: broken events into the parser
+        int cnt = 0;
+        unsigned seed = 1;
+        if (sscanf(p + 5, "%d %u", &cnt, &seed) < 1 || cnt < 1) { Serial.println("[COT] junk <n> [seed]"); return; }
+        uint32_t r = seed ? seed : 1;
+        auto rnd = [&r]() { r ^= r << 13; r ^= r >> 17; r ^= r << 5; return r; };
+        static char xml[900], bad[1100];
+        const uint32_t t0 = millis();
+        const uint32_t rx0 = g_takRx;
+        for (int k = 0; k < cnt; k++) {
+            char cs[40], uid[48];
+            snprintf(cs, sizeof(cs), "JUNK %u", (unsigned)(rnd() % 50));
+            snprintf(uid, sizeof(uid), "ANDROID-junk-%u", (unsigned)(rnd() % 50));
+            const time_t now = time(nullptr);
+            cot::Item it;
+            it.lat = (double)(rnd() % 18000) / 100.0 - 90.0; it.lon = (double)(rnd() % 36000) / 100.0 - 180.0;
+            it.at = (uint32_t)now; it.stale = (uint32_t)now + 300;
+            it.uid = uid; it.callsign = cs;
+            it.type = (rnd() & 1) ? "a-f-G-U-C" : "b-m-p-s-m";
+            size_t n = cot::format(it, xml, sizeof(xml));
+            memcpy(bad, xml, n + 1);
+            switch (rnd() % 6) {
+            case 0: bad[rnd() % (n ? n : 1)] = 0; break;                                  // cut short
+            case 1: for (int j = 0; j < 12; j++) bad[rnd() % n] = (char)(rnd() % 255 + 1); break;   // noise
+            case 2: { char* q = strstr(bad, "lat=\""); if (q) memcpy(q + 5, "9e999\"", 6); } break;   // bad number
+            case 3: { char* q = strstr(bad, "callsign=\""); if (q) { size_t o = q - bad + 10;          // huge callsign
+                          for (size_t j = o; j < sizeof(bad) - 1; j++) bad[j] = 'X';
+                          bad[sizeof(bad) - 1] = 0; } } break;
+            case 4: for (char* q = bad; *q; q++) if (*q == '"') *q = '\''; break;           // other quotes
+            default: { char* q = strstr(bad, "uid=\""); if (q) q[1] = 'x'; } break;        // no uid
+            }
+            cotReceive(bad);
+            if ((k & 63) == 63) delay(1);
+        }
+        Serial.printf("[COT] junk: %d events in %lu ms, %lu taken in, %d ATAK units, heap %u\n", cnt,
+                      (unsigned long)(millis() - t0), (unsigned long)(g_takRx - rx0), g_takCount, (unsigned)ESP.getFreeHeap());
+        return;
     }
     cotIp(g_cot.ip, ip, sizeof(ip));
     Serial.printf("[COT] feed %s, every %u s, to %s:%u, %lu events sent, WiFi %s\n", g_cot.on ? "on" : "off",
@@ -9978,6 +10080,21 @@ void cotConsole(const char* p) {
 bool g_tmenuOpen = false;
 int  g_tmenuSel = 0;
 constexpr int kTmenuRows = 5;
+// Quick replies (Q in a chat's MIC menu, contact or group): one digit sends one.
+const char* const kQuick[8] = {"OK", "Yes", "No", "On my way", "Where are you?", "Call me", "I'm safe", "Wait for me"};
+bool g_qrOpen = false;
+
+void commitEntry();
+void quickSend(int i) {
+    if (i < 0 || i >= 8 || !g_threadOpen) return;
+    g_qrOpen = false;
+    g_tmenuOpen = false;
+    g_tmenuGrpShare = false;
+    if (g_entry != Entry::Message) { toast("Open the chat first"); return; }
+    bufSet(kQuick[i]);
+    Serial.printf("[MSG] quick reply %d: %s\n", i + 1, kQuick[i]);
+    commitEntry();                               // the same path as typing it and Enter
+}
 
 // A group chat: MIC shows "who got it"; L there opens rows 1-3 of this menu for the group.
 bool g_tmenuGrpShare = false;
@@ -9994,6 +10111,8 @@ void tmenuAct(int i) {
             g_ashare[k].until = m ? (uint32_t)time(nullptr) + m * 60UL : 0;
             ashareSave();
         }
+    } else if (i == 5) {
+        g_qrOpen = true;
     } else if (i == 4) {
         if (!feature(F_VOICEMSG)) { toast("Voice messages are off (S.1.5)"); return; }
         g_tmenuOpen = false;
@@ -10014,6 +10133,14 @@ void tmenuAct(int i) {
 void tmenuKey(const KeyEvent& ev) {
     const bool grp = isGrpHash(g_threadPeer);
     const char c = (char)toupper((unsigned char)ev.character);
+    if (g_qrOpen) {                              // quick replies: a digit sends, anything else = back
+        if (c >= '1' && c <= '8') { quickSend(c - '1'); return; }
+        g_qrOpen = false;
+        if (ev.up) { requestRedraw(); return; }
+        requestRedraw();
+        return;
+    }
+    if (c == 'Q' && !ev.up && !ev.fn && !ev.enter) { g_qrOpen = true; requestRedraw(); return; }
     if (grp && !g_tmenuGrpShare) {           // "who got it": L = share with the group, any other key = back
         if (c == 'L' && !ev.up && !ev.fn && !ev.enter) { g_tmenuGrpShare = true; g_tmenuSel = 0; }
         else g_tmenuOpen = false;
@@ -10086,6 +10213,15 @@ void renderThreadMenu(int y) {
     addHit(2, y, W - 4, ROW_H, H_TMENU, 3); y += ROW_H;
     listRow(y, "5 Voice message", feature(F_VOICEMSG) ? "record, send, play" : "off (S.1.5)", g_tmenuSel == 4);
     addHit(2, y, W - 4, ROW_H, H_TMENU, 4);
+}
+
+// The quick replies list (over the chat, like the MIC menu).
+void renderQuickReplies(int y) {
+    char t[40];
+    for (int i = 0; i < 8; i++) {
+        snprintf(t, sizeof(t), "%d %s", i + 1, kQuick[i]);
+        text(10, y + i * 22, t, false, W - 20);
+    }
 }
 
 void openMenu();
@@ -10180,6 +10316,35 @@ void nwrNearMe() {
     }
     o.close();
     Serial.printf("[LIB] weather radio near me: %d stations%s\n", n, have ? "" : " (no position)");
+}
+
+// A new note from the Library: saved as Note-YYYYMMDD-HHMMSS.txt in the Library folder, with
+// the time on its first line; it then opens like any other file.
+void libScan();
+void noteCommit() {
+    if (!g_bufLen) { endEntry(); requestRedraw(); return; }
+    if (!sdMount()) { toast("No SD card: note not saved"); return; }
+    g_sdStore.ensureDir(kLibDir);
+    const time_t now = time(nullptr);
+    struct tm lt;
+    applyTz();
+    localtime_r(&now, &lt);
+    char path[96], head[48];
+    snprintf(path, sizeof(path), "%s/Note-%04d%02d%02d-%02d%02d%02d.txt", kLibDir, lt.tm_year + 1900, lt.tm_mon + 1,
+             lt.tm_mday, lt.tm_hour, lt.tm_min, lt.tm_sec);
+    snprintf(head, sizeof(head), "Note %04d-%02d-%02d %02d:%02d\n\n", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday,
+             lt.tm_hour, lt.tm_min);
+    File f = g_sdStore.openFile(path, FILE_WRITE);
+    if (!f) { toast("Note not saved (card)"); return; }
+    f.print(head);
+    f.print(g_buf);
+    f.print("\n");
+    f.close();
+    Serial.printf("[LIB] note saved: %s (%u chars)\n", strrchr(path, '/') + 1, (unsigned)g_bufLen);
+    endEntry();
+    libScan();
+    toast("Note saved");
+    requestRedraw();
 }
 
 void libScan() {
@@ -10440,11 +10605,12 @@ void libKey(const KeyEvent& ev) {
     auto pick = [](int k) {                      // the rows after the files are the games
         if (k == g_libCount) { if (gameOpen()) { g_libOpen = false; } else requestRedraw(); }
         else if (k == g_libCount + 1) { if (chessOpen()) g_libOpen = false; }
+        else if (k == g_libCount + 2) { startEntry(Entry::Note, ""); toast("Type the note, Enter saves"); requestRedraw(); }
         else libOpenFile(k);
     };
     if (ev.enter) { pick(g_libSel); return; }
-    if (c >= '1' && c <= '9') { const int k = g_libScroll + (c - '1'); if (k <= g_libCount + 1) { g_libSel = k; pick(k); } return; }
-    if (c == 'V' && g_libSel < g_libCount + 1) g_libSel++;
+    if (c >= '1' && c <= '9') { const int k = g_libScroll + (c - '1'); if (k <= g_libCount + 2) { g_libSel = k; pick(k); } return; }
+    if (c == 'V' && g_libSel < g_libCount + 2) g_libSel++;
     if (c == 'T' && g_libSel > 0) g_libSel--;
     if (c == 'M') { libClose(); openMenu(); return; }
     if (g_libSel < g_libScroll) g_libScroll = g_libSel;
@@ -10460,9 +10626,14 @@ void renderLibrary() {
             text(8, LIST_TOP + ROW_H + 8, "No files in ratdeckpro/library", false, W - 16);
             text(8, LIST_TOP + ROW_H + 30, "on the SD card (push_files.py)", false, W - 16);
         }
-        for (int r = 0; r < 4 && g_libScroll + r <= g_libCount + 1; r++) {
+        for (int r = 0; r < 4 && g_libScroll + r <= g_libCount + 2; r++) {
             const int k = g_libScroll + r;
             char t[48], sub[24];
+            if (k == g_libCount + 2) {
+                snprintf(t, sizeof(t), "%d New note", r + 1);
+                listRow(LIST_TOP + r * ROW_H, t, "type it; saved here as a file", k == g_libSel);
+                continue;
+            }
             if (k == g_libCount + 1) {
                 snprintf(t, sizeof(t), "%d Chess (game)", r + 1);
                 listRow(LIST_TOP + r * ROW_H, t, "play the unit; 4 levels", k == g_libSel);
@@ -10480,7 +10651,11 @@ void renderLibrary() {
             listRow(LIST_TOP + r * ROW_H, t, sub, k == g_libSel);
         }
         box(0, FOOT_Y, W, FOOT_H, 1);
-        label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4 / Enter  T/V  K keys");
+        if (g_entry == Entry::Note) {
+            char ln[48];
+            snprintf(ln, sizeof(ln), ">%.38s_", g_bufLen > 38 ? g_buf + g_bufLen - 38 : g_buf);
+            label(0, FOOT_Y - 1, W, FOOT_H, ln);
+        } else label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : "1-4 / Enter  T/V  K keys");
         if (g_navKeysOpen) drawNavKeys(FOOT_Y - kNavH, kLibListKeys);
         return;
     }
@@ -13307,6 +13482,9 @@ void commitEntry() {
         toast("Waypoint W%d", g_wptCount);
         return;
     }
+    case Entry::Note:
+        noteCommit();
+        return;
     case Entry::MarkDist:
     case Entry::MarkNote:
         markCommitEntry();
@@ -13501,7 +13679,8 @@ void entryKey(const KeyEvent& ev) {
         if (g_entry == Entry::Latitude || g_entry == Entry::Longitude) c = '.';
         else if (g_entry == Entry::Message || g_entry == Entry::Name || g_entry == Entry::WifiPass || passEntry(g_entry) ||
                  g_entry == Entry::Search || g_entry == Entry::WptName || g_entry == Entry::MarkNote || g_entry == Entry::LibFind ||
-                 g_entry == Entry::PlaceFind || g_entry == Entry::FoundText || g_entry == Entry::GroupName) c = ' ';
+                 g_entry == Entry::PlaceFind || g_entry == Entry::FoundText || g_entry == Entry::GroupName ||
+                 g_entry == Entry::Note) c = ' ';
     } else if (ev.fn) {
         if (passEntry(g_entry)) { g_showPass = !g_showPass; requestRedraw(); return; }   // MIC = show / hide
         if (g_entry == Entry::Message && g_threadOpen) { g_tmenuOpen = true; g_tmenuGrpShare = false; g_tmenuSel = 0; requestRedraw(); return; }
@@ -13627,7 +13806,225 @@ void minimalToInbox() {
     if (g_screen != SCR_INBOX) goScreen(SCR_INBOX);
 }
 
+// ---- SOS (top side button held 3 s) ---------------------------------------------------
+// Hold 3 s: a 5 s countdown (a buzz each second; any key or the button cancels), then
+// "SOS! <name> needs help. <lat, lon> Bat N%" to the SOS target (Alerts page: all saved
+// contacts, at most 8, or one group). A position update every 2 min and the full SOS every
+// 10 min, until the button is held 3 s again ("SOS cancelled"). It survives a restart (NVS
+// rs_sos). A received SOS sounds an alarm that ignores quiet hours and beep off, until a key.
+constexpr const char* kSosPrefix = "SOS! ";
+constexpr const char* kSosUpdPrefix = "SOS update: ";
+constexpr const char* kSosEndPrefix = "SOS cancelled";
+constexpr uint32_t kSosHoldMs = 3000, kSosCountMs = 5000, kSosUpdMs = 120000, kSosFullMs = 600000;
+struct SosState { bool on; uint8_t to; uint32_t startedAt; };   // to: 0 = saved contacts, n = group n
+SosState g_sos = {false, 0, 0};
+uint32_t g_sosArmAt = 0, g_sosLastUpd = 0, g_sosLastFull = 0, g_sosResumeAt = 0;
+uint8_t  g_sosArmSec = 0;
+uint32_t g_sosRxUntil = 0, g_sosRxBeepAt = 0;
+char     g_sosRxFrom[24] = "";
+uint16_t g_sosSent = 0;
+
+void sosSave() {
+    Preferences p;
+    if (!p.begin("rs_sos", false)) return;
+    p.putBool("on", g_sos.on);
+    p.putUChar("to", g_sos.to);
+    p.putULong("at", g_sos.startedAt);
+    p.end();
+}
+
+void sosLoad() {
+    Preferences p;
+    if (p.begin("rs_sos", true)) {
+        g_sos.on = p.getBool("on", false);
+        g_sos.to = p.getUChar("to", 0);
+        g_sos.startedAt = p.getULong("at", 0);
+        p.end();
+    }
+    if (g_sos.on) {
+        g_sosResumeAt = millis() + 30000;    // let the radio and the store come up first
+        Serial.println("[SOS] was active before the restart: resumes in 30 s");
+    }
+}
+
+void sosTargetText(char* out, size_t n) {
+    if (g_sos.to && g_sos.to <= g_grpCount) snprintf(out, n, "group %s", g_grp[g_sos.to - 1].name);
+    else snprintf(out, n, "saved contacts (max 8)");
+}
+
+int sosTargets(uint8_t (*d)[16], int max) {
+    int k = 0;
+    if (g_sos.to && g_sos.to <= g_grpCount) { grpHash(g_grp[g_sos.to - 1].id, d[k++]); return k; }
+    for (const auto& node : g_announceMgr.nodes()) {
+        if (node.hash.size() != 16 || !node.saved || isSelf(node.hash.data())) continue;
+        if (k >= max) break;
+        memcpy(d[k++], node.hash.data(), 16);
+    }
+    return k;
+}
+
+bool sosActive() { return g_sos.on; }
+
+void sosNextTarget() {                       // Alerts page: saved contacts, group 1, group 2, ...
+    g_sos.to = (uint8_t)((g_sos.to + 1) % (g_grpCount + 1));
+    sosSave();
+    char t[40];
+    sosTargetText(t, sizeof(t));
+    Serial.printf("[SOS] sends to %s\n", t);
+}
+
+void sosPosText(char* out, size_t n) {
+    if (g_gpsPosValid) snprintf(out, n, "%.5f, %.5f (%s)", g_gpsLat, g_gpsLon, gpsFresh() ? "GPS" : "last fix");
+    else if (g_cfg.hasPos) snprintf(out, n, "%.5f, %.5f (saved position)", (double)g_cfg.lat, (double)g_cfg.lon);
+    else snprintf(out, n, "position unknown");
+}
+
+void sosSend(int kind) {                     // 0 = full SOS, 1 = position update, 2 = cancelled
+    char pos[48], bs[16] = "", body[140], tgt[40];
+    sosPosText(pos, sizeof(pos));
+    if (g_bat.valid) snprintf(bs, sizeof(bs), " Bat %d%%", (int)g_bat.pct);
+    if (kind == 0) snprintf(body, sizeof(body), "%s%s needs help. %s%s", kSosPrefix, g_selfName, pos, bs);
+    else if (kind == 1) snprintf(body, sizeof(body), "%s%s%s", kSosUpdPrefix, pos, bs);
+    else snprintf(body, sizeof(body), "%s: %s is OK now.", kSosEndPrefix, g_selfName);
+    uint8_t d[8][16];
+    const int n = sosTargets(d, 8);
+    int ok = 0;
+    for (int i = 0; i < n; i++)
+        if (statusSend(d[i], body) != SendResult::Failed) ok++;
+    g_sosSent++;
+    sosTargetText(tgt, sizeof(tgt));
+    Serial.printf("[SOS] %s to %d of %d (%s): %s\n", kind == 0 ? "sent" : kind == 1 ? "update" : "cancel", ok, n, tgt, body);
+    if (!n) toast("SOS: no contacts to send to");
+}
+
+void sosStart() {
+    g_sos.on = true;
+    g_sos.startedAt = (uint32_t)time(nullptr);
+    sosSave();
+    g_sosLastUpd = g_sosLastFull = millis();
+    sosSend(0);
+    toast("SOS sent. Hold top button 3 s = cancel");
+    vibrate(400);
+    requestRedraw();
+}
+
+void sosStop(const char* why) {
+    if (!g_sos.on) return;
+    sosSend(2);
+    g_sos.on = false;
+    g_sosResumeAt = 0;
+    sosSave();
+    Serial.printf("[SOS] off (%s)\n", why);
+    toast("SOS cancelled");
+    requestRedraw();
+}
+
+void sosArmCancel(const char* why) {
+    g_sosArmAt = 0;
+    Serial.printf("[SOS] countdown cancelled (%s)\n", why);
+    toast("SOS cancelled");
+    requestRedraw();
+}
+
+// The top button held 3 s (or "btn hold"): start the countdown, or end an SOS.
+void sosHold(const char* src) {
+    if (g_sosArmAt) { sosArmCancel(src); return; }
+    if (g_sos.on) { sosStop(src); return; }
+    if (g_wizOpen) { Serial.println("[SOS] hold ignored (setup wizard)"); return; }
+    g_sosArmAt = millis();
+    g_sosArmSec = 0;
+    Serial.printf("[SOS] countdown started (%s)\n", src);
+    if (g_idleActive) { g_idleActive = false; g_fullRefreshReq = true; }   // show the countdown
+    toast("SOS in 5 s - any key cancels");
+    vibrate(80);
+    requestRedraw();
+}
+
+void sosAlarmBeep() {                        // loud, whatever the beep / quiet hours settings
+    const uint8_t vol = g_audio.volume();
+    g_audio.setEnabled(true);
+    g_audio.setVolume(100);
+    g_audio.playMessage();
+    g_audio.setVolume(vol);
+    g_audio.setEnabled(g_cfg.beep);
+    vibrate(200);
+}
+
+void sosTick() {
+    const uint32_t now = millis();
+    if (g_sosArmAt) {
+        const uint32_t el = now - g_sosArmAt;
+        if (el >= kSosCountMs) { g_sosArmAt = 0; sosStart(); }
+        else if (el / 1000 > g_sosArmSec) {
+            g_sosArmSec = (uint8_t)(el / 1000);
+            vibrate(60);
+            toast("SOS in %u s - any key cancels", (unsigned)((kSosCountMs - el + 999) / 1000));
+            requestRedraw();
+        }
+    }
+    if (g_sosResumeAt && (int32_t)(now - g_sosResumeAt) >= 0) {
+        g_sosResumeAt = 0;
+        if (g_sos.on) { g_sosLastUpd = g_sosLastFull = now; sosSend(0); toast("SOS still active"); }
+    }
+    if (g_sos.on && !g_sosResumeAt) {
+        if (now - g_sosLastFull >= kSosFullMs) { g_sosLastFull = g_sosLastUpd = now; sosSend(0); }
+        else if (now - g_sosLastUpd >= kSosUpdMs) { g_sosLastUpd = now; sosSend(1); }
+    }
+    if (g_sosRxUntil) {
+        if ((int32_t)(now - g_sosRxUntil) >= 0) { g_sosRxUntil = 0; Serial.println("[SOS] alarm ended (timeout)"); }
+        else if (!g_sosRxBeepAt || now - g_sosRxBeepAt >= 3000) { g_sosRxBeepAt = now ? now : 1; sosAlarmBeep(); }
+    }
+}
+
+// A key while a countdown runs cancels it; a key while an alarm sounds silences it. Both
+// consume the key.
+bool sosKey() {
+    if (g_sosArmAt) { sosArmCancel("key"); return true; }
+    if (g_sosRxUntil) {
+        g_sosRxUntil = 0;
+        Serial.println("[SOS] alarm silenced (key)");
+        toast("SOS from %.14s: see the chat", g_sosRxFrom);
+        requestRedraw();
+        return true;
+    }
+    return false;
+}
+
+// An incoming message (inboundTick): an SOS starts the alarm and puts the sender on the map.
+void sosIncoming(const uint8_t from[16], const char* text) {
+    const bool full = !strncmp(text, kSosPrefix, strlen(kSosPrefix));
+    const bool upd = !strncmp(text, kSosUpdPrefix, strlen(kSosUpdPrefix));
+    const bool end = !strncmp(text, kSosEndPrefix, strlen(kSosEndPrefix));
+    if (!full && !upd && !end) return;
+    char nm[24];
+    peerName(from, nm, sizeof(nm));
+    if (end) {
+        if (g_sosRxUntil && !strcmp(nm, g_sosRxFrom)) g_sosRxUntil = 0;
+        Serial.printf("[SOS] %s: cancelled\n", nm);
+        toast("%.14s: SOS cancelled", nm);
+        requestRedraw();
+        return;
+    }
+    const char* p = full ? strstr(text, "help. ") : text + strlen(kSosUpdPrefix);
+    if (p && full) p += 6;
+    double la = 0, lo = 0;
+    if (p && sscanf(p, "%lf, %lf", &la, &lo) == 2 && la >= -90 && la <= 90 && lo >= -180 && lo <= 180 && (la || lo))
+        cposNote(from, la, lo, (uint32_t)time(nullptr));
+    Serial.printf("[SOS] %s from %s\n", full ? "ALARM" : "update", nm);
+    if (full) {
+        strlcpy(g_sosRxFrom, nm, sizeof(g_sosRxFrom));
+        g_sosRxUntil = millis() + 60000;
+        g_sosRxBeepAt = 0;
+        if (g_idleActive) { g_idleActive = false; g_fullRefreshReq = true; }
+        toast("SOS from %.14s! Any key = silence", nm);
+    } else {
+        toast("SOS update from %.14s", nm);
+    }
+    requestRedraw();
+}
+
 void handleKey(const KeyEvent& ev) {
+    if (sosKey()) { noteInput(); return; }
     if (g_idleActive) {                 // any key wakes; the key itself is consumed
         g_idleActive = false;
         noteInput();
@@ -13738,7 +14135,9 @@ void processKeys() {
 constexpr uint32_t kBtnDebounceMs = 30;
 bool g_btnRaw = false, g_btnDown = false;     // last reading / debounced state
 uint32_t g_btnChangeAt = 0;
-volatile bool g_btnPressed = false;           // a debounced press waits for the loop
+volatile bool g_btnPressed = false;           // a debounced short press waits for the loop
+uint32_t g_btnDownAt = 0;
+bool g_btnHoldDone = false;                   // this press was a 3 s hold (SOS): no lock on release
 
 // Read the pin (loop and panel busy-wait); never draws.
 void sideButtonPoll() {
@@ -13747,7 +14146,8 @@ void sideButtonPoll() {
     if (raw != g_btnRaw) { g_btnRaw = raw; g_btnChangeAt = now; return; }
     if (raw == g_btnDown || now - g_btnChangeAt < kBtnDebounceMs) return;
     g_btnDown = raw;
-    if (raw) g_btnPressed = true;             // once per press; the release does nothing
+    if (raw) { g_btnDownAt = now; g_btnHoldDone = false; }
+    else if (!g_btnHoldDone) g_btnPressed = true;   // a short press acts on release
 }
 
 void sideButtonAction(const char* src) {
@@ -13779,8 +14179,11 @@ void sideButtonAction(const char* src) {
 
 void sideButtonTick() {
     sideButtonPoll();
+    if (g_btnDown && !g_btnHoldDone && millis() - g_btnDownAt >= kSosHoldMs) { g_btnHoldDone = true; sosHold("button"); }
+    sosTick();
     if (!g_btnPressed) return;
     g_btnPressed = false;
+    if (g_sosArmAt) { sosArmCancel("button"); return; }
     sideButtonAction("button");
 }
 
@@ -15388,7 +15791,8 @@ void handleSerialLine(char* p) {
     if (!*p) return;
     if (p[0] == '@') { handleRemoteLine(p + 1); return; }   // keys still meet the lock prompt
     if (g_locked) {                       // locked: status only, nothing that reads or changes data
-        static const char* kOk[] = {"pw", "clk", "id", "lock", "ev", "rl", "sdinfo", "energy", "btn", "standby"};
+        static const char* kOk[] = {"pw", "clk", "id", "lock", "ev", "rl", "sdinfo", "energy", "btn", "standby",
+                                    "btn hold", "sos", "sos now", "sos off"};
         bool ok = false;
         for (const char* k : kOk) ok |= !strcmp(p, k);
         if (!ok) { Serial.println("[CMD] locked: unlock on the device first"); return; }
@@ -15666,6 +16070,23 @@ void handleSerialLine(char* p) {
         Serial.printf("[LOC] telesend: %s\n", r == SendResult::Sent ? "sent" : r == SendResult::Queued ? "queued" : "failed");
         return;
     }
+    if (!strcmp(p, "psramth") || !strncmp(p, "psramth ", 8)) {   // psramth [bytes]: PSRAM threshold (main.cpp), 0 = default
+        Preferences pr;
+        if (p[7] && pr.begin("rs_mem", false)) {
+            const long v = atol(p + 8);
+            pr.putUInt("extmem", v >= 256 && v < 4096 ? (uint32_t)v : 0u);
+            pr.end();
+            Serial.println("[MEM] saved: restart to apply");
+        }
+        uint32_t th = 0;
+        if (pr.begin("rs_mem", true)) { th = pr.getUInt("extmem", 0); pr.end(); }
+        Serial.printf("[MEM] PSRAM threshold %s%lu; internal free %u, lowest %u, biggest block %u\n",
+                      th ? "" : "default (4096), saved ", (unsigned long)th,
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                      (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        return;
+    }
     if (!strcmp(p, "hasensors") || !strncmp(p, "hasensors ", 10)) {   // hasensors [0|1|2]
         if (p[9]) { g_cfg.haSensors = (uint8_t)constrain(atoi(p + 10), 0, 2); saveConfig(); }
         Serial.printf("[HAV] sensors setting: %s\n", kHaSensName[g_cfg.haSensors]);
@@ -15774,12 +16195,12 @@ void handleSerialLine(char* p) {
     }
     if (!strcmp(p, "talk")) { havoice::startTalk(); return; }        // talk / talkstop: test without MIC
     if (!strcmp(p, "talkstop")) { havoice::stopTalk("console"); return; }
-    if (!strncmp(p, "k ", 2)) {                        // k <keys>: press keys (bench timing); ^ back, ~ Enter
+    if (!strncmp(p, "k ", 2)) {                        // k <keys>: press keys (bench timing); ^ back, ~ Enter, ! MIC
         for (const char* q = p + 2; *q; q++) {
             uint8_t next = (uint8_t)((g_keyqHead + 1) % KEYQ_CAP);
             if (next == g_keyqTail) { Serial.printf("[KEY] queue full: %u keys dropped\n", (unsigned)strlen(q)); break; }
             KeyEvent ev{};
-            if (*q == '^') ev.up = true; else if (*q == '~') ev.enter = true; else ev.character = *q;
+            if (*q == '^') ev.up = true; else if (*q == '~') ev.enter = true; else if (*q == '!') ev.fn = true; else ev.character = *q;
             g_keyq[g_keyqHead] = ev;
             g_keyqHead = next;
         }
@@ -15815,6 +16236,25 @@ void handleSerialLine(char* p) {
     }
     if (!strcmp(p, "idle now")) { enterIdle(); return; }
     if (!strcmp(p, "btn")) { sideButtonAction("console"); return; }   // the top side button (lock)
+    if (!strcmp(p, "btn hold")) { sosHold("console"); return; }
+    if (!strcmp(p, "lib")) { libOpen(); return; }                          // the Library
+    if (!strcmp(p, "libnote")) { libOpen(); startEntry(Entry::Note, ""); requestRedraw(); return; }   // + New note        // the top button held 3 s (SOS)
+    if (!strcmp(p, "sos") || !strncmp(p, "sos ", 4)) {                 // sos [now|off|update|to all|to g<n>]
+        if (!strcmp(p, "sos now")) { g_sosArmAt = 0; if (!g_sos.on) sosStart(); else sosSend(0); }
+        else if (!strcmp(p, "sos off")) { g_sosArmAt = 0; sosStop("console"); }
+        else if (!strcmp(p, "sos update")) { if (g_sos.on) sosSend(1); }
+        else if (!strncmp(p, "sos to ", 7)) {
+            const char* a = p + 7;
+            if (!strcmp(a, "all")) g_sos.to = 0;
+            else if (a[0] == 'g' && atoi(a + 1) >= 1 && atoi(a + 1) <= g_grpCount) g_sos.to = (uint8_t)atoi(a + 1);
+            sosSave();
+        }
+        char t[40];
+        sosTargetText(t, sizeof(t));
+        Serial.printf("[SOS] %s; sends to %s; %u sent; countdown %s; alarm %s\n", g_sos.on ? "ACTIVE" : "off", t,
+                      (unsigned)g_sosSent, g_sosArmAt ? "running" : "no", g_sosRxUntil ? g_sosRxFrom : "none");
+        return;
+    }
     if (!strncmp(p, "standby", 7) && (p[7] == 0 || p[7] == ' ')) {
         // standby                 print the option and the state
         // standby on | off        the option (saved), like S.5.11
@@ -17056,6 +17496,7 @@ bool begin() {
     markLoad();
     cotLoad();
     layLoad();
+    sosLoad();
     handheld::lxmf::g_onTelemetry = onTelemetry;
     cposLoad();
     wptLoad();

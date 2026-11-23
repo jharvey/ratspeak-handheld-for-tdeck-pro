@@ -1,7 +1,22 @@
+#include <Preferences.h>
+#include <esp_heap_caps.h>
 #include <Arduino.h>
 #include "StandaloneApp.h"
 
 void setup() {
+#if !defined(SIMULATOR)
+    // Experiment (off by default): allocations from this size up go to PSRAM instead of the
+    // scarce internal RAM (framework default 4096). Saved by the console "psramth <bytes>"
+    // (0 = default); read before anything else allocates. See docs in Stress_test_plan.md.
+    {
+        Preferences p;
+        if (p.begin("rs_mem", true)) {
+            const uint32_t th = p.getUInt("extmem", 0);
+            p.end();
+            if (th >= 256 && th < 4096) heap_caps_malloc_extmem_enable(th);
+        }
+    }
+#endif
 #if !defined(SIMULATOR) && ARDUINO_USB_CDC_ON_BOOT && ARDUINO_USB_MODE
     // USB Serial/JTAG drops bytes once its RX queue (default 256) is full; the console's
     // `sdput` file upload sends up to 16 KB at once (tools/maptiles/push_tiles.py).

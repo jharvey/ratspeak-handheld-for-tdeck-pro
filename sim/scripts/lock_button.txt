@@ -18,17 +18,26 @@ expect 3000 locked=0 password=0
 key T
 expect 3000 [IDLE] wake
 wait 800
-# The same with the real pin held low, then let go (the release does nothing).
+# The same with the real pin: a short press acts when it is let go.
+menu Device > Hold BOOT
+wait 300
 menu Device > Hold BOOT
 expect 3000 [BTN] top button (button): idle screen (no password)
 expect 3000 [IDLE] enter
 wait 800
+# Held 3 s = SOS: the countdown starts, nothing else happens on release; a key cancels.
+key T
+expect 3000 [IDLE] wake
+wait 800
 menu Device > Hold BOOT
+expect 5000 [SOS] countdown started (button)
+menu Device > Hold BOOT
+wait 600
+key X
+expect 3000 [SOS] countdown cancelled (key)
 wait 800
 serial lock
 expect 3000 locked=0 password=0
-key T
-expect 3000 [IDLE] wake
 wait 800
 # Set a password (Settings S.4.2 row 3, new + repeat).
 key M
@@ -78,11 +87,11 @@ wait 800
 key I
 wait 1000
 menu Device > Hold BOOT
+wait 300
+menu Device > Hold BOOT
 expect 3000 [BTN] top button (button): lock
 expect 3000 [LOCK] locked
 expect 3000 [IDLE] enter
-wait 800
-menu Device > Hold BOOT
 wait 800
 serial lock
 expect 3000 locked=1

@@ -225,8 +225,35 @@ def tasks(r, rnd):
             r.key("peers", m, "V", None, B_KEY, "row down")
         r.key("peers", m, "I", r"\[UI\] -> Inbox", B_KEY, "leave")
 
+    def quickreply(m):                                   # opens the list, sends nothing
+        r.key("quickreply", m, "I", r"\[UI\] -> Inbox", B_KEY, "inbox")
+        r.key("quickreply", m, "~", r"\[HIST\]", B_OPEN, "open chat")
+        r.key("quickreply", m, "!", None, B_KEY, "MIC menu")
+        r.key("quickreply", m, "Q", None, B_KEY, "quick replies")
+        r.key("quickreply", m, "^", None, B_KEY, "close list")
+        r.key("quickreply", m, "^", None, B_KEY, "back")
+
+    def sos(m):                                          # a countdown, cancelled by a key
+        r.settle()
+        st = r.l.mark()
+        r.l.send("btn hold")
+        got, _ = r.l.wait(r"\[SOS\] countdown started", 3.0, st)
+        if got:
+            time.sleep(rnd.uniform(0.3, 2.5))
+            st = r.l.mark()                              # no settle(): the countdown redraws each second
+            t0 = time.time()
+            r.l.send("k x")
+            ok, _ = r.l.wait(r"\[SOS\] countdown cancelled \(key\)", B_KEY * r.scale / 1000.0 + 1.0, st)
+            ms = int((time.time() - t0) * 1000)
+            r.steps.append(("sos", m, "cancel", ms, ok is not None and ms <= B_KEY * r.scale))
+        else:
+            r.steps.append(("sos", m, "start", None, False))
+        r.l.send("sos off")                              # never leave an SOS running
+        time.sleep(0.5)
+
     return {"atlas": atlas, "settings": settings, "contact": contact, "chat": chat,
-            "markers": markers, "layers": layers, "library": library, "peers": peers}
+            "markers": markers, "layers": layers, "library": library, "peers": peers,
+            "quickreply": quickreply, "sos": sos}
 
 
 def pct(v, p):
