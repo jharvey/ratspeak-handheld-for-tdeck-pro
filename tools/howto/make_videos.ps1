@@ -94,11 +94,12 @@ $videos = @(
        comps = @("Low_battery_notice_sage.txt@hv_sage"); rec2 = "hv_sage"; labels = @("Robin", "Sage") },
     @{ name = "Battery_empty_wont_turn_on"; title = "Battery empty: it will not turn on"; main = "hv_robin"
        devices = [ordered]@{ hv_robin = "ROBIN" } },
-    @{ name = "Share_your_location"; title = "Share your location"; main = "hv_robin"
-       devices = [ordered]@{ hv_robin = "ROBIN"; hv_sage = "SAGE" }
-       comps = @("Share_your_location_sage.txt@hv_sage"); rec2 = "hv_sage"; labels = @("Robin", "Sage")
-       ini = @{ hv_robin = @($alamo); hv_sage = @("gps = 29.43500,-98.48000") }
-       seed = @{ hv_robin = "atlas"; hv_sage = "atlas" } },
+    # Jack and Jill at Cave Spring Hollow, Lynchburg, Tennessee (seed "tn": zoom 3 to 13 there)
+    @{ name = "Share_your_location"; title = "Share your location"; main = "hv_jack"
+       devices = [ordered]@{ hv_jack = "JACK"; hv_jill = "JILL" }
+       comps = @("Share_your_location_jill.txt@hv_jill"); rec2 = "hv_jill"; labels = @("Jack", "Jill")
+       ini = @{ hv_jack = @("gps = 35.28330,-86.37000"); hv_jill = @("gps = 35.29230,-86.36800") }
+       seed = @{ hv_jack = "tn"; hv_jill = "tn" } },
     @{ name = "Atlas_waypoints"; title = "Atlas: waypoints"; main = "hv_robin"
        devices = [ordered]@{ hv_robin = "ROBIN" }; ini = @{ hv_robin = @($alamo) }; seed = @{ hv_robin = "atlas" } },
     @{ name = "Atlas_breadcrumb_track"; title = "Atlas: the breadcrumb track"; main = "hv_robin"

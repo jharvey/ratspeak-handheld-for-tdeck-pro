@@ -1,5 +1,5 @@
-# Companion for Share_your_location.txt: Sage's radio (recorded too) gets the position and
-# opens it on the map.
+# Companion for Share_your_location.txt: Jill's radio (recorded too), about 1 km north of
+# Jack, gets the position and opens it on the map. Her idle screen is the Map.
 gps on
 expect 60000 [BOOT] ready
 serial wiz skip
@@ -7,10 +7,11 @@ serial wiz skip
 wait 1500
 key SPACE
 wait 800
-serial contact {ROBIN} ROBIN
+serial idlescr 1
+serial contact {JACK} JACK
 wait 5000
 serial a
-expect 60000 {ROBIN16}
+expect 60000 {JACK16}
 wait 2000
 key I
 wait 1500
@@ -19,8 +20,8 @@ wait 1500
 rec Share_your_location
 expect 300000 [MSG] inbound
 wait 4000
-caption Sage gets it: [loc] in the chat with Robin. Enter on the empty message line opens the map there.
-wait 1500
+caption Jill's map shows 1 NEW at the top. The chat with Jack: [loc]. Enter on the empty message line opens the map there.
+wait 2500
 key SPACE
 wait 1500
 key I

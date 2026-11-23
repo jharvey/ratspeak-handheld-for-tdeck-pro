@@ -535,33 +535,37 @@ End: the empty-battery idle screen.
 
 -- Share_your_location.mp4
 
-Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
-Depends: CAN BE MADE NOW.
-Remake when: ATAK, groups (share with a group; markers).
+Status: MADE 22 Nov 2026 (Robin and Sage at the Alamo); made again 23 Nov 2026 as Jack and
+Jill at Cave Spring Hollow (firmware 609c48a), 66 s.
+Depends: CAN BE MADE NOW (seed "tn": map tiles zoom 3 to 13 around Lynchburg, Tennessee).
+Remake when: the share menu changes; markers or groups get their own share rows.
 
-Purpose: send your position to a contact once, or keep sending it; open a position you got.
+Purpose: send your position and battery to a contact once, or keep sending it; open a
+position you got.
 
 Setup:
-- Two units side by side, each labeled: "ROBIN" left, at the Alamo in San Antonio, Texas;
-  "SAGE" right, 1 km away. They are contacts of each other. Both SD cards hold the maps.
-  Splash idle screens. No password.
+- Two units side by side, each labeled: "JACK" left, at Cave Spring Hollow in Lynchburg,
+  Tennessee (35.28330, -86.37000); "JILL" right, about 1 km north. They are contacts of each
+  other. Both idle screens are the Map (both SD cards hold the Tennessee tiles). No password.
 
 Steps:
-1. Robin presses a key, then C, 1 (SYM + W), Enter (Sage's card), 1 = Message: the chat.
-2. MIC opens the location menu.
-3. Press 1 = Share my location. It goes to Sage once, as a message.
-4. Sage presses a key, I, Enter: "[loc]" in the chat with Robin. Enter on the empty message
-   line opens the map at Robin's position.
-5. Robin: MIC, then 2 = Auto-share location: every 5 minutes (2 again: 15, 30, 60 minutes,
+1. Jack's idle screen is the map. He presses a key, then C, 1 (SYM + W), Enter (Jill's
+   card), 1 = Message: the chat.
+2. MIC opens the share menu.
+3. Press 1: his position and battery go to Jill once, as a message. (B in this menu changes
+   what is sent: both, position, battery.)
+4. Jill's map idle screen shows 1 NEW. She presses a key, I, Enter: "[loc] ... bat 72%" in the
+   chat with Jack. Enter on the empty message line opens the map at Jack's position.
+5. Jack: MIC, then 2 = automatic sharing: every 5 minutes (2 again: 15, 30, 60 minutes,
    off).
-6. ^ twice.
+6. ^ twice; later the radio sleeps: back to the map.
 
 Overlays:
-- Start: "Nothing about where you are is sent unless you send it".
+- Start: "Nothing about where you are, or your battery, is sent unless you send it".
 - Step 5: "Row 3 sets for how long: 1 hour, 4 hours, or until you turn it off. To stop all
   sharing: Settings, 2 Time & Location, row 8".
 
-End: both units are on the idle screen.
+End: both units are on the idle screen (the Map).
 
 
 -- Group_messages.mp4
