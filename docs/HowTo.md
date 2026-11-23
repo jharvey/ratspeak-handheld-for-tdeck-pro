@@ -4,6 +4,9 @@ Short, step-by-step guides for everyday use. Each one has a short video made wit
 simulator (`docs/videos/`): a hand points at every key as it is pressed, the key's name
 shows above the keyboard, and you hear a click.
 
+A 90-second tour of everything: [Overview.mp4](videos/Overview.mp4) (clips from the videos below,
+joined by ffmpeg; no sound).
+
 Keys as of 23 Nov 2026.
 
 ## The keys you need
