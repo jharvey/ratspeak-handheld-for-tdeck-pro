@@ -1,8 +1,8 @@
 # Status sharing and ATAK-style markers: report
 
-State on 2026-11-22: **work in progress, paused by the owner.** Part 1 (status sharing) is
-written and committed as work in progress. Part 2 (markers) is drafted but not in the tree.
-No firmware was built on VM100 for this work and no unit was flashed.
+State on 2026-11-23: Part 1 (status sharing) passes every simulator test, including the
+three late edits; firmware built on VM100, no unit flashed yet. Part 2 (markers) is
+drafted but not in the tree.
 
 ## Part 1: share position and battery with a contact or a group
 
@@ -59,23 +59,22 @@ Keys 1 to 5 of the menu mean what they meant before, so the existing videos stil
 
 ### Tests
 
-Simulator build `C:\Users\MyPC\simrun\simb` (before the three last small edits, see below).
+Simulator build `C:\Users\MyPC\simrun\simb` of `8a5e56d` (with the three late edits), 2026-11-23.
 
 | Test | Result |
 |---|---|
 | `sim\scripts\status.txt` (menu, B choice, automatic on, the mark, group menu) | PASS |
 | `sim\scripts\status_after.txt` (a restart keeps both automatic shares) | PASS |
-| `sim\scripts\status_net.py` steps 1 to 7 (three radios: off by default; one-time position, battery, both; automatic; change threshold; battery only; position only) | PASS |
-| `status_net.py` steps 8 to 11 (standby, group, restart, receiver's data) | NOT RUN: the run was stopped at the pause, in step 8 |
-| Existing scripts (location, groups, lock, standby, idle screens), `monkey.py` | NOT RUN |
-| Firmware build on VM100 | NOT DONE |
+| `sim\scripts\status_net.py` steps 1 to 11 (three radios: off by default; one-time position, battery, both; automatic; change threshold; battery only; position only; standby; group; restart; receiver's data) | PASS (11 of 11) |
+| groups, groups_after, lock, lock_boot, lock_button, lock_button_boot, standby, standby_after, idle_banner, idle_map, `groups_net.py`, `standby_pair.py`, `monkey.py` 2 rounds | PASS |
+| `loc_pair.py` | NOT RUN: it only runs `sim\build`, an older build |
+| Firmware build on VM100 | see the firmware commit after this one; no unit flashed |
 
-Step 8 showed one real fault before the stop: in standby only one share was served per
-wake, so a second contact waited 5 more minutes. The fix (all due shares in one pass) is in
-the commit and is one of the edits not yet compiled.
+Step 8 showed one real fault in the first run: in standby only one share was served per
+wake, so a second contact waited 5 more minutes. The fix (all due shares in one pass) now
+passes step 8.
 
-**Three small edits were made after the last simulator build and are not compiled or
-tested:** the fix above; a battery-only chat row showing `[bat] 61%` and not the raw text;
+**Three small edits made after the first simulator build, now compiled and tested:** the fix above; a battery-only chat row showing `[bat] 61%` and not the raw text;
 one comment.
 
 ## Part 2: markers (items of interest): NOT in the tree
@@ -99,10 +98,8 @@ running ATAK.
 
 ## Next steps
 
-1. Build the simulator and run `status_net.py` (about 15 minutes), then the existing
-   scripts and two rounds of `monkey.py`.
-2. Build the firmware on VM100: `python tools/vm_build.py --commit`.
-3. Apply the part 2 draft, build, test, write its docs, build the firmware again.
+1. Flash the units with the new image (none flashed yet).
+2. Apply the part 2 draft, build, test, write its docs, build the firmware again.
 
 ## Decisions for the owner
 
