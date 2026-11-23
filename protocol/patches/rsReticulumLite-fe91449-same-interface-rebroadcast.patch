@@ -1,0 +1,53 @@
+diff --git a/src/transport.rs b/src/transport.rs
+index 09e3135..3ea73ba 100644
+--- a/src/transport.rs
++++ b/src/transport.rs
+@@ -901,6 +901,16 @@ impl<
+     ) -> Option<&QueuedOutbound> {
+         self.retained_owner_mode = true;
+         self.expire_outbound(self.clock_ms);
++        // A FULL-mode interface may carry a rebroadcast back out on the interface it came in
++        // on: a single-radio relay (one shared LoRa channel) is otherwise mute, as upstream
++        // Reticulum sends announce rebroadcasts on every interface. Other modes keep the
++        // receiving interface excluded.
++        let mut same_iface_ok = 0u8;
++        for facts in self.interface_facts.iter() {
++            if facts.outbound() && facts.id < 7 && facts.mode == InterfaceMode::Full {
++                same_iface_ok |= 1u8 << facts.id;
++            }
++        }
+         for queued in self.outbound.iter_mut() {
+             let delivery = &mut queued.delivery;
+             if !delivery.initialized {
+@@ -916,7 +926,8 @@ impl<
+                     }
+                     OutboundReason::AnnounceRebroadcast | OutboundReason::PathRequestForward => {
+                         if queued.frame.interface_id < 7 {
+-                            0x7f & !(1u8 << queued.frame.interface_id)
++                            let own = 1u8 << queued.frame.interface_id;
++                            if same_iface_ok & own != 0 { 0x7f } else { 0x7f & !own }
+                         } else {
+                             0x7f
+                         }
+@@ -4104,6 +4115,21 @@ mod retained_queue_tests {
+     }
+     const GENERATIONS: [u32; 7] = [11, 12, 13, 14, 15, 16, 17];
+ 
++    #[test]
++    fn full_mode_interface_rebroadcasts_on_itself() {
++        // A single-radio relay: the announce came in on interface 2, which is FULL and
++        // outbound, so the rebroadcast may go back out on it. ROAMING keeps it excluded.
++        for (mode, mask) in [(InterfaceMode::Full, 0x7f), (InterfaceMode::Roaming, 0x7b)] {
++            for reason in [OutboundReason::AnnounceRebroadcast, OutboundReason::PathRequestForward] {
++                let mut n = node();
++                n.interface_facts[0] = InterfaceFacts { generation: 13, bitrate_bps: 1000, id: 2, mode, flags: 3 };
++                enqueue(&mut n, 42, reason, 2);
++                let selected = n.retained_outbound_select(0, 0, GENERATIONS);
++                assert_eq!(selected.map_or(0, |q| q.delivery.pending_targets), mask, "{mode:?} {reason:?}");
++            }
++        }
++    }
++
+     #[test]
+     fn every_reason_keeps_existing_fanout_selection() {
+         for (reason, interface, mask) in [

@@ -79,6 +79,11 @@ public:
     String destinationHashStr() const override { return _destHashStr; }
 
     bool isTransportActive() const override { return _nodeOpen; }
+    // Relay (Reticulum transport node): forward other units' packets, answer path requests,
+    // rebroadcast announces. Reopens the node in place (its path / announce tables start empty
+    // again and refill from announces; known destinations and keys are kept). false: no node.
+    bool setRelay(bool on);
+    bool relay() const { return _relay; }
     size_t pathCount() const override;
     size_t linkCount() const override;
 
@@ -155,6 +160,7 @@ private:
     int32_t _profile = RS_HANDHELD_PROFILE_SMALL;
     bool _identityLoaded = false;
     bool _nodeOpen = false;
+    bool _relay = false;
     bool _enginesUp = false;
     enum AnnounceTiming : uint8_t { PathPending = 1, NormalPending = 2, HasPathResponseTime = 4 };
     uint8_t _announceTiming = 0; // Uses the existing alignment gap after lifecycle flags.

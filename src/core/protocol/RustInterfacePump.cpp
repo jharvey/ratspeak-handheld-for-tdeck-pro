@@ -117,7 +117,7 @@ uint32_t RustInterfacePump::interfaceBitrate(uint8_t ifaceId) const {
 }
 
 int32_t RustInterfacePump::interfaceMode(uint8_t ifaceId) const {
-    if (ifaceId == LORA_IFACE_ID) return RS_HANDHELD_IFACE_MODE_ROAMING;
+    if (ifaceId == LORA_IFACE_ID) return _loraFull ? RS_HANDHELD_IFACE_MODE_FULL : RS_HANDHELD_IFACE_MODE_ROAMING;
     if (ifaceId >= TCP_IFACE_BASE && ifaceId < TCP_IFACE_BASE + MAX_TCP)
         return RS_HANDHELD_IFACE_MODE_FULL;
     if (ifaceId == AUTO_IFACE_ID) return RS_HANDHELD_IFACE_MODE_FULL;

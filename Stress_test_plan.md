@@ -286,3 +286,22 @@ A send holds the loop ~2.5-5 s while the record is saved.
 Findings to follow up: COM8's stalled console and stopped feed; a store that is full refuses
 markers and status updates as well as chat (by design today, but those small updates could
 be kept apart); re-run with stores that are not full and a receiver that can take UDP.
+
+### 2026-11-23: full store that could not clean itself; timed random tasks
+
+Found on COM3 / COM5 (soak units, stores 92-94 % full): the flash upkeep only removed
+finished outgoing messages (delivered, failed), so messages that ended "unconfirmed" (6) or
+stayed "sent" (3) to radios that had gone never left; every save started a cleanup pass that
+freed nothing, and new messages were refused. Fixed: unconfirmed messages and sent messages
+more than an hour old are removable too (the engine only resends queued / sending ones).
+Tests: `sim/scripts/fullflash_unconfirmed.txt` (300 old unconfirmed on a 1 MB flash: all
+saved) and `fullflash_sent_young.txt` (fresh sent messages stay pinned: the store fills and
+refuses, nothing lost). Console `flash` now says "busy" instead of "0 of 0 KB" while the
+storage task holds the flash.
+
+`tools/stress/tasks.py`: random realistic tasks (Atlas pan / zoom, Settings, Contacts, chat,
+markers, layers, Library, Peers) with a time budget per step (key to finished screen: 2 s,
+4 s for screens that read storage), cycling energy modes; simulator with real e-ink timing or
+a real unit (`--port`). First runs (simulator): a step is one e-ink partial refresh, about
+660 ms; opening the Atlas and returning to it after a sub-page are full refreshes, about
+1.6 s; heap flat.

@@ -1,0 +1,11 @@
+# Full flash with outgoing messages sent just now (no proof yet): the engine may still retry
+# them, so they stay pinned and the flash fills up: saves are refused, nothing is lost.
+# Run: ratspeak-sim.exe --name ffs --flashkb 1024 --fast --script scripts\fullflash_sent_young.txt --quit (fresh data)
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1000
+serial msgfill 300 2 200 0 3 0
+expect 600000 [FILL] saved
+serial flash
+expect 5000 messages: FULL
+quit

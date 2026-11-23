@@ -13,3 +13,9 @@ If the other radio is out of range, the message waits in a queue and goes out by
 Long list? L, type part of the name, Enter. ^ clears the filter.
 
 The idle screen shows how many messages are unread.
+
+RELAY FOR OTHERS
+A unit can pass messages on for units that cannot hear each other: Settings, 8 (LoRa), last
+row "Relay for others": Off, On USB power (only while plugged in), or Always (more battery).
+Put the relaying unit high up, between the others. It forwards their announces and messages;
+they need nothing set. Messages stay end-to-end encrypted: the relay cannot read them.

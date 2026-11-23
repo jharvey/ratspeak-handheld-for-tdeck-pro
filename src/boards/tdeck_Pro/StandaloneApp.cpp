@@ -171,6 +171,7 @@ struct Config {
     uint8_t  haWake      = 0;       // S.3.7 row 7: wake word 0 off, 1 on USB power only, 2 always
     uint8_t  haSensors   = 0;       // S.3.7 row 8: sensors for HA 0 off, 1 battery, 2 battery + position
     uint8_t  quiet       = 0;       // S.9 row 6: quiet hours preset (kQuiet), 0 = off
+    uint8_t  relay       = 0;       // S.8 row 7: relay for other units 0 off, 1 on USB power, 2 always
     char     haKey[45]   = "";      // its ESPHome API encryption key (base64); "" = none
     bool     meshWifi    = true;    // S.3.8: Reticulum over WiFi (AutoInterface: units on the LAN)
     uint8_t  micGain     = 4;       // microphone gain for HA voice (console micgain)
@@ -217,6 +218,7 @@ bool quietNow() {
     const int from = kQuiet[g_cfg.quiet][0], to = kQuiet[g_cfg.quiet][1];
     return from > to ? (h >= from || h < to) : (h >= from && h < to);
 }
+const char* const kRelayName[3] = {"Off", "On USB power", "Always"};
 // Operator modes (S.1). Minimal: Inbox, Contacts and Settings S.1 only (no Home, Peers, Atlas,
 // Library); waking goes to the Inbox. Normal is Advanced for now.
 // Operator modes (S.1): Minimal (Inbox, Contacts, S.1, walkie-talkie), Typical (the features
@@ -368,6 +370,8 @@ void loadConfig() {
     g_cfg.haSensors   = p.getUChar("haSens", 0);
     if (g_cfg.haSensors > 2) g_cfg.haSensors = 0;
     g_cfg.quiet       = p.getUChar("quiet", 0);
+    g_cfg.relay       = p.getUChar("relay", 0);
+    if (g_cfg.relay > 2) g_cfg.relay = 0;
     if (g_cfg.haWake > 2) g_cfg.haWake = 0;
     p.getString("haKey", g_cfg.haKey, sizeof(g_cfg.haKey));
     g_cfg.meshWifi    = p.getBool("meshWifi", true);
@@ -435,6 +439,7 @@ void saveConfig() {
     p.putUChar("haWake", g_cfg.haWake);
     p.putUChar("haSens", g_cfg.haSensors);
     p.putUChar("quiet", g_cfg.quiet);
+    p.putUChar("relay", g_cfg.relay);
     p.putString("haKey", g_cfg.haKey);
     p.putBool("meshWifi", g_cfg.meshWifi);
     p.putUChar("micGain", g_cfg.micGain);
@@ -4866,6 +4871,8 @@ void buildSettingsRows(Page p) {
         srow(RK_INFO, "Last RSSI", "%d dBm", loraRssi());
         srow(RK_INFO, "Last SNR", "%.1f dB", loraSnr());
         srow(RK_ACTION, "Range test", g_rtOn ? "running; Enter = show" : "ping a radio, log to SD");
+        srow(RK_TOGGLE, "Relay for others", "%s%s", kRelayName[g_cfg.relay > 2 ? 0 : g_cfg.relay],
+             g_cfg.relay ? (g_proto.relay() ? ": relaying now" : ": not now") : "");
         break;
 
     case PG_ALERTS:
@@ -4995,6 +5002,7 @@ void pushPage(Page p, int sel = 0) {
     g_scroll = 0;
     clampScroll(g_sel, g_scroll, settingsRowCount());
     requestRedraw();
+    Serial.printf("[UI] page %s (depth %d)\n", pageTitle(p), g_navDepth);   // for tests (timed tasks)
 }
 
 void popPage() {
@@ -5005,6 +5013,7 @@ void popPage() {
     g_scroll = f.scroll;
     clampScroll(g_sel, g_scroll, settingsRowCount());
     requestRedraw();
+    Serial.printf("[UI] page %s (depth %d)\n", pageTitle(g_page), g_navDepth);
 }
 
 void settingsPath(char* out, size_t n) {
@@ -5514,6 +5523,13 @@ void activateSetting(int idx) {
             g_shareActive = true;
             g_pickRt = true;
             toast("Pick the other radio");
+        } else if (idx == 6) {                       // relay: off -> on USB power -> always -> off
+            g_cfg.relay = (uint8_t)((g_cfg.relay + 1) % 3);
+            saveConfig();
+            Serial.printf("[RELAY] setting: %s\n", kRelayName[g_cfg.relay]);
+            toast(g_cfg.relay == 0 ? "Relay off" : g_cfg.relay == 1 ? "Relays others while on USB power"
+                                                                  : "Relays others always (more battery)");
+            requestRedraw();
         }
         break;
 
@@ -15662,6 +15678,19 @@ void handleSerialLine(char* p) {
                       g_cfg.quiet ? "" : " (off)", quietNow() ? "quiet" : "not quiet");
         return;
     }
+    if (!strcmp(p, "relay") || !strncmp(p, "relay ", 6)) {   // relay [0|1|2] (off, on USB power, always)
+        if (p[5]) { g_cfg.relay = (uint8_t)constrain(atoi(p + 6), 0, 2); saveConfig(); }
+        Serial.printf("[RELAY] setting: %s, relaying %s\n", kRelayName[g_cfg.relay], g_proto.relay() ? "yes" : "no");
+        rs_handheld_transport_stats_t st;
+        if (g_proto.transportStats(st))
+            Serial.printf("[RELAY] node: accepted %llu, duplicates %llu, announces learned %llu, queued out %llu, "
+                          "dropped %llu, out dropped %llu, rate dropped %llu, waiting %lu\n",
+                          (unsigned long long)st.accepted, (unsigned long long)st.duplicates,
+                          (unsigned long long)st.learned_announces, (unsigned long long)st.queued_outbound,
+                          (unsigned long long)st.dropped, (unsigned long long)st.outbound_dropped,
+                          (unsigned long long)st.announces_rate_dropped, (unsigned long)st.outbound_len);
+        return;
+    }
     if (!strcmp(p, "hawake") || !strncmp(p, "hawake ", 7)) {   // hawake [0|1|2] (off, on USB power only, always)
         if (p[6]) { g_cfg.haWake = (uint8_t)constrain(atoi(p + 7), 0, 2); saveConfig(); }
         Serial.printf("[HAV] wake word setting: %s\n", kHaWakeName[g_cfg.haWake]);
@@ -16495,9 +16524,13 @@ void handleSerialLine(char* p) {
         if (handheld::storage::MessageTransactions::spaceStats().capBytes)
             Serial.printf("[FLASH] stress-test cap %lu KB (flashcap)\n",
                           (unsigned long)(handheld::storage::MessageTransactions::spaceStats().capBytes >> 10));
-        Serial.printf("[FLASH] used %u of %u KB (%u%%)\n", (unsigned)(g_flash.usedBytes() >> 10),
-                      (unsigned)(g_flash.totalBytes() >> 10),
-                      g_flash.totalBytes() ? (unsigned)(100ull * g_flash.usedBytes() / g_flash.totalBytes()) : 0u);
+        const size_t fTotal = g_flash.totalBytes(), fUsed = fTotal ? g_flash.usedBytes() : 0;
+        if (fTotal)
+            Serial.printf("[FLASH] used %u of %u KB (%u%%)\n", (unsigned)(fUsed >> 10), (unsigned)(fTotal >> 10),
+                          (unsigned)(100ull * fUsed / fTotal));
+        else   // the storage task holds the flash (a save or a clean-up pass): sizes cannot be read now
+            Serial.printf("[FLASH] busy (storage task working): last estimate %u%% used\n",
+                          (unsigned)handheld::storage::MessageTransactions::spaceStats().usedPct);
         const auto& sp = handheld::storage::MessageTransactions::spaceStats();
         Serial.printf("[FLASH] messages: %s; %lu oldest removed for space in %lu passes (from %u%% to %u%%, refuse at %u%%)\n",
                       sp.full ? "FULL, new messages refused" : "ok", (unsigned long)sp.removed,
@@ -16519,25 +16552,31 @@ void handleSerialLine(char* p) {
         Serial.printf("[FLASH] message cap %s%lu KB (real %u KB)\n", sp.capBytes ? "" : "off, ",
                       (unsigned long)(sp.capBytes >> 10), (unsigned)(g_flash.totalBytes() >> 10));
     } else if (!strncmp(p, "msgfill ", 8)) {
-        // Bench (full-flash test): "msgfill <count> [peers] [bytes] [unread]" stores <count> fake
-        // incoming messages spread over [peers] fake conversations through the normal save path
-        // (unread 1: as new messages, for the idle screen's count). Stops at the first failed save
-        // and prints flash use.
+        // Bench (full-flash test): "msgfill <count> [peers] [bytes] [unread] [outStatus] [ageS]"
+        // stores <count> fake incoming messages spread over [peers] fake conversations through the
+        // normal save path (unread 1: as new messages, for the idle screen's count). outStatus 1-6:
+        // outgoing messages with that status instead (3 sent, 6 unconfirmed), ageS seconds old.
+        // Stops at the first failed save and prints flash use.
         using namespace handheld::storage;
-        int count = 0, peers = 4, bytes = 200, unread = 0;
-        sscanf(p + 8, "%d %d %d %d", &count, &peers, &bytes, &unread);
+        int count = 0, peers = 4, bytes = 200, unread = 0, outStatus = 0, ageS = 0;
+        sscanf(p + 8, "%d %d %d %d %d %d", &count, &peers, &bytes, &unread, &outStatus, &ageS);
+        const bool outgoing = outStatus >= 1 && outStatus <= 6;
         peers = peers < 1 ? 1 : (peers > 200 ? 200 : peers);
         bytes = bytes < 1 ? 1 : (bytes > 3000 ? 3000 : bytes);
         std::string body(bytes, 'x');
         int saved = 0, failed = 0;
         const unsigned long t0 = millis();
         for (int i = 0; i < count; i++) {
-            Request rq; rq.operation = Operation::CreateIncoming; rq.key.incoming = true;
+            Request rq; rq.operation = outgoing ? Operation::CreateOutgoing : Operation::CreateIncoming;
+            rq.key.incoming = !outgoing;
             memset(rq.key.peer, 0xF0, 16); rq.key.peer[15] = (uint8_t)(i % peers);
-            memcpy(rq.source, rq.key.peer, 16); for (int b = 0; b < 16; b++) { unsigned v = 0; sscanf(g_destHex + 2 * b, "%2x", &v); rq.destination[b] = (uint8_t)v; }
+            uint8_t self[16];
+            for (int b = 0; b < 16; b++) { unsigned v = 0; sscanf(g_destHex + 2 * b, "%2x", &v); self[b] = (uint8_t)v; }
+            memcpy(rq.source, outgoing ? self : rq.key.peer, 16);
+            memcpy(rq.destination, outgoing ? rq.key.peer : self, 16);
             for (int b = 0; b < 32; b++) rq.messageId[b] = (uint8_t)esp_random();
-            rq.hasMessageId = true; rq.timestamp = (double)time(nullptr) + i * 0.001;
-            rq.status = (uint8_t)LXMFStatus::DELIVERED; rq.read = !unread;
+            rq.hasMessageId = true; rq.timestamp = (double)time(nullptr) - ageS + i * 0.001;
+            rq.status = outgoing ? (uint8_t)outStatus : (uint8_t)LXMFStatus::DELIVERED; rq.read = outgoing || !unread;
             rq.contentLength = (uint16_t)bytes;
             auto sub = g_msgStore.requestSave(rq, nullptr, body.data());
             MessageStore::Result r;
@@ -17061,6 +17100,23 @@ bool haWakeWanted() {
     return walkie::state() == walkie::State::Idle;
 }
 
+// Relay (Reticulum transport node): forward other units' messages and announces, so units
+// out of each other's range reach each other through this one. Follows the setting and USB
+// power; a change waits until it has held 10 s (no flapping on a loose cable).
+void relayTick() {
+    if (!g_protoReady) return;
+    const bool want = g_cfg.relay == 2 || (g_cfg.relay == 1 && powerUsbPowered());
+    static uint32_t since = 0;
+    if (want == g_proto.relay()) { since = 0; return; }
+    if (!since) { since = millis() | 1; return; }
+    if (millis() - since < 10000) return;
+    since = 0;
+    if (g_proto.setRelay(want)) {
+        Serial.printf("[RELAY] %s\n", want ? "on: relaying for other units" : "off");
+        if (g_screen == SCR_SETTINGS && g_page == PG_LORA) requestRedraw();
+    }
+}
+
 void haVoiceTick() {
     havoice::setWakeWord(haWakeWanted());
     havoice::setSensors(g_cfg.haVoice ? g_cfg.haSensors : 0);
@@ -17123,6 +17179,7 @@ void loop() {
     SLOW_STEP("pumpOnce", pumpOnce());
     SLOW_STEP("g_announceMgr.loop", g_announceMgr.loop());
     SLOW_STEP("g_audio.loop", g_audio.loop());
+    SLOW_STEP("relay", relayTick());
     SLOW_STEP("havoice", haVoiceTick());
     SLOW_STEP("walkie", walkieTick());
     SLOW_STEP("cot", cotTick());

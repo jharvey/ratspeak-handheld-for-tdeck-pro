@@ -468,12 +468,13 @@ Nice to have
   unread count on the group's Inbox row; voice messages, locations and walkie-talkie to a
   group; the low-battery notice to a group; automatic sync of member changes (share again
   instead); removing yourself from other people's copies; how-to video.
-- 13. BLOCKED 2026-11-23 (protocol core): relay mode built (setting Off / On USB power /
-  Always, node reopened with transport_enabled, LoRa FULL mode while relaying; work saved in
-  backups/relay_mode_wip.patch + backups/relay_net.py, sim air_deny.txt test aid) but announces
-  and path requests are never rebroadcast: rsReticulumLite excludes the receiving interface
-  from AnnounceRebroadcast / PathRequestForward targets, and a T-Deck has one interface (LoRa)
-  (upstream Reticulum sends on all). Needs an owner decision to change rsReticulumLite.
+- 13. DONE 2026-11-23 (simulator, 3 radios): relay mode. LoRa settings (S.8) last row "Relay for
+  others": Off / On USB power / Always (console relay). The node reopens with transport on and LoRa
+  in FULL mode. Needed a protocol core change (owner OK): rsReticulumLite now lets a rebroadcast
+  go back out on the interface it came in on when that interface is FULL (one-radio relay); local
+  change on the pinned commit, patch in protocol/patches/, prebuilt xtensa libs rebuilt (+dirty),
+  not pushed upstream. Test: sim/scripts/relay_net.py (air_deny.txt makes two sims deaf to each
+  other). Not yet tried on real radios out of each other's range.
 - 13. Relay mode when plugged in: act as a Reticulum transport node on USB power to extend
   range for nearby units (see also the propagation-node item under Hardware / platform).
 - 14. Notepad: write notes on the device, saved to the Library folder on SD.

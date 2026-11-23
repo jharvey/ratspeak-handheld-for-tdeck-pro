@@ -1,0 +1,14 @@
+# Full flash with outgoing messages that will never be confirmed (a soak test to radios that
+# are gone): 300 outgoing "unconfirmed" messages, 2 hours old, in 2 conversations, on a 1 MB
+# flash. They must be removable, so the upkeep makes room and every save succeeds. (Before
+# 2026-11-23 only delivered / failed outgoing messages could go: the flash filled and every
+# new message was refused.)
+# Run: ratspeak-sim.exe --name ffu --flashkb 1024 --fast --script scripts\fullflash_unconfirmed.txt --quit (fresh data)
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1000
+serial msgfill 300 2 200 0 6 7200
+expect 600000 [FILL] saved 300, failed 0
+serial flash
+expect 5000 [FLASH] messages: ok
+quit

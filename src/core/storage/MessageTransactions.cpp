@@ -7,6 +7,7 @@
 #include <array>
 #include <algorithm>
 #include <cerrno>
+#include <time.h>
 #include <esp_timer.h>
 #include "util/DisplayText.h"
 #include "util/EventTrace.h"
@@ -1399,6 +1400,19 @@ bool MessageTransactions::makeRoom(int32_t& unreadDelta, bool newConversation) {
     return !stats.full;
 }
 
+// An outgoing record that may go to make room: delivered (4), failed (5), unconfirmed (6: the
+// engine gave up waiting for a proof and settled it), or sent (3) more than an hour ago. The
+// engine only resends queued / sending records (1, 2; also after a restart); a sent record is
+// settled within minutes (proof waits and a 2-minute grace). Without the hour rule a unit whose
+// peers stopped answering (a soak test, a lost contact) filled its flash with sent records that
+// could never go, refused every new message and spent each save on a pass that freed nothing.
+static bool outgoingRemovable(const StoredRecordHeader& header) {
+    if (header.status == 4 || header.status == 5 || header.status == 6) return true;
+    if (header.status != 3) return false;
+    const time_t now = time(nullptr);
+    return now > 1600000000 && header.timestamp > 0 && double(now) - header.timestamp > 3600.0;
+}
+
 uint64_t MessageTransactions::evictOldest(uint64_t bytes, int32_t& unreadDelta) {
     if (!bytes) return 0;
     struct Victim { uint32_t counter; uint16_t peer; bool incoming; };
@@ -1470,9 +1484,9 @@ uint64_t MessageTransactions::evictOldest(uint64_t bytes, int32_t& unreadDelta) 
         key.counter = victim.counter; key.incoming = victim.incoming;
         StoredRecordHeader header;
         if (load(key, document, header) != Error::None) continue;
-        // Outgoing: only finished records (4 delivered, 5 failed). A "sent" record (3) may still
-        // be retried by the engine, which needs its body: removing it lost the message.
-        if (!header.incoming && header.status != 4 && header.status != 5) continue;
+        // Outgoing: only finished records (outgoingRemovable). A "sent" record (3) younger than
+        // an hour may still be retried by the engine, which needs its body.
+        if (!header.incoming && !outgoingRemovable(header)) continue;
         // With the SD archive on, flash is a cache: drop a copy only when the card holds it.
         if (mirrored && !retainedCopy(key, 1, document)) continue;
         char primary[128], backup[128]; path(key, 0, primary); path(key, 0, backup, ".bak");
@@ -1561,7 +1575,7 @@ void MessageTransactions::trim(const Request& request, Result& result) {
                 if (after.counter && !historyLess(after, entry)) continue;
                 StoredRecordHeader header; const auto error = load(key, document, header);
                 if (error != Error::None) { result.error = error; continue; }
-                if (!header.incoming && header.status != 4 && header.status != 5) continue;
+                if (!header.incoming && !outgoingRemovable(header)) continue;
                 size_t at = 0;
                 while (at < selected && historyLess({oldest[at].counter, oldest[at].incoming}, entry)) ++at;
                 if (at == 8) continue;

@@ -100,8 +100,12 @@ public:
                         const handheld::TxLease& retained);
 
     const Counters& counters() const { return _counters; }
+    // Relay: LoRa as a FULL interface (a transport node passes announces heard on the radio
+    // back out on it; Reticulum does not forward from a ROAMING interface to a ROAMING one).
+    void setLoraFull(bool on) { _loraFull = on; }
 
 private:
+    bool _loraFull = false;
     void ingest(const uint8_t* data, size_t len, uint8_t ifaceId);
     void drainOutbound();
     bool sendAllExcept(const uint8_t* data, size_t len, uint8_t excludedIface);

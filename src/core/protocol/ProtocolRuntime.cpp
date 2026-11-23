@@ -93,6 +93,7 @@ bool ProtocolRuntime::begin(FlashStore* flash, SDStore* sd, IdentityManager* idM
     }
 
     _pump.begin(_ctx, &_clock);
+    _pump.setLoraFull(_relay);
     _pump.setSink(this);
     if (!startEngines(flash, sd, store, announceMgr)) return false;
     // The outgoing owner recovers persisted records through bounded metadata
@@ -261,10 +262,10 @@ bool ProtocolRuntime::openTransport(int32_t profile, uint32_t nodeHeapCaps) {
     }
     _nodeBufLen = size;
 
-    // Endpoint posture: transport_enabled=0 (no relay). transport_id = our
-    // identity hash — stable, unique per device.
+    // Endpoint posture unless relay is on (setRelay before begin, or later). transport_id =
+    // our identity hash: stable, unique per device.
     rs_handheld_status_t st = rs_handheld_rns_open_transport(
-        _ctx, profile, _identityHash, 0, _nodeBuf, _nodeBufLen);
+        _ctx, profile, _identityHash, _relay ? 1 : 0, _nodeBuf, _nodeBufLen);
     if (st != RS_HANDHELD_OK) {
         Serial.printf("[RUST] open_transport failed (%d)\n", (int)st);
         heap_caps_free(_nodeBuf);
@@ -273,6 +274,22 @@ bool ProtocolRuntime::openTransport(int32_t profile, uint32_t nodeHeapCaps) {
         return false;
     }
     _nodeOpen = true;
+    return true;
+}
+
+bool ProtocolRuntime::setRelay(bool on) {
+    handheld::assertDeviceOwner();
+    if (!_nodeOpen) { _relay = on; return false; }       // taken when the node opens
+    if (on == _relay) return true;
+    const rs_handheld_status_t st = rs_handheld_rns_open_transport(
+        _ctx, _profile, _identityHash, on ? 1 : 0, _nodeBuf, _nodeBufLen);
+    if (st != RS_HANDHELD_OK) {
+        Serial.printf("[RUST] relay %s: reopen failed (%d)\n", on ? "on" : "off", (int)st);
+        return false;
+    }
+    _relay = on;
+    _pump.setLoraFull(on);
+    Serial.printf("[RUST] relay %s (transport node reopened)\n", on ? "ON" : "off");
     return true;
 }
 

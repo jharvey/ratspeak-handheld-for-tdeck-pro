@@ -3,6 +3,8 @@
 // PC (loopback enabled) or LAN hears every packet. A receiver only accepts packets
 // sent with the same frequency / SF / bandwidth, like a real radio. TX holds the
 // radio busy for the real LoRa airtime so protocol timing stays realistic.
+#include <chrono>
+#include <cstdio>
 #include "radio/SX1262.h"
 #include "hw/SimHw.h"
 
@@ -35,10 +37,31 @@ std::vector<uint8_t> g_tx;
 int g_lastRssi = -120;
 float g_lastSnr = 0;
 
+// Test aid: <data dir>/air_deny.txt lists air ids (hex, as in "[SIM-RADIO] air = ... (id X)"),
+// one per line, whose frames this radio does not hear (out of range). Read again every second,
+// so a test can write it after the radios have started. Missing file: hears everyone.
+bool airDenied(uint32_t sender) {
+    static std::vector<uint32_t> deny;
+    static std::chrono::steady_clock::time_point readAt;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - readAt > std::chrono::seconds(1)) {
+        readAt = now;
+        deny.clear();
+        if (FILE* f = fopen((sim::hw().dataDir + "/air_deny.txt").c_str(), "r")) {
+            unsigned v;
+            while (fscanf(f, "%x", &v) == 1) deny.push_back(v);
+            fclose(f);
+        }
+    }
+    for (uint32_t d : deny) if (d == sender) return true;
+    return false;
+}
+
 bool netStart() {
     const bool ok = sim::air::start([](sim::air::Frame&& f) {
         std::lock_guard<std::mutex> l(g_mu);
         if (f.freq != g_freq || f.bw != g_bw || f.sf != g_sf) return;   // not on our channel
+        if (airDenied(f.sender)) return;                                 // test: out of range
         AirPacket p;
         p.data = std::move(f.payload);
         p.rssi = -60 - (int)(std::random_device{}() % 30);
@@ -47,6 +70,10 @@ bool netStart() {
         if (g_rxFlag) *g_rxFlag = true;
     });
     if (ok) Serial.printf("[SIM-RADIO] air = %s (id %08x)\n", sim::air::address(), (unsigned)sim::air::selfId());
+    if (ok) if (FILE* f = fopen((sim::hw().dataDir + "/air_id.txt").c_str(), "w")) {   // for tests (air_deny.txt)
+        fprintf(f, "%08x\n", (unsigned)sim::air::selfId());
+        fclose(f);
+    }
     return ok;
 }
 

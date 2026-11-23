@@ -1,8 +1,8 @@
-built: 2026-11-15T13:30:28Z
+built: 2026-11-23T16:47:47Z
 toolchain: rustc 1.95.0-nightly (95e5bda86 2026-04-15) (1.95.0.0)
-ratspeak-handheld.source: commit 4f0bc60 protocol/ (development build on VM100, not via build-xtensa.sh: the
-  shared working tree has other sessions' untracked files, so source_fingerprint.py refuses to run)
-rsReticulumLite: fe9144945fa9cddb3aa6ae967bf8e0d0e5fa4227
+ratspeak-handheld.source-sha256: 298e6725e86b23e767583d04903f93ff2141239c915a1c57af7efeb793c20d89
+source-graph-sha256: e44eade69ad897fe76d59c666e837760918a63b95ac7888ab669b846650146c9
+rsReticulumLite: fe9144945fa9cddb3aa6ae967bf8e0d0e5fa4227 +dirty
 rsLXMFLite: e8c19f18338263be9bb801f563509759d91482f3
-small.sha256: c696bb98725781d43bb8f26f862b5c44fb9594e22ccd15e38df5aed90d95c33c
-micro.sha256: ef599ab5a5fd3a0cdd797bafe41252a38f67e6f18bda8609da5aeeb295c429c3
+small.sha256: 772220970dfdf4e544421df79591b1d5b4fc3c01f0872e372db34c423d66b6fe
+micro.sha256: b026ea48f2843fa3c3f8d8f021ee4d78138414ef7b2556b161fd4218a854ec42
