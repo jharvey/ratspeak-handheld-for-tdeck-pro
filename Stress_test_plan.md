@@ -274,3 +274,15 @@ Fixed findings (2026-11-15/16, 4-unit soak):
 Open: processKeys / watchBattery sometimes take exactly 1000 ms with no key pressed (an I2C
 wait; COM5 71 times in 2.5 h). Logging of slow keyboard / gauge reads is in the next build.
 A send holds the loop ~2.5-5 s while the record is saved.
+
+### 2026-11-23: markers and the ATAK feed on real units
+
+| Date | Build | Test | Hours | Result | Notes |
+|---|---|---|---|---|---|
+| 2026-11-23 | 04c172f | Simulator: `marks_net.py` (3 radios), `cot_net.py` (2 radios), full regression (status, groups, lock, standby, idle, wifi, groups_net, standby_pair, status_net, monkey x2) | - | PASS | 8/8, 4/4, all PASS |
+| 2026-11-23 | 04c172f | Units COM9 -> COM6: one marker over LoRa | - | PASS | stored and listed on COM6 |
+| 2026-11-23 | 04c172f | Units COM3, COM5, COM8 (USB, WiFi) + COM6, COM9 (air): markers every 45 s to a unit, to COM6 / COM9 and to a five-unit group; ATAK feed every 10 s; PC on 239.2.3.1:6969 (`M:atspeak-soaktak_stress.py`) | 0.4 | NOT CONCLUSIVE | 5 of 46 markers arrived: COM3 (94 %) and COM5 (92 %) refuse new messages (flash full from the soak), outboxes full. Feed sent 1,528 / 1,410 events; the PC got none, also not by unicast (PC on a WiFi network marked Public in Windows). Heap steady (COM8 lowest: 22 KB, internal 16 KB), no restarts. COM8's feed stopped after 9 events and its console stalled up to 16 s |
+
+Findings to follow up: COM8's stalled console and stopped feed; a store that is full refuses
+markers and status updates as well as chat (by design today, but those small updates could
+be kept apart); re-run with stores that are not full and a receiver that can take UDP.

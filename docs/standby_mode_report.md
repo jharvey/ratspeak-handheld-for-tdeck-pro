@@ -1,6 +1,8 @@
 # Standby when idle, lock button, boot to idle: report
 
 Unattended run of 2026-11-22. No unit was flashed. No serial port was opened.
+Update 23 Nov 2026: all five units now run image `04c172f`, which includes standby (still off
+by default) and the lock button.
 Both jobs are committed and pushed to main. The firmware image in `firmware/` was built on VM100.
 
 ## 1. Standby when idle

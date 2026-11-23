@@ -15,6 +15,61 @@
 
 ---
 
+## This repository: RatSpeak for the LilyGO T-Deck Pro
+
+This fork adds the **LilyGO T-Deck Pro** (ESP32-S3, 3.1" e-ink, keyboard, SX1262 LoRa,
+GPS) as a standalone messenger. The rest of this page is the upstream Ratspeak text.
+
+What the T-Deck Pro firmware does (state on 23 Nov 2026, beta):
+
+- **Messages and contacts** over LoRa (and WiFi mesh): chats, delivery status, peers,
+  contact cards, an Inbox.
+- **Groups**: one message to up to 8 contacts; a group can be shared so members have it too.
+- **Status sharing**: send your position and battery % to a contact or a group, once or
+  automatically (off by default).
+- **Markers (ATAK-style items of interest)**: mark a hazard, camp, water, meet-up ... with a
+  note, by distance and direction or at the map cross; send it to a contact or group. The
+  receiver sees "hazard 640 m NE of you" and a triangle on the map.
+- **ATAK feed**: on WiFi, sends this unit, its contacts' positions and the markers as
+  Cursor-on-Target to 239.2.3.1:6969, so phones running ATAK see them (not yet tried with a
+  real ATAK phone).
+- **Atlas**: offline topo maps from the SD card, places, waypoints, breadcrumb track and
+  track back, navigate to a contact, arrival alerts.
+- **Power**: energy modes from Full to Check-in, standby, battery gauge and low-battery
+  notice; the idle screen (splash, If found, or the map) with one top banner.
+- **Also**: password lock, walkie-talkie and voice messages over WiFi, Home Assistant
+  voice, a library and games on the SD card, SD backup / restore, firmware update from SD,
+  range test.
+
+Documents:
+
+| Document | What |
+|---|---|
+| [docs/HowTo.md](docs/HowTo.md) | Step-by-step guides, each with a video ([docs/videos](docs/videos)) |
+| [RatSpeak_TDeck-Pro_Description.md](src/boards/tdeck_Pro/RatSpeak_TDeck-Pro_Description.md) | The full description: every screen, key and setting |
+| [docs/sharing_atak_report.md](docs/sharing_atak_report.md) | Status sharing, markers, the ATAK feed: design, tests, open questions |
+| [docs/groups_report.md](docs/groups_report.md) | Groups |
+| [docs/standby_mode_report.md](docs/standby_mode_report.md) | Standby mode |
+| [Stress_test_plan.md](Stress_test_plan.md) | How the firmware is stress tested |
+| [sim/README.md](sim/README.md) | The desktop simulator (runs the real firmware) |
+| [docs/videos/Video_Descriptions.txt](docs/videos/Video_Descriptions.txt) | Scripts of the how-to videos |
+| [Future_steps.txt](Future_steps.txt) | Planned work |
+
+Build, flash and test (T-Deck Pro):
+
+- Firmware: PlatformIO environment `tdeck_pro_standalone`
+  (`pio run -e tdeck_pro_standalone`), or `python tools/vm_build.py --commit` on the build VM.
+  The current image is committed as `firmware/tdeck_pro_standalone.bin` (its `.txt` names
+  the source commit and sha256).
+- Flash a unit that already runs RatSpeak: `python tools/flash_app.py COM7`. A new or
+  wiped unit: `python tools/flash_new_device.py COM7` (`--erase` blanks settings, identity and
+  messages first).
+- Simulator: see [sim/README.md](sim/README.md). Test scripts are in `sim/scripts`
+  (screen scripts `*.txt`, multi-radio tests `*_net.py`, e.g. `marks_net.py`, `cot_net.py`,
+  `groups_net.py`, `status_net.py`); how-to videos: `tools/howto/make_videos.ps1`.
+
+---
+
 Send encrypted LXMF messages over LoRa or WiFi, directly from your handheld.
 No account or phone required. Keep contacts, discover peers, and carry your
 conversations with you. LoRa messaging works without an internet connection.

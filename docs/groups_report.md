@@ -1,7 +1,10 @@
 # Group messages: report (22 Nov 2026)
 
-Future_steps item 12. Built and tested in the simulator with four radios. Not yet tried on
-real units (none were flashed).
+Future_steps item 12. Built and tested in the simulator with four radios. On 23 Nov 2026 all
+five units run image `04c172f` (groups included); a five-unit group STRESS was made on COM3
+in the ATAK stress run, but COM3 refused to store new messages (flash 94 % full), so group
+delivery on real radios is still not shown (see "Real units" below and
+docs/sharing_atak_report.md).
 
 ## What was built
 

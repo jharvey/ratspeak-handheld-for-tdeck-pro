@@ -70,7 +70,7 @@ Pick how the simulated unit is equipped when it starts:
 | `--sats 9` | `sats = 9` | satellites in the fix. Default 7 |
 | `--flashkb 2048` | `flashkb = 2048` | internal flash size (see below) |
 | `--fast` | `fast = on` | instant e-ink refresh |
-| | `uptime = 1d2h` | the uptime shown on screen (idle Splash) starts there instead of at 0: `1d2h`, `26h`, `90m`. The how-to videos use 1d2h (`tools\howto\make_videos.ps1 -Uptime`) |
+| | `uptime = 1d2h` | the uptime shown on screen (idle Splash) starts there instead of at 0: `1d2h`, `26h`, `90m`. The how-to videos use 1d2h (`tools/howto/make_videos.ps1 -Uptime`) |
 | | `wifi = NAME/RSSI/PASSWORD; NAME2/RSSI` | the WiFi networks in range (no password = open). Default: HomeNet, Coffee-Shop, Neighbour_5G |
 
 Settings are read from `build\simdata\<name>\sim.ini` (that device's own setup, if the file
@@ -206,7 +206,7 @@ the size fails, like the real flash. `scripts/fullflash.txt` (`--flashkb 2048`) 
 | `note <ms> <text>` | while recording: a box with the text over the screen for `ms` |
 | `point <x> <y> <ms>` | while recording: a hand points at panel x,y (and wiggles) for `ms` |
 
-How-to videos: `scripts/howto/*.txt` (send / read a message, add / share a contact, WiFi, If found, mode, Atlas), run by `tools\howto\make_videos.ps1`, which writes `docsideos\*.mp4` (guide: `docs/HowTo.md`).
+How-to videos: `scripts/howto/*.txt` (one script per video, plus a companion script for each other radio in the story; 34 videos as of 23 Nov 2026 (31 how-to, 3 instructional), listed in `docs/videos/Video_Descriptions.txt`), run by `tools/howto/make_videos.ps1`, which writes `docs/videos\*.mp4` (guide: `docs/HowTo.md`). Map videos need a seed folder with tiles (`-Seed`, folders `atlas` (San Antonio), `tn` (Lynchburg, Tennessee), `library`, `fw`).
 
 Included: `scripts/smoke.txt` (boot and menus), `scripts/wifi.txt` (scan, join with
 password, saved + encrypted), `scripts/announce_a.txt` + `announce_b.txt` (two devices
@@ -217,6 +217,19 @@ UI features: `lock.txt` then `lock_boot.txt` (password lock, same device name), 
 find), `identity.txt` then `identity_after.txt` (identity slots, TCP hub settings), `id.txt`
 (print the destination hash), `more_box.txt` (the "^ more" cell), `loc_a.txt` + `loc_b.txt` (share my location / auto-share, run together), `contacts_map.txt` (contacts' positions on the map, T cycles; tiles in `build\simdata\cmap\sd`), `loc_pair.py` (two sims over TCP serial: share → stored on the receiver; robust to other simulators on the shared radio), `waypoints.txt` (P / N / Del, S.1.9 list, track), `packs.txt` (same views from loose tiles on `cmap` and from pack files on `packsim`: shots must match; make the packs with `tools\maptiles\make_packs.py --out build\simdata\packsim\sd build\simdata\cmap\sd`), `track_nav.txt` (track, track back B, GPX, G arrow + distance; device `cmap`), `geofence.txt` (arrival alerts; `cmap`), `rangetest_screen.txt` (`cmap`) + `rt_pair.py` (two sims ping each other, CSV), `battery_left.txt` (time left + low-battery notice; `batt fresh`), `wizard.txt` (setup wizard on a fresh device: `run-script.bat scripts\wizard.txt wiz fresh`), `wizard_existing.txt` (same device: not shown again; S.6 row 6 + 0 skip), `wizard_skip.txt` (fresh, 0), `wiz_pair.py` (two sims: wizard listens, the other sends `shareall`; then contacts.txt export / import). Fresh-device scripts begin with `serial wiz skip`; `idle_screens.txt` (Splash / Library page / If found idle screens + If found while locked; device `libsim`; the Map one is `idle_map.txt`), `library.txt` (MENU → Library, pages, R find, a wide `wide_table.csv` with wrap off / pan / W / E X / K card — make it with 41 lines of ~110 comma-separated chars in the device's `library` folder; push files to device `libsim` first with `tools\sdcard\push_files.py --port socket://127.0.0.1:5593` against `ratspeak-sim.exe --name libsim --serial-tcp 5593`), `map_keys.txt` (map GPS per power mode: Balanced asks, Saver not, Custom `pset mapgps 1`; K = Nav keys card, Z/E/D with it showing, M = MENU, I leaves the map; device `cmap`), `gps_map.txt` (Balanced mode: opening the map asks for a GPS visit, footer GPS state, a fix re-centres, reopen on the last fix; device `cmap`), `map_menu.txt` (MENU → Atlas
 with no GPS: card start view, zoom fallback; needs tiles in `build\simdata\<name>\sd`). Scripts wait for `[BOOT] ready` rather than a fixed time.
+
+Newer feature tests (23 Nov 2026), each a screen script plus a multi-radio Python test that
+starts its own simulators (`set RS_SIM_EXE=<exe>`; exit 0 = PASS):
+`groups.txt` then `groups_after.txt` + `groups_net.py` (groups: make, share, join, send,
+reply), `status.txt` then `status_after.txt` + `status_net.py` (position / battery sharing,
+11 steps), `marks.txt` then `marks_after.txt` + `marks_net.py` (markers: make, send to a
+contact and a group, chat row, update, full list), `cot_net.py` (the ATAK feed: two radios
+on the simulated WiFi, one listens with `cot listen 6969` and checks each CoT event's XML),
+`standby.txt` / `standby_after.txt` + `standby_pair.py`, `lock_button.txt` /
+`lock_button_boot.txt`, `idle_banner.txt`, `idle_map.txt`. The simulated WiFi delivers a
+UDP packet only to the unit with that address (no multicast), so `cot_net.py` sends to the
+listener's address. Console helpers for these tests: `wifi join <ssid> [password]`,
+`mark ...`, `cot ...`, `grp ...`, `locshare ...`, `fake bat <pct>`, `fake move <m>`.
 
 The energy modes run their real logic here; light sleep is a 20 ms pause, and the
 console command `pw` shows the mode, knobs and percent of time asleep.

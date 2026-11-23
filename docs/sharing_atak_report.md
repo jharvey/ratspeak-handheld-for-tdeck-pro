@@ -159,6 +159,25 @@ The simulated WiFi only delivers to one unit's address, so the test sends to the
 address. Multicast to 239.2.3.1 was not tried (it needs real WiFi). **Not tried with a real
 ATAK phone.**
 
+### Real units, 23 Nov 2026 (stress run, all five on image `04c172f`)
+
+COM3, COM5, COM8 on USB and WiFi, COM6 and COM9 on the air; 20 rounds of 45 s: each USB
+unit made a marker and sent it to the next unit, to COM6 / COM9, or to a group of all five;
+the ATAK feed every 10 s; the PC listened on 239.2.3.1:6969 (`M:atspeak-soaktak_stress.py`,
+logs in `M:atspeak-soak6-11-23_atak`).
+
+| What | Result |
+|---|---|
+| Markers received on USB units | 5 of 46. Not a marker fault: COM3's message store is 94 % full and COM5's 92 % (soak test data), so they refuse every new message, sent or received ("flash full: new message refused"), and their outboxes filled ("outbox full", "radio busy"). COM8 (83 %) sent all 19 of its markers; COM3 did not take them in |
+| ATAK feed sent | COM3 1528 events, COM5 1410 (sendto succeeded) |
+| ATAK feed on the PC | 0 events, also 0 when COM3 sent straight to the PC's address. The PC is on WiFi with the network set to Public in Windows, which blocks incoming UDP for programs without a rule. Not a feed fault as far as this shows; not yet seen by any receiver on real WiFi |
+| Heap (heartbeat every 30 s) | COM3 38.5-44.8 KB (lowest internal 33 KB), COM5 37.4-42.6 KB (28 KB), COM8 22.4-30.1 KB (16 KB). No restarts |
+| COM8 | Its feed sent 9 events and then none; its console was blocked up to 16 s at a time (`[SLOW] pollSerial 16450 ms`): to look into |
+
+To run it again usefully: free the message stores on COM3 and COM5 (or use units that are not
+full), and let the PC receive UDP 6969 (network set to Private plus a rule for Python, or
+listen on a phone running ATAK instead).
+
 ### Not done
 
 - Receiving from ATAK (phones' own positions and their markers onto the Atlas).

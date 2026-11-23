@@ -4,7 +4,7 @@ Short, step-by-step guides for everyday use. Each one has a short video made wit
 simulator (`docs/videos/`): a hand points at every key as it is pressed, the key's name
 shows above the keyboard, and you hear a click.
 
-Keys as of 22 Nov 2026.
+Keys as of 23 Nov 2026.
 
 ## The keys you need
 
@@ -14,7 +14,7 @@ Keys as of 22 Nov 2026.
 | **I** | Inbox (your chats) |
 | **C** | Contacts. **G** on Contacts = Groups |
 | **P** | Peers (every radio heard). **R** on Peers = announce this radio |
-| **A** | Atlas, the offline map |
+| **A** | Atlas, the offline map. **J** on the Atlas = markers, **Alt+J** = new marker |
 | **T** / **V** | Up / down in lists |
 | **Enter** | Open, send, save |
 | **^** (Shift, tapped alone) | Back |
