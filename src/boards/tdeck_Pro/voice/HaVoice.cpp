@@ -36,9 +36,12 @@ enum : uint16_t {
 constexpr uint32_t kVaFeatures = 1 | 2 | 4;
 enum VaEvent : uint32_t {
     EV_ERROR = 0, EV_RUN_START = 1, EV_RUN_END = 2, EV_STT_START = 3, EV_STT_END = 4, EV_INTENT_START = 5,
-    EV_INTENT_END = 6, EV_TTS_START = 7, EV_TTS_END = 8, EV_STT_VAD_START = 11, EV_STT_VAD_END = 12,
+    EV_INTENT_END = 6, EV_TTS_START = 7, EV_TTS_END = 8, EV_WAKE_WORD_START = 9, EV_WAKE_WORD_END = 10,
+    EV_STT_VAD_START = 11, EV_STT_VAD_END = 12,
     EV_TTS_STREAM_START = 98, EV_TTS_STREAM_END = 99,
 };
+// VoiceAssistantRequest.flags (aioesphomeapi VoiceAssistantCommandFlag).
+constexpr uint32_t kFlagUseWakeWord = 2;
 
 AudioNotify* g_audio = nullptr;
 WiFiServer* g_server = nullptr;
@@ -79,6 +82,14 @@ uint32_t g_talkStart = 0;
 bool g_runActive = false;
 uint32_t g_runAt = 0;
 bool g_playing = false;
+// Wake word (Home Assistant's wake word engine, e.g. openWakeWord): while wanted and HA is
+// connected, a run that starts at the wake word stage stays open and the mic streams to it.
+bool g_wakeWanted = false;
+bool g_wakeListen = false;          // a wake word run is open (mic streaming, no wake word yet)
+uint32_t g_wakeRetryAt = 0;         // millis(): not before this
+uint32_t g_wakeBackoff = 0;         // after an error before the wake word: 5 s, doubling to 60 s
+bool g_pendingTalk = false;         // MIC pressed while listening: the push-to-talk run starts
+uint32_t g_pendingAt = 0;           // once HA has ended the wake word run (or after 1.5 s)
 uint8_t g_micGain = 4;
 uint32_t g_micSamples = 0;
 int32_t g_micPeak = 0;
@@ -284,7 +295,14 @@ void sendDeviceInfo() {
 }
 
 void endRun(const char* why) {
-    if (g_talking) { g_talking = false; g_audio->micStop(); }
+    const bool wasWake = g_wakeListen;
+    if (g_talking || g_wakeListen) { g_talking = false; g_wakeListen = false; g_audio->micStop(); }
+    if (wasWake && !g_pendingTalk) {             // the run ended before a wake word: HA error?
+        g_wakeBackoff = g_wakeBackoff ? (g_wakeBackoff * 2 > 60000 ? 60000 : g_wakeBackoff * 2) : 5000;
+        g_wakeRetryAt = millis() + g_wakeBackoff;
+    } else {
+        g_wakeRetryAt = millis() + 1500;         // let the answer finish playing
+    }
     g_streaming = false;
     g_runActive = false;
     g_playing = false;
@@ -314,6 +332,17 @@ void handleEvent(const uint8_t* d, size_t n) {
     }
     switch (type) {
         case EV_RUN_START: g_runAt = millis(); break;
+        case EV_WAKE_WORD_END:                   // HA heard the wake word: now it is a normal run
+            if (g_wakeListen) {
+                g_wakeListen = false;
+                g_talking = true;
+                g_talkStart = millis();
+                g_wakeBackoff = 0;
+                g_audio->writeTone(1200, 60);
+                Serial.println("[HAV] wake word heard");
+                setStatus("wake word: listening...");
+            }
+            break;
         case EV_STT_VAD_START: setStatus("listening (speech heard)"); break;
         case EV_STT_VAD_END: if (g_talking) stopTalk("end of speech"); break;
         case EV_STT_END:
@@ -330,7 +359,7 @@ void handleEvent(const uint8_t* d, size_t n) {
             break;
         case EV_TTS_STREAM_START: g_playing = true; g_runAt = millis(); setStatus("speaking"); break;
         case EV_TTS_STREAM_END: g_playing = false; break;
-        case EV_RUN_END: endRun("ready: press MIC to talk"); break;
+        case EV_RUN_END: endRun(g_wakeWanted ? "ready: wake word or MIC" : "ready: press MIC to talk"); break;
         case EV_ERROR: {
             char e[48];
             snprintf(e, sizeof(e), "HA: %.40s", msg[0] ? msg : "error");
@@ -380,6 +409,7 @@ void handleMessage(uint16_t type, const uint8_t* d, size_t n) {
             while (in.next(f, wt, v, s, len)) if (f == 2 && wt == 0) err = v != 0;
             if (err) { endRun("HA could not start"); break; }
             if (g_talking) { g_streaming = true; setStatus("listening..."); }
+            else if (g_wakeListen) { g_streaming = true; setStatus("listening for the wake word"); }
             break;
         }
         case VA_EVENT: handleEvent(d, n); break;
@@ -535,7 +565,8 @@ void processRx() {
 }
 
 void closeConn(const char* why) {
-    if (g_talking) { g_talking = false; g_audio->micStop(); }
+    if (g_talking || g_wakeListen) { g_talking = false; g_wakeListen = false; g_audio->micStop(); }
+    g_pendingTalk = false;
     if (g_client) g_client.stop();
     if (g_tunnel) Serial.println("@API closed");
     g_conn = Conn::None;
@@ -561,7 +592,10 @@ void streamMic() {
     g_micSamples += n;
     PbOut o;
     o.bytes(1, buf, n * 2);
-    if (!sendMessage(VA_AUDIO, o.b, o.n)) { stopTalk("connection lost"); return; }
+    if (!sendMessage(VA_AUDIO, o.b, o.n)) {
+        if (g_wakeListen) closeConn("connection lost"); else stopTalk("connection lost");
+        return;
+    }
   }
 }
 
@@ -614,10 +648,34 @@ void tunnelFeed(const char* hex) {
 }
 void tunnelStop() { if (g_tunnel) { closeConn("tunnel off"); g_tunnel = false; } }
 
+bool beginTalk();
+bool startWakeListen();
+
+// The voice run: mic streaming, time limits, the push-to-talk that waits for the wake word
+// run to end, and listening for the wake word again (WiFi and the USB tunnel alike).
+void runTick() {
+    if (g_talking) {
+        streamMic();
+        if (millis() - g_talkStart > kMaxTalkMs) stopTalk("15 s limit");
+    } else if (g_wakeListen) {
+        streamMic();
+    }
+    if (g_runActive && !g_talking && !g_wakeListen && !g_playing && !g_pendingTalk &&
+        millis() - g_runAt > kRunTimeoutMs) endRun("no answer from HA");
+    if (g_pendingTalk && (!g_runActive || millis() - g_pendingAt > 1500)) {
+        g_pendingTalk = false;
+        g_runActive = false;
+        beginTalk();
+    }
+    if (g_wakeWanted && connected() && !g_runActive && !g_talking && !g_playing && !g_pendingTalk &&
+        (int32_t)(millis() - g_wakeRetryAt) >= 0)
+        startWakeListen();
+}
+
 void tick(bool wifiUp, bool enabled, const char* deviceName, const char* keyB64) {
     if (!g_audio || !g_rx || !g_txBuf || !g_txPlain || !g_rxPlain) return;
     if (g_tunnel) {
-        if (g_talking) streamMic();
+        runTick();
         return;
     }
     const char* key = keyB64 ? keyB64 : "";
@@ -677,22 +735,48 @@ void tick(bool wifiUp, bool enabled, const char* deviceName, const char* keyB64)
         g_rxLen += got;
         processRx();
     }
-    if (g_talking) {
-        streamMic();
-        if (millis() - g_talkStart > kMaxTalkMs) stopTalk("15 s limit");
-    }
-    if (g_runActive && !g_talking && !g_playing && millis() - g_runAt > kRunTimeoutMs) endRun("no answer from HA");
+    runTick();
     WiFi.setSleep(!busy());
 }
 
 bool connected() { return (g_tunnel || (g_client && g_client.connected())) && (g_conn == Conn::Ready || g_conn == Conn::Plain) && g_vaSubscribed; }
 bool talking() { return g_talking; }
-bool busy() { return g_talking || g_runActive || g_playing; }
+bool busy() { return g_talking || g_runActive || g_playing || g_wakeListen || g_pendingTalk; }
+bool wakeListening() { return g_wakeListen; }
 
-bool startTalk() {
-    if (!connected()) { setStatus(g_client ? "HA has not turned voice on" : "Home Assistant not connected"); return false; }
-    if (g_talking) return true;
-    if (g_runActive) { setStatus("busy: HA is still answering"); return false; }   // one run at a time
+// Abort the open wake word run (MIC pressed, or the wake word turned off).
+void stopWakeListen(const char* why) {
+    if (!g_wakeListen) return;
+    g_wakeListen = false;
+    g_streaming = false;
+    g_audio->micStop();
+    PbOut o;
+    o.boolean(1, false);                         // start = false: end the run
+    sendMessage(VA_REQUEST, o.b, o.n);
+    Serial.printf("[HAV] wake word listening stopped (%s)\n", why);
+}
+
+bool startWakeListen() {
+    if (!g_audio->micStart()) { setStatus("microphone failed"); g_wakeRetryAt = millis() + 30000; return false; }
+    PbOut o;
+    o.boolean(1, true);                          // start
+    o.u32(3, kFlagUseWakeWord);                  // HA starts the run at its wake word stage
+    PbOut as;
+    as.f32(3, 1.0f);
+    o.bytes(4, as.b, as.n);
+    sendMessage(VA_REQUEST, o.b, o.n);
+    g_wakeListen = true;
+    g_streaming = false;
+    g_runActive = true;
+    g_runAt = millis();
+    g_micSamples = 0;
+    g_micPeak = 0;
+    Serial.println("[HAV] listening for the wake word");
+    setStatus("starting wake word...");
+    return true;
+}
+
+bool beginTalk() {
     if (!g_audio->micStart()) { setStatus("microphone failed"); return false; }
     PbOut o;
     o.boolean(1, true);                          // start
@@ -711,6 +795,29 @@ bool startTalk() {
     g_answer[0] = 0;
     setStatus("starting...");
     return true;
+}
+
+bool startTalk() {
+    if (!connected()) { setStatus(g_client ? "HA has not turned voice on" : "Home Assistant not connected"); return false; }
+    if (g_talking || g_pendingTalk) return true;
+    if (g_wakeListen) {                          // MIC while listening for the wake word: end that
+        stopWakeListen("MIC pressed");           // run, start push-to-talk once HA has ended it
+        g_pendingTalk = true;
+        g_pendingAt = millis();
+        setStatus("starting...");
+        return true;
+    }
+    if (g_runActive) { setStatus("busy: HA is still answering"); return false; }   // one run at a time
+    return beginTalk();
+}
+
+void setWakeWord(bool on) {
+    if (on == g_wakeWanted) return;
+    g_wakeWanted = on;
+    g_wakeBackoff = 0;
+    g_wakeRetryAt = millis();
+    Serial.printf("[HAV] wake word %s\n", on ? "on" : "off");
+    if (!on && g_wakeListen) { stopWakeListen("wake word off"); g_runActive = false; setStatus("ready: press MIC to talk"); }
 }
 
 void stopTalk(const char* why) {

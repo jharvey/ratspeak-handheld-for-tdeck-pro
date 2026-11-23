@@ -10,6 +10,14 @@ Python, independent of the firmware's code, so the two are checked against each 
 
   python tools/test/esphome_api_test.py COM6 <44-char key>       (key: console "hakey")
   python tools/test/esphome_api_test.py COM9 <key> 192.168.0.11  (over WiFi, TCP 6053)
+  python tools/test/esphome_api_test.py COM6 <key> --wake        (the wake word cycle, below)
+  key "auto": read it from the unit (console "hakey"). Opening the port can restart a unit:
+  the script waits for "[BOOT] ready" first.
+
+--wake plays Home Assistant with a wake word engine: the unit (console "hawake 2") opens a
+run with the wake word flag and streams its mic; we answer, report the wake word, end the
+speech, answer and end the run; the unit must open a new wake word run by itself; MIC
+(console "talk") must end that run and start push-to-talk; "hawake 0" must end listening.
 """
 import base64
 import hashlib
@@ -303,11 +311,49 @@ def frame(payload):
     return bytes((1, len(payload) >> 8, len(payload) & 0xFF)) + payload
 
 
+WAKE = "--wake" in sys.argv
+if WAKE:
+    sys.argv.remove("--wake")
+
+
+def settle(ser):
+    """Opening the port may restart the unit: wait until it is up (or quiet)."""
+    buf, t0, last = b"", time.time(), time.time()
+    while time.time() - t0 < 200:
+        d = ser.read(4096)
+        if d:
+            buf += d
+            last = time.time()
+            if b"[BOOT] ready" in buf:
+                time.sleep(8)
+                ser.read(1 << 20)
+                return
+        elif time.time() - last > 5:
+            return
+
+
+def read_key(ser):
+    """Ask until it answers: a unit with a full message store can take 100 s to start."""
+    end, buf, asked = time.time() + 180, b"", 0
+    while time.time() < end:
+        if time.time() - asked > 15:
+            ser.write(b"hakey\r\n")
+            asked = time.time()
+        buf += ser.read(4096)
+        for line in buf.decode(errors="replace").splitlines():
+            if line.startswith("[HAV] key ") and len(line.split()[2]) == 44:
+                return line.split()[2]
+    raise SystemExit("no key from the unit (turn Home Assistant voice on: console havoice 1)")
+
+
 def main():
     port, key = sys.argv[1], sys.argv[2]
+    t = TcpLink(port, sys.argv[3]) if len(sys.argv) > 3 else Tunnel(port)
+    settle(t.s)
+    if key == "auto":
+        key = read_key(t.s)
     psk = base64.b64decode(key)
     assert len(psk) == 32
-    t = TcpLink(port, sys.argv[3]) if len(sys.argv) > 3 else Tunnel(port)
     t.cmd("apitunnel off")
     time.sleep(0.3)
     t.s.reset_input_buffer()
@@ -364,6 +410,16 @@ def main():
     send(89, b"\x08\x01\x10\x01")                                     # SubscribeVoiceAssistant(subscribe, API_AUDIO)
     time.sleep(0.5)
 
+    def event(et, **data):
+        body = varint(8) + varint(et) if et else b""
+        for k, v in data.items():
+            kv = b"\x0a" + varint(len(k)) + k.encode() + b"\x12" + varint(len(v)) + v.encode()
+            body += b"\x12" + varint(len(kv)) + kv
+        send(92, body)
+
+    if WAKE:
+        return wake_cycle(t, send, recv, event)
+
     # A voice run: the unit starts it (console "talk"), we answer port 0, take its audio,
     # then play the pipeline's events and a short reply tone back to it.
     t.cmd("talk")
@@ -392,13 +448,6 @@ def main():
     mt, d = recv()
     print("stop: message %d %r" % (mt, pb_fields(d)))
 
-    def event(et, **data):
-        body = varint(8) + varint(et) if et else b""
-        for k, v in data.items():
-            kv = b"\x0a" + varint(len(k)) + k.encode() + b"\x12" + varint(len(v)) + v.encode()
-            body += b"\x12" + varint(len(kv)) + kv
-        send(92, body)
-
     event(1)                                                          # RUN_START
     event(4, text="what time is it")                                  # STT_END
     event(7, text="It is three o'clock")                              # TTS_START
@@ -420,6 +469,90 @@ def main():
     t.cmd("apitunnel off")
     print("PASS" if got > 0 else "FAIL: no mic audio")
     return 0 if got > 0 else 1
+
+
+def wake_cycle(t, send, recv, event):
+    """The wake word cycle (see the top). Returns 0 = PASS."""
+    audio = [0]
+    fails = []
+
+    def wait_msg(want, timeout):
+        """Next message of type want (audio in between is counted). None on timeout."""
+        end = time.time() + timeout
+        while time.time() < end:
+            try:
+                mt, d = recv(timeout=1.0)
+            except TimeoutError:
+                continue
+            if mt == 106:
+                audio[0] += sum(len(v) for f, v in pb_fields(d) if f == 1)
+                continue
+            if mt == want:
+                return dict((f, v) for f, v in pb_fields(d))
+            print("   (message %d)" % mt)
+        return None
+
+    def check(ok, what):
+        print(("ok   " if ok else "FAIL ") + what)
+        if not ok:
+            fails.append(what)
+
+    t.cmd("havoice 1")
+    t.cmd("hawake 2")
+    req = wait_msg(90, 10)
+    check(req is not None and req.get(1) == 1 and req.get(3, 0) & 2,
+          "1 the unit opens a run with the wake word flag: %r" % req)
+    send(91, b"")                                                     # VoiceAssistantResponse
+    audio[0] = 0
+    wait_msg(-1, 2.5)
+    check(audio[0] > 16000, "2 the mic streams while it waits for the wake word: %d bytes" % audio[0])
+    event(1)                                                          # RUN_START
+    event(9)                                                          # WAKE_WORD_START
+    event(10, text="hey jarvis")                                      # WAKE_WORD_END
+    event(3)                                                          # STT_START
+    audio[0] = 0
+    wait_msg(-1, 1.5)
+    check(audio[0] > 8000, "3 after the wake word the speech keeps streaming: %d bytes" % audio[0])
+    event(12)                                                         # STT_VAD_END: the unit stops
+    t0 = time.time()
+    got_end = False
+    while time.time() - t0 < 3 and not got_end:
+        try:
+            mt, d = recv(timeout=1.0)
+        except TimeoutError:
+            continue
+        if mt == 106 and any(f == 2 and v for f, v in pb_fields(d)):
+            got_end = True
+    check(got_end, "4 end of speech: the unit sends the last audio with end=true")
+    event(4, text="turn on the kitchen light")                        # STT_END
+    event(7, text="Turned on the light")                              # TTS_START
+    event(2)                                                          # RUN_END
+    req = wait_msg(90, 8)
+    check(req is not None and req.get(1) == 1 and req.get(3, 0) & 2,
+          "5 after the answer the unit listens for the wake word again: %r" % req)
+    send(91, b"")
+    wait_msg(-1, 1.0)
+    t.cmd("talk")                                                     # MIC while listening
+    req = wait_msg(90, 5)
+    check(req is not None and not req.get(1), "6 MIC ends the wake word run (start=false): %r" % req)
+    event(2)                                                          # HA ends that run
+    req = wait_msg(90, 5)
+    check(req is not None and req.get(1) == 1 and not req.get(3, 0) & 2,
+          "7 then push-to-talk starts (no wake word flag): %r" % req)
+    send(91, b"")
+    wait_msg(-1, 1.0)
+    t.cmd("talkstop")
+    event(2)                                                          # RUN_END
+    req = wait_msg(90, 8)
+    check(req is not None and req.get(3, 0) & 2, "8 back to the wake word afterwards: %r" % req)
+    send(91, b"")
+    wait_msg(-1, 0.5)
+    t.cmd("hawake 0")
+    req = wait_msg(90, 5)
+    check(req is not None and not req.get(1), "9 wake word off ends the run (start=false): %r" % req)
+    t.cmd("apitunnel off")
+    print("PASS" if not fails else "FAIL: %d of 9" % len(fails))
+    return 0 if not fails else 1
 
 
 if __name__ == "__main__":

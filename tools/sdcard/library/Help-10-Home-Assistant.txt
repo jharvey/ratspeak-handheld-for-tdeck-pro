@@ -14,6 +14,8 @@ ON THE UNIT
    4 New random key (Enter twice). HA then needs the new key.
    5 No encryption (Enter twice): HA connects without a key. Not recommended.
    6 Name in Home Assistant: the device name HA shows, port 6053.
+   7 Wake word: Enter steps Off (MIC to talk) -> On USB power only -> Always.
+     Off by default. See WAKE WORD below.
    Row 1 then shows what it is doing: waiting for Home Assistant, ready: press MIC
    to talk, listening, thinking, speaking.
 
@@ -27,11 +29,24 @@ IN HOME ASSISTANT (once)
    text-to-speech) it should use.
 
 TALKING
-- Press MIC on any screen (not while typing a message) and say the command. There is no
-  wake word: "OK Nabu" alone does nothing.
+- Press MIC on any screen (not while typing a message) and say the command. With the wake
+  word off (the default), "OK Nabu" alone does nothing.
 - HA stops listening when you pause; MIC again stops it at once. Up to 15 s per command.
 - A message at the bottom shows what HA heard and answered.
 - MIC alone still does a full screen refresh when HA voice is off or not connected.
+
+WAKE WORD
+- With row 7 on, the unit sends its microphone to HA all the time and HA listens for the
+  wake word (for example "OK Nabu" or "Hey Jarvis"). Say it, then the command: a short beep
+  says HA heard the wake word. After the answer it listens for the wake word again.
+- HA does the listening: its Assist pipeline needs a wake word engine (for example the
+  openWakeWord add-on), and the device's settings in HA pick which wake word. Without one,
+  row 1 shows HA's error and the unit tries again after 5 s, then less often (up to 1 min).
+- MIC still works while it listens: it starts a command at once.
+- "On USB power only" listens only while USB power is in. "Always" also listens on battery:
+  WiFi and the microphone stay on and the unit never sleeps, so the battery lasts hours,
+  not days. It does not listen while the unit is locked or during a walkie-talkie call.
+- Console: "hawake" shows the setting, "hawake 0|1|2" sets it.
 
 NOTES
 - WiFi only: voice is too big for LoRa.

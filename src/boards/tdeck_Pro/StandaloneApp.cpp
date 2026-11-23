@@ -168,6 +168,7 @@ struct Config {
                                     // country, misc 1-2 (S.4.2.9); NVS fnd0..fnd9
     bool     touchOff    = false;   // S.1.4: touch screen off, keys only
     bool     haVoice     = false;   // S.3.7: Home Assistant voice satellite (WiFi, ESPHome API)
+    uint8_t  haWake      = 0;       // S.3.7 row 7: wake word 0 off, 1 on USB power only, 2 always
     char     haKey[45]   = "";      // its ESPHome API encryption key (base64); "" = none
     bool     meshWifi    = true;    // S.3.8: Reticulum over WiFi (AutoInterface: units on the LAN)
     uint8_t  micGain     = 4;       // microphone gain for HA voice (console micgain)
@@ -193,6 +194,7 @@ struct Config {
     float    lon         = 0.0f;
 };
 Config g_cfg;
+const char* const kHaWakeName[3] = {"Off (MIC to talk)", "On USB power only", "Always (more battery)"};
 // Operator modes (S.1). Minimal: Inbox, Contacts and Settings S.1 only (no Home, Peers, Atlas,
 // Library); waking goes to the Inbox. Normal is Advanced for now.
 // Operator modes (S.1): Minimal (Inbox, Contacts, S.1, walkie-talkie), Typical (the features
@@ -340,6 +342,8 @@ void loadConfig() {
     }
     g_cfg.touchOff    = p.getBool("touchOff", false);
     g_cfg.haVoice     = p.getBool("haVoice", false);
+    g_cfg.haWake      = p.getUChar("haWake", 0);
+    if (g_cfg.haWake > 2) g_cfg.haWake = 0;
     p.getString("haKey", g_cfg.haKey, sizeof(g_cfg.haKey));
     g_cfg.meshWifi    = p.getBool("meshWifi", true);
     g_cfg.micGain     = p.getUChar("micGain", 4);
@@ -403,6 +407,7 @@ void saveConfig() {
     if (p.isKey("foundTxt")) p.remove("foundTxt");   // moved to fnd0..9
     p.putBool("touchOff", g_cfg.touchOff);
     p.putBool("haVoice", g_cfg.haVoice);
+    p.putUChar("haWake", g_cfg.haWake);
     p.putString("haKey", g_cfg.haKey);
     p.putBool("meshWifi", g_cfg.meshWifi);
     p.putUChar("micGain", g_cfg.micGain);
@@ -4478,6 +4483,7 @@ void buildSettingsRows(Page p) {
         srow(RK_ACTION, "New random key", "%s", hasKey ? "Enter twice" : "Enter");
         srow(RK_ACTION, "No encryption", "%s", hasKey ? "Enter twice" : "(none set)");
         srow(RK_INFO, "Name in Home Assistant", "%s, port %u", havoice::nodeName(), (unsigned)havoice::kPort);
+        srow(RK_TOGGLE, "Wake word", "%s", kHaWakeName[g_cfg.haWake > 2 ? 0 : g_cfg.haWake]);
         break;
     }
 
@@ -5134,6 +5140,13 @@ void activateSetting(int idx) {
             if (idx == 3) { haNewKey(); toast("New key: give it to HA"); }
             else { g_cfg.haKey[0] = 0; toast("No encryption: HA connects without a key"); Serial.println("[HAV] key cleared"); }
             saveConfig();
+        } else if (idx == 6) {                   // wake word: off -> on USB power only -> always
+            g_cfg.haWake = (uint8_t)((g_cfg.haWake + 1) % 3);
+            saveConfig();
+            Serial.printf("[HAV] wake word setting: %s\n", kHaWakeName[g_cfg.haWake]);
+            toast(g_cfg.haWake == 0 ? "Wake word off: MIC to talk"
+                  : g_cfg.haWake == 1 ? "Wake word on USB power (HA needs a wake word engine)"
+                                      : "Wake word always: uses much more battery");
         }
         requestRedraw();
         break;
@@ -15217,6 +15230,11 @@ void handleSerialLine(char* p) {
         Serial.printf("[HAV] voice %s\n", g_cfg.haVoice ? "on" : "off");
         return;
     }
+    if (!strcmp(p, "hawake") || !strncmp(p, "hawake ", 7)) {   // hawake [0|1|2] (off, on USB power only, always)
+        if (p[6]) { g_cfg.haWake = (uint8_t)constrain(atoi(p + 7), 0, 2); saveConfig(); }
+        Serial.printf("[HAV] wake word setting: %s\n", kHaWakeName[g_cfg.haWake]);
+        return;
+    }
     if (!strncmp(p, "micgain ", 8)) {                  // micgain 1-32
         g_cfg.micGain = (uint8_t)constrain(atoi(p + 8), 1, 32);
         havoice::setMicGain(g_cfg.micGain);
@@ -16601,7 +16619,16 @@ bool begin() {
 
 // Home Assistant voice: run the satellite, stop talking when MIC is let go, show what
 // HA heard and answered.
+// Wake word wanted now: the setting, power (USB only unless "always"), no walkie-talkie call
+// (it needs the mic), not while locked (nothing is heard or answered on a locked unit).
+bool haWakeWanted() {
+    if (!g_cfg.haVoice || !feature(F_HAVOICE) || !g_cfg.haWake || g_locked) return false;
+    if (g_cfg.haWake == 1 && !g_bat.usb) return false;
+    return walkie::state() == walkie::State::Idle;
+}
+
 void haVoiceTick() {
+    havoice::setWakeWord(haWakeWanted());
     havoice::tick(wifiConnected() && g_pwEff.wifi, g_cfg.haVoice && feature(F_HAVOICE), g_selfName, g_cfg.haKey);
     static uint32_t shown = 0;
     if (havoice::changedAt() != shown) {

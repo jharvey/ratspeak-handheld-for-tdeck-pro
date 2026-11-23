@@ -23,7 +23,7 @@ Keys as of 23 Nov 2026.
 | **^** (Shift, tapped alone) | Back |
 | **Alt** + letter | Small letter (the keyboard types capitals) |
 | **SYM** held + key | Digits and symbols: **W E R** = 1 2 3, **S D F** = 4 5 6, **Z X C** = 7 8 9, **MIC** = 0 |
-| **MIC** | Full screen refresh. With Home Assistant voice on: talk to Home Assistant |
+| **MIC** | Full screen refresh. With Home Assistant voice on: talk to Home Assistant (or use a wake word: S.3.7 row 7) |
 
 Numbers pick a row: in Settings the number opens that row at once; in lists it selects
 the row, then **Enter** opens it. While you type a message the letter keys type letters:

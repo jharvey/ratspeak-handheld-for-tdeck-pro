@@ -69,6 +69,11 @@ bool talking();             // the mic is streaming to HA
 bool busy();                // talking, or HA's answer is still running / playing (no sleep)
 bool startTalk();           // MIC pressed: start an Assist run (false: not connected)
 void stopTalk(const char* why);   // MIC released (or HA heard the end of speech)
+// Wake word: while on (call each loop) and HA is connected, a run that starts at Home
+// Assistant's wake word stage stays open and the mic streams to it; HA's wake word engine
+// (e.g. openWakeWord) listens. MIC still works (it ends that run and starts push-to-talk).
+void setWakeWord(bool on);
+bool wakeListening();      // the mic streams to HA waiting for the wake word
 const char* status();       // one line for Settings / the screen
 const char* heard();        // last speech-to-text result ("" none)
 const char* answer();       // last spoken answer text ("" none)
@@ -87,6 +92,8 @@ inline bool talking() { return false; }
 inline bool busy() { return false; }
 inline bool startTalk() { return false; }
 inline void stopTalk(const char*) {}
+inline void setWakeWord(bool) {}
+inline bool wakeListening() { return false; }
 inline const char* status() { return "simulator: no audio"; }
 inline const char* heard() { return ""; }
 inline const char* answer() { return ""; }

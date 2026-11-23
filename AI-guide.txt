@@ -225,6 +225,12 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        start, after VoiceAssistantResponse the mic goes out as VoiceAssistantAudio; end of speech =
        VoiceAssistantAudio end=true (start=false ABORTS the HA run); no new run while one is active
        (an old RUN_END killed the new run). Hold-to-talk was cut at 0.9 s -> tap-to-talk.
+       Wake word (2026-11-23): g_cfg.haWake (NVS haWake) 0 off / 1 USB power only / 2 always, S.3.7 row 7,
+       console hawake [0-2]; havoice::setWakeWord(haWakeWanted()) each loop (not locked, no walkie call).
+       Server-side wake word: VoiceAssistantRequest start + flags USE_WAKE_WORD (2), mic streams;
+       WAKE_WORD_END (10) -> beep, normal run (15 s limit); RUN_END -> listen again after 1.5 s; a run
+       that ends before the wake word (HA error) backs off 5 s doubling to 60 s; MIC while listening ->
+       start=false, push-to-talk once HA ends that run (or 1.5 s). Bench: esphome_api_test.py COMx auto --wake.
        HA events: STT_END text = heard, TTS_START text = answer, TTS audio as VoiceAssistantAudio
        (16 kHz mono) -> speaker (I2S1; PDM mic on I2S0, DC block + micgain), RUN_END. Bench test with
        no WiFi: console apitunnel + tools/test/esphome_api_test.py COM6 <key> (own Python Noise /

@@ -1,0 +1,24 @@
+# After hawake.txt (same device name): the wake word setting survived the restart.
+expect 60000 [BOOT] ready
+wait 1500
+key BACK
+wait 800
+key M
+wait 800
+key S
+wait 800
+key 3
+wait 800
+key 7
+wait 1200
+serial hawake
+expect 3000 [HAV] wake word setting: On USB power only
+key V
+key V
+key V
+key V
+key V
+key V
+wait 800
+shot hawake-03-after.png
+quit

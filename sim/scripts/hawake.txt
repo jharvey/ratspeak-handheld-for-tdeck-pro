@@ -1,0 +1,38 @@
+# Home Assistant voice: the wake word setting (S.3.7 last row). Off by default; Enter steps
+# Off -> On USB power only -> Always -> Off; kept over a restart (hawake_after.txt).
+# (The simulator has no HA voice audio: this checks the setting, not the listening.)
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+key BACK
+wait 800
+serial opmode 2
+serial havoice 1
+expect 3000 [HAV] voice on
+key M
+wait 800
+key S
+wait 800
+key 3
+wait 800
+key 7
+wait 1200
+shot hawake-01-page.png
+key V
+key V
+key V
+key V
+key V
+key V
+wait 500
+key ENTER
+expect 3000 [HAV] wake word setting: On USB power only
+wait 800
+shot hawake-02-usb.png
+key ENTER
+expect 3000 [HAV] wake word setting: Always (more battery)
+key ENTER
+expect 3000 [HAV] wake word setting: Off (MIC to talk)
+serial hawake 1
+expect 3000 [HAV] wake word setting: On USB power only
+quit
