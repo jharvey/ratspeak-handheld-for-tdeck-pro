@@ -26,8 +26,8 @@ CONVENTIONS FOR EVERY VIDEO
 - The videos are recorded on the simulator (tools/howto/make_videos.ps1; one script per
   video in sim/scripts/howto). It shows the device screen and keys, one unit or two side
   by side, and plays sound. It cannot show the box, cables, the side buttons or a PC screen.
-  The simulator used on 22 Nov 2026 was built from the firmware of that day (commit
-  d582a50). Its map card has tiles around San Antonio, Texas only, down to zoom 10 at the
+  The simulator used on 23 Nov 2026 was built from the firmware of that day (commit
+  609c48a: markers, ATAK feed, the one-banner idle screen, the blinking box). Its map card has tiles around San Antonio, Texas only, down to zoom 10 at the
   Alamo, so the map videos are set there and do not zoom in further.
 - Start on the idle screen and end on the idle screen. Any key wakes the unit. A unit wakes
   to the screen used last (in these videos usually the Inbox, because that is what most
@@ -136,7 +136,7 @@ End: the unit goes to the idle screen (the If found screen just picked in the wi
 
 -- Common_checkup.mp4
 
-Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: typical_checkup.mp4.
+Status: MADE (15 or 16 Nov), made again 22 Nov and 23 Nov 2026 (firmware 609c48a). File: typical_checkup.mp4.
 Depends: CAN BE MADE NOW.
 Remake when: groups (the Inbox changes). The made video differs from this script in its
 names (Deep Thought and Fook, with Ford and Trillian as the other chats) and its password
@@ -155,7 +155,8 @@ Setup:
 
 Steps:
 1. Emphasize the new message on Author's idle screen somehow: wave a hand near it, or use an
-   arrow pointing at the new-message count ("1 NEW") at the top of the idle screen.
+   arrow pointing at the new-message count ("1 NEW", right end of the top banner, under the
+   time and date) on the idle screen.
 2. Author presses a key. The unit asks for the password: type it, then Enter.
 3. The Inbox opens. The 3rd row, Jillian's chat, is marked "1 new".
 4. Press 3 (SYM + R) to select it, then Enter to open it. Show Jillian's question.
@@ -175,7 +176,7 @@ End: Author's unit goes back to the idle screen by itself (locked).
 
 -- Contact_exchange.mp4
 
-Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: contact_exchange.mp4.
+Status: MADE (15 or 16 Nov), made again 22 Nov and 23 Nov 2026 (firmware 609c48a). File: contact_exchange.mp4.
 Depends: CAN BE MADE NOW, except the place: the Map idle screen at Cave Spring Hollow is
 WAITING ON map tiles of Lynchburg, Tennessee on the simulator's card (its tiles are around
 San Antonio, Texas, so the made video is at the Alamo), and zoom 14 needs zoom 14 tiles
@@ -202,8 +203,8 @@ Steps:
 4. Jack presses 3 (SYM + R) = Share. The list reads "Send JACK to:".
 5. Jill is not a contact yet, so Jack presses P to switch to Peers, picks Jill (T / V) and
    presses Enter. His card goes out.
-6. An arrow or the pointing hand shows the new-message count at the top of Jill's idle
-   screen: it reads "no new" and changes to "1 NEW".
+6. An arrow or the pointing hand shows the new-message count in the top banner of Jill's
+   idle screen (right end, under the date): it reads "no new" and changes to "1 NEW".
 7. Overlay box: "Jill receives his contact and sends her contact to Jack".
 8. Jill presses a key: the Inbox shows a new chat from Jack. She opens it (its number, then
    Enter): it shows "[card] JACK". She presses Enter on the empty message line: Jack is
@@ -228,7 +229,7 @@ and announces the unit; it does not send a contact card. Sharing is C, MyID, Ent
 
 -- Search_for_others.mp4
 
-Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: peer_search.mp4.
+Status: MADE (15 or 16 Nov), made again 22 Nov and 23 Nov 2026 (firmware 609c48a). File: peer_search.mp4.
 Depends: CAN BE MADE NOW.
 Remake when: ATAK, groups (the menu and the contact page change). The made video uses
 "KEN FRANKLIN" as the person of interest instead of "DR FLEMMING".
@@ -274,7 +275,7 @@ End: Columbo's unit goes back to the idle screen (If found).
 
 -- Add_wifi_in_minimal_mode.mp4
 
-Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: add_wifi.mp4.
+Status: MADE (15 or 16 Nov), made again 22 Nov and 23 Nov 2026 (firmware 609c48a). File: add_wifi.mp4.
 Depends: CAN BE MADE NOW.
 Remake when: the WiFi page changes. The video of 22 Nov follows this script (the first one
 started in Typical mode). It goes back to Settings with M, S instead of ^ in step 4, the
@@ -317,7 +318,7 @@ End: the unit goes back to the idle screen (If found, W1AW).
 
 -- atlas.mp4
 
-Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: atlas.mp4.
+Status: MADE (15 or 16 Nov), made again 22 Nov and 23 Nov 2026 (firmware 609c48a). File: atlas.mp4.
 Depends: CAN BE MADE NOW.
 Remake when: the on-screen map layer switch lands; ATAK (markers on the map).
 
@@ -357,7 +358,7 @@ End: the unit goes back to the idle screen.
 
 -- Charging_and_battery.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: the Battery page changes.
 
@@ -367,7 +368,8 @@ Setup:
 - One unit, "ROBIN", shown large. On battery at 35 %. Splash idle screen. No password.
 
 Steps:
-1. Idle screen: the pointing hand shows the battery % at the top (35 %, "unplugged").
+1. Idle screen: the pointing hand shows the battery picture and % at the left of the top
+   banner (35%); "unplugged" is under the RatSpeak logo.
 2. A USB-C charger is plugged in.
 3. Press a key: the Inbox. The hand shows the battery icon at the top left with the
    charging sign.
@@ -386,7 +388,7 @@ End: the unit goes back to the idle screen.
 
 -- Password_lock_and_unlock.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: the Idle splash page changes; messages encrypted under the password.
 
@@ -415,7 +417,7 @@ End: the unit locks and goes back to the idle screen.
 
 -- Announce_your_unit.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: ATAK, groups (the menu).
 
@@ -445,7 +447,7 @@ End: the unit goes back to the idle screen.
 
 -- Energy_modes.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: Full power only on a strong USB supply lands; the Power page changes. (The
 Standby rows, 11 and 12, are in the video.)
@@ -475,7 +477,7 @@ End: the unit goes back to the idle screen.
 
 -- Low_battery_notice.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: groups (send the notice to a group).
 
@@ -504,7 +506,7 @@ End: both units are on the idle screen.
 
 -- Battery_empty_wont_turn_on.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW, except the BOOTING banner, which is described in an overlay box
 but not shown (the simulator cannot restart inside one recording).
 Remake when: the empty-battery screen changes.
@@ -515,7 +517,8 @@ Setup:
 - One unit, "ROBIN", shown large. On battery at 3 %. Splash idle screen.
 
 Steps:
-1. Idle screen: the pointing hand shows "3% bat" at the top.
+1. Idle screen: the pointing hand shows the battery picture and "3%" at the left of the top
+   banner.
 2. The battery runs out: the idle screen shows "BATTERY EMPTY / PLUG IN A USB CHARGER" at
    the bottom and the unit switches itself off. The hand shows the banner.
 3. Caption: keys do nothing; it stays off even if the battery recovers a little.
@@ -532,7 +535,7 @@ End: the empty-battery idle screen.
 
 -- Share_your_location.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: ATAK, groups (share with a group; markers).
 
@@ -613,7 +616,7 @@ running ATAK, with no TAK server.
 
 -- Atlas_waypoints.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: ATAK (markers on the map).
 
@@ -642,7 +645,7 @@ End: the unit goes back to the idle screen.
 
 -- Atlas_breadcrumb_track.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: the Track page changes.
 
@@ -675,7 +678,7 @@ End: the unit goes back to the idle screen.
 
 -- Navigate_to_a_contact.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: ATAK.
 
@@ -702,7 +705,7 @@ End: the unit goes back to the idle screen.
 
 -- Arrival_alerts.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: ATAK, groups.
 
@@ -730,7 +733,7 @@ End: the unit goes back to the idle screen.
 
 -- SD_backup_and_restore.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: the SD card page changes (for example backups encrypted with the password).
 
@@ -761,7 +764,7 @@ End: the unit goes back to the idle screen.
 
 -- Firmware_update_from_SD.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW up to the question "Enter again: install it". The install and the
 restart are described in overlay boxes, not shown (the simulator cannot restart inside one
 recording).
@@ -793,7 +796,7 @@ End: the unit goes back to the idle screen.
 
 -- Range_test.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: the LoRa page changes.
 
@@ -819,7 +822,7 @@ End: the unit goes back to the idle screen.
 
 -- Library_and_games.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: how-to pages are added to the Library.
 
@@ -848,7 +851,7 @@ End: the unit goes back to the idle screen.
 
 -- Settings_tour.mp4
 
-Status: MADE 22 Nov 2026.
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
 Depends: CAN BE MADE NOW.
 Remake when: ATAK, groups, or any new Settings row. It shows every page, so it is the first
 of the short videos to go out of date.
@@ -881,33 +884,33 @@ on the current firmware, and is in docs/HowTo.md.
 
 -- Send_a_message.mp4: open a chat, type, Enter, "delivered"; a message to an out-of-range
    radio waits in the queue and goes out by itself later.
-   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: send_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
+   Status: MADE (15 or 16 Nov), made again 22 Nov and 23 Nov 2026 (firmware 609c48a). File: send_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
 -- Read_a_message.mp4: the new-message count on the idle screen, I (Inbox), open the chat,
    T / V to scroll older messages.
-   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: read_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
+   Status: MADE (15 or 16 Nov), made again 22 Nov and 23 Nov 2026 (firmware 609c48a). File: read_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
 -- Add_a_contact.mp4 (was First_message_to_a_new_contact): save a radio from Peers as a
    contact (Enter, 2 Rename). The first message to it (1 Message) is in
    Search_for_others.mp4.
-   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: add_contact.mp4. Depends: CAN BE MADE NOW. Remake when: ATAK, groups.
+   Status: MADE (15 or 16 Nov), made again 22 Nov and 23 Nov 2026 (firmware 609c48a). File: add_contact.mp4. Depends: CAN BE MADE NOW. Remake when: ATAK, groups.
 -- Connect_to_wifi.mp4: M, S, 3 WiFi, 3 Scan networks, the network's number, the password,
    Enter.
-   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: wifi.mp4. Depends: CAN BE MADE NOW. Remake when: the WiFi page
+   Status: MADE (15 or 16 Nov), made again 22 Nov and 23 Nov 2026 (firmware 609c48a). File: wifi.mp4. Depends: CAN BE MADE NOW. Remake when: the WiFi page
    changes.
 -- If_found_idle_screen.mp4: fill in the If-found details (M, S, 4, 2, 9), pick the If
    found idle screen (row 8), show or hide the address (row 10, key 0). The other idle
    screens (Splash, Map, Library page) are named but not shown.
-   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: if_found.mp4. Depends: CAN BE MADE NOW. Remake when: the Idle splash
+   Status: MADE (15 or 16 Nov), made again 22 Nov and 23 Nov 2026 (firmware 609c48a). File: if_found.mp4. Depends: CAN BE MADE NOW. Remake when: the Idle splash
    page changes.
 -- Mode_and_touch.mp4: Settings 1 Mode: 1 Minimal / 2 Typical / 3 Everything, 4 Touch
    screen on / off, 5 Typical features.
-   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: mode_touch.mp4. Depends: CAN BE MADE NOW. Remake when: ATAK, groups
+   Status: MADE (15 or 16 Nov), made again 22 Nov and 23 Nov 2026 (firmware 609c48a). File: mode_touch.mp4. Depends: CAN BE MADE NOW. Remake when: ATAK, groups
    (new rows in the Typical features list).
 -- Voice_message.mp4: in a chat MIC, 5 Voice message, Space to record, Space to stop and
    send (up to 20 s), P to play the newest one.
-   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: voice_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
+   Status: MADE (15 or 16 Nov), made again 22 Nov and 23 Nov 2026 (firmware 609c48a). File: voice_message.mp4. Depends: CAN BE MADE NOW. Remake when: groups.
 -- Walkie_talkie.mp4: C, pick the person, Enter, W to call; the other answers with Enter;
    Space talk / listen, ^ hang up; same WiFi or the unit's own hotspot.
-   Status: MADE (15 or 16 Nov), made again 22 Nov 2026 on the current firmware. File: walkie_talkie.mp4. Depends: CAN BE MADE NOW. Remake when: groups
+   Status: MADE (15 or 16 Nov), made again 22 Nov and 23 Nov 2026 (firmware 609c48a). File: walkie_talkie.mp4. Depends: CAN BE MADE NOW. Remake when: groups
    (group / channel talk).
 
 
