@@ -305,3 +305,12 @@ markers, layers, Library, Peers) with a time budget per step (key to finished sc
 a real unit (`--port`). First runs (simulator): a step is one e-ink partial refresh, about
 660 ms; opening the Atlas and returning to it after a sub-page are full refreshes, about
 1.6 s; heap flat.
+
+### 2026-11-23 afternoon: after the clean-up fix (image 73780f7)
+
+| Date | Build | Test | Hours | Result | Notes |
+|---|---|---|---|---|---|
+| 2026-11-23 | 73780f7 | Markers + ATAK feed rerun, COM3 / COM5 / COM8 (stores cleaned by the fix: 76 % / 75 %) | 0.4 | PASS (markers) | 46 of 46 marker deliveries to the USB units; over the air to COM6 / COM9 all delivered, 0 failed; no restarts. ATAK feed: still 0 on the PC (Windows network set to Public). COM8 lowest internal heap 5.9 KB with its feed left on all day (40,961 events): to watch |
+| 2026-11-23 | 73780f7 | tools/stress/tasks.py on COM3 and COM5, 8 min each, Full / Balanced / Saver | 0.3 | timing | a normal step ~850 ms (one partial refresh); Atlas open and some pan / zoom 2.4-2.8 s (full refresh ~2.5 s on the panel); back from the marker list up to 3.0 s; one Library page 6.5 s. Heap flat (COM3 ~35 KB, COM5 ~38 KB). Back to the map now uses a partial refresh (2495741) |
+| 2026-11-23 | a7dfadc | Full regression (all screen scripts incl. fullflash_*, all network tests incl. relay_net, monkey x2) | - | PASS | |
+
