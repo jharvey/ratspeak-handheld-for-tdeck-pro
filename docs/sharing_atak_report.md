@@ -116,6 +116,14 @@ tests were lost with the old notes folder and were written again.
 | `sim\scripts\marks.txt` (Atlas J, one marker, show on map, Alt+J form, save, nearby, 8 screenshots) | PASS |
 | `sim\scripts\marks_after.txt` (a restart keeps the markers) | PASS |
 | `sim\scripts\marks_net.py` (three radios: make, send to a contact, chat row, update, send to a group, the pages, restart, full) | PASS (8 of 8) |
+| Real radios, image `04c172f` (2026-11-23 02:50): COM9 made a marker and sent it to COM6 over LoRa | PASS: COM6 stored it (`[MARK] #1 hazard ... from 3bb4b09700e7`); COM6 had no GPS fix, so it showed the coordinates instead of a distance |
+
+Seen on COM9 during that test, not caused by markers but worth a look: free heap 18 KB
+(lowest 6.9 KB), `announce-order persist/verify FAILED` on every announce (flash 81% full),
+and after each flash the first boot spends 98 s on a full message scan
+(`no saved record index`: the index is only written 30 s after a message change).
+Opening the USB serial port also restarts these units, so a console query during that scan
+starts it again.
 
 ## Part 3: ATAK feed (Cursor-on-Target over WiFi)
 
@@ -160,7 +168,7 @@ ATAK phone.**
 
 ## Next steps
 
-1. Flash the units with the markers + ATAK feed image; send a marker between two real radios.
+1. Flash COM3 and COM5 with `04c172f` (COM6, COM8, COM9 have it).
 2. Try the ATAK feed with a phone running ATAK on the same WiFi (multicast 239.2.3.1:6969).
 3. Receive from ATAK: phones' positions and their markers onto the Atlas.
 4. Videos for the share menu, markers and the ATAK feed (videos are on hold).
