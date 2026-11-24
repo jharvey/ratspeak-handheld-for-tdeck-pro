@@ -4632,7 +4632,8 @@ void buildSettingsRows(Page p) {
         // WiFi joined or Bluetooth on keeps the CPU awake: the current mode's figure counts it.
         // (Checked directly: while this page is open the blocker reads "recent input".)
         const char* why = powerSleepBlocker();
-        const bool wifiAwake = g_wifiSt != WifiSt::Off || WiFi.getMode() != WIFI_OFF;
+        const bool wifiAwake = g_wifiSt == WifiSt::Connecting || g_wifiSt == WifiSt::Connected ||
+                               WiFi.getMode() != WIFI_OFF;
         const bool bleAwake = !wifiAwake && cotble::active();
         const int extra = wifiAwake ? power::kWifiAwakeMa : bleAwake ? power::kBleAwakeMa : -1;
         bool capLearned = false;
@@ -14927,7 +14928,12 @@ const char* powerSleepBlocker() {
     }
     if (HWCDC::isPlugged() && !g_usbSleepUntil) return "usb host";   // console drops while asleep
     if (mirror::active()) return "mirror";
-    if (g_wifiSt != WifiSt::Off || g_wifiScanning || WiFi.getMode() != WIFI_OFF) return "wifi";
+    // WiFi keeps the CPU awake only while its radio is on: joining, joined or scanning. After a
+    // failed join (wrong password, the network gone or out of reach) the state stays Failed until
+    // the next try 3 min later, with the radio off: that must not keep it awake (2026-11-24:
+    // leaving the home WiFi kept Balanced at ~70 mA, no sleep, until a join worked again).
+    if (g_wifiSt == WifiSt::Connecting || g_wifiSt == WifiSt::Connected || g_wifiScanning ||
+        WiFi.getMode() != WIFI_OFF) return "wifi";
     // The SDK's Bluetooth controller has no modem sleep (CONFIG_BT_CTRL_MODEM_SLEEP is off in
     // the Arduino build): light sleep would drop the phone.
     if (cotble::active()) return "bluetooth";

@@ -1,0 +1,17 @@
+# WiFi that failed to join (wrong password, network gone, out of range) must not keep the
+# radio awake: the radio is off, so Balanced sleeps as with WiFi off.
+expect 60000 [BOOT] ready
+wait 1500
+serial wiz skip
+wait 1000
+serial pm1
+expect 3000 [POWER] Balanced
+serial wifi join HomeNet wrongpassword
+expect 30000 [WIFI] join "HomeNet" failed
+# Balanced stays awake 15 s after the last input; give it 30 s
+wait 30000
+serial pw
+expect 3000 [POWER] asleep
+serial pw
+expect 3000 blocker=none
+quit

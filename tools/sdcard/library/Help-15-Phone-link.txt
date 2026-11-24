@@ -90,6 +90,10 @@ or Bluetooth on, keeps it awake: it cannot sleep in any mode.
   itself is small. Expect about the same, 13-15 hours (not
   measured yet).
 - Neither on: the radio sleeps; Eco and Saver last several days.
+- WiFi allowed but not joined (no saved network in reach): the
+  WiFi radio is off; every 3 minutes it looks for a few seconds.
+  That costs little (about 1-2 mA on average), the radio sleeps.
+  Only a JOINED network keeps it awake.
 The Power page (M, S, 5) shows it: "ON ~19 h, awake: Bluetooth"
 and row Now "kept awake by WiFi".
 Tips:

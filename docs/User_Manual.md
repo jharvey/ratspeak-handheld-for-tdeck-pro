@@ -681,6 +681,10 @@ row "Now": "kept awake by WiFi"), and the current mode's runtime counts it. Meas
 2026: Balanced with WiFi joined and the ATAK feed on drew ~90 mA and ran 12.6 and 13.5 hours on a full battery (two radios). Balanced
 without WiFi has not been measured yet: the runtime the Power page shows for it (~21 h) assumes
 the GPS keeps the CPU awake, which is pessimistic since the GPS got its own power-save mode.
+WiFi that is allowed but not joined costs little: with no saved network in reach the WiFi
+radio is off and looks for a few seconds every 3 minutes (about 1-2 mA on average). Only a
+joined network keeps the radio awake. (Before 24 Nov 2026 a failed join, such as walking out of
+range of the home WiFi, also kept it awake until a join worked again; fixed.)
 
 **Eco** is the step down from Balanced: the same quick radio (wakes every second, touch and key
 light on, map can still wake the GPS), but WiFi is off and the GPS takes a fix once an hour.
