@@ -99,7 +99,12 @@ uint16_t nextCheckinEvery(uint16_t mins);    // 15, 30, 60, 120, 180, 360, 720, 
 
 // Estimated average battery draw (mA) of a profile, from bench measurements on the
 // T-Deck Pro (2026-11-09/10); WiFi traffic and LoRa activity are not included.
-uint16_t estimateMa(const Profile& p);
+// awakeExtraMa >= 0: something keeps the CPU awake (WiFi joined, Bluetooth on): the profile's
+// awake figure plus that much for the radio. Measured 2026-11-23 (battery run 1): Balanced
+// with WiFi joined and the ATAK feed on drew 85-94 mA, i.e. WiFi ~ +22 mA over awake + GPS.
+constexpr int kWifiAwakeMa = 22;
+constexpr int kBleAwakeMa = 6;                 // not measured yet: advertising / slow connection
+uint16_t estimateMa(const Profile& p, int awakeExtraMa = -1);
 // Runtime text for a full battery of capacityMah: "~12 h" or "~1.2 days".
 void fmtRuntime(char* out, unsigned n, uint16_t capacityMah, uint16_t ma);
 

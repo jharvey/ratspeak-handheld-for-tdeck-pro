@@ -16,5 +16,5 @@ Track (breadcrumbs): M, S, 2, 0 (row 10) opens the Track page:
 2 Track back: a line to the earlier track points, one after the other, back to the start (on the map: B).
 3 Export as GPX: ratdeckpro/tracks/track-<date>-<time>.gpx, for Google Earth / Gaia / OsmAnd.
 4 Clear track: Enter twice.
-The track logs when the GPS is on anyway (Full, Balanced every 15 min ...). Custom power mode has "Track wakes GPS" for more points.
+The track logs when the GPS is on anyway (Full and Balanced: always). Custom power mode has "Track wakes GPS" for more points.
 Units (m/km or ft/mi): M, S, 2, row 11.

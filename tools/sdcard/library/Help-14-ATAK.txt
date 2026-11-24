@@ -41,7 +41,7 @@ Bluetooth.
 
 BLUETOOTH: PAIR THE PHONE (ONCE)
 1 Radio: feed ON, link Bluetooth. The row below shows the radio's
-  name (RatSpeak-xxxx) and a 6-digit code.
+  name (RatSpeak-xxxx) and a 6-digit PIN.
 2 Phone: install the bridge app (RatSpeak-ATAK-bridge.apk), open it,
   allow Bluetooth / Nearby devices, tap Scan, tap the radio.
 3 Android asks for a pairing code: type the code the radio shows

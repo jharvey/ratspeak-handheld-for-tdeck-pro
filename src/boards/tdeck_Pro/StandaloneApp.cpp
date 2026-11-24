@@ -2215,6 +2215,7 @@ bool g_cotListen = false;
 void cotSave();
 void cotIp(uint32_t ip, char* out, size_t n);
 bool cotUseBle();
+const char* powerSleepBlocker();
 void cotBleName(char* out, size_t n);
 void cotSetLink(uint8_t link);
 void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at);
@@ -4551,7 +4552,7 @@ void buildSettingsRows(Page p) {
         else {
             char nm[24];
             cotBleName(nm, sizeof(nm));
-            srow(RK_ACTION, "Bluetooth", "%s, code %06lu", nm, (unsigned long)cotble::passkey());
+            srow(RK_ACTION, "Bluetooth", "%s PIN %06lu", nm, (unsigned long)cotble::passkey());
         }
         break;
 
@@ -4628,6 +4629,12 @@ void buildSettingsRows(Page p) {
 
     case PG_POWER: {
         // Estimated runtime on a full battery: learned capacity, else the gauge's, else 1450 mAh.
+        // WiFi joined or Bluetooth on keeps the CPU awake: the current mode's figure counts it.
+        // (Checked directly: while this page is open the blocker reads "recent input".)
+        const char* why = powerSleepBlocker();
+        const bool wifiAwake = g_wifiSt != WifiSt::Off || WiFi.getMode() != WIFI_OFF;
+        const bool bleAwake = !wifiAwake && cotble::active();
+        const int extra = wifiAwake ? power::kWifiAwakeMa : bleAwake ? power::kBleAwakeMa : -1;
         bool capLearned = false;
         const uint16_t cap = batCapacityMah(&capLearned);
         static const char* kNote[power::MODE_CUSTOM] = {"always awake", "wake 1 s", "wake 60 s",
@@ -4636,11 +4643,13 @@ void buildSettingsRows(Page p) {
         fmtClockMin(g_pw.checkinStart, at, sizeof(at));
         checkinEveryText(ci, sizeof(ci));
         for (uint8_t m = power::MODE_FULL; m < power::MODE_CUSTOM; m++) {
-            power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(power::preset(m)));
+            const bool cur = g_pw.mode == m && extra >= 0;
+            power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(power::preset(m), cur ? extra : -1));
             if (m == power::MODE_CHECKIN)        // a menu: the Check-in page (time, every ...)
                 srow(RK_MENU, "Check-in", "%s%s, every %s", g_pw.mode == m ? "ON " : "", at, ci);
             else
-                srow(RK_PICK, power::modeName(m), "%s%s, %s", g_pw.mode == m ? "ON " : "", rt, kNote[m]);
+                srow(RK_PICK, power::modeName(m), "%s%s, %s", g_pw.mode == m ? "ON " : "", rt,
+                     cur ? (wifiAwake ? "awake: WiFi" : "awake: Bluetooth") : kNote[m]);
         }
         if (g_pw.customSet || g_pw.mode == power::MODE_CUSTOM) {
             power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(g_pw.custom));
@@ -4659,6 +4668,10 @@ void buildSettingsRows(Page p) {
                                           (unsigned long)((millis() - g_standbySince) / 60000UL));
         else if (g_pwOnUsb)          srow(RK_INFO, "Now", "Full (USB power)");
         else if (!g_pwEff.wakeSecs)  srow(RK_INFO, "Now", "%u MHz, never sleeps", (unsigned)g_pwEff.cpuMhz);
+        else if (wifiAwake || bleAwake)
+            srow(RK_INFO, "Now", "%u MHz, kept awake by %s", (unsigned)g_pwEff.cpuMhz, wifiAwake ? "WiFi" : "Bluetooth");
+        else if (why && strcmp(why, "recent input") && strcmp(why, "redraw") && strcmp(why, "keys"))
+            srow(RK_INFO, "Now", "%u MHz, awake: %s", (unsigned)g_pwEff.cpuMhz, why);
         else srow(RK_INFO, "Now", "%u MHz, asleep %u%%", (unsigned)g_pwEff.cpuMhz,
                   tot ? (unsigned)((uint64_t)g_pwSleepMs * 100 / tot) : 0u);
         if (!g_bat.valid)                          srow(RK_INFO, "Battery draw", "gauge n/a");

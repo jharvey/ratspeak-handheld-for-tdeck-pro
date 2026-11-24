@@ -467,7 +467,7 @@ the radio once):
 
 **Bluetooth, first time:**
 1. On the radio: feed ON, link Bluetooth. Row 11 "Bluetooth" shows the radio's name
-   (RatSpeak-xxxx) and a 6-digit code.
+   (RatSpeak-xxxx) and a 6-digit PIN.
 2. On the phone: install `firmware/RatSpeak-ATAK-bridge.apk` (allow installing from this
    source when Android asks). Open it, allow Bluetooth (Nearby devices), tap **Scan for
    radios**, tap the radio.
@@ -485,7 +485,7 @@ feed on, not several days.
 
 *Tested: WiFi with a PC receiving every event as valid CoT; Bluetooth in the simulator and the
 radio side on a T-Deck Pro. Not yet seen with a real ATAK phone.* Windows PCs on a network
-marked "Public" may block the WiFi feed.
+marked "Public" may block the WiFi feed. Video: [ATAK_over_Bluetooth.mp4](videos/ATAK_over_Bluetooth.mp4).
 
 ### 4.11 WiFi
 
@@ -664,12 +664,19 @@ drain after 30 minutes on battery.
 | Mode | Sleeps, wakes every | LoRa receive | GPS | WiFi | Battery draw (bench) |
 |---|---|---|---|---|---|
 | Full power | never | on | always on | yes | ~48 mA, ~67 mA with GPS |
-| Balanced (default) | 1 s | on | every 15 min | yes | ~9-10 mA |
+| Balanced (default) | 1 s (wakes ~every 30 s to read the GPS) | on | always on, in its own power-save | yes | not measured yet (see below) |
 | Saver | 60 s | on | every hour | off | ~7 mA |
 | Ultra-low | 5 min | on | off | off | ~7 mA (estimate) |
 | On demand | 5 min | 2 min after a key | one fix on a key | off | ~6 mA (estimate) |
 | Check-in | 5 min | only at set times | as On demand | off | ~6 mA (estimate) |
 | Custom | your settings | | | | |
+
+**WiFi or Bluetooth keeps the radio awake.** While WiFi is joined, or the ATAK feed uses
+Bluetooth, the radio cannot sleep in any mode. The Power page says so ("ON ~16 h, awake: WiFi";
+row "Now": "kept awake by WiFi"), and the current mode's runtime counts it. Measured 23-24 Nov
+2026: Balanced with WiFi joined and the ATAK feed on drew 85-94 mA (about a day). Balanced
+without WiFi has not been measured yet: the runtime the Power page shows for it (~21 h) assumes
+the GPS keeps the CPU awake, which is pessimistic since the GPS got its own power-save mode.
 
 Keys and incoming messages are immediate in Full, Balanced, Saver and Ultra-low. In On demand
 messages arrive only while LoRa is on; in Check-in only in the windows, and outgoing messages
@@ -718,8 +725,9 @@ chats. Storage row 3 and row 4 show the state.
 **The Atlas is missing, or the map says "no tiles".** There are no map files on the card for
 that place or zoom. See [2.2](#22-prepare-the-sd-card-optional).
 
-**No GPS fix.** In Balanced the GPS looks every 15 minutes, in Saver every hour. Go outside
-and wait up to 15 minutes, or switch to Full power for a while. **M**, **S**, **2**, row 3
+**No GPS fix.** In Full and Balanced the GPS is always on; in Saver it looks every hour. Go
+outside with a view of the sky and give it a few minutes (in Saver, up to an hour, or switch to
+Full power for a while). **M**, **S**, **2**, row 3
 shows the satellites heard.
 
 **WiFi does not connect.** Check the password (WiFi, Saved networks, the network, Password).
@@ -833,6 +841,7 @@ is pressed.
 | Navigate to a contact | [Navigate_to_a_contact.mp4](videos/Navigate_to_a_contact.mp4) |
 | Arrival alerts | [Arrival_alerts.mp4](videos/Arrival_alerts.mp4) |
 | WiFi | [wifi.mp4](videos/wifi.mp4), [add_wifi.mp4](videos/add_wifi.mp4) |
+| ATAK feed over Bluetooth | [ATAK_over_Bluetooth.mp4](videos/ATAK_over_Bluetooth.mp4) |
 | Walkie-talkie | [walkie_talkie.mp4](videos/walkie_talkie.mp4) |
 | Voice message | [voice_message.mp4](videos/voice_message.mp4) |
 | If-found details | [if_found.mp4](videos/if_found.mp4) |

@@ -5,12 +5,13 @@ Afterwards: Look: M, S, 4, 1 (Theme). WiFi (optional): M, S, 3. Meet another rad
 
 Battery: M, S, 5 (Power).
 Full: everything on, GPS on.
-Balanced: day to day; GPS looks every 15 min.
+Balanced: day to day; GPS always on, in its own power-save.
 Saver: longest; GPS hourly, no WiFi or key light.
 Custom: pick each setting. (Also Ultra-low, On demand, Check-in.)
 Keys and incoming messages stay instant in every mode. On USB power it runs Full anyway.
 
-No GPS fix in Balanced or Saver? Go outside and wait up to 15 min, or switch to Full for a while.
+No GPS fix? Go outside with a view of the sky and wait a few minutes. In Saver the GPS looks only hourly: switch to Full for a while.
+WiFi joined, or the ATAK feed on Bluetooth, keeps the radio awake in every mode: about a day of battery. The Power page says "awake: WiFi".
 
 Idle screen (M, S, 4, 2, row 8): Splash, Map, Library page or If found. All show the time, battery, date and unread messages at the top. The e-ink keeps the last picture with no power at all, so an If found screen stays readable on a flat battery.
 

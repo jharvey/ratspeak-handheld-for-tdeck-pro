@@ -1,0 +1,28 @@
+# Energy page: Bluetooth (ATAK link) keeps the CPU awake; the page says so and the current
+# mode's runtime counts it. Balanced (wake 1 s): sleeps when nothing keeps it awake.
+usb off
+expect 20000 [BOOT] ready
+serial wiz skip
+wait 2000
+serial pm1
+expect 3000 [POWER] Balanced
+serial cot link ble
+serial cot on
+expect 5000 [BLE] advertising as
+wait 1000
+key M
+wait 800
+key S
+wait 800
+key 5
+wait 1500
+shot power_awake-01-bluetooth.png
+serial cot off
+expect 5000 [BLE] off
+key ^
+wait 800
+key 5
+wait 1500
+shot power_awake-02-off.png
+serial cot link wifi
+serial pm0

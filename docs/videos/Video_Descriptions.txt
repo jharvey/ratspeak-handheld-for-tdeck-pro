@@ -720,6 +720,34 @@ Overlays:
 End: the idle screen.
 
 
+-- ATAK_over_Bluetooth.mp4
+
+Status: MADE 24 Nov 2026 (sim/scripts/howto/ATAK_over_Bluetooth.txt), 80 s.
+Depends: CAN BE MADE NOW (radio side only; the simulator has no real Bluetooth).
+Remake when: the WiFi page rows 9-11 or the Power page change. A version with a real phone
+(pairing dialog, ATAK showing the radio) belongs in ATAK_feed.mp4 (needs a phone).
+
+Purpose: turn the ATAK feed on and send it to the phone over Bluetooth instead of WiFi.
+
+Setup: one unit, "ROBIN", Balanced, the help files on the SD card (seed "library").
+
+Steps:
+1. A key, M, S, 3 (WiFi). 9: ATAK feed on.
+2. V to row 10, Enter: the link to the phone becomes Bluetooth.
+3. V to row 11: the radio's Bluetooth name and its PIN.
+4. ^, 5 (Power): Balanced reads "awake: Bluetooth" with a shorter runtime.
+5. ^, 3, 9: the feed off (Bluetooth goes off with it).
+
+Overlays:
+- Start: what ATAK is and what the feed shows.
+- After step 2: no WiFi network needed; the first switch restarts the radio once.
+- After step 3: the phone side (bridge app, Scan, tap the radio, type the PIN); ATAK then shows
+  the radio and its contacts, even those reached only over LoRa.
+- After step 4: plan on about a day of battery with the feed on.
+
+End: the WiFi page.
+
+
 -- ATAK_feed.mp4
 
 Status: PROPOSED.

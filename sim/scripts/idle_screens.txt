@@ -5,6 +5,7 @@
 #   run-script.bat scripts\idle_screens.txt libsim
 # The Map idle screen is in idle_map.txt (device cmap, tiles).
 expect 60000 [BOOT] ready
+serial wiz skip
 wait 1500
 serial idlescr 0
 expect 3000 [IDLE] screen Splash

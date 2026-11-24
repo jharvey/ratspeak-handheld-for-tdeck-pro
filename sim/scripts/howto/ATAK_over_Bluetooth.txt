@@ -1,0 +1,71 @@
+# How-to video: the ATAK feed over Bluetooth (settings on the radio; the phone side is told in
+# notes: the simulator has no real Bluetooth). Device hv_robin, seed "library".
+expect 60000 [BOOT] ready
+serial wiz skip
+wait 1500
+serial pm1
+wait 800
+serial cot off
+serial cot link wifi
+key SPACE
+wait 800
+wait 3000
+key I
+wait 1500
+serial idle now
+wait 2500
+rec ATAK_over_Bluetooth
+note 7500 ATAK is a map app teams use. This radio can show itself, its contacts and markers in ATAK on a phone, and the phone's position on the radio's map.
+wait 8000
+caption Wake the radio, then M (Menu), S (Settings), 3 (WiFi).
+wait 1500
+key SPACE
+wait 1500
+key M
+wait 1200
+key S
+wait 1200
+key 3
+wait 2500
+caption Row 9: ATAK feed. 9 turns it on.
+wait 1500
+key 9
+expect 5000 [COT] feed on
+wait 2500
+caption Row 10: the link to the phone. Enter switches WiFi / Bluetooth.
+wait 1500
+key V
+wait 1200
+key ENTER
+expect 5000 [COT] link Bluetooth
+wait 2000
+note 7000 Bluetooth needs no WiFi network at all: good in the field. The first switch to Bluetooth restarts the radio once.
+wait 7500
+caption Row 11 shows the radio's Bluetooth name and its pairing code.
+wait 1500
+key V
+wait 4000
+note 9000 On the phone: open the RatSpeak ATAK bridge app, tap Scan for radios, tap this radio, and type this 6-digit code when Android asks.
+wait 9500
+note 7500 Then ATAK shows this radio and its contacts. Contacts reached only over LoRa, miles away, show up too.
+wait 8000
+caption Bluetooth keeps the radio awake: S, 5 (Power) shows it.
+wait 1500
+key ^
+wait 1200
+key 5
+wait 3500
+note 6500 With the feed on Bluetooth or WiFi, plan on about a day of battery, not several.
+wait 7000
+caption To stop: S, 3, then 9 turns the feed off. Bluetooth goes off with it.
+wait 1500
+key ^
+wait 1200
+key 3
+wait 1200
+key 9
+expect 5000 [COT] feed off
+wait 3000
+rec off
+wait 500
+serial cot link wifi

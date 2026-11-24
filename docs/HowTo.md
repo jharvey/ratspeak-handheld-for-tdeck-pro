@@ -370,7 +370,8 @@ ATAK: phones running ATAK can see this unit, its contacts and the markers:
 **M**, **S**, **3** (WiFi), row 9 "ATAK feed (CoT)", **Enter** turns it on.
 The next row, "ATAK link to phone", switches between WiFi and Bluetooth (switching to
 Bluetooth restarts the radio once). Bluetooth needs the Android app `firmware/RatSpeak-ATAK-bridge.apk`: scan, tap the radio and
-type the 6-digit code the radio shows (see tools/android/atak-bridge/README.md).
+type the 6-digit PIN the radio shows (see tools/android/atak-bridge/README.md).
+Video: [ATAK_over_Bluetooth.mp4](videos/ATAK_over_Bluetooth.mp4).
 
 ## Waypoints
 

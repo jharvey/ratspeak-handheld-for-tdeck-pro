@@ -158,15 +158,15 @@ CheckinPhase checkinPhase(const Settings& s, uint32_t secOfDay) {
 
 uint16_t nextCheckinEvery(uint16_t mins) { return stepNext(kEverySteps, mins); }
 
-uint16_t estimateMa(const Profile& p) {
+uint16_t estimateMa(const Profile& p, int awakeExtraMa) {
     // Measured 2026-11-10 after the GPS UART, audio and front-light fixes: awake at 240 MHz
     // with LoRa listening and touch on ~48 mA (CPU ~35, -12 at 80 MHz), GPS ~19 mA more.
     // Asleep: ~8 mA floor with touch on, LoRa listening ~+1-2 mA, waking every 1 s ~+1 mA;
     // touch held in reset saves ~2 mA. A powered GPS keeps the CPU awake.
-    const bool sleeps = p.wakeSecs > 0 && p.gps != GPS_ON;
-    uint32_t ma;
+    const bool sleeps = p.wakeSecs > 0 && p.gps != GPS_ON && awakeExtraMa < 0;
+    uint32_t ma = awakeExtraMa > 0 ? (uint32_t)awakeExtraMa : 0;
     if (!sleeps) {
-        ma = 7 + (p.cpuMhz >= 240 ? 35 : p.cpuMhz >= 160 ? 29 : 23) + (p.lora ? 6 : 0);
+        ma += 7 + (p.cpuMhz >= 240 ? 35 : p.cpuMhz >= 160 ? 29 : 23) + (p.lora ? 6 : 0);
     } else {
         ma = 6 + (p.touchOnKey ? 0 : 2) + (p.lora ? 2 : 0) + (p.wakeSecs <= 1 ? 1 : 0);
         if (p.wakeSecs >= 300 && ma > 6) ma -= 1;     // few wake-ups: measured ~7 mA with LoRa

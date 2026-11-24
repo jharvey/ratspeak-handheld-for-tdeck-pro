@@ -135,6 +135,8 @@ $videos = @(
     @{ name = "Map_layers"; title = "Atlas: map layers"; main = "hv_jack"
        devices = [ordered]@{ hv_jack = "JACK" }
        ini = @{ hv_jack = @("gps = 35.28330,-86.37000") }; seed = @{ hv_jack = "tn" } },
+    @{ name = "ATAK_over_Bluetooth"; title = "ATAK feed over Bluetooth"; main = "hv_robin"
+       devices = [ordered]@{ hv_robin = "ROBIN" }; seed = @{ hv_robin = "library" } },
     @{ name = "Library_and_games"; title = "Library and games"; main = "hv_robin"
        devices = [ordered]@{ hv_robin = "ROBIN" }; seed = @{ hv_robin = "library" } },
     @{ name = "Settings_tour"; title = "A tour of Settings"; main = "hv_robin"
