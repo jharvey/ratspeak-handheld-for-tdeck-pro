@@ -1,0 +1,18 @@
+# Console "wifi off" / "wifi auto" (battery tests): off disconnects and pauses auto-join, so a
+# saved network is not joined again; "wifi auto" lets auto-join take it again.
+expect 60000 [BOOT] ready
+wait 1500
+serial wiz skip
+wait 1000
+serial wifi join HomeNet password123
+expect 15000 [WIFI] connected "HomeNet"
+serial wifi off
+expect 3000 [WIFI] off (auto-join paused
+# auto-join would scan within a minute or so: nothing may connect for 90 s
+wait 90000
+serial pw
+expect 3000 wifi=allowed
+serial wifi auto
+expect 3000 [WIFI] auto-join on
+# ("wifi join" does not save the network: with nothing saved, auto-join has nothing to scan for)
+quit

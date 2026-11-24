@@ -16823,6 +16823,12 @@ void handleSerialLine(char* p) {
 #endif
     } else if (!strcmp(p, "cot") || !strncmp(p, "cot ", 4)) {
         cotConsole(p[3] ? p + 4 : "");
+    } else if (!strcmp(p, "wifi off")) {                // = S.3 row 5 Disconnect (auto-join paused)
+        wifiDisconnect();
+        Serial.println("[WIFI] off (auto-join paused; 'wifi auto' resumes it)");
+    } else if (!strcmp(p, "wifi auto")) {               // auto-join again (battery tests)
+        g_wifiUserOff = false;
+        Serial.println("[WIFI] auto-join on");
     } else if (!strncmp(p, "wifi join ", 10)) {         // wifi join <ssid> [password] (bench)
         char ssid[33] = "", pass[65] = "";
         if (sscanf(p + 10, "%32s %64s", ssid, pass) >= 1) { wifiConnect(ssid, pass, false, false); Serial.printf("[WIFI] joining \"%s\"\n", ssid); }
