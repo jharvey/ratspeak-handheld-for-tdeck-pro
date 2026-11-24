@@ -131,7 +131,7 @@ and so on. **Enter** keeps what is shown and goes on, **^** goes back, a number 
 | 2 | Radio name (default TDP- plus four characters) |
 | 3 | Time zone. The clock sets itself from GPS or from radios it hears |
 | 4 | Clock: 24 h or 12 h |
-| 5 | Energy mode: Full, Balanced (default), Saver, Check-in |
+| 5 | Energy mode: Full, Balanced (default), Eco, Saver, Check-in |
 | 6 | Idle screen: Splash, Map, Library page, If found |
 | 7 | Minimal, Typical or Everything |
 | 8 | Password lock: none, or set one |
@@ -480,8 +480,11 @@ For your own ATAK markers to reach the radio, add an output in ATAK once: Settin
 Preferences, Manage Outputs, address 127.0.0.1, port 4349, UDP. Your ATAK position reaches it
 without that. To forget paired phones: row 11, **Enter** twice.
 
-Either link keeps the radio awake (no light sleep): expect about a day of battery with the
-feed on, not several days.
+Either link keeps the radio awake (no light sleep): expect about 13 hours of battery with the
+feed on (measured with WiFi), not days.
+
+On the radio, the Library page *Help-15-Phone-link* compares WiFi and Bluetooth (who should use
+which, battery, phone and ATAK set-up, trouble-shooting).
 
 *Tested: WiFi with a PC receiving every event as valid CoT; Bluetooth in the simulator and the
 radio side on a T-Deck Pro. Not yet seen with a real ATAK phone.* Windows PCs on a network
@@ -498,7 +501,7 @@ WiFi is optional; messages go over LoRa without it.
 
 Up to 8 saved networks (row 4), passwords stored encrypted. Row 5 disconnects. On WiFi,
 RatSpeak radios on the same network also talk to each other directly (row 8, Mesh over WiFi,
-on by default). Saver, Ultra-low, On demand and Check-in turn WiFi off.
+on by default). Eco, Saver, Ultra-low, On demand and Check-in turn WiFi off.
 
 ### 4.12 Walkie-talkie
 
@@ -623,7 +626,7 @@ Entry (type a value), Action, Info. Rows a mode hides keep their numbers.
 | 3 | **WiFi** | 1 Status · 2 IP address · 3 Scan networks · 4 Saved networks · 5 Disconnect · 6 TCP hub (Advanced) · 7 Home Assistant voice · 8 Mesh over WiFi · 9 ATAK feed (CoT) · 10 ATAK link to phone (WiFi / Bluetooth) · 11 Bluetooth (name, pairing code) |
 | 4 | **Screen & I/O** | 1 Theme (White paper / Black ink) · 2 Idle splash · 3 Key backlight |
 | 4.2 | Idle splash | 1 Off · 2 On, no password · 3 On + password · 4 Timeout (10-99999 s) · 5 Set / Change password · 6 Remove password · 7 Lock now · 8 Idle screen · 9 If-found details · 10 If found: my address shown / hidden |
-| 5 | **Power** | 1 Full power · 2 Balanced · 3 Saver · 4 Ultra-low · 5 On demand · 6 Check-in · 7 Custom · 8 Check-in schedule · 9 Energy monitor · 10 Full power on USB · 11 Standby when idle · 12 Standby after · 13 Now · 14 Battery draw · 15 Capacity used for estimates |
+| 5 | **Power** | 1 Full power · 2 Balanced · 3 Eco · 4 Saver · 5 Ultra-low · 6 On demand · 7 Check-in (and its schedule) · 8 Custom · 9 Energy monitor · 10 Full power on USB · 11 Standby when idle · 12 Standby after · 13 Now · 14 Battery draw · 15 Capacity used for estimates |
 | 6 | **Battery** | 1 Voltage · 2 Charge · 3 Avg current · 4 Status · 5 USB power · 6 Gauge flags · 7 Capacity · 8 Battery log · 9 Full-charge cal · 10 Reset calibration · 11 Time left (measured) · 12 Low-battery notice · 13 Learned capacity |
 | 7 | **Identity** | 1 Address 1-16 · 2 Display name · 3 Address 17-32 · 4 Announce ID · 5 Identities · 6 Run setup wizard · 7 Share all contacts · 8 Export contacts (SD) · 9 Import contacts (SD) |
 | 8 | **LoRa** (Advanced) | 1 Radio · 2 Frequency · 3 Link preset (Long Fast, Long Slow, Medium, Fast Short) · 4 Last RSSI · 5 Last SNR · 6 Range test · 7 Relay for others |
@@ -665,6 +668,7 @@ drain after 30 minutes on battery.
 |---|---|---|---|---|---|
 | Full power | never | on | always on | yes | ~48 mA, ~67 mA with GPS |
 | Balanced (default) | 1 s (wakes ~every 30 s to read the GPS) | on | always on, in its own power-save | yes | not measured yet (see below) |
+| Eco | 1 s | on | every hour | off | ~12 mA (estimate) |
 | Saver | 60 s | on | every hour | off | ~7 mA |
 | Ultra-low | 5 min | on | off | off | ~7 mA (estimate) |
 | On demand | 5 min | 2 min after a key | one fix on a key | off | ~6 mA (estimate) |
@@ -674,11 +678,15 @@ drain after 30 minutes on battery.
 **WiFi or Bluetooth keeps the radio awake.** While WiFi is joined, or the ATAK feed uses
 Bluetooth, the radio cannot sleep in any mode. The Power page says so ("ON ~16 h, awake: WiFi";
 row "Now": "kept awake by WiFi"), and the current mode's runtime counts it. Measured 23-24 Nov
-2026: Balanced with WiFi joined and the ATAK feed on drew 85-94 mA (about a day). Balanced
+2026: Balanced with WiFi joined and the ATAK feed on drew ~90 mA and ran 12.6 and 13.5 hours on a full battery (two radios). Balanced
 without WiFi has not been measured yet: the runtime the Power page shows for it (~21 h) assumes
 the GPS keeps the CPU awake, which is pessimistic since the GPS got its own power-save mode.
 
-Keys and incoming messages are immediate in Full, Balanced, Saver and Ultra-low. In On demand
+**Eco** is the step down from Balanced: the same quick radio (wakes every second, touch and key
+light on, map can still wake the GPS), but WiFi is off and the GPS takes a fix once an hour.
+Pick it when you do not need WiFi or a live position.
+
+Keys and incoming messages are immediate in Full, Balanced, Eco, Saver and Ultra-low. In On demand
 messages arrive only while LoRa is on; in Check-in only in the windows, and outgoing messages
 wait for the next window.
 
@@ -725,13 +733,13 @@ chats. Storage row 3 and row 4 show the state.
 **The Atlas is missing, or the map says "no tiles".** There are no map files on the card for
 that place or zoom. See [2.2](#22-prepare-the-sd-card-optional).
 
-**No GPS fix.** In Full and Balanced the GPS is always on; in Saver it looks every hour. Go
-outside with a view of the sky and give it a few minutes (in Saver, up to an hour, or switch to
+**No GPS fix.** In Full and Balanced the GPS is always on; in Eco and Saver it looks every hour. Go
+outside with a view of the sky and give it a few minutes (in Eco or Saver, up to an hour, or switch to
 Full power for a while). **M**, **S**, **2**, row 3
 shows the satellites heard.
 
 **WiFi does not connect.** Check the password (WiFi, Saved networks, the network, Password).
-Saver, Ultra-low, On demand, Check-in and standby turn WiFi off. With a password lock set,
+Eco, Saver, Ultra-low, On demand, Check-in and standby turn WiFi off. With a password lock set,
 saved WiFi passwords are only usable after unlocking.
 
 **The ATAK phone does not see the radio.** WiFi link: both must be on the same WiFi network

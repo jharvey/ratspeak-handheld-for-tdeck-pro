@@ -4637,8 +4637,8 @@ void buildSettingsRows(Page p) {
         const int extra = wifiAwake ? power::kWifiAwakeMa : bleAwake ? power::kBleAwakeMa : -1;
         bool capLearned = false;
         const uint16_t cap = batCapacityMah(&capLearned);
-        static const char* kNote[power::MODE_CUSTOM] = {"always awake", "wake 1 s", "wake 60 s",
-                                                        "LoRa only", "LoRa on key", ""};
+        static const char* kNote[power::MODE_CUSTOM] = {"always awake", "wake 1 s", "no WiFi",
+                                                        "wake 60 s", "LoRa only", "LoRa on key", ""};
         char rt[16], ci[24], at[12];
         fmtClockMin(g_pw.checkinStart, at, sizeof(at));
         checkinEveryText(ci, sizeof(ci));
@@ -4646,7 +4646,8 @@ void buildSettingsRows(Page p) {
             const bool cur = g_pw.mode == m && extra >= 0;
             power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(power::preset(m), cur ? extra : -1));
             if (m == power::MODE_CHECKIN)        // a menu: the Check-in page (time, every ...)
-                srow(RK_MENU, "Check-in", "%s%s, every %s", g_pw.mode == m ? "ON " : "", at, ci);
+                srow(RK_MENU, "Check-in", "%s%s, every %s%s", g_pw.mode == m ? "ON " : "", at, ci,
+                     g_pw.mode == m && g_outboxCount ? ", msgs wait" : "");
             else
                 srow(RK_PICK, power::modeName(m), "%s%s, %s", g_pw.mode == m ? "ON " : "", rt,
                      cur ? (wifiAwake ? "awake: WiFi" : "awake: Bluetooth") : kNote[m]);
@@ -4657,7 +4658,6 @@ void buildSettingsRows(Page p) {
         } else {
             srow(RK_MENU, "Custom", "set your own");
         }
-        srow(RK_MENU, "Check-in sched", "%s, every %s%s", at, ci, g_outboxCount ? ", msgs wait" : "");
         srow(RK_MENU, "Energy monitor", "what uses the battery");
         srow(RK_TOGGLE, "Full power on USB", "%s", g_pw.fullOnUsb ? "ON" : "OFF");
         srow(RK_TOGGLE, "Standby when idle", g_pw.standby ? "ON: GPS off after %u h idle" : "OFF",
@@ -5381,23 +5381,21 @@ void activateSetting(int idx) {
             power::save(g_pw);
             powerApply(true);
             pushPage(PG_POWER_CUSTOM);
-        } else if (idx == power::MODE_CUSTOM + 1) {
-            pushPage(PG_CHECKIN);
-        } else if (idx == power::MODE_CUSTOM + 2) {
+        } else if (idx == power::MODE_CUSTOM + 1) {   // (row 7 Check-in opens the schedule)
             g_energyShowCurrent = false;
             pushPage(PG_ENERGY);
-        } else if (idx == power::MODE_CUSTOM + 3) {
+        } else if (idx == power::MODE_CUSTOM + 2) {
             g_pw.fullOnUsb = !g_pw.fullOnUsb;
             power::save(g_pw);
             powerApply(true);
             requestRedraw();
-        } else if (idx == power::MODE_CUSTOM + 4) {
+        } else if (idx == power::MODE_CUSTOM + 3) {
             g_pw.standby = !g_pw.standby;
             power::save(g_pw);
             toast(g_pw.standby ? "Standby after %u h idle" : "Standby when idle: off", (unsigned)g_pw.standbyHours);
             Serial.printf("[STANDBY] option %s, after %u h\n", g_pw.standby ? "on" : "off", (unsigned)g_pw.standbyHours);
             requestRedraw();
-        } else if (idx == power::MODE_CUSTOM + 5) {
+        } else if (idx == power::MODE_CUSTOM + 4) {
             g_pw.standbyHours = power::nextStandbyHours(g_pw.standbyHours);
             power::save(g_pw);
             Serial.printf("[STANDBY] option %s, after %u h\n", g_pw.standby ? "on" : "off", (unsigned)g_pw.standbyHours);
@@ -12122,7 +12120,9 @@ enum WizStep : uint8_t { WZ_WELCOME, WZ_NAME, WZ_TIME, WZ_CLOCK, WZ_POWER, WZ_ID
 const char* const kWizTitle[WZ_COUNT] = {"Welcome", "Device name", "Time zone", "Clock", "Energy mode",
                                          "Idle screen", "Simple / Advanced", "Password lock",
                                          "Import contacts", "Done"};
-const uint8_t kWizModes[4] = {power::MODE_FULL, power::MODE_BALANCED, power::MODE_SAVER, power::MODE_CHECKIN};
+constexpr int kWizModeN = 5;
+const uint8_t kWizModes[kWizModeN] = {power::MODE_FULL, power::MODE_BALANCED, power::MODE_ECO, power::MODE_SAVER,
+                                      power::MODE_CHECKIN};
 
 void wizStart() {
     g_menuOpen = false;
@@ -12191,7 +12191,7 @@ bool wizPick(int k) {
             g_cfg.clock12 = k == 2; saveConfig();
             return true;
         case WZ_POWER:
-            if (k < 1 || k > 4) return false;
+            if (k < 1 || k > kWizModeN) return false;
             g_pw.mode = kWizModes[k - 1]; power::save(g_pw); powerApply(true);
             return true;
         case WZ_IDLE:
@@ -12282,7 +12282,7 @@ void renderWizard() {
             row("2 12 h", "1:45 PM", g_cfg.clock12);
             break;
         case WZ_POWER:
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < kWizModeN; i++) {
                 snprintf(a, sizeof(a), "%d %s", i + 1, power::modeName(kWizModes[i]));
                 if (kWizModes[i] == power::MODE_CHECKIN) {
                     char at[12], ev[16];

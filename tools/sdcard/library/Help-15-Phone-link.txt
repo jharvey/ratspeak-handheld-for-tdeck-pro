@@ -1,0 +1,121 @@
+PHONE LINK: WIFI OR BLUETOOTH (BLE)
+
+WHAT THIS IS ABOUT
+The radio talks to other radios over LoRa: miles, no network,
+no phone. WiFi and Bluetooth are only for the last few metres:
+radio to a phone or PC next to you. Mostly that means ATAK (the
+team map app, see Help-14-ATAK), and a few WiFi-only extras.
+You never need either one to send messages between radios.
+
+THE SHORT ANSWER
+- No phone with you, or only messaging: use NEITHER. Longest
+  battery. Eco or Saver mode turn WiFi off for you.
+- ATAK on an Android phone, out in the field: BLUETOOTH.
+- ATAK on iPhone (iTAK), Windows (WinTAK), several phones at
+  once, or at home / base camp with WiFi: WIFI.
+- Home Assistant voice, TCP hub, mesh over WiFi: WIFI only.
+
+WIFI
+How it works: the radio joins a WiFi network (your router or a
+phone's hotspot). ATAK on any device on that network finds the
+radio by itself (multicast 239.2.3.1 port 6969).
+Good:
+- Nothing to install: stock ATAK, iTAK and WinTAK just see it.
+- Many phones and PCs at once.
+- Range of the WiFi network (a whole house or camp).
+- Also carries Home Assistant, the TCP hub, mesh over WiFi.
+Not so good:
+- Needs a network. In the field that means a phone hotspot,
+  which drains the phone too.
+- Not encrypted: anyone on that network can read positions and
+  could send fake ones. Use your own network or hotspot only.
+- Guest networks and PCs set to "Public" often block it.
+Set up:
+1 Radio: M, S, 3 (WiFi), 3 Scan networks, pick one, password.
+2 Radio: row 9 ATAK feed ON, row 10 link = WiFi (the default).
+3 Phone: join the same network, open ATAK. Done: the radio and
+  its contacts appear within 30 s.
+
+BLUETOOTH (BLE, BLUETOOTH LOW ENERGY)
+How it works: the radio and ONE phone pair directly, no network
+at all. A small app on the phone, "RatSpeak ATAK bridge", passes
+the data to ATAK on the same phone. BLE is the low-power kind of
+Bluetooth (the kind watches use); this radio has no other kind.
+Good:
+- No network, no hotspot, nothing else to carry: best in the
+  field.
+- Paired with a PIN and encrypted: only your phone gets the data.
+- Phone reconnects by itself when it comes back in range.
+Not so good:
+- Android only for now (no iPhone app yet).
+- One phone per radio.
+- About 10 m: keep the phone on you.
+- While the feed uses Bluetooth, the radio's WiFi stays off
+  (both do not fit in its memory at once).
+Set up, radio:
+1 M, S, 3 (WiFi): row 9 ATAK feed ON.
+2 Row 10 "ATAK link to phone": Enter -> Bluetooth. The first
+  time the radio restarts once.
+3 Row 11 shows the radio's name and PIN:
+  "RatSpeak-xxxx PIN 123456".
+Set up, phone (once):
+1 Copy RatSpeak-ATAK-bridge.apk to the phone (from the firmware
+  folder of the RatSpeak files, by USB cable, email or a cloud
+  drive). Tap it to install; Android asks to allow installs
+  from that app: allow it once.
+2 Open the bridge app. Allow "Nearby devices" (Bluetooth) and
+  notifications. (Android 8-11 asks for location instead: that
+  is how old Android names Bluetooth scanning.)
+3 Tap Scan for radios, tap RatSpeak-xxxx.
+4 Android asks for a pairing PIN: type the 6 digits from row 11
+  (they also pop up on the radio's screen for 30 s).
+5 The app says "connected to RatSpeak-xxxx". Leave it running;
+  a small notification shows it is working.
+Set up, ATAK (once, for your markers to reach the radio):
+- ATAK, Settings, Network Preferences, Manage Outputs, add:
+  address 127.0.0.1, port 4349, protocol UDP.
+- Nothing else: ATAK already listens where the app sends
+  (127.0.0.1 port 4242). Your own ATAK position reaches the
+  radio without any setting.
+Forget a phone: radio row 11, Enter twice; on the phone, forget
+"RatSpeak-xxxx" in Android's Bluetooth settings.
+
+ENERGY: WHAT IT COSTS
+The radio saves battery by sleeping between jobs. Joined WiFi,
+or Bluetooth on, keeps it awake: it cannot sleep in any mode.
+- Measured 23-24 Nov 2026: Balanced with WiFi joined and the
+  ATAK feed on drew ~90 mA and ran 12.6 and 13.5 hours on a
+  full battery (two radios).
+- Bluetooth: the radio is awake the same way; the Bluetooth part
+  itself is small. Expect about the same, 13-15 hours (not
+  measured yet).
+- Neither on: the radio sleeps; Eco and Saver last several days.
+The Power page (M, S, 5) shows it: "ON ~19 h, awake: Bluetooth"
+and row Now "kept awake by WiFi".
+Tips:
+- Turn the feed off when nobody looks at ATAK: S, 3, 9.
+- WiFi joined but not needed? S, 3, 5 Disconnect.
+- On a charger it does not matter: the radio runs Full anyway.
+- The phone side: the bridge app costs the phone little; a WiFi
+  hotspot on the phone costs it a lot.
+
+WHEN NOT TO USE EITHER
+- Long trips on battery with no ATAK user: leave both off, pick
+  Eco, Saver or Check-in.
+- Privacy: with both off the radio sends nothing but LoRa
+  (end-to-end encrypted messages).
+- Crowded WiFi or no hotspot: Bluetooth or nothing.
+
+TROUBLE?
+- Phone app never finds the radio: radio row 11 must show a PIN
+  (not "off in this energy mode": Eco, Saver, Check-in turn
+  phone links off; pick Balanced or Full). Bluetooth on in the
+  phone. Within a few metres.
+- Pairing fails again and again: forget on both sides (above),
+  scan and pair again.
+- App "connected" but ATAK shows nothing: wait 30 s (one round);
+  in the app "to ATAK" should count up. Check ATAK has not
+  turned its default inputs off.
+- WiFi link, ATAK shows nothing: same network? Hotspot or home
+  WiFi, not a guest network.
+More: Help-14-ATAK (what ATAK is), Help-9-Battery (modes).

@@ -35,9 +35,10 @@ Bluetooth.
   feed uses Bluetooth, the radio's WiFi stays off (both do not fit
   in memory at once).
 - Neither is turned on by itself. In an energy mode with WiFi off
-  (Saver, Check-in) the feed waits, Bluetooth too.
+  (Eco, Saver, Check-in) the feed waits, Bluetooth too.
 - Off, the feed costs no power. On, either link keeps the radio
-  awake (no sleep): plan for a day of battery, not several.
+  awake (no sleep): about 13 hours on a full battery
+  (measured with WiFi), not days.
 
 BLUETOOTH: PAIR THE PHONE (ONCE)
 1 Radio: feed ON, link Bluetooth. The row below shows the radio's
@@ -83,3 +84,4 @@ GOOD TO KNOW
   the radio side on a T-Deck; not yet tried with a real ATAK phone.
 - Hostile units (red, a-h) from ATAK show as hazard markers.
 - Markers: Help-6-Map, Atlas J. Sharing your position: Help-5.
+- WiFi or Bluetooth, set-up on the phone, battery: Help-15.

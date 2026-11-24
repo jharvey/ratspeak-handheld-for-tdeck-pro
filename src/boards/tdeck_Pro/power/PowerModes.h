@@ -21,8 +21,10 @@
 
 namespace power {
 
-enum Mode : uint8_t { MODE_FULL, MODE_BALANCED, MODE_SAVER, MODE_ULTRA, MODE_ONDEMAND, MODE_CHECKIN,
-                     MODE_CUSTOM, MODE_COUNT };
+// Saved as "mode3" (Eco added 2026-11-24 after Balanced; an older "mode2" is moved up by one
+// from Saver on, see load()).
+enum Mode : uint8_t { MODE_FULL, MODE_BALANCED, MODE_ECO, MODE_SAVER, MODE_ULTRA, MODE_ONDEMAND,
+                     MODE_CHECKIN, MODE_CUSTOM, MODE_COUNT };
 // GPS_ON_USE: one visit when a key is pressed, at most every 15 min.
 enum GpsUse : uint8_t { GPS_ON, GPS_15MIN, GPS_HOURLY, GPS_OFF, GPS_ON_USE, GPS_COUNT };
 constexpr uint32_t kLoraOnUseMs = 120000;      // LoRa stays on this long after a key (on use)

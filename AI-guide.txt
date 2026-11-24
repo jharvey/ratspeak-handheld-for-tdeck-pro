@@ -310,10 +310,12 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        this small (deadband / offset). Real floor ~1-5 mA; needs a meter. BHI260 boot
        status 0x38 (firmware loaded) on COM3/COM5, 0x18 on COM6/COM9 - no visible
        difference. Only COM8/COM9 have SD cards. floor d <n> <secs> sets cycle length.
-[DONE] Mode ladder (power/PowerModes.*): Full, Balanced (DEFAULT), Saver, Ultra-low
+[DONE] Mode ladder (power/PowerModes.*): Full, Balanced (DEFAULT), Eco (2026-11-24: Balanced
+       without WiFi, GPS hourly), Saver, Ultra-low
        (LoRa only, 5 min wakes), On demand (Profile.loraOnUse: LoRa 2 min after a key;
-       GPS_ON_USE one fix per key, <= every 15 min), Check-in, Custom. NVS key "mode2"
-       holds the new numbering (old "mode" 3 = Custom is migrated). pm0..pm6.
+       GPS_ON_USE one fix per key, <= every 15 min), Check-in, Custom. NVS key "mode3"
+       holds the numbering with Eco ("mode2" from Saver on +1, old "mode" 2/3 = Saver/Custom
+       migrated; sim/scripts/eco_migrate.py). pm0..pm7 (pm2 = Eco, pm3 = Saver).
 [DONE] Check-in mode (Profile.checkin; Settings.checkinMin/checkinEvery, NVS ciMin/
        ciEvery): LoRa only from 1 min before to 3 min after each check-in; announce at
        +5 s and +90 s; outbox (8, NVS rs_outbox) sent from +20 s, or at once when the

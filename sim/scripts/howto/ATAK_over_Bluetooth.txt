@@ -55,7 +55,7 @@ key ^
 wait 1200
 key 5
 wait 3500
-note 6500 With the feed on Bluetooth or WiFi, plan on about a day of battery, not several.
+note 6500 With the feed on Bluetooth or WiFi, plan on about 13 hours of battery, not days.
 wait 7000
 caption To stop: S, 3, then 9 turns the feed off. Bluetooth goes off with it.
 wait 1500

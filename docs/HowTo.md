@@ -305,9 +305,10 @@ How much the radio sleeps. More sleep means more days on one charge.
 
 1. **M**, **S**, **5** (Power). Each row is a mode, with the battery life in it.
 2. A row's number picks it: **1** Full power (always awake), **2** Balanced (the everyday
-   mode), **3** Saver (wakes once a minute; LoRa still listens), **4** Ultra-low (LoRa only,
-   wakes every 5 minutes), **5** On demand (LoRa only for a while after a key press),
-   **6** Check-in (LoRa only at set times), **7** Custom.
+   mode), **3** Eco (like Balanced, but WiFi off and the GPS once an hour), **4** Saver (wakes
+   once a minute; LoRa still listens), **5** Ultra-low (LoRa only, wakes every 5 minutes),
+   **6** On demand (LoRa only for a while after a key press), **7** Check-in (LoRa only at set
+   times; the row opens its schedule), **8** Custom.
 3. Further down: 9 Energy monitor, 10 Full power on USB.
 
 ## Low-battery notice

@@ -1,4 +1,4 @@
-# Energy modes: Settings > Power, pick Saver, open Custom, USB power forces Full.
+# Energy modes: Settings > Power, Eco, pick Saver, open Custom, USB power forces Full.
 usb off
 expect 20000 [BOOT] ready
 serial wiz skip
@@ -10,7 +10,12 @@ wait 800
 key 5
 wait 1200
 shot power-01-page.png
+# Eco (row 3): Balanced without WiFi, GPS hourly.
 key 3
+expect 3000 [POWER] Eco: cpu 240 MHz, sleep 1 s, awake 15s, lora on, gps Every hour, wifi off, keylight allowed
+wait 1200
+shot power-01b-eco.png
+key 4
 expect 3000 [POWER] Saver: cpu 240 MHz
 wait 1200
 shot power-02-saver.png
@@ -29,21 +34,21 @@ key T
 wait 300
 shot power-02b-woke.png
 wait 1500
-# Custom (row 7): copies Saver, then CPU speed steps 240 -> 160.
-key 7
+# Custom (row 8): copies Saver, then CPU speed steps 240 -> 160.
+key 8
 wait 1200
 shot power-03-custom.png
 key 1
 expect 3000 [POWER] Custom: cpu 160 MHz
 wait 1200
 shot power-04-custom-cpu.png
-# Back to the Power page: Ultra-low (row 4) and On demand (row 5, LoRa on after a key).
+# Back to the Power page: Ultra-low (row 5) and On demand (row 6, LoRa on after a key).
 key BACK
 wait 1200
-key 4
+key 5
 expect 3000 [POWER] Ultra-low: cpu 240 MHz, sleep 5 min, awake 5s, lora on, gps Off
 wait 1200
-key 5
+key 6
 expect 3000 [POWER] On demand: cpu 240 MHz, sleep 5 min, awake 10s, lora on, gps When used
 wait 1200
 shot power-05-ondemand.png

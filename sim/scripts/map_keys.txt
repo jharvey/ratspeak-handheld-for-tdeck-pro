@@ -20,7 +20,7 @@ wait 1500
 serial map close
 expect 3000 [MAP] closed
 # Saver: the map does not wake the GPS
-serial pm2
+serial pm3
 expect 3000 [POWER] Saver
 expect 70000 (no fix), next in 60 min
 key T

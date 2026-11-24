@@ -40,29 +40,35 @@ caption 2 Balanced, the everyday mode.
 wait 1500
 key 2
 wait 2500
-note 8500 Balanced: sleeps between wake-ups one second apart. GPS takes a fix every 15 minutes. WiFi and the key light are allowed.
+note 8500 Balanced: sleeps between wake-ups one second apart. The GPS stays on in its own power-save mode. WiFi and the key light are allowed.
 wait 9000
-caption 3 Saver.
+caption 3 Eco: the next step down.
 wait 1500
 key 3
 wait 2500
-note 8500 Saver: sleeps and wakes once a minute. GPS takes a fix once an hour. WiFi and the key light are off. LoRa still hears your messages.
+note 8500 Eco: like Balanced, wakes every second, key light and touch on. But WiFi is off and the GPS takes a fix once an hour.
 wait 9000
-caption 4 Ultra-low.
+caption 4 Saver.
 wait 1500
 key 4
 wait 2500
+note 8500 Saver: sleeps and wakes once a minute. GPS takes a fix once an hour. WiFi and the key light are off. LoRa still hears your messages.
+wait 9000
+caption 5 Ultra-low.
+wait 1500
+key 5
+wait 2500
 note 8500 Ultra-low: LoRa listening and nothing else. It wakes every 5 minutes. GPS, WiFi and the lights are off, so your position is not updated.
 wait 9000
-caption V goes down. 5 On demand.
+caption V goes down. 6 On demand.
 wait 1500
 key V
 wait 600
-key 5
+key 6
 wait 2500
 note 10000 On demand: everything is off until you press a key. Then LoRa is on for 2 minutes, to send and get replies, and the GPS takes a fix if the last one is over 15 minutes old. Messages sent to you in between wait at the sender.
 wait 10500
-caption 6 Check-in: a set time to listen. 7 Custom: your own settings.
+caption 7 Check-in: a set time to listen. 8 Custom: your own settings.
 wait 2500
 note 10000 Check-in: LoRa is on only around a set time, for example every hour at half past: from 1 minute before to 3 minutes after. Messages you write wait for it. Everyone in the team uses the same time.
 wait 10500
@@ -70,8 +76,6 @@ caption A GPS fix can keep the GPS powered for up to 3 minutes. Fewer fixes is t
 wait 7000
 caption Further down: 9 Energy monitor, 10 Full power on USB.
 wait 1500
-key V
-wait 500
 key V
 wait 500
 key V

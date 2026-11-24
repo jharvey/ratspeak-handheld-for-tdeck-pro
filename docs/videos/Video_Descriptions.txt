@@ -447,7 +447,8 @@ End: the unit goes back to the idle screen.
 
 -- Energy_modes.mp4
 
-Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a).
+Status: MADE 22 Nov 2026, made again 23 Nov 2026 (firmware 609c48a), again 24 Nov 2026 with
+Eco (row 3).
 Depends: CAN BE MADE NOW.
 Remake when: Full power only on a strong USB supply lands; the Power page changes. (The
 Standby rows, 11 and 12, are in the video.)
@@ -460,13 +461,14 @@ Setup:
 Steps:
 1. Press a key, then M, S, then 5 (SYM + D) = Power. Each row is a mode with the battery
    life in it.
-2. Press 1 = Full power: always awake.
-3. Press 3 = Saver: sleeps most of the time, wakes once a minute, LoRa still listens.
-4. Press 4 = Ultra-low: LoRa only; GPS and WiFi off; wakes every 5 minutes.
-5. V, then 5 = On demand: LoRa is on only for a while after a key press.
-6. Caption only: 6 Check-in (LoRa only at set times), 7 Custom (your own settings).
-7. V further down: 9 Energy monitor, 10 Full power on USB, then Now, Battery draw, Times use.
-8. Press 2 = Balanced, the everyday mode. ^ twice.
+2. Press 1 = Full power: always awake. Press 2 = Balanced: the GPS on in its power-save.
+3. Press 3 = Eco: like Balanced, but WiFi off and the GPS once an hour.
+4. Press 4 = Saver: sleeps most of the time, wakes once a minute, LoRa still listens.
+5. Press 5 = Ultra-low: LoRa only; GPS and WiFi off; wakes every 5 minutes.
+6. V, then 6 = On demand: LoRa is on only for a while after a key press.
+7. Caption only: 7 Check-in (LoRa only at set times), 8 Custom (your own settings).
+8. V further down: 9 Energy monitor, 10 Full power on USB, then Now, Battery draw, Times use.
+9. Press 2 = Balanced, the everyday mode. ^ twice.
 
 Overlays:
 - Start: "Energy modes: how much the radio sleeps. More sleep means more days on one
@@ -743,7 +745,7 @@ Overlays:
 - After step 2: no WiFi network needed; the first switch restarts the radio once.
 - After step 3: the phone side (bridge app, Scan, tap the radio, type the PIN); ATAK then shows
   the radio and its contacts, even those reached only over LoRa.
-- After step 4: plan on about a day of battery with the feed on.
+- After step 4: plan on about 13 hours of battery with the feed on.
 
 End: the WiFi page.
 

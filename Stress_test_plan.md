@@ -281,7 +281,8 @@ A send holds the loop ~2.5-5 s while the record is saved.
 |---|---|---|---|---|---|
 | 2026-11-23 | 04c172f | Simulator: `marks_net.py` (3 radios), `cot_net.py` (2 radios), full regression (status, groups, lock, standby, idle, wifi, groups_net, standby_pair, status_net, monkey x2) | - | PASS | 8/8, 4/4, all PASS |
 | 2026-11-23 | 04c172f | Units COM9 -> COM6: one marker over LoRa | - | PASS | stored and listed on COM6 |
-| 2026-11-23 | 04c172f | Units COM3, COM5, COM8 (USB, WiFi) + COM6, COM9 (air): markers every 45 s to a unit, to COM6 / COM9 and to a five-unit group; ATAK feed every 10 s; PC on 239.2.3.1:6969 (`M:atspeak-soaktak_stress.py`) | 0.4 | NOT CONCLUSIVE | 5 of 46 markers arrived: COM3 (94 %) and COM5 (92 %) refuse new messages (flash full from the soak), outboxes full. Feed sent 1,528 / 1,410 events; the PC got none, also not by unicast (PC on a WiFi network marked Public in Windows). Heap steady (COM8 lowest: 22 KB, internal 16 KB), no restarts. COM8's feed stopped after 9 events and its console stalled up to 16 s |
+| 2026-11-23 | 04c172f | Units COM3, COM5, COM8 (USB, WiFi) + COM6, COM9 (air): markers every 45 s to a unit, to COM6 / COM9 and to a five-unit group; ATAK feed every 10 s; PC on 239.2.3.1:6969 (`M:
+atspeak-soaktak_stress.py`) | 0.4 | NOT CONCLUSIVE | 5 of 46 markers arrived: COM3 (94 %) and COM5 (92 %) refuse new messages (flash full from the soak), outboxes full. Feed sent 1,528 / 1,410 events; the PC got none, also not by unicast (PC on a WiFi network marked Public in Windows). Heap steady (COM8 lowest: 22 KB, internal 16 KB), no restarts. COM8's feed stopped after 9 events and its console stalled up to 16 s |
 
 Findings to follow up: COM8's stalled console and stopped feed; a store that is full refuses
 markers and status updates as well as chat (by design today, but those small updates could
@@ -338,7 +339,32 @@ logged to each unit's SD card (`ratdeckpro/soak.log`, COM3's card re-seated and 
 Status reports ("PS ... mV pct ma heap ...") every 5 min, and "dark" just before the
 switch-off, to the listener COM8 on USB (`M:\ratspeak-soak\2026-11-17\COM8_listener.log`);
 `batcap` started the learned-capacity count. Units apart, unplugged by the owner.
-Result to fill in: hours to shutdown, mAh/day, messages sent / delivered, gauge % vs real time.
+**Result (2026-11-24): Balanced + WiFi joined + ATAK feed on (worst case).**
+
+| | COM3 | COM5 |
+|---|---|---|
+| Unplugged | ~17:52 (first "dsg" report 17:54) | ~17:52 |
+| Switched itself off ("dark") | 06:29 | 07:23 |
+| Runtime on battery | **12 h 37 m** | **13 h 31 m** |
+| Average draw | 85-100 mA, mostly ~90 | 85-103 mA, mostly ~92 |
+| Used (draw x time) | ~1150 mAh | ~1250 mAh |
+| Gauge at 6 h / 12 h / off | 50 % at 6.1 h, 25 % at 12.2 h, **22 % at off** | 50 % at ~6.5 h, **19 % at off** |
+| Voltage at off | 3.40 V (kBatEmptyV) | 3.40 V |
+| Soak messages | ~61 sent, 0 send failures | ~56 sent, 0 send failures |
+| Restarts / heap | none (one boot) / internal 33-34 KB, min 28 KB, steady | none / 34 KB, min 29 KB |
+
+- About **1.9 Ah/day** at this draw: a full battery lasts **~13 h** with WiFi joined and the ATAK feed on,
+  in any mode (WiFi keeps the CPU awake). The firmware's new Power-page figure for this case
+  (Balanced + WiFi, 89 mA, "~16-19 h" on the nominal capacity) is somewhat optimistic: the
+  usable capacity to the 3.40 V cut-off is ~1.2 Ah, not 1.45.
+- The gauge reads ~20 % at the cut-off: it tracked well down to ~25 %, then the cell reached
+  3.40 V under ~95 mA. Either the cut-off could go a little lower (3.30 V would give maybe
+  20-40 min more; brownout margin to check) or the % shown should be scaled so 3.40 V reads 0 %.
+  Not changed yet: owner's call.
+- Every 5-min status report and every "dark" report arrived at the listener; the reports
+  repeated "dark" 2-3 times while the voltage hovered at 3.40 V (fine).
+- Next: run 2 with WiFi off (plain Balanced), then Eco, to measure the modes the docs still
+  mark "not measured yet".
 
 20:30 check: both still draw ~87 mA (100 → 86 % in 3 h, about 22 h projected). Cause: both were
 still joined to the WiFi with the ATAK feed on (left from the ATAK test), and WiFi keeps the CPU

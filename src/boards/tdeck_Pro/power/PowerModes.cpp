@@ -9,13 +9,16 @@ namespace {
 
 // Balanced (2026-11-14): GPS always on, but the CPU still sleeps (it wakes ~every 30 s to
 // read a position) and the receiver runs its own power-save mode (PSMCT).
-// mapGps: only Full and Balanced let the map wake the GPS; the saving modes keep their
+// mapGps: only Full, Balanced and Eco let the map wake the GPS; the saving modes keep their
 // schedule (the map shows the last fix and its age).
 // trackGps: no preset wakes the GPS for the track; it logs when the GPS is on anyway (Full:
 // always). Custom has the knob.
 //                         cpu  wake awake  lora   gps         wifi   keyLight touchOnKey loraOnUse checkin mapGps trackGps
 const Profile kFull     = {240,   0,   0,  true,  GPS_ON,     true,  true,    false,     false,    false,  true,  false};
 const Profile kBalanced = {240,   1,  15,  true,  GPS_ON,      true,  true,    false,     false,    false,  true,  false};
+// Eco (2026-11-24): Balanced without WiFi, the GPS looking once an hour (the map can still
+// wake it): keys, touch, key light and LoRa as in Balanced, the CPU sleeping between.
+const Profile kEco      = {240,   1,  15,  true,  GPS_HOURLY, false, true,    false,     false,    false,  true,  false};
 const Profile kSaver    = {240,  60,   5,  true,  GPS_HOURLY, false, false,   true,      false,    false,  false, false};
 const Profile kUltra    = {240, 300,   5,  true,  GPS_OFF,    false, false,   true,      false,    false,  false, false};
 const Profile kOnDemand = {240, 300,  10,  false, GPS_ON_USE, false, false,   true,      true,     false,  false, false};
@@ -46,6 +49,7 @@ bool inSteps(const uint16_t (&steps)[N], uint16_t v) {
 const Profile& preset(uint8_t mode) {
     switch (mode) {
         case MODE_BALANCED: return kBalanced;
+        case MODE_ECO:      return kEco;
         case MODE_SAVER:    return kSaver;
         case MODE_ULTRA:    return kUltra;
         case MODE_ONDEMAND: return kOnDemand;
@@ -67,6 +71,7 @@ const char* modeName(uint8_t mode) {
     switch (mode) {
         case MODE_FULL:     return "Full power";
         case MODE_BALANCED: return "Balanced";
+        case MODE_ECO:      return "Eco";
         case MODE_SAVER:    return "Saver";
         case MODE_ULTRA:    return "Ultra-low";
         case MODE_ONDEMAND: return "On demand";
@@ -79,7 +84,8 @@ const char* modeName(uint8_t mode) {
 const char* modeBlurb(uint8_t mode) {
     switch (mode) {
         case MODE_FULL:     return "always awake, all on";
-        case MODE_BALANCED: return "wake 1s, GPS 15m";
+        case MODE_BALANCED: return "wake 1s, GPS on";
+        case MODE_ECO:      return "wake 1s, no WiFi, GPS 1h";
         case MODE_SAVER:    return "wake 60s, GPS 1h";
         case MODE_ULTRA:    return "LoRa only, wake 5 min";
         case MODE_ONDEMAND: return "radios on when used";
@@ -193,12 +199,16 @@ void load(Settings& s) {
     s.custom = kBalanced;
     Preferences p;
     if (!p.begin("rs_power", true)) return;
-    // "mode2" holds the 6-mode numbering; the old "mode" key had Custom at 3.
-    if (p.isKey("mode2")) {
-        s.mode = p.getUChar("mode2", MODE_BALANCED);
+    // "mode3" holds the numbering with Eco; "mode2" (before Eco) is moved up by one from Saver
+    // on; the old "mode" key had Custom at 3.
+    if (p.isKey("mode3")) {
+        s.mode = p.getUChar("mode3", MODE_BALANCED);
+    } else if (p.isKey("mode2")) {
+        const uint8_t m2 = p.getUChar("mode2", MODE_BALANCED);
+        s.mode = m2 >= MODE_ECO ? (uint8_t)(m2 + 1) : m2;
     } else {
-        const uint8_t old = p.getUChar("mode", MODE_BALANCED);
-        s.mode = old == 3 ? MODE_CUSTOM : old;
+        const uint8_t old = p.getUChar("mode", MODE_BALANCED);   // Full, Balanced, Saver, Custom
+        s.mode = old == 3 ? MODE_CUSTOM : old == 2 ? MODE_SAVER : old;
     }
     s.fullOnUsb = p.getBool("usbFull", true);
     s.customSet = p.getBool("cSet", false);
@@ -239,7 +249,7 @@ void load(Settings& s) {
 void save(const Settings& s) {
     Preferences p;
     if (!p.begin("rs_power", false)) return;
-    p.putUChar("mode2", s.mode);
+    p.putUChar("mode3", s.mode);
     p.putBool("usbFull", s.fullOnUsb);
     p.putBool("cSet", s.customSet);
     const Profile& c = s.custom;

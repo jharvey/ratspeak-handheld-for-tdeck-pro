@@ -11,7 +11,7 @@ wait 800
 key 5
 wait 1200
 shot checkin-00-power.png
-key 6
+key 7
 wait 1200
 key 1
 expect 3000 [POWER] Check-in: cpu 240 MHz, sleep 5 min, awake 10s
@@ -29,7 +29,7 @@ expect 3000 at 08:15 every 60 min
 key BACK
 wait 1200
 shot checkin-03-power.png
-key 8
+key 7
 wait 1200
 key 1
 expect 3000 [POWER] Balanced
