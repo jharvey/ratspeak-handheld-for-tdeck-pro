@@ -26,8 +26,10 @@ def main():
     ap.add_argument("--version-name", default="0.1")
     a = ap.parse_args()
     run(["ssh", HOST, "rm -rf ~/atak-bridge && mkdir -p ~/atak-bridge"])
-    run(["scp", "-q", "-r", os.path.join(APP, "AndroidManifest.xml"), os.path.join(APP, "build.sh"),
-         os.path.join(APP, "src"), HOST + ":atak-bridge/"])
+    # relative paths from inside the app folder: scp reads "M:\..." as a host named M
+    print("+ scp (from %s)" % APP, flush=True)
+    subprocess.run(["scp", "-q", "-r", "AndroidManifest.xml", "build.sh", "src", HOST + ":atak-bridge/"],
+                   cwd=APP, check=True)
     run(["ssh", HOST, "cd ~/atak-bridge && VC=%s VN=%s sh build.sh" % (a.version_code, a.version_name)])
     out = os.path.join(ROOT, "firmware", "RatSpeak-ATAK-bridge.apk")
     run(["scp", "-q", HOST + ":atak-bridge/build/RatSpeak-ATAK-bridge.apk", out])

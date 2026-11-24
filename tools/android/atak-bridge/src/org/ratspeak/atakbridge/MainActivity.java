@@ -124,8 +124,9 @@ public class MainActivity extends Activity {
     private void refresh() {
         status.setText(BridgeService.running ? BridgeService.state : "Not connected");
         stats.setText(BridgeService.running
-                ? String.format("Radio %s\nto ATAK %d   from ATAK %d   dropped %d", BridgeService.radioName,
-                        BridgeService.toAtak, BridgeService.fromAtak, BridgeService.dropped)
+                ? String.format("Radio %s\nto ATAK %d   from ATAK %d   dropped %d%s", BridgeService.radioName,
+                        BridgeService.toAtak.get(), BridgeService.fromAtak.get(), BridgeService.dropped.get(),
+                        BridgeService.saNote.isEmpty() ? "" : "\n" + BridgeService.saNote)
                 : "");
         stopBtn.setEnabled(BridgeService.running);
         ui.postDelayed(this::refresh, 1000);
@@ -173,10 +174,15 @@ public class MainActivity extends Activity {
         scanner.startScan(Collections.singletonList(f), s, scanCb);
         scanning = true;
         scanBtn.setText("Stop scan");
-        ui.postDelayed(this::stopScan, 15000);
+        if (Build.VERSION.SDK_INT < 31) status.setText("Scanning... (Android 8-11: Location must be on in the quick settings)");
+        ui.removeCallbacks(scanTimeout);
+        ui.postDelayed(scanTimeout, 15000);
     }
 
+    private final Runnable scanTimeout = this::stopScan;
+
     private void stopScan() {
+        ui.removeCallbacks(scanTimeout);
         if (!scanning) return;
         try { scanner.stopScan(scanCb); } catch (Exception ignored) { }
         scanning = false;
@@ -199,8 +205,9 @@ public class MainActivity extends Activity {
     private void start(BluetoothDevice d) {
         stopScan();
         String a = atak.getText().toString().trim();
-        prefs.edit().putString("atak", a).putString("addr", d.getAddress()).apply();
         String name = d.getName();
+        prefs.edit().putString("atak", a).putString("addr", d.getAddress())
+                .putString("name", name != null ? name : d.getAddress()).apply();
         Intent i = new Intent(this, BridgeService.class)
                 .putExtra(BridgeService.EXTRA_ADDR, d.getAddress())
                 .putExtra(BridgeService.EXTRA_NAME, name != null ? name : d.getAddress())

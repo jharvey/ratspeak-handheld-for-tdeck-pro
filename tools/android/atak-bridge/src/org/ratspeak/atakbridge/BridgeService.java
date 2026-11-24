@@ -17,6 +17,7 @@ import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ServiceInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
@@ -24,6 +25,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 
+import java.io.ByteArrayOutputStream;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -31,21 +33,23 @@ import java.net.InetSocketAddress;
 import java.net.MulticastSocket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * The bridge itself: keeps the Bluetooth LE link to one radio and moves Cursor-on-Target events
  * between it and ATAK on this phone.
  *
- * Radio -> ATAK: the radio notifies the events cut into pieces; they are joined, split on
- * "</event>" and each one is sent as a UDP datagram to ATAK's local input (127.0.0.1:4242 by
+ * Radio -> ATAK: the radio notifies the events cut into pieces; the bytes are joined, split on
+ * "</event>" and each event is sent as a UDP datagram to ATAK's local input (127.0.0.1:4242 by
  * default, ATAK listens there out of the box).
  * ATAK -> radio: ATAK's own position goes out on the SA multicast 239.2.3.1:6969; markers and
  * more go to any "output" added in ATAK (Settings, Network, Manage Outputs: 127.0.0.1:4349 UDP).
- * Both are read here and written to the radio. Events that came from a radio (uid RatSpeak-...)
- * are not sent back.
+ * Both are read here and written to the radio, one GATT write at a time. Events that came from a
+ * radio (uid RatSpeak-...) are not sent back; the same event seen on both sockets goes once.
  * The radio asks for pairing on the first connection: Android shows its pairing dialog, type the
- * 6-digit code the radio shows. After that the phone is bonded and reconnects by itself.
+ * 6-digit PIN the radio shows. After that the phone is bonded and reconnects by itself.
  */
 @SuppressLint("MissingPermission")   // MainActivity asks for the Bluetooth permissions first
 public class BridgeService extends Service {
@@ -58,56 +62,83 @@ public class BridgeService extends Service {
     static final String EXTRA_ADDR = "addr", EXTRA_NAME = "name", EXTRA_ATAK = "atak";
     static final int SA_PORT = 6969, OUT_PORT = 4349;
     static final String SA_GROUP = "239.2.3.1";
+    static final long SETUP_TIMEOUT_MS = 60000;    // connected but not ready by then: start over
+    private static final byte[] END = "</event>".getBytes(StandardCharsets.UTF_8);
 
     // Shown by MainActivity (read every second).
     static volatile String state = "stopped";
     static volatile String radioName = "";
-    static volatile int toAtak = 0, fromAtak = 0, dropped = 0;
+    static volatile String saNote = "";
+    static final AtomicInteger toAtak = new AtomicInteger(), fromAtak = new AtomicInteger(),
+            dropped = new AtomicInteger();
     static volatile boolean running = false;
 
     private final Handler main = new Handler(Looper.getMainLooper());
+    private volatile boolean alive = false;        // this instance (old threads stop on their own)
     private BluetoothGatt gatt;
     private BluetoothGattCharacteristic rxChar;
     private String addr;
     private InetSocketAddress atak = new InetSocketAddress("127.0.0.1", 4242);
     private int mtu = 23;
-    private boolean ready = false, stopping = false;
-    private int cccdTries = 0;
-    private final StringBuilder inBuf = new StringBuilder();
+    private boolean ready = false, stopping = false, discovering = false;
+    private int cccdTries = 0, bondWaits = 0;
+    private final ByteArrayOutputStream inBuf = new ByteArrayOutputStream();
     private final ArrayDeque<byte[]> outQ = new ArrayDeque<>();   // pieces waiting for the radio
+    private byte[] inFlight;                       // the piece being written (put back on failure)
+    private int writeFails = 0;
     private boolean writing = false;
-    private DatagramSocket txSock;
-    private Thread rxThread, saThread;
-    private DatagramSocket outSock;
+    private String lastEv = "";
+    private long lastEvAt = 0;
+    private DatagramSocket txSock, outSock;
     private MulticastSocket saSock;
     private WifiManager.MulticastLock mcLock;
+    private final Runnable setupWatchdog = () -> {
+        if (!ready && gatt != null) {
+            state = "setup timed out, retrying";
+            gatt.disconnect();
+            retry(3000);
+        }
+    };
+    private final Runnable reconnect = this::connect;
 
     @Override public IBinder onBind(Intent i) { return null; }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent == null) return START_NOT_STICKY;
-        addr = intent.getStringExtra(EXTRA_ADDR);
-        radioName = intent.getStringExtra(EXTRA_NAME) != null ? intent.getStringExtra(EXTRA_NAME) : addr;
-        String a = intent.getStringExtra(EXTRA_ATAK);
+        SharedPreferences prefs = getSharedPreferences("bridge", MODE_PRIVATE);
+        String a;
+        if (intent != null && intent.getStringExtra(EXTRA_ADDR) != null) {
+            addr = intent.getStringExtra(EXTRA_ADDR);
+            radioName = intent.getStringExtra(EXTRA_NAME) != null ? intent.getStringExtra(EXTRA_NAME) : addr;
+            a = intent.getStringExtra(EXTRA_ATAK);
+        } else {                                   // restarted by Android after it killed us
+            addr = prefs.getString("addr", null);
+            radioName = prefs.getString("name", addr);
+            a = prefs.getString("atak", null);
+        }
+        startInForeground();
+        if (addr == null) { stopSelf(); return START_NOT_STICKY; }
         if (a != null && a.contains(":")) {
             try {
                 atak = new InetSocketAddress(a.substring(0, a.lastIndexOf(':')),
                         Integer.parseInt(a.substring(a.lastIndexOf(':') + 1).trim()));
             } catch (Exception ignored) { }
         }
-        startInForeground();
-        running = true;
-        stopping = false;
-        toAtak = fromAtak = dropped = 0;
-        openUdp();
-        connect();
+        if (!alive) {
+            alive = true;
+            running = true;
+            stopping = false;
+            toAtak.set(0); fromAtak.set(0); dropped.set(0);
+            openUdp();
+            connect();
+        }
         return START_STICKY;
     }
 
     @Override
     public void onDestroy() {
         stopping = true;
+        alive = false;
         running = false;
         main.removeCallbacksAndMessages(null);
         if (gatt != null) { gatt.disconnect(); gatt.close(); gatt = null; }
@@ -119,8 +150,7 @@ public class BridgeService extends Service {
     // ---- foreground notification -------------------------------------------------------------
     private void startInForeground() {
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-        if (Build.VERSION.SDK_INT >= 26)
-            nm.createNotificationChannel(new NotificationChannel("bridge", "ATAK bridge", NotificationManager.IMPORTANCE_LOW));
+        nm.createNotificationChannel(new NotificationChannel("bridge", "ATAK bridge", NotificationManager.IMPORTANCE_LOW));
         PendingIntent pi = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class),
                 PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification n = new Notification.Builder(this, "bridge")
@@ -143,30 +173,49 @@ public class BridgeService extends Service {
         BluetoothDevice dev = ad.getRemoteDevice(addr);
         state = "connecting to " + radioName;
         ready = false;
+        discovering = false;
         mtu = 23;
         cccdTries = 0;
+        bondWaits = 0;
         if (gatt != null) { gatt.close(); gatt = null; }
         gatt = dev.connectGatt(this, false, cb, BluetoothDevice.TRANSPORT_LE);
+        if (gatt == null) { state = "could not start the connection"; retry(5000); }
     }
 
     private void retry(long ms) {
         if (stopping) return;
-        main.removeCallbacksAndMessages(null);
-        main.postDelayed(this::connect, ms);
+        main.removeCallbacks(reconnect);
+        main.removeCallbacks(setupWatchdog);
+        main.postDelayed(reconnect, ms);
+    }
+
+    private void discover(BluetoothGatt g) {
+        if (discovering || g != gatt) return;      // Android 14 may report the MTU twice
+        discovering = true;
+        if (!g.discoverServices()) { state = "could not read the radio's services"; g.disconnect(); }
     }
 
     private final BluetoothGattCallback cb = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(BluetoothGatt g, int status, int newState) {
             main.post(() -> {
+                if (g != gatt) return;
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     state = "connected, setting up";
-                    g.requestMtu(247);
+                    main.removeCallbacks(setupWatchdog);
+                    main.postDelayed(setupWatchdog, SETUP_TIMEOUT_MS);
+                    if (!g.requestMtu(247)) discover(g);
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     ready = false;
-                    synchronized (outQ) { outQ.clear(); writing = false; }
-                    inBuf.setLength(0);
-                    state = stopping ? "stopped" : "radio not in reach, retrying";
+                    synchronized (outQ) { outQ.clear(); writing = false; inFlight = null; }
+                    inBuf.reset();
+                    if (stopping) { state = "stopped"; return; }
+                    // 5 / 15 / 137 (insufficient authentication / encryption, SMP failure): the
+                    // pairing on one side was removed
+                    if (status == 5 || status == 15 || status == 137)
+                        state = "pairing does not match: remove RatSpeak in Android's Bluetooth settings and pair again";
+                    else
+                        state = "radio not in reach, retrying" + (status != 0 ? " (code " + status + ")" : "");
                     retry(5000);
                 }
             });
@@ -176,19 +225,20 @@ public class BridgeService extends Service {
         public void onMtuChanged(BluetoothGatt g, int m, int status) {
             main.post(() -> {
                 if (status == BluetoothGatt.GATT_SUCCESS) mtu = m;
-                g.discoverServices();
+                discover(g);
             });
         }
 
         @Override
         public void onServicesDiscovered(BluetoothGatt g, int status) {
             main.post(() -> {
+                if (g != gatt) return;
                 BluetoothGattService s = g.getService(SVC);
                 if (s == null) { state = "not a RatSpeak radio"; g.disconnect(); return; }
                 rxChar = s.getCharacteristic(RX);
                 BluetoothGattCharacteristic tx = s.getCharacteristic(TX);
                 if (rxChar == null || tx == null) { state = "not a RatSpeak radio"; g.disconnect(); return; }
-                state = "pairing: type the code the radio shows";
+                state = "pairing: type the PIN the radio shows";
                 subscribe(g, tx);
             });
         }
@@ -196,12 +246,9 @@ public class BridgeService extends Service {
         @Override
         public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor d, int status) {
             main.post(() -> {
-                if (status == BluetoothGatt.GATT_SUCCESS) {
-                    ready = true;
-                    state = "connected to " + radioName;
-                    return;
-                }
-                // Not paired yet (Android pairs and the radio asks for its code): try again.
+                if (g != gatt) return;
+                if (status == BluetoothGatt.GATT_SUCCESS) { waitBonded(g); return; }
+                // Not paired yet (Android pairs and the radio asks for its PIN): try again.
                 if (++cccdTries < 20) main.postDelayed(() -> subscribe(g, d.getCharacteristic()), 3000);
                 else { state = "pairing failed"; g.disconnect(); }
             });
@@ -212,7 +259,7 @@ public class BridgeService extends Service {
         public void onCharacteristicChanged(BluetoothGatt g, BluetoothGattCharacteristic c) {
             if (Build.VERSION.SDK_INT < 33) {
                 final byte[] v = c.getValue();
-                if (v != null) main.post(() -> fromRadio(v));
+                if (v != null) { final byte[] copy = Arrays.copyOf(v, v.length); main.post(() -> fromRadio(copy)); }
             }
         }
 
@@ -225,109 +272,156 @@ public class BridgeService extends Service {
         @Override
         public void onCharacteristicWrite(BluetoothGatt g, BluetoothGattCharacteristic c, int status) {
             main.post(() -> {
-                synchronized (outQ) { writing = false; }
-                writeNext();
+                synchronized (outQ) {
+                    writing = false;
+                    if (status != BluetoothGatt.GATT_SUCCESS && inFlight != null && ++writeFails <= 5) {
+                        outQ.addFirst(inFlight);                    // not secure yet / busy: again
+                    } else {
+                        if (status != BluetoothGatt.GATT_SUCCESS) dropped.incrementAndGet();
+                        writeFails = 0;
+                    }
+                    inFlight = null;
+                }
+                main.postDelayed(BridgeService.this::writeNext, status == BluetoothGatt.GATT_SUCCESS ? 0 : 500);
             });
         }
     };
+
+    // The CCCD itself may not need encryption, so its write can succeed before the pairing is
+    // done; the radio only takes writes on a secure link. Ready = subscribed and bonded.
+    private void waitBonded(BluetoothGatt g) {
+        if (g != gatt) return;
+        if (g.getDevice().getBondState() == BluetoothDevice.BOND_BONDED) {
+            ready = true;
+            main.removeCallbacks(setupWatchdog);
+            state = "connected to " + radioName;
+            writeNext();
+            return;
+        }
+        state = "pairing: type the PIN the radio shows";
+        if (++bondWaits < 60) main.postDelayed(() -> waitBonded(g), 1000);   // the watchdog ends it otherwise
+    }
 
     @SuppressWarnings("deprecation")
     private void subscribe(BluetoothGatt g, BluetoothGattCharacteristic tx) {
         if (g != gatt) return;
         g.setCharacteristicNotification(tx, true);
         BluetoothGattDescriptor d = tx.getDescriptor(CCCD);
-        if (d == null) { ready = true; state = "connected to " + radioName; return; }
+        if (d == null) { waitBonded(g); return; }
+        boolean ok;
         if (Build.VERSION.SDK_INT >= 33) {
-            g.writeDescriptor(d, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+            ok = g.writeDescriptor(d, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothGatt.GATT_SUCCESS;
         } else {
             d.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-            g.writeDescriptor(d);
+            ok = g.writeDescriptor(d);
         }
+        if (!ok && ++cccdTries < 20) main.postDelayed(() -> subscribe(g, tx), 1000);   // busy (bonding)
     }
 
     // ---- radio -> ATAK -----------------------------------------------------------------------
+    // Bytes, not text, until a whole event is in: a character cut between two notifications
+    // must not turn into U+FFFD.
     private void fromRadio(byte[] v) {
-        inBuf.append(new String(v, StandardCharsets.UTF_8));
-        int end;
-        while ((end = inBuf.indexOf("</event>")) >= 0) {
-            String ev = inBuf.substring(0, end + 8);
-            inBuf.delete(0, end + 8);
-            int start = ev.indexOf("<?xml");
-            if (start < 0) start = ev.indexOf("<event");
-            if (start < 0) continue;
-            sendToAtak(ev.substring(start).trim());
+        inBuf.write(v, 0, v.length);
+        byte[] b = inBuf.toByteArray();
+        int start = 0, end;
+        while ((end = indexOf(b, END, start)) >= 0) {
+            String ev = new String(b, start, end + END.length - start, StandardCharsets.UTF_8);
+            start = end + END.length;
+            int s = ev.indexOf("<?xml");
+            if (s < 0) s = ev.indexOf("<event");
+            if (s >= 0) sendToAtak(ev.substring(s).trim());
         }
-        if (inBuf.length() > 8192) inBuf.setLength(0);   // broken stream: start over
+        inBuf.reset();
+        if (b.length - start <= 8192) inBuf.write(b, start, b.length - start);   // else broken: start over
+    }
+
+    private static int indexOf(byte[] h, byte[] n, int from) {
+        outer:
+        for (int i = from; i <= h.length - n.length; i++) {
+            for (int j = 0; j < n.length; j++) if (h[i + j] != n[j]) continue outer;
+            return i;
+        }
+        return -1;
     }
 
     private void sendToAtak(String ev) {
         final byte[] b = ev.getBytes(StandardCharsets.UTF_8);
+        final DatagramSocket s = txSock;
         new Thread(() -> {
             try {
-                txSock.send(new DatagramPacket(b, b.length, atak));
-                toAtak++;
+                s.send(new DatagramPacket(b, b.length, atak));
+                toAtak.incrementAndGet();
             } catch (Exception e) {
-                dropped++;
+                dropped.incrementAndGet();
             }
         }).start();
     }
 
     // ---- ATAK -> radio -----------------------------------------------------------------------
+    // Sockets are made here, before their threads start, so closeUdp() always finds them.
     private void openUdp() {
         try { txSock = new DatagramSocket(); } catch (Exception e) { state = "UDP failed: " + e.getMessage(); }
         WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         if (wm != null) { mcLock = wm.createMulticastLock("ratspeak-sa"); mcLock.setReferenceCounted(false); mcLock.acquire(); }
-        rxThread = new Thread(() -> {
-            try {
-                outSock = new DatagramSocket(null);
-                outSock.setReuseAddress(true);
-                outSock.bind(new InetSocketAddress(OUT_PORT));
-                listen(outSock);
-            } catch (Exception ignored) { }
-        });
-        rxThread.start();
-        saThread = new Thread(() -> {
-            try {
-                saSock = new MulticastSocket(SA_PORT);
-                saSock.joinGroup(InetAddress.getByName(SA_GROUP));
-                listen(saSock);
-            } catch (Exception ignored) { }
-        });
-        saThread.start();
-    }
-
-    private void listen(DatagramSocket s) throws Exception {
-        byte[] buf = new byte[8192];
-        String last = "";
-        long lastAt = 0;
-        while (running) {
-            DatagramPacket p = new DatagramPacket(buf, buf.length);
-            s.receive(p);
-            String ev = new String(p.getData(), 0, p.getLength(), StandardCharsets.UTF_8).trim();
-            if (!ev.contains("<event") || !ev.contains("</event>")) continue;
-            if (ev.contains("uid=\"RatSpeak-")) continue;          // from a radio: not back again
-            long now = System.currentTimeMillis();
-            if (ev.equals(last) && now - lastAt < 2000) continue;  // the same event on both sockets
-            last = ev;
-            lastAt = now;
-            final byte[] b = (ev + "\n").getBytes(StandardCharsets.UTF_8);
-            main.post(() -> toRadio(b));
+        try {
+            outSock = new DatagramSocket(null);
+            outSock.setReuseAddress(true);
+            outSock.bind(new InetSocketAddress(OUT_PORT));
+            final DatagramSocket s = outSock;
+            new Thread(() -> listen(s)).start();
+        } catch (Exception e) {
+            state = "port " + OUT_PORT + " is in use: markers from ATAK will not reach the radio";
         }
+        new Thread(this::saLoop).start();
     }
 
-    private void toRadio(byte[] ev) {
-        if (!ready || gatt == null || rxChar == null) { dropped++; return; }
-        int chunk = Math.max(20, Math.min(mtu - 3, 244));
-        synchronized (outQ) {
-            if (outQ.size() > 400) { dropped++; return; }            // the radio is slow: skip
-            for (int o = 0; o < ev.length; o += chunk) {
-                int n = Math.min(chunk, ev.length - o);
-                byte[] piece = new byte[n];
-                System.arraycopy(ev, o, piece, 0, n);
-                outQ.add(piece);
+    // ATAK's own position on the SA multicast. With no WiFi (mobile data only, or nothing at all)
+    // the group cannot be joined: try again every 30 s, so it starts once WiFi is there.
+    private void saLoop() {
+        while (alive) {
+            try {
+                MulticastSocket s = new MulticastSocket(SA_PORT);
+                s.joinGroup(InetAddress.getByName(SA_GROUP));
+                saSock = s;
+                saNote = "";
+                listen(s);
+                return;
+            } catch (Exception e) {
+                saNote = "ATAK position: waiting for WiFi (or add the 127.0.0.1:4349 output in ATAK)";
+                try { Thread.sleep(30000); } catch (InterruptedException ie) { return; }
             }
         }
-        fromAtak++;
+    }
+
+    private void listen(DatagramSocket s) {
+        byte[] buf = new byte[8192];
+        try {
+            while (alive) {
+                DatagramPacket p = new DatagramPacket(buf, buf.length);
+                s.receive(p);
+                String ev = new String(p.getData(), 0, p.getLength(), StandardCharsets.UTF_8).trim();
+                if (!ev.contains("<event") || !ev.contains("</event>")) continue;
+                if (ev.contains("uid=\"RatSpeak-")) continue;          // from a radio: not back again
+                main.post(() -> toRadio(ev));
+            }
+        } catch (Exception ignored) {              // socket closed: the service is stopping
+        }
+    }
+
+    private void toRadio(String ev) {
+        long now = System.currentTimeMillis();
+        if (ev.equals(lastEv) && now - lastEvAt < 2000) return;   // the same event on both sockets
+        lastEv = ev;
+        lastEvAt = now;
+        if (!ready || gatt == null || rxChar == null) { dropped.incrementAndGet(); return; }
+        byte[] b = (ev + "\n").getBytes(StandardCharsets.UTF_8);
+        int chunk = Math.max(20, Math.min(mtu - 3, 244));
+        synchronized (outQ) {
+            if (outQ.size() > 400) { dropped.incrementAndGet(); return; }   // the radio is slow: skip
+            for (int o = 0; o < b.length; o += chunk) outQ.add(Arrays.copyOfRange(b, o, Math.min(b.length, o + chunk)));
+        }
+        fromAtak.incrementAndGet();
         writeNext();
     }
 
@@ -335,9 +429,10 @@ public class BridgeService extends Service {
     private void writeNext() {
         byte[] piece;
         synchronized (outQ) {
-            if (writing || outQ.isEmpty() || gatt == null || rxChar == null) return;
+            if (!ready || writing || outQ.isEmpty() || gatt == null || rxChar == null) return;
             piece = outQ.poll();
             writing = true;
+            inFlight = piece;
         }
         boolean ok;
         if (Build.VERSION.SDK_INT >= 33) {
@@ -349,7 +444,7 @@ public class BridgeService extends Service {
             ok = gatt.writeCharacteristic(rxChar);
         }
         if (!ok) {                                                   // busy: try again shortly
-            synchronized (outQ) { outQ.addFirst(piece); writing = false; }
+            synchronized (outQ) { outQ.addFirst(piece); writing = false; inFlight = null; }
             main.postDelayed(this::writeNext, 50);
         }
     }
