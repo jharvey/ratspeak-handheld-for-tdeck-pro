@@ -85,6 +85,7 @@ set(FW_SRCS
     ${BOARD}/voice/VoiceCodec.cpp
     ${BOARD}/voice/Walkie.cpp
     ${BOARD}/CotFeed.cpp
+    ${BOARD}/CotBle.cpp
     ${BOARD}/voice/ChaChaPoly.cpp)
 file(GLOB CORE_SRCS CONFIGURE_DEPENDS
     ${SRC}/core/storage/*.cpp

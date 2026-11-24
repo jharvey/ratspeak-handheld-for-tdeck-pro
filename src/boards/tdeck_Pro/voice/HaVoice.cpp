@@ -13,6 +13,7 @@
 #include <mbedtls/md.h>
 
 #include "ChaChaPoly.h"
+#include "../PsramBuf.h"
 #include "audio/AudioNotify.h"
 
 namespace havoice {
@@ -209,7 +210,7 @@ bool g_tunnel = false;
 
 bool writeRaw(const uint8_t* d, size_t n) {
     if (g_tunnel) {                      // one write per line: other logs cannot cut into it
-        static char line[5 + 2 * (kTxMax + 40) + 2];
+        static char (&line)[5 + 2 * (kTxMax + 40) + 2] = psram<char, 5 + 2 * (kTxMax + 40) + 2>();
         static const char* hx = "0123456789abcdef";
         size_t o = 0;
         memcpy(line, "@API ", 5); o = 5;

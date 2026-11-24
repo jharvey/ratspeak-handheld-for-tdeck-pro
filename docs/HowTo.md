@@ -366,8 +366,11 @@ Mark a place with a type and a short note (a hazard, a camp, water, a meet-up) a
    **Enter** on the empty message line opens the map on it.
 5. **J** in the marker list shows the contacts who shared a position, nearest first.
 
-ATAK: phones running ATAK on the same WiFi can see this unit, its contacts and the markers:
-**M**, **S**, **3** (WiFi), last row "ATAK feed (CoT)", **Enter** turns it on.
+ATAK: phones running ATAK can see this unit, its contacts and the markers:
+**M**, **S**, **3** (WiFi), row 9 "ATAK feed (CoT)", **Enter** turns it on.
+The next row, "ATAK link to phone", switches between WiFi and Bluetooth (switching to
+Bluetooth restarts the radio once). Bluetooth needs the Android app `firmware/RatSpeak-ATAK-bridge.apk`: scan, tap the radio and
+type the 6-digit code the radio shows (see tools/android/atak-bridge/README.md).
 
 ## Waypoints
 

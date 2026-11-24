@@ -339,3 +339,25 @@ Status reports ("PS ... mV pct ma heap ...") every 5 min, and "dark" just before
 switch-off, to the listener COM8 on USB (`M:\ratspeak-soak\2026-11-17\COM8_listener.log`);
 `batcap` started the learned-capacity count. Units apart, unplugged by the owner.
 Result to fill in: hours to shutdown, mAh/day, messages sent / delivered, gauge % vs real time.
+
+20:30 check: both still draw ~87 mA (100 → 86 % in 3 h, about 22 h projected). Cause: both were
+still joined to the WiFi with the ATAK feed on (left from the ATAK test), and WiFi keeps the CPU
+awake. So run 1 measures **Balanced + WiFi + ATAK feed** (the worst case); a run with WiFi off
+is still needed for the plain Balanced figure.
+
+### 2026-11-23 night: ATAK feed over Bluetooth; big buffers to PSRAM
+
+- New: ATAK link to phone = Bluetooth (BLE, NimBLE, paired with a passkey, encrypted) plus the
+  Android bridge app (`tools/android/atak-bridge`, `firmware/RatSpeak-ATAK-bridge.apk`).
+- COM9 found: with Bluetooth on, WiFi starting next to it left **288 bytes** of internal RAM,
+  and Bluetooth alone left 6 KB (NimBLE + controller take ~38 KB internal). Fixes: WiFi stays
+  off while the feed uses Bluetooth; the largest scratch buffers (console tile bench 8 KB,
+  track 8 KB, Home Assistant line 4.5 KB, Library 7 KB, Bluetooth receive 3 KB, others) moved
+  to PSRAM. Static internal RAM 234 KB → 196 KB; free internal RAM before Bluetooth 46 → 84 KB,
+  with Bluetooth advertising 44.7 KB (more than the WiFi link had before). The WiFi link gains
+  the same 38 KB.
+- Simulator: `atak_ble.py` 5/5 (whole valid events to the "phone", ATAK unit + marker in,
+  broken / NUL / oversized input dropped without blocking the next event, back to WiFi turns
+  Bluetooth off); full regression with it: all pass.
+- Not yet: pairing and traffic with a real Android phone and ATAK; battery with Bluetooth on
+  (it blocks light sleep like WiFi: the SDK's controller has no modem sleep).

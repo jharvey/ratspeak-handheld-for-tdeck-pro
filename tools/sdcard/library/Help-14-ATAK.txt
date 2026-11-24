@@ -18,31 +18,58 @@ WHAT THIS RADIO DOES WITH IT
   WiFi, miles away) still show up in ATAK through this radio.
 
 TURN IT ON
-M, S, 3 (WiFi), last row "ATAK feed (CoT)", Enter = on / off.
-Off by default. It sends every 30 s, to ATAK's standard address
-239.2.3.1 port 6969, so ATAK finds it with no setup and no server.
+M, S, 3 (WiFi), row "ATAK feed (CoT)", Enter = on / off.
+Off by default. It sends every 30 s.
+Next row "ATAK link to phone": Enter switches WiFi / Bluetooth
+(the first switch to Bluetooth restarts the radio once).
 
-DOES IT NEED WIFI?
-Yes. The feed only runs on WiFi: the radio and the phone must be on
-the same WiFi network (a phone hotspot works: join the radio to the
-phone's hotspot). LoRa carries the messages, positions and markers
-between radios; WiFi carries them to and from ATAK.
-- It never turns WiFi on by itself. In an energy mode with WiFi off
-  (Saver, Check-in) the feed waits.
-- Off, it costs no power. On, the cost is WiFi itself.
+HOW IT REACHES THE PHONE: WIFI OR BLUETOOTH
+LoRa carries messages, positions and markers between radios, miles
+apart. Only the last few metres, radio to phone, need WiFi or
+Bluetooth.
+- WiFi: radio and phone on the same WiFi network (a phone hotspot
+  works). Sent to ATAK's standard address 239.2.3.1 port 6969, so
+  ATAK finds it with no setup. Nothing to install on the phone.
+- Bluetooth: no network needed at all, good in the field. Needs the
+  free "RatSpeak ATAK bridge" app on the phone (Android). While the
+  feed uses Bluetooth, the radio's WiFi stays off (both do not fit
+  in memory at once).
+- Neither is turned on by itself. In an energy mode with WiFi off
+  (Saver, Check-in) the feed waits, Bluetooth too.
+- Off, the feed costs no power. On, either link keeps the radio
+  awake (no sleep): plan for a day of battery, not several.
+
+BLUETOOTH: PAIR THE PHONE (ONCE)
+1 Radio: feed ON, link Bluetooth. The row below shows the radio's
+  name (RatSpeak-xxxx) and a 6-digit code.
+2 Phone: install the bridge app (RatSpeak-ATAK-bridge.apk), open it,
+  allow Bluetooth / Nearby devices, tap Scan, tap the radio.
+3 Android asks for a pairing code: type the code the radio shows
+  (it also pops up on the radio's screen).
+4 The app shows "connected"; ATAK shows the radio and its contacts.
+  After that the phone reconnects by itself.
+- Your own markers to the radio: in ATAK add an output once
+  (Settings, Network Preferences, Manage Outputs: 127.0.0.1, port
+  4349, UDP). Your ATAK position reaches the radio without it.
+- Forget the paired phones: the Bluetooth row, Enter twice.
+- Only a phone that typed the code gets data: the link is encrypted.
 
 STRENGTHS
-- No TAK server, no internet, no account: same WiFi is enough.
+- No TAK server, no internet, no account: same WiFi, or Bluetooth
+  with no network at all.
 - LoRa radios with no phone join the ATAK picture.
 - ATAK users' positions and markers reach the Atlas; a marker from
   ATAK can be sent on to your LoRa contacts like any other.
 - Small: one short message per item every 30 s.
 
 WEAKNESSES
-- WiFi range only between radio and phone: tens of metres, not the
-  miles LoRa reaches.
-- Not encrypted: anyone on the same WiFi can see the positions, and
-  can send fake ones. Use it on your own network or hotspot only.
+- Radio to phone is short range: WiFi tens of metres, Bluetooth
+  about 10 m (keep the phone on you).
+- WiFi is not encrypted: anyone on the same WiFi can see the
+  positions, and can send fake ones. Use your own network or
+  hotspot. Bluetooth is encrypted and paired.
+- Bluetooth needs the bridge app (Android only for now; iTAK on
+  iPhone and WinTAK use WiFi).
 - Positions of contacts are only as fresh as their last share.
 - Limits: 16 ATAK users kept (oldest dropped), at most 12 of the 24
   markers come from ATAK, so your contacts' markers are never pushed
@@ -52,6 +79,7 @@ WEAKNESSES
 
 GOOD TO KNOW
 - Tested 23 Nov 2026: a PC on the WiFi received every event as valid
-  CoT (units and markers). Not yet tried with a real ATAK phone.
+  CoT (units and markers). Bluetooth: tested in the simulator and
+  the radio side on a T-Deck; not yet tried with a real ATAK phone.
 - Hostile units (red, a-h) from ATAK show as hazard markers.
 - Markers: Help-6-Map, Atlas J. Sharing your position: Help-5.

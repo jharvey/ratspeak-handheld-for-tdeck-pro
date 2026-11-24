@@ -449,16 +449,43 @@ Up to 24 markers. When the list is full a new one replaces the oldest received o
 
 ### 4.10 ATAK feed
 
-Phones running ATAK (or WinTAK, iTAK) on the same WiFi can see this radio, its contacts'
-shared positions and the markers, with no TAK server.
+Phones running ATAK (or WinTAK, iTAK) can see this radio, its contacts' shared positions
+and the markers, with no TAK server. LoRa carries them between radios. Only the last few
+metres, from the radio to the phone, go over WiFi or Bluetooth.
 
-Turn it on: **M**, **S**, **3** (WiFi), row 9 "ATAK feed (CoT)", **Enter**. Every 30 s, while
-WiFi is up, the radio sends Cursor-on-Target to 239.2.3.1:6969. It also listens there: ATAK
-users show as squares on the Atlas (up to 16), and their markers as markers from ATAK (at
-most 12 of the 24).
+Turn it on: **M**, **S**, **3** (WiFi), row 9 "ATAK feed (CoT)", **Enter**. Every 30 s the
+radio sends Cursor-on-Target events and takes in what ATAK sends: ATAK users show as squares
+on the Atlas (up to 16), and their markers as markers from ATAK (at most 12 of the 24).
 
-*Tested in the simulator only. Not yet seen with a real ATAK phone.* Windows PCs on a network
-marked "Public" may block it.
+Row 10 "ATAK link to phone" chooses how (**Enter** switches; switching to Bluetooth restarts
+the radio once):
+
+| Link | Needs | Notes |
+|---|---|---|
+| **WiFi** (default) | radio and phone on the same WiFi network (a phone hotspot works) | Multicast 239.2.3.1:6969, ATAK finds it with no setup. Not encrypted. |
+| **Bluetooth** | the *RatSpeak ATAK bridge* app on the phone (Android) | No network at all. Paired and encrypted. WiFi stays off while it runs. |
+
+**Bluetooth, first time:**
+1. On the radio: feed ON, link Bluetooth. Row 11 "Bluetooth" shows the radio's name
+   (RatSpeak-xxxx) and a 6-digit code.
+2. On the phone: install `firmware/RatSpeak-ATAK-bridge.apk` (allow installing from this
+   source when Android asks). Open it, allow Bluetooth (Nearby devices), tap **Scan for
+   radios**, tap the radio.
+3. Android asks for a pairing code: type the code from the radio (it also pops up on the
+   radio's screen for 30 s).
+4. The app shows "connected to RatSpeak-xxxx"; ATAK shows the radio and its contacts. Later the
+   phone reconnects by itself while the app runs.
+
+For your own ATAK markers to reach the radio, add an output in ATAK once: Settings, Network
+Preferences, Manage Outputs, address 127.0.0.1, port 4349, UDP. Your ATAK position reaches it
+without that. To forget paired phones: row 11, **Enter** twice.
+
+Either link keeps the radio awake (no light sleep): expect about a day of battery with the
+feed on, not several days.
+
+*Tested: WiFi with a PC receiving every event as valid CoT; Bluetooth in the simulator and the
+radio side on a T-Deck Pro. Not yet seen with a real ATAK phone.* Windows PCs on a network
+marked "Public" may block the WiFi feed.
 
 ### 4.11 WiFi
 
@@ -593,7 +620,7 @@ Entry (type a value), Action, Info. Rows a mode hides keep their numbers.
 |---|---|---|
 | 1 | **Mode** | 1 Minimal · 2 Typical · 3 Everything · 4 Touch screen · 5 Typical features |
 | 2 | **Time & Location** | 1 Set RTC · 2 Time zone · 3 Enable GPS · 4 Manual location · 5 Sync GPS now · 6 Auto GPS sync (boot + daily) · 7 GPS position · 8 Location auto-share (stop all) · 9 Waypoints · 10 Track (breadcrumbs) · 11 Units (m/km or ft/mi) · 12 Coordinates (decimal, deg min sec, MGRS) |
-| 3 | **WiFi** | 1 Status · 2 IP address · 3 Scan networks · 4 Saved networks · 5 Disconnect · 6 TCP hub (Advanced) · 7 Home Assistant voice · 8 Mesh over WiFi · 9 ATAK feed (CoT) |
+| 3 | **WiFi** | 1 Status · 2 IP address · 3 Scan networks · 4 Saved networks · 5 Disconnect · 6 TCP hub (Advanced) · 7 Home Assistant voice · 8 Mesh over WiFi · 9 ATAK feed (CoT) · 10 ATAK link to phone (WiFi / Bluetooth) · 11 Bluetooth (name, pairing code) |
 | 4 | **Screen & I/O** | 1 Theme (White paper / Black ink) · 2 Idle splash · 3 Key backlight |
 | 4.2 | Idle splash | 1 Off · 2 On, no password · 3 On + password · 4 Timeout (10-99999 s) · 5 Set / Change password · 6 Remove password · 7 Lock now · 8 Idle screen · 9 If-found details · 10 If found: my address shown / hidden |
 | 5 | **Power** | 1 Full power · 2 Balanced · 3 Saver · 4 Ultra-low · 5 On demand · 6 Check-in · 7 Custom · 8 Check-in schedule · 9 Energy monitor · 10 Full power on USB · 11 Standby when idle · 12 Standby after · 13 Now · 14 Battery draw · 15 Capacity used for estimates |
@@ -699,8 +726,12 @@ shows the satellites heard.
 Saver, Ultra-low, On demand, Check-in and standby turn WiFi off. With a password lock set,
 saved WiFi passwords are only usable after unlocking.
 
-**The ATAK phone does not see the radio.** Both must be on the same WiFi network and the
-network must let multicast through. Windows PCs on a "Public" network block it.
+**The ATAK phone does not see the radio.** WiFi link: both must be on the same WiFi network
+and the network must let multicast through. Windows PCs on a "Public" network block it.
+Bluetooth link: the bridge app must show "connected"; check the radio's row 11 (not "off in
+this energy mode"); keep the phone within about 10 m. If pairing keeps failing, forget the
+radio in Android's Bluetooth settings and forget phones on the radio (row 11, Enter twice),
+then pair again.
 
 **I forgot the password.** It cannot be recovered. The only way back is to erase the radio
 and start again: `python tools/flash_new_device.py --erase COMx`. Messages, contacts and the
@@ -767,8 +798,9 @@ Slow (SF12, 125 kHz), Medium (SF10, 250 kHz), Fast Short (SF7, 500 kHz). Transmi
 - **SOS is not an emergency service.** It reaches only your own contacts or group, and only
   when a radio is in range. It does not call 911 or any rescue service. Carry another way to
   call for help.
-- **Encryption:** messages are end-to-end encrypted (Reticulum / LXMF). The ATAK feed and
-  shared positions sent to ATAK go unencrypted over your WiFi network.
+- **Encryption:** messages are end-to-end encrypted (Reticulum / LXMF). The ATAK feed over
+  WiFi is not encrypted (anyone on that network can read it). Over Bluetooth it is paired and
+  encrypted, and on the phone the bridge app hands it to ATAK locally.
 - **Backups and lost radios:** an SD backup contains your identity. Set a password if the
   radio may be lost, and keep backups safe.
 

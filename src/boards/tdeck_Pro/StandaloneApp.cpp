@@ -49,6 +49,7 @@
 #include "Eink/RatSpeakLogo.h"
 #include "MapView.h"
 #include "CotFeed.h"
+#include "CotBle.h"
 #include "Chess.h"
 #include "audio/AudioNotify.h"
 #include "voice/HaVoice.h"
@@ -99,6 +100,7 @@
 #include <vector>
 #include "util/Bytes.h"
 #include "util/EventTrace.h"
+#include "PsramBuf.h"
 
 // hal/Keyboard.cpp — app-driven number layer for numeric fields
 extern void keyboardSetNumLayer(bool on);
@@ -2138,7 +2140,7 @@ int g_wptCount = 0;
 int g_wptSel = -1;                           // selected on the map (N), -1 = none
 uint32_t g_wptDelAt = 0;                     // Del pressed once (confirm within 3 s)
 constexpr int kTrackRam = 1000;
-float g_track[kTrackRam * 2];
+float* g_track = nullptr;                    // kTrackRam * 2 floats, in PSRAM (psramGlobals)
 int g_trackN = 0;
 bool g_trackLoaded = false;
 bool ownPosition(double& lat, double& lon);
@@ -2205,12 +2207,16 @@ void layClose();
 void layKey(const KeyEvent& ev);
 void layOpen();
 // ATAK feed (see "ATAK feed" below)
-struct CotCfg { uint8_t on; uint8_t pad; uint16_t port; uint32_t ip; uint16_t every; uint16_t pad2; };
+// link: kCotLinkWifi / kCotLinkBle (CotBle.h). Byte 1: the boot check (btInUse) reads it.
+struct CotCfg { uint8_t on; uint8_t link; uint16_t port; uint32_t ip; uint16_t every; uint16_t pad2; };
 CotCfg g_cot = {0, 0, cot::kSaPort, cot::kSaGroup, 30, 0};
 uint32_t g_cotLast = 0, g_cotSent = 0;
 bool g_cotListen = false;
 void cotSave();
 void cotIp(uint32_t ip, char* out, size_t n);
+bool cotUseBle();
+void cotBleName(char* out, size_t n);
+void cotSetLink(uint8_t link);
 void cposNote(const uint8_t dest[16], double lat, double lon, uint32_t at);
 uint32_t msgEpoch(double ts);
 // Enter on an empty draft: the newest of an unsaved card / a location wins.
@@ -2527,7 +2533,7 @@ void toast(const char* fmt, ...);
 
 // Why sends are refused as "busy": the engine's outgoing rows and the store's write slots.
 void txDescribe() {
-    static char buf[2200];
+    static char (&buf)[2200] = psram<char, 2200>();
     g_proto.lxmfDescribeRows(buf, sizeof(buf));
     char slots[16];
     g_msgStore.writeQueue().describe(slots, sizeof(slots));
@@ -3547,8 +3553,10 @@ void wifiBeginJoin() {
 }
 
 // save: store the credentials once the join succeeds.
+bool wifiHeldForBle();
 void wifiConnect(const char* ssid, const char* pass, bool save, bool autoJoin) {
     if (!g_pwEff.wifi) { toast("WiFi off in %s mode", power::modeName(g_pw.mode)); return; }
+    if (wifiHeldForBle()) { if (!autoJoin) toast("WiFi off: ATAK on Bluetooth"); return; }
     strlcpy(g_wifiTarget, ssid, sizeof(g_wifiTarget));
     strlcpy(g_wifiTargetPass, pass ? pass : "", sizeof(g_wifiTargetPass));
     g_wifiTargetAuto = autoJoin;
@@ -3571,6 +3579,7 @@ void wifiStartScan(bool forAuto) {
         if (!forAuto) toast("WiFi off in %s mode", power::modeName(g_pw.mode));
         return;
     }
+    if (wifiHeldForBle()) { if (!forAuto) toast("WiFi off: ATAK on Bluetooth"); return; }
     wifiRadioOn();
     if (!WiFiInterface::startAsyncScan()) {
         strlcpy(g_wifiMsg, "scan failed", sizeof(g_wifiMsg));
@@ -3589,6 +3598,22 @@ void wifiDisconnect() {
     g_wifiScanning = false;
     g_wifiSt = WifiSt::Off;
     strlcpy(g_wifiMsg, "off (auto paused)", sizeof(g_wifiMsg));
+    wifiUiChanged();
+}
+
+// The ATAK feed on Bluetooth: WiFi stays off. Both stacks together leave the firmware almost
+// no internal RAM (COM9: 288 bytes when WiFi started next to Bluetooth), so WiFi waits until
+// the feed is off or back on the WiFi link; auto-join is not paused for good.
+bool wifiHeldForBle() { return g_cot.on && cotUseBle(); }
+
+void wifiOffForBle() {
+    if (WiFi.getMode() == WIFI_OFF && g_wifiSt == WifiSt::Off) return;
+    g_wifiJoinAfterScan = false;
+    wifiRadioOff();
+    g_wifiScanning = false;
+    g_wifiSt = WifiSt::Off;
+    strlcpy(g_wifiMsg, "off (ATAK on Bluetooth)", sizeof(g_wifiMsg));
+    Serial.println("[WIFI] off: the ATAK feed uses Bluetooth");
     wifiUiChanged();
 }
 
@@ -4515,8 +4540,19 @@ void buildSettingsRows(Page p) {
         else if (meshPeers() < 0) srow(RK_TOGGLE, "Mesh over WiFi", "ON (starts with WiFi)");
         else srow(RK_TOGGLE, "Mesh over WiFi", "ON, %d unit%s seen", meshPeers(), meshPeers() == 1 ? "" : "s");
         if (!g_cot.on) srow(RK_TOGGLE, "ATAK feed (CoT)", "OFF");
+        else if (cotUseBle()) srow(RK_TOGGLE, "ATAK feed (CoT)", "ON, %lu sent", (unsigned long)g_cotSent);
         else if (g_cot.ip == cot::kSaGroup) srow(RK_TOGGLE, "ATAK feed (CoT)", "ON, every %us, %lu sent", (unsigned)g_cot.every, (unsigned long)g_cotSent);
         else { char ip[16]; cotIp(g_cot.ip, ip, sizeof(ip)); srow(RK_TOGGLE, "ATAK feed (CoT)", "ON, to %s", ip); }
+        srow(RK_PICK, "ATAK link to phone", "%s", cotUseBle() ? "Bluetooth (bridge app)" : "WiFi (same network)");
+        if (!cotUseBle()) srow(RK_INFO, "Bluetooth", "off (link is WiFi)");
+        else if (!g_cot.on) srow(RK_INFO, "Bluetooth", "off (feed off)");
+        else if (!g_pwEff.wifi) srow(RK_INFO, "Bluetooth", "off in this energy mode");
+        else if (cotble::connected()) srow(RK_ACTION, "Bluetooth", "phone connected; Enter x2 = forget");
+        else {
+            char nm[24];
+            cotBleName(nm, sizeof(nm));
+            srow(RK_ACTION, "Bluetooth", "%s, code %06lu", nm, (unsigned long)cotble::passkey());
+        }
         break;
 
     case PG_HAVOICE: {                               // S.3.7: on / off, the encryption key
@@ -5171,7 +5207,18 @@ void activateSetting(int idx) {
             g_cotLast = 0;
             cotSave();
             Serial.printf("[COT] feed %s\n", g_cot.on ? "on" : "off");
-            toast(g_cot.on ? (wifiConnected() ? "ATAK feed on" : "ATAK feed on with WiFi") : "ATAK feed off");
+            if (!g_cot.on) toast("ATAK feed off");
+            else if (cotUseBle()) toast("ATAK on: pair the phone");
+            else toast(wifiConnected() ? "ATAK feed on" : "ATAK feed on with WiFi");
+            requestRedraw();
+        } else if (idx == 9) {
+            cotSetLink(cotUseBle() ? kCotLinkWifi : kCotLinkBle);
+            requestRedraw();
+        } else if (idx == 10 && cotUseBle() && cotble::active()) {
+            if (confirmTwice(1311, "forget paired phones")) {
+                cotble::forget();
+                toast("Paired phones forgotten");
+            }
             requestRedraw();
         }
         break;
@@ -8690,7 +8737,7 @@ void placeSearch(const char* q0) {
     if (!ownPosition(ola, olo)) mapview::getCentre(ola, olo);
     char line[96];
     const uint32_t t0 = millis();
-    static uint8_t rb[2048];                 // buffered line reader (works on the simulator too)
+    static uint8_t (&rb)[2048] = psram<uint8_t, 2048>();                 // buffered line reader (works on the simulator too)
     int rpos = 0, rlen = 0;
     auto readLine = [&](char* out, size_t cap) -> bool {
         size_t n = 0;
@@ -9721,6 +9768,81 @@ void cotLoad() {
     p.end();
     if (g_cot.every < 5) g_cot.every = 30;
     if (!g_cot.port) g_cot.port = cot::kSaPort;
+    if (g_cot.link > kCotLinkBle) g_cot.link = kCotLinkWifi;
+}
+
+// The feed's link to the phone: WiFi (UDP, CotFeed) or Bluetooth (CotBle). Bluetooth needs the
+// controller RAM kept at boot (cotble::reserved), so switching to Bluetooth restarts the radio once.
+bool cotUseBle() { return g_cot.link == kCotLinkBle; }
+
+// Phone radio allowed by the energy mode: the modes that turn WiFi off (Saver, Check-in ...)
+// keep Bluetooth off too (it keeps the CPU awake).
+bool cotLinkUp() {
+    if (!g_pwEff.wifi) return false;
+    return cotUseBle() ? cotble::connected() : wifiConnected();
+}
+
+void cotBleName(char* out, size_t n) {
+    char hex[33];
+    hashToHex(g_selfHash, hex);
+    snprintf(out, n, "RatSpeak-%.4s", g_haveSelf ? hex : "0000");
+}
+
+// Start / stop Bluetooth with the feed, and tell the screen about pairing.
+void cotBleTick() {
+    const bool want = g_cot.on && cotUseBle() && g_pwEff.wifi && cotble::reserved();
+    if (want) wifiOffForBle();                   // WiFi and Bluetooth do not both fit in RAM
+    if (want && !cotble::active()) {
+        char nm[24];
+        cotBleName(nm, sizeof(nm));
+        const bool ok = cotble::begin(nm);
+        Serial.printf("[BLE] %s as \"%s\", code %06lu\n", ok ? "advertising" : "start failed", nm,
+                      (unsigned long)cotble::passkey());
+    } else if (!want && cotble::active()) {
+        cotble::end();
+        Serial.println("[BLE] off");
+    }
+    for (cotble::Event e; (e = cotble::takeEvent()) != cotble::EV_NONE;) {
+        switch (e) {
+        case cotble::EV_PAIR_CODE:
+            Serial.printf("[BLE] pairing: code %06lu\n", (unsigned long)cotble::passkey());
+            if (g_idleActive) { g_idleActive = false; g_fullRefreshReq = true; }
+            noteInput();
+            toast("Bluetooth code %06lu", (unsigned long)cotble::passkey());
+            g_toastUntil = millis() + 30000;     // long enough to type it on the phone
+            break;
+        case cotble::EV_CONNECTED:
+            Serial.println("[BLE] phone connected");
+            g_cotLast = 0;                       // send a full round now
+            toast("Phone connected (ATAK)");
+            break;
+        case cotble::EV_DISCONNECTED: Serial.println("[BLE] phone disconnected"); toast("Phone disconnected"); break;
+        case cotble::EV_PAIR_FAILED: Serial.println("[BLE] pairing failed"); toast("Bluetooth pairing failed"); break;
+        default: break;
+        }
+        requestRedraw();
+    }
+}
+
+// The link setting changed: save, and restart when Bluetooth's memory must be kept (back to
+// WiFi needs no restart: the kept controller RAM is only ~1.3 KB, freed at the next boot).
+void cotSetLink(uint8_t link) {
+    if (link == g_cot.link) return;
+    g_cot.link = link;
+    cotSave();
+    Serial.printf("[COT] link %s\n", link == kCotLinkBle ? "Bluetooth" : "WiFi");
+    if (link == kCotLinkBle && !cotble::reserved()) {
+        toast("Restarting for Bluetooth");
+        g_toastUntil = millis() + 4000;
+        requestRedraw();
+        Serial.println("[COT] restart to apply the link");
+        Serial.flush();
+#ifndef SIMULATOR
+        render();
+        delay(1500);
+        ESP.restart();
+#endif
+    }
 }
 
 void cotIp(uint32_t ip, char* out, size_t n) {
@@ -9778,9 +9900,10 @@ int cotSendItem(int k, uint32_t t) {
     } else {
         return -1;
     }
-    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < kCotMinInternal) { g_cotSkipped++; return 2; }
+    if (!cotUseBle() && heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < kCotMinInternal) { g_cotSkipped++; return 2; }
     const size_t n = cot::format(it, xml, sizeof(xml));
-    if (!n || !cot::send(xml, n, g_cot.ip, g_cot.port)) return 2;
+    if (!n) return 2;
+    if (cotUseBle() ? !cotble::send(xml, n) : !cot::send(xml, n, g_cot.ip, g_cot.port)) return 2;
     g_cotSent++;
     return 1;
 }
@@ -9929,8 +10052,16 @@ void takPrune() {
 }
 
 void cotTick() {
-    // Receive while the feed is on and WiFi is up, or while the bench listener is on.
-    const bool want = g_cotListenPort || (g_cot.on && wifiConnected() && g_pwEff.wifi);
+    cotBleTick();
+    if (cotble::active()) {                      // Bluetooth: events from ATAK on the phone
+        static char bbuf[1024];
+        for (int k = 0; k < 8 && cotble::poll(bbuf, sizeof(bbuf)) > 0; k++) {
+            cotReceive(bbuf);
+            if (g_cotListen) Serial.printf("[COT] ble xml %s\n", bbuf);
+        }
+    }
+    // Receive while the feed is on WiFi and WiFi is up, or while the bench listener is on.
+    const bool want = g_cotListenPort || (g_cot.on && !cotUseBle() && wifiConnected() && g_pwEff.wifi);
     if (want && !g_cotRxOpen) g_cotRxOpen = cot::listen(g_cotListenPort ? g_cotListenPort : cot::kSaPort, cot::kSaGroup);
     if (!want && g_cotRxOpen) { cot::listen(0); g_cotRxOpen = false; }
     static uint32_t pruned = 0;
@@ -9958,7 +10089,7 @@ void cotTick() {
     }
     static int next = -1;                        // the event a running round sends next (-1: none)
     static uint32_t roundT = 0, stepAt = 0, lowNoted = 0;
-    if (!g_cot.on || !wifiConnected() || !g_pwEff.wifi) { next = -1; return; }
+    if (!g_cot.on || !cotLinkUp()) { next = -1; return; }
     if (next < 0) {                              // start a round every interval
         if (g_cotLast && millis() - g_cotLast < (uint32_t)g_cot.every * 1000u) return;
         const time_t now = time(nullptr);
@@ -9983,6 +10114,7 @@ void cotTick() {
 }
 
 // Console: cot | cot on|off | cot to <a.b.c.d> [port] | cot to default | cot every <s> |
+//          cot link wifi|ble (restarts when needed) | cot forget (paired phones) |
 //          cot now | cot listen <port|0> (bench: print the CoT events that arrive)
 void cotConsole(const char* p) {
     char ip[16];
@@ -10001,8 +10133,14 @@ void cotConsole(const char* p) {
     } else if (sscanf(p, "every %u", &s) == 1 && s >= 5 && s <= 3600) {
         g_cot.every = (uint16_t)s;
         cotSave();
+    } else if (!strcmp(p, "link wifi") || !strcmp(p, "link ble")) {
+        cotSetLink(p[5] == 'b' ? kCotLinkBle : kCotLinkWifi);
+    } else if (!strcmp(p, "forget")) {           // Bluetooth: forget the paired phones
+        cotble::forget();
+        Serial.println("[BLE] paired phones forgotten");
+        return;
     } else if (!strcmp(p, "now")) {
-        if (!wifiConnected()) { Serial.println("[COT] WiFi is not connected"); return; }
+        if (!cotLinkUp()) { Serial.printf("[COT] %s is not connected\n", cotUseBle() ? "no phone" : "WiFi"); return; }
         cotSendAll(true);
         return;
     } else if (sscanf(p, "listen %u", &port) == 1) {
@@ -10078,8 +10216,14 @@ void cotConsole(const char* p) {
         return;
     }
     cotIp(g_cot.ip, ip, sizeof(ip));
-    Serial.printf("[COT] feed %s, every %u s, to %s:%u, %lu events sent, WiFi %s\n", g_cot.on ? "on" : "off",
-                  (unsigned)g_cot.every, ip, (unsigned)g_cot.port, (unsigned long)g_cotSent, wifiConnected() ? "up" : "down");
+    if (cotUseBle())
+        Serial.printf("[COT] feed %s, every %u s, link Bluetooth (%s, code %06lu, memory %s), %lu events sent, %lu in, int %u min %u\n",
+                      g_cot.on ? "on" : "off", (unsigned)g_cot.every, cotble::state(), (unsigned long)cotble::passkey(),
+                      cotble::reserved() ? "kept" : "freed: restart", (unsigned long)g_cotSent, (unsigned long)cotble::rxEvents(),
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+    else
+        Serial.printf("[COT] feed %s, every %u s, to %s:%u, %lu events sent, WiFi %s\n", g_cot.on ? "on" : "off",
+                      (unsigned)g_cot.every, ip, (unsigned)g_cot.port, (unsigned long)g_cotSent, wifiConnected() ? "up" : "down");
 }
 
 // ---- Thread menu (MIC in a conversation) -----------------------------------------------
@@ -10249,7 +10393,7 @@ char g_libPath[96] = "";
 uint32_t g_libSize = 0;
 std::vector<uint32_t> g_libPages;            // start offset of every page read so far
 constexpr int kLibLineMax = 256;             // chars kept per line (wrap off: room to pan)
-char g_libText[kLibLines][kLibLineMax];      // the current page
+char (*g_libText)[kLibLineMax] = nullptr;    // the current page: kLibLines lines, in PSRAM (psramGlobals)
 uint32_t g_libLineOff[kLibLines];            // file offset where each shown line starts
 int g_libTextN = 0;
 uint32_t g_libNext = 0;                      // offset after the current page
@@ -10402,7 +10546,7 @@ int libLayout(uint32_t off, int maxLines, char (*text)[kLibLineMax], uint32_t* s
     File f = g_sdStore.openFile(g_libPath, FILE_READ);
     if (!f) return 0;
     f.seek(off);
-    static uint8_t buf[2048];
+    static uint8_t (&buf)[2048] = psram<uint8_t, 2048>();
     const int n = f.read(buf, sizeof(buf));
     f.close();
     if (n <= 0) return 0;
@@ -10552,7 +10696,7 @@ void libFind(const char* what) {
     if (!wl) return;
     File f = g_sdStore.openFile(g_libPath, FILE_READ);
     if (!f) return;
-    static uint8_t buf[2048 + 64];
+    static uint8_t (&buf)[2048 + 64] = psram<uint8_t, 2048 + 64>();
     uint32_t pos = g_libPages.back() + 1;
     int32_t found = -1;
     while (pos < g_libSize && found < 0) {
@@ -12874,7 +13018,7 @@ bool paintIdleLibrary() {
     const bool keepWrap = g_libWrap;
     strlcpy(g_libPath, path, sizeof(g_libPath));
     g_libWrap = wrap;
-    static char lines[kLibLines][kLibLineMax];
+    static char (&lines)[kLibLines][kLibLineMax] = psram<char[kLibLineMax], kLibLines>();
     uint32_t next;
     const int n = libLayout(off, kLibLines, lines, nullptr, &next);
     strlcpy(g_libPath, keepPath, sizeof(g_libPath));
@@ -14771,6 +14915,9 @@ const char* powerSleepBlocker() {
     if (HWCDC::isPlugged() && !g_usbSleepUntil) return "usb host";   // console drops while asleep
     if (mirror::active()) return "mirror";
     if (g_wifiSt != WifiSt::Off || g_wifiScanning || WiFi.getMode() != WIFI_OFF) return "wifi";
+    // The SDK's Bluetooth controller has no modem sleep (CONFIG_BT_CTRL_MODEM_SLEEP is off in
+    // the Arduino build): light sleep would drop the phone.
+    if (cotble::active()) return "bluetooth";
     if (g_gpsSerial) {
         if (!gpsSleepsWithCpu()) return "gps";
         // The UART is off in light sleep: about every 30 s stay awake until one RMC sentence
@@ -16548,7 +16695,7 @@ void handleSerialLine(char* p) {
         // Bench: write labelled grid test tiles (3x3 at z14 and z15) around <lat> <lon> on the SD card.
         double la = 0, lo = 0;
         if (sscanf(p + 8, "%lf %lf", &la, &lo) != 2 || !sdMount()) { Serial.println("[MAP] maptest <lat> <lon> (needs SD)"); return; }
-        static uint8_t buf[mapview::kHeaderBytes + mapview::kTileBytes];
+        static uint8_t (&buf)[mapview::kHeaderBytes + mapview::kTileBytes] = psram<uint8_t, mapview::kHeaderBytes + mapview::kTileBytes>();
         int written = 0;
         const uint32_t t0 = millis();
         for (int z = 14; z <= 15; z++) {
@@ -17425,6 +17572,13 @@ void vaultStart() {
         vault::begin();
     }
 }
+// Big global buffers in PSRAM (see PsramBuf.h): allocated here, the first thing setup does
+// after PSRAM is up, before anything reads them.
+void psramGlobals() {
+    if (!g_track) g_track = psram<float, kTrackRam * 2>();
+    if (!g_libText) g_libText = psram<char[kLibLineMax], kLibLines>();
+}
+
 void vaultWait() {
     if (!g_vaultDone) return;
     const uint32_t t0 = millis();
@@ -17496,6 +17650,7 @@ bool begin() {
 #endif
     spiBusIdle();
     logPsram();
+    psramGlobals();
     bootMark("config, power, I2C");
 
     // Empty battery and no USB: do not start (and do not draw "BOOTING" over the idle screen).
