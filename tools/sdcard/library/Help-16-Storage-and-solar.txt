@@ -10,12 +10,14 @@ If that does not work: press the BOTTOM (restart) button, then within 3 seconds 
 
 WHILE IT IS OFF
 It does not send or receive. Messages sent to you meanwhile are not kept. Tell your people when you will switch on (for example every evening at 8), or use Check-in mode (Help-9) when you are switched on.
-Everything is powered down. How much it still uses is not measured yet; the aim is months on a full battery.
+Everything is powered down. How much it still uses is not measured yet; the aim is 4 months or more on a full battery.
 Twice a day it looks at the battery for a moment. Nearly empty: the screen changes to BATTERY EMPTY and the battery is cut off until USB power arrives.
 
 CHARGING AND SOLAR
 A USB charger, a power bank or a small 5 V USB solar panel on the USB socket charges the battery. It does NOT switch the radio on.
-A solar panel only charges well in direct sun, facing the sun, not behind glass. A 5 W panel (about the size of this radio or a little larger) refills an hour of use in roughly an hour or two of good sun. Not measured with this radio yet.
+A solar panel only charges well in direct sun, facing the sun. Behind a window it gives about a sixth.
+Estimate (not measured with this radio yet): an hour of use needs about 35 minutes of direct sun on a 1 W panel, 20 minutes on a 2 W panel, a few minutes on a 5 W panel. Behind glass: 3.5 hours, 2 hours, 40 minutes. A 2 W or 5 W panel is the safe choice.
+No sun at all: a full battery gives about two weeks of one hour a day.
 Best for long storage: charge it fully, switch it off, and top it up every few months.
 
 USING IT FOR AN HOUR A DAY

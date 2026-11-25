@@ -188,6 +188,83 @@ units 2-5 m apart; GPS left at the mode's default.
 average delivery time, gauge % vs. real time left. They feed the S.4.12 "estimated time
 left" and the table in the guide's §6.
 
+## 4c. Storage and solar: switched off for months, used an hour a day (2026-11-25)
+
+The case: a radio is charged, switched off (Settings > Power > row 13 "Switch off") and
+carried for months. Then it is used about an hour a day and switched off again, kept going
+by a small USB solar panel.
+
+**Done in the simulator** (`sim/scripts/power_off.py`, in the regression): switch off from the
+menu; power coming back does not start it; the battery look does not start it and is counted;
+the top button starts it and reports the off time, voltage and number of battery looks.
+
+**Done on a real unit (COM6, 2026-11-25):** `poweroff` draws the off screen, the unit leaves
+the USB bus and stays off on USB power.
+
+**Still to do on real units** (each needs a person at the radio):
+
+| # | Test | How | Pass |
+|---|---|---|---|
+| S1 | Button wake | hold the top button 2 s on a switched-off unit | BOOTING, then normal start; `pw` shows "last switched off" |
+| S2 | Short press | tap the top button | stays off, screen unchanged |
+| S3 | Timer wake | `poweroff 2` (battery look every 2 min), wait 10 min, button on | report says about 5 battery looks |
+| S4 | Draw while off | full battery, unplugged, switched off for 3-7 days, then button on | voltage drop in "Last time"; put the mA into `tools/solar_storage_model.py --off-ma` |
+| S5 | Charging while off | switched off at ~50 %, on a USB charger for 2 h, then button on | stayed off; voltage higher than before |
+| S6 | Solar panel | same as S5 with a 5 V USB panel in sun, and once behind a window | stayed off; charge gained per hour noted |
+| S7 | Empty while off | switch off at ~3.45 V, `poweroff 2`, unplugged | changes to BATTERY EMPTY; starts only on USB; then shows SWITCHED OFF again |
+| S8 | Restart button | press the bottom button on a switched-off unit | stays off; restart, then top button within 3 s starts it |
+
+**Energy model** (`python tools/solar_storage_model.py`). A model, not a measurement: usable
+battery ~1150 mAh (battery run 1), ~70 mA while on (bench), draw while off unknown (three
+guesses), panel gives ~60 % of its rating in direct sun and ~10 % behind glass, charger 88 %.
+
+#### 1. Stored, switched off, no charging: time until empty
+
+| Draw while off | Full battery lasts | Half-full battery lasts |
+|---|---|---|
+| 0.10 mA | 363 days (11.9 months) | 182 days |
+| 0.30 mA | 144 days (4.7 months) | 72 days |
+| 1.00 mA | 46 days (1.5 months) | 23 days |
+
+#### 2. In use, no sun: days of use from a full battery
+
+| Use per day | off 0.10 mA | off 0.30 mA | off 1.00 mA |
+|---|---|---|---|
+| 0.5 h (36 mAh) | 29 days | 26 days | 19 days |
+| 1.0 h (72 mAh) | 15 days | 15 days | 12 days |
+| 2.0 h (142 mAh) | 8 days | 8 days | 7 days |
+
+#### 3. Sun needed to stay level (1 h of use a day)
+
+| Panel (rated) | Charge per sun hour | Sun hours needed per day | Behind glass / haze |
+|---|---|---|---|
+| 1 W | 135 mAh | 0.6 h | 3.5 h |
+| 2 W | 271 mAh | 0.3 h | 1.8 h |
+| 5 W | 677 mAh | 0.1 h | 0.7 h |
+| 10 W | 1000 mAh | 0.1 h | 0.5 h |
+
+#### 4. A year of 1 h a day with a panel: does it run out?
+
+(start at 60 % charge; every 10 days some days in a row with almost no sun)
+
+| Panel | Sun hours / day | No bad days | 3 bad days in 10 | 6 bad days in 10 |
+|---|---|---|---|---|
+| 1 W | 1 | OK (lowest 60 %) | OK (lowest 43 %) | empty on day 26 |
+| 1 W | 3 | OK (lowest 60 %) | OK (lowest 50 %) | OK (lowest 40 %) |
+| 1 W | 5 | OK (lowest 60 %) | OK (lowest 57 %) | OK (lowest 54 %) |
+| 2 W | 1 | OK (lowest 60 %) | OK (lowest 46 %) | OK (lowest 33 %) |
+| 2 W | 3 | OK (lowest 60 %) | OK (lowest 60 %) | OK (lowest 60 %) |
+| 2 W | 5 | OK (lowest 60 %) | OK (lowest 60 %) | OK (lowest 60 %) |
+| 5 W | 1 | OK (lowest 60 %) | OK (lowest 57 %) | OK (lowest 54 %) |
+| 5 W | 3 | OK (lowest 60 %) | OK (lowest 60 %) | OK (lowest 60 %) |
+| 5 W | 5 | OK (lowest 60 %) | OK (lowest 60 %) | OK (lowest 60 %) |
+
+Assumptions: usable 1150 mAh, on 70 mA, off 0.10/0.30/1.00 mA, self-discharge 2 %/month.
+
+What it says: storage time depends almost only on the draw while off (S4 is the test that
+matters most). An hour a day without any sun is about two weeks. A 2 W panel with an hour of
+real sun a day keeps up; a 1 W panel behind a window does not.
+
 ## 5. Order of work
 
 1. Add the `heap` heartbeat line (firmware) and the PC logger (also used for the units).

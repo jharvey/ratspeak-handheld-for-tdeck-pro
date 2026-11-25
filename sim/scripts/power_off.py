@@ -112,10 +112,10 @@ def main():
                 "power or restart, staying off" in o and "[BOOT] ready" not in o, o)
     o = run("stay_timer", S_STAY, "timer")
     ok &= check("12 h battery look: stays off",
-                "12 h battery look, staying off" in o and "[BOOT] ready" not in o, o)
+                "battery look, staying off" in o and "[BOOT] ready" not in o, o)
     o = run("on", S_ON, "button")
     ok &= check("top button: starts and reports",
-                "[POWER] on (top button): off" in o and "[POWER] last switched off: off" in o, o)
+                "[POWER] on (top button): off" in o and "; 1 battery looks, lowest 3." in o and "[POWER] last switched off: off" in o, o)
     o = run("plain", S_PLAIN, "power")
     ok &= check("next start is normal",
                 "[BOOT] ready" in o and "staying off" not in o and "[POWER] on (top button)" not in o, o)

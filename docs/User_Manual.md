@@ -719,6 +719,10 @@ shows **SWITCHED OFF / HOLD TOP BUTTON 2 S = ON** and keeps showing it with no p
   voltage before and after. Twice a day it looks at the battery for a moment; if the
   battery is nearly empty it changes to BATTERY EMPTY and cuts the battery off completely
   until USB power arrives.
+- **Solar (estimate, not measured):** an hour of use a day needs about 35 minutes of direct
+  sun on a 1 W USB panel or 20 minutes on a 2 W panel; behind a window about six times
+  longer. With no sun a full battery gives about two weeks of one hour a day. The model
+  is `tools/solar_storage_model.py`.
 - **If the top button does not start it:** press the bottom (restart) button, then within
   3 seconds hold the top button for 2 seconds.
 

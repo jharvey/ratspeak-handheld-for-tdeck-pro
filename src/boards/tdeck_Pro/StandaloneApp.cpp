@@ -4127,7 +4127,7 @@ void meshTick() {
 // Destructive actions need Enter twice within 5 s.
 int      g_idSel = 0;                 // slot shown on PG_ID_ONE
 void popPage();
-[[noreturn]] void powerDown(const char* why);
+[[noreturn]] void powerDown(const char* why, uint16_t lookMin);
 extern char g_offReport[72];
 int      g_confirmKey = -1;
 uint32_t g_confirmAt = 0;
@@ -5408,7 +5408,7 @@ void activateSetting(int idx) {
             Serial.printf("[STANDBY] option %s, after %u h\n", g_pw.standby ? "on" : "off", (unsigned)g_pw.standbyHours);
             requestRedraw();
         } else if (idx == power::MODE_CUSTOM + 5) {
-            if (confirmTwice(0x0FF, "switch off")) powerDown("menu");
+            if (confirmTwice(0x0FF, "switch off")) powerDown("menu", 12 * 60);
         }
         break;
 
@@ -13337,7 +13337,9 @@ void emptyBatteryTick() {
 // NVS rs_boot "off": 1 = switched off by the owner. "offT" / "offMv" / "offMah": clock,
 // battery voltage and gauge charge at switch-off, for the report at the next switch-on.
 constexpr uint32_t kOffHoldMs = 1200;        // button still down this long after the wake
-constexpr uint64_t kOffCheckUs = 12ULL * 3600ULL * 1000000ULL;
+constexpr uint16_t kOffCheckMin = 12 * 60;   // battery look; console "poweroff <min>" = another period (tests)
+// "offMin": the period of this switch-off; "offLooks" / "offLowMv": battery looks since then
+// and the lowest voltage one of them saw (the report shows both: proof the timer wake works).
 char g_offReport[72] = "";                   // "off 13.2 h, 4.05 -> 4.03 V, 3 mAh" (pw, Power page)
 
 enum OffWake : uint8_t { OFF_WAKE_POWER, OFF_WAKE_BUTTON, OFF_WAKE_TIMER };
@@ -13368,7 +13370,12 @@ OffWake offWakeCause() {
     rtc_gpio_pullup_en((gpio_num_t)BOARD_BOOT_PIN);
     rtc_gpio_pulldown_dis((gpio_num_t)BOARD_BOOT_PIN);
     esp_sleep_enable_ext0_wakeup((gpio_num_t)BOARD_BOOT_PIN, 0);
-    esp_sleep_enable_timer_wakeup(kOffCheckUs);
+    {
+        Preferences p;
+        uint16_t m = kOffCheckMin;
+        if (p.begin("rs_boot", true)) { m = p.getUShort("offMin", kOffCheckMin); p.end(); }
+        esp_sleep_enable_timer_wakeup((uint64_t)(m ? m : kOffCheckMin) * 60ULL * 1000000ULL);
+    }
     esp_deep_sleep_start();
 #else
     ESP.restart();                           // the simulator ends here; the next run is the wake
@@ -13383,7 +13390,7 @@ void offDrawScreen() {
 }
 
 // Switch off now (the owner asked). Saves what is pending first.
-[[noreturn]] void powerDown(const char* why) {
+[[noreturn]] void powerDown(const char* why, uint16_t lookMin = kOffCheckMin) {
     Serial.printf("[POWER] off (%s): battery %.2f V %d%%; top button 2 s = on%c", why, g_bat.volts, g_bat.pct, 10);
     soakLog("OFF (%s) %.3fV %d%%", why, g_bat.volts, g_bat.pct);
     saveConfig();
@@ -13395,6 +13402,9 @@ void offDrawScreen() {
         Preferences p;
         if (p.begin("rs_boot", false)) {
             p.putUChar("off", 1);
+            p.putUShort("offMin", lookMin ? lookMin : kOffCheckMin);
+            p.putUShort("offLooks", 0);
+            p.putUShort("offLowMv", 0);
             p.putULong("offT", (uint32_t)time(nullptr));
             p.putUShort("offMv", g_bat.valid ? (uint16_t)(g_bat.volts * 1000.0f + 0.5f) : 0);
             p.putUShort("offMah", g_bat.valid ? g_bat.remMah : 0);
@@ -13429,9 +13439,10 @@ bool offStaysOff() {
 #endif
         if (held) {
             Preferences p;
-            uint32_t t = 0; uint16_t mv = 0, mah = 0;
+            uint32_t t = 0; uint16_t mv = 0, mah = 0, looks = 0, lowMv = 0;
             if (p.begin("rs_boot", false)) {
                 t = p.getULong("offT", 0); mv = p.getUShort("offMv", 0); mah = p.getUShort("offMah", 0);
+                looks = p.getUShort("offLooks", 0); lowMv = p.getUShort("offLowMv", 0);
                 p.putUChar("off", 0);
                 p.end();
             }
@@ -13442,14 +13453,25 @@ bool offStaysOff() {
                 snprintf(g_offReport, sizeof(g_offReport), "%s, %.2f -> %.2f V, %d mAh", dur, mv / 1000.0f,
                          g_bat.volts, (int)mah - (int)g_bat.remMah);
             else snprintf(g_offReport, sizeof(g_offReport), "%s", dur);
-            Serial.printf("[POWER] on (top button): %s%c", g_offReport, 10);
+            Serial.printf("[POWER] on (top button): %s; %u battery looks, lowest %.2f V%c", g_offReport,
+                          (unsigned)looks, lowMv / 1000.0f, 10);
             return false;
         }
         Serial.println("[POWER] off: button let go too soon, staying off");
         return true;
     }
+    if (w == OFF_WAKE_TIMER) {
+        Preferences p;
+        if (p.begin("rs_boot", false)) {
+            const uint16_t n = p.getUShort("offLooks", 0), low = p.getUShort("offLowMv", 0);
+            const uint16_t mv = g_bat.valid ? (uint16_t)(g_bat.volts * 1000.0f + 0.5f) : 0;
+            if (n < 0xFFFF) p.putUShort("offLooks", n + 1);
+            if (mv && (!low || mv < low)) p.putUShort("offLowMv", mv);
+            p.end();
+        }
+    }
     Serial.printf("[POWER] off: %s, staying off (battery %.2f V%s)%c",
-                  w == OFF_WAKE_TIMER ? "12 h battery look" : "power or restart", g_bat.volts,
+                  w == OFF_WAKE_TIMER ? "battery look" : "power or restart", g_bat.volts,
                   g_bat.usb ? ", charging" : "", 10);
     return true;
 }
@@ -16625,7 +16647,9 @@ void handleSerialLine(char* p) {
     }
     if (!strcmp(p, "idle now")) { enterIdle(); return; }
     if (!strcmp(p, "btn")) { sideButtonAction("console"); return; }
-    if (!strcmp(p, "poweroff")) powerDown("console");   // S.5 Switch off; top button 2 s = on   // the top side button (lock)
+    if (!strncmp(p, "poweroff", 8) && (p[8] == 0 || p[8] == ' '))   // "poweroff 2": battery look every 2 min (test)
+        powerDown("console", p[8] ? (uint16_t)constrain(atoi(p + 9), 1, 1440) : 12 * 60);
+    // S.5 Switch off; top button 2 s = on
     if (!strcmp(p, "btn hold")) { sosHold("console"); return; }
     if (!strcmp(p, "lib")) { libOpen(); return; }                          // the Library
     if (!strcmp(p, "libnote")) { libOpen(); startEntry(Entry::Note, ""); requestRedraw(); return; }   // + New note        // the top button held 3 s (SOS)
