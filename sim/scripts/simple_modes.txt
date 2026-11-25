@@ -1,0 +1,59 @@
+# Minimal mode stays minimal (owner, 2026-11-25): Inbox, Contacts and Settings row 1 only; no
+# Home, Switch off, trip check or Atlas there. Typical mode keeps the new features; without
+# "Advanced" its Power page is short (Full, Balanced, Eco, Saver, USB rule, Switch off).
+expect 60000 [BOOT] ready
+wait 1500
+serial wiz skip
+wait 1000
+serial home set 41.8781 -87.6298
+expect 3000 [HOME] set
+serial opmode 0
+wait 1000
+key BACK
+wait 800
+key M
+wait 800
+shot simple-01-menu-minimal.png
+key S
+wait 1000
+shot simple-02-settings-minimal.png
+# Rows 2-5 do not exist in Minimal: nothing opens.
+key 2
+wait 600
+key 4
+wait 600
+serial trip
+expect 5000 [TRIP] 11 checks
+# Typical without Advanced: the short Power page; row 13 still opens the Switch off page
+# with the daily contact and "Ready for a trip?".
+serial opmode 1
+wait 1000
+key BACK
+wait 500
+key M
+wait 800
+key S
+wait 1000
+key 5
+wait 1200
+shot simple-03-power-typical.png
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
+shot simple-04-power-typical-end.png
+serial pm2
+expect 3000 [POWER] Eco
+serial home go
+expect 3000 [NAV] open kind=3
+key G
+expect 3000 [NAV] closed
+serial opmode 2
+wait 500
+quit

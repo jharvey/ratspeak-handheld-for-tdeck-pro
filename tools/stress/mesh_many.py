@@ -20,7 +20,7 @@ import argparse, os, re, statistics, sys, tempfile, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 os.environ.setdefault("RS_SIM_DATA", os.path.join(tempfile.gettempdir(), "rs_mesh_many"))
-os.environ.setdefault("RS_SIM_AIR_PORT", "48461")
+os.environ.setdefault("RS_SIM_AIR_PORT", "48463")
 sys.path.insert(0, os.path.join(ROOT, "sim", "scripts"))
 import groups_net as G
 
@@ -37,7 +37,7 @@ def main():
     sims, sent, lost = [], [], {}
     try:
         for i in range(a.radios):
-            sims.append(G.Sim("mm_%02d" % i, 5761 + i))
+            sims.append(G.Sim("mm_%02d" % i, 5801 + i))
             time.sleep(1.5)
         ids = [s.ident() for s in sims]
         for i, s in enumerate(sims):

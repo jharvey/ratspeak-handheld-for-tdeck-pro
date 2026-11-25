@@ -11,7 +11,7 @@ ANN resends, BOB shows the message, ANN's list is empty again. Exit 0 = PASS.
 import os, sys, tempfile, time
 
 os.environ.setdefault("RS_SIM_DATA", os.path.join(tempfile.gettempdir(), "rs_held_net"))
-os.environ.setdefault("RS_SIM_AIR_PORT", "48447")
+os.environ.setdefault("RS_SIM_AIR_PORT", "48449")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import groups_net as G
 
@@ -21,7 +21,7 @@ def main():
     sims = {}
     try:
         for i, n in enumerate(("ann", "bob")):
-            sims[n] = G.Sim("hd_" + n, 5741 + i)
+            sims[n] = G.Sim("hd_" + n, 5791 + i)
         a, b = sims["ann"], sims["bob"]
         h = {n: s.ident() for n, s in sims.items()}
         for n, s in sims.items():
@@ -51,7 +51,7 @@ def main():
 
         def s2():
             a.mark()
-            sims["bob"] = G.Sim("hd_bob", 5742, fresh=False)   # BOB switches on: announces at start
+            sims["bob"] = G.Sim("hd_bob", 5792, fresh=False)   # BOB switches on: announces at start
             bb = sims["bob"]
             bb.ident()
             time.sleep(8)

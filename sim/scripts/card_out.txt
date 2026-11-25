@@ -1,0 +1,42 @@
+# The SD card is taken out while the radio runs: the features that read it (trip check, route
+# import, map, Library, sun times) say so and nothing hangs; the card goes back in and they
+# work again.
+expect 60000 [BOOT] ready
+wait 1500
+serial wiz skip
+wait 1000
+serial trip
+expect 5000 [TRIP] OK    SD card: present
+sd out
+wait 500
+serial sdinfo
+wait 1500
+serial trip
+expect 8000 [TRIP] TO DO SD card: none
+serial gpximport
+wait 3000
+serial home set 41.8781 -87.6298
+expect 3000 [HOME] set
+serial home go
+expect 3000 [NAV] open kind=3
+key G
+expect 3000 [NAV] closed
+key BACK
+wait 800
+key L
+wait 2500
+key BACK
+wait 800
+serial sun
+expect 3000 [SUN] today:
+serial pw
+expect 3000 lxmf_queue=
+sd in
+wait 500
+serial sdinfo
+wait 2000
+serial trip
+expect 8000 [TRIP] OK    SD card: present
+serial gpximport
+expect 5000 [GPX] 0 file(s)
+quit

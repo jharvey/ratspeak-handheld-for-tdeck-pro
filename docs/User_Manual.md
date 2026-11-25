@@ -240,8 +240,12 @@ without it ([7](#7-troubleshooting-and-questions)).
 **M**, **S**, **1**:
 
 - **1 Minimal:** only Inbox, Contacts, Settings row 1 and the walkie-talkie. The radio wakes to
-  the Inbox. To get back: **M**, **S**, **1**, **2**.
-- **2 Typical:** the features turned on in row 5.
+  the Inbox. Home, Switch off, the trip check and the map are not in Minimal: they are in
+  Typical and Everything. To get back: **M**, **S**, **1**, **2**.
+- **2 Typical:** the features turned on in row 5. Unless "Advanced" is on there, the Power
+  page shows only Full, Balanced, Eco and Saver (plus the mode in use), Full power on USB
+  and Switch off; Ultra-low, On demand, Check-in, Custom, the energy monitor and standby
+  are in Everything.
 - **3 Everything:** all features.
 - **4** Touch screen on / off (off = keys only).
 - **5** Typical features: Walkie-talkie, Voice messages, Home Assistant voice, WiFi settings,

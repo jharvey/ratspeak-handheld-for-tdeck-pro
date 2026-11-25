@@ -225,8 +225,10 @@ bool quietNow() {
 const char* const kRelayName[3] = {"Off", "On USB power", "Always"};
 // Operator modes (S.1). Minimal: Inbox, Contacts and Settings S.1 only (no Home, Peers, Atlas,
 // Library); waking goes to the Inbox. Normal is Advanced for now.
-// Operator modes (S.1): Minimal (Inbox, Contacts, S.1, walkie-talkie), Typical (the features
-// picked on S.1.5, most on by default), Everything (all). Same NVS values as before.
+// Operator modes (S.1): Minimal (Inbox, Contacts, S.1, walkie-talkie: kept minimal on purpose,
+// owner 2026-11-25: Home, Switch off, the trip check and the Atlas are NOT in Minimal), Typical
+// (the features picked on S.1.5, most on by default; the Power page shows only Full, Balanced,
+// Eco and Saver unless "Advanced" is on), Everything (all). Same NVS values as before.
 constexpr uint8_t OP_MINIMAL = 0, OP_NORMAL = 1, OP_ADVANCED = 2;   // NORMAL = Typical, ADVANCED = Everything
 const char* const kOpModeName[3] = {"Minimal", "Typical", "Everything"};
 bool minimalMode() { return g_cfg.opMode == OP_MINIMAL; }
@@ -4685,7 +4687,9 @@ void buildSettingsRows(Page p) {
         char rt[16], ci[24], at[12];
         fmtClockMin(g_pw.checkinStart, at, sizeof(at));
         checkinEveryText(ci, sizeof(ci));
+        const bool pwAll = feature(F_ADVANCED);    // Typical without Advanced: the short list
         for (uint8_t m = power::MODE_FULL; m < power::MODE_CUSTOM; m++) {
+            if (!pwAll && g_pw.mode != m && m + 3 >= power::MODE_CUSTOM) { srowSkip(); continue; }   // Ultra-low, On demand, Check-in
             const bool cur = g_pw.mode == m && extra >= 0;
             power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(power::preset(m), cur ? extra : -1));
             if (m == power::MODE_CHECKIN)        // a menu: the Check-in page (time, every ...)
@@ -4695,17 +4699,24 @@ void buildSettingsRows(Page p) {
                 srow(RK_PICK, power::modeName(m), "%s%s, %s", g_pw.mode == m ? "ON " : "", rt,
                      cur ? (wifiAwake ? "awake: WiFi" : "awake: Bluetooth") : kNote[m]);
         }
-        if (g_pw.customSet || g_pw.mode == power::MODE_CUSTOM) {
+        if (!pwAll && g_pw.mode != power::MODE_CUSTOM) {
+            srowSkip();
+        } else if (g_pw.customSet || g_pw.mode == power::MODE_CUSTOM) {
             power::fmtRuntime(rt, sizeof(rt), cap, power::estimateMa(g_pw.custom));
             srow(RK_MENU, "Custom", "%s%s (your settings)", g_pw.mode == power::MODE_CUSTOM ? "ON " : "", rt);
         } else {
             srow(RK_MENU, "Custom", "set your own");
         }
-        srow(RK_MENU, "Energy monitor", "what uses the battery");
+        if (pwAll) srow(RK_MENU, "Energy monitor", "what uses the battery"); else srowSkip();
         srow(RK_TOGGLE, "Full power on USB", "%s", g_pw.fullOnUsb ? "ON" : "OFF");
-        srow(RK_TOGGLE, "Standby when idle", g_pw.standby ? "ON: GPS off after %u h idle" : "OFF",
-             (unsigned)g_pw.standbyHours);
-        srow(RK_PICK, "Standby after", "%u h without a key", (unsigned)g_pw.standbyHours);
+        if (pwAll || g_pw.standby) {
+            srow(RK_TOGGLE, "Standby when idle", g_pw.standby ? "ON: GPS off after %u h idle" : "OFF",
+                 (unsigned)g_pw.standbyHours);
+            srow(RK_PICK, "Standby after", "%u h without a key", (unsigned)g_pw.standbyHours);
+        } else {
+            srowSkip();
+            srowSkip();
+        }
         if (g_offc.on) srow(RK_MENU, "Switch off", "storage; contact daily %02u:%02u", (unsigned)(g_offc.atMin / 60), (unsigned)(g_offc.atMin % 60));
         else srow(RK_MENU, "Switch off", "for storage; daily contact");
         const uint32_t tot = g_pwAwakeMs + g_pwSleepMs;
