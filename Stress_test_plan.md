@@ -265,6 +265,18 @@ What it says: storage time depends almost only on the draw while off (S4 is the 
 matters most). An hour a day without any sun is about two weeks. A 2 W panel with an hour of
 real sun a day keeps up; a 1 W panel behind a window does not.
 
+**Simulator runs, 2026-11-25** (source 0190855):
+
+| Run | Tool | Result |
+|---|---|---|
+| 8 radios on one channel, each sends to the next, 3 rounds, sends 3 s apart | `python tools/stress/mesh_many.py --radios 8 --rounds 3` | 24 of 24 delivered; median 16-18 s, worst 30 s |
+| 10 days of stored life: a battery look and a daily contact every day, a use by hand on days 5 and 10 | `python tools/stress/off_cycles.py --days 10` | every day passed; the simulator's data folder went from 2 KB to 3 KB (11 to 18 files) |
+| Message to a contact that is off, then on again | `python sim/scripts/held_net.py` | kept, resent on the contact's announce, delivered, list empty |
+
+Not run yet: 16 or more radios, relays between groups that cannot hear each other, lost
+packets, a power cut during a save while switching off, the SD card pulled during a GPX
+import, and all of section 4c on real radios.
+
 ## 5. Order of work
 
 1. Add the `heap` heartbeat line (firmware) and the PC logger (also used for the units).
