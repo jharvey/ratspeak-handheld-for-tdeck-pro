@@ -2,7 +2,11 @@ HELP: STORAGE, SWITCH OFF AND SOLAR
 
 For a radio that is put away for weeks or months and used now and then (an emergency radio in a bag, a car, a dorm room).
 
-SWITCH OFF: M, S, 5 (Power), V down to row 13 "Switch off", Enter, Enter again.
+SWITCH OFF: M, S, 5 (Power), V down to row 13 "Switch off", Enter. On the page that opens: Enter, Enter again on "Switch off now".
+
+DAILY CONTACT (optional, same page): row 2 on, row 3 the hour, row 4 how long. Every day at that hour the switched-off radio starts by itself, sends its position and battery to the contacts that have location auto-share (in a chat: MIC, row 2), listens for messages, and switches off again. Press a key in those minutes and it stays on. About 8 mAh each time: roughly four months of daily contacts on a full battery (estimate).
+
+HOME: set it once with M, S, 2, row 14 (here) or row 15 (the map centre). After that M, S, 2, row 13, or G on the map, shows an arrow and the distance home.
 The screen shows SWITCHED OFF and keeps showing it. The e-ink needs no power for that.
 
 SWITCH ON: hold the TOP side button about 2 seconds, until BOOTING shows. A short press does nothing, so a bump in a bag does not start it. Start-up takes a minute or more.
@@ -22,7 +26,7 @@ Best for long storage: charge it fully, switch it off, and top it up every few m
 
 USING IT FOR AN HOUR A DAY
 Switch on, wait for the clock and the GPS (open sky; the first fix after a long time off can take several minutes).
-Map: M, then Map. Your position needs GPS; the maps are on the card and need no network.
+Map: A (or M, then A). Your position needs GPS; the maps are on the card and need no network.
 When you are done: switch off again (M, S, 5, row 13). Do not just leave it on the idle screen: there it keeps listening and the battery lasts a day or two, not months.
 To use less while it is on: Eco or Saver mode (M, S, 5), WiFi off.
 An hour of use takes very roughly 5 to 8 % of the battery.

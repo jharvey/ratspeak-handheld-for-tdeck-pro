@@ -20,7 +20,7 @@ expect 3000 [IDLE] wake
 wait 800
 # The same with the real pin: a short press acts when it is let go.
 menu Device > Hold BOOT
-wait 300
+wait 900
 menu Device > Hold BOOT
 expect 3000 [BTN] top button (button): idle screen (no password)
 expect 3000 [IDLE] enter
@@ -103,7 +103,7 @@ wait 800
 key I
 wait 1000
 menu Device > Hold BOOT
-wait 300
+wait 900
 menu Device > Hold BOOT
 expect 3000 [BTN] top button (button): lock
 expect 3000 [LOCK] locked

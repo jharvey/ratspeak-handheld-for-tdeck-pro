@@ -1,0 +1,50 @@
+# Home point: one saved place the arrow can always point to (S.2 rows 13-15, map G with
+# nothing selected, map Alt+H, console "home"). Kept in NVS; shown on the idle splash.
+expect 60000 [BOOT] ready
+wait 1500
+serial wiz skip
+wait 1000
+serial home
+expect 3000 [HOME] not set
+# No Home yet: "go" only says so.
+serial home go
+wait 500
+serial home set 41.8781 -87.6298
+expect 3000 [HOME] set (console): 41.878
+serial home
+expect 3000 [HOME] 41.878
+# The arrow: opens the map and the bearing screen on Home.
+serial home go
+expect 3000 [NAV] open kind=3
+wait 1500
+shot home-01-arrow.png
+key G
+expect 3000 [NAV] closed
+wait 800
+# G on the map with nothing selected also points Home.
+key G
+expect 3000 [NAV] open kind=3
+key G
+expect 3000 [NAV] closed
+wait 500
+# Settings S.2: rows 13 Go Home, 14 Set Home here, 15 Set Home = map centre.
+key M
+wait 800
+key S
+wait 800
+key 2
+wait 1000
+key T
+wait 300
+key T
+wait 300
+key T
+wait 800
+shot home-02-settings.png
+serial home here
+expect 3000 [HOME] set (console, here)
+serial home clear
+expect 3000 [HOME] cleared
+serial home
+expect 3000 [HOME] not set
+quit

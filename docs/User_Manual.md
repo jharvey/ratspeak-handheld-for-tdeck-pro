@@ -417,6 +417,13 @@ contours, woods, hill shading, and a radio coverage overlay made by
 through them; **Alt+SYM** twice removes the selected one. The list: **M**, **S**, **2**,
 row 9. Up to 32.
 
+**Home point:** one saved place the arrow can always point to. Set it with **M**, **S**, **2**,
+row 14 (Set Home here: your position now) or row 15 (Set Home = map centre: move or search
+the map to the place first), **Enter** twice. Then row 13 (Go Home), or on the map **G** with
+nothing selected, or **Alt+H**, shows a big arrow, the distance and the compass direction.
+While you walk the arrow is relative to your direction of travel; standing still it is
+north-up. The idle screen shows "Home 212 mi NE".
+
 **Breadcrumb track:** **M**, **S**, **2**, row 10 (Track), **1** (Record track). A point about
 every 25 m, drawn as a dotted line. **B** on the Atlas guides you back. The Track page also
 exports it as GPX to the card and clears it (**Enter** twice).
@@ -703,7 +710,8 @@ without a key, GPS, WiFi, touch and the key light go off and the radio wakes eve
 LoRa keeps listening, so messages still arrive. A key ends standby.
 
 **Switch off (row 13), for storage:** for a radio that is put away for weeks or months and
-used now and then. **M**, **S**, **5**, move to row 13 with **V**, **Enter** twice. The screen
+used now and then. **M**, **S**, **5**, move to row 13 with **V**, **Enter** (the Switch off page opens), then **Enter** twice on row 1
+"Switch off now". The screen
 shows **SWITCHED OFF / HOLD TOP BUTTON 2 S = ON** and keeps showing it with no power.
 
 - **On again:** hold the **top side button** about 2 seconds, until BOOTING shows. A short
@@ -719,6 +727,13 @@ shows **SWITCHED OFF / HOLD TOP BUTTON 2 S = ON** and keeps showing it with no p
   voltage before and after. Twice a day it looks at the battery for a moment; if the
   battery is nearly empty it changes to BATTERY EMPTY and cuts the battery off completely
   until USB power arrives.
+- **Daily contact (optional):** on the Switch off page, row 2 turns it on, row 3 sets the hour,
+  row 4 how long it stays on (5, 10 or 15 minutes). Every day at that hour the switched-off
+  radio starts by itself, sends its position and battery to every contact that has location
+  auto-share turned on (in a chat: **MIC**, row 2), listens for messages, and switches off
+  again. Press any key during those minutes and it stays on. Each contact costs roughly
+  8 mAh, so a full battery gives about four months of daily contacts (estimate). It needs
+  the clock to be set; with no clock it simply stays off.
 - **Solar (estimate, not measured):** an hour of use a day needs about 35 minutes of direct
   sun on a 1 W USB panel or 20 minutes on a 2 W panel; behind a window about six times
   longer. With no sun a full battery gives about two weeks of one hour a day. The model

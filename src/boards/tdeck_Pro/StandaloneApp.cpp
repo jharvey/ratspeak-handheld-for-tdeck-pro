@@ -2140,6 +2140,12 @@ constexpr int kWptMax = 32;
 Wpt g_wpt[kWptMax];
 int g_wptCount = 0;
 int g_wptSel = -1;                           // selected on the map (N), -1 = none
+// Home point (S.2 rows 13-15, map G with nothing selected, Alt+H): one place the arrow can
+// always point to. NVS rs_wpt "hset" / "hlat" / "hlon".
+struct HomePt { float lat = 0, lon = 0; bool set = false; } g_home;
+void homeSet(double lat, double lon, const char* how);
+void homeGo();
+bool homeText(char* out, size_t n);
 uint32_t g_wptDelAt = 0;                     // Del pressed once (confirm within 3 s)
 constexpr int kTrackRam = 1000;
 float* g_track = nullptr;                    // kTrackRam * 2 floats, in PSRAM (psramGlobals)
@@ -3299,7 +3305,7 @@ enum Page : uint8_t {
     PG_ROOT, PG_TIME, PG_RTC, PG_TZ, PG_LOC, PG_WIFI, PG_SCREEN, PG_IDLE,
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
-    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW, PG_LOWBAT,
+    PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW, PG_LOWBAT, PG_OFF,
     PG_BACKUPS, PG_FOUND, PG_MODE, PG_HAVOICE, PG_FEATURES, PG_SELFTEST
 };
 struct NavFrame { Page page; int sel; int scroll; };
@@ -4127,7 +4133,15 @@ void meshTick() {
 // Destructive actions need Enter twice within 5 s.
 int      g_idSel = 0;                 // slot shown on PG_ID_ONE
 void popPage();
-[[noreturn]] void powerDown(const char* why, uint16_t lookMin);
+[[noreturn]] void powerDown(const char* why, uint16_t lookMin, bool resume);
+// Daily contact while switched off (S.5 > Switch off): at the set hour the radio starts by
+// itself, sends its position and battery to the contacts that have location auto-share,
+// listens for the set minutes (messages held for it arrive now), and switches off again.
+// A key during the window keeps it on. NVS rs_boot dcOn / dcMin / dcStay / dcDay.
+struct OffContact { bool on = false; uint16_t atMin = 20 * 60; uint8_t stayMin = 5; } g_offc;
+bool g_contactWin = false;            // this start is a contact window
+void offcSave();
+void offcPrint();
 extern char g_offReport[72];
 int      g_confirmKey = -1;
 uint32_t g_confirmAt = 0;
@@ -4381,6 +4395,7 @@ const char* pageTitle(Page p) {
         case PG_TRACK:        return "Track";
         case PG_GEOFS:        return "Arrival alerts";
         case PG_LOWBAT:       return "Low-battery notice";
+        case PG_OFF:          return "Switch off";
         case PG_GEOF_NEW:     return "New arrival alert";
         case PG_BACKUPS:      return "Restore backup";
         case PG_FOUND:        return "If found";
@@ -4477,6 +4492,12 @@ void buildSettingsRows(Page p) {
             srow(RK_PICK, "Units", "%s", g_cfg.imperial ? "ft / mi" : "m / km");
             static const char* const kFmt[3] = {"Decimal 43.64012,-70.92011", "Deg min sec 43 38'24\"N", "MGRS 19T CJ 4513 3368"};
             srow(RK_PICK, "Coordinates", "%s", kFmt[g_cfg.coordFmt % 3]);
+            char hd[24];
+            if (!g_home.set) srow(RK_ACTION, "Go Home", "not set (rows 14, 15)");
+            else if (homeText(hd, sizeof(hd))) srow(RK_ACTION, "Go Home", "%s; Enter = arrow", hd);
+            else srow(RK_ACTION, "Go Home", "%.4f, %.4f", g_home.lat, g_home.lon);
+            srow(RK_ACTION, "Set Home here", "my position; Enter twice");
+            srow(RK_ACTION, "Set Home = map centre", "Enter twice");
         }
         break;
 
@@ -4668,7 +4689,8 @@ void buildSettingsRows(Page p) {
         srow(RK_TOGGLE, "Standby when idle", g_pw.standby ? "ON: GPS off after %u h idle" : "OFF",
              (unsigned)g_pw.standbyHours);
         srow(RK_PICK, "Standby after", "%u h without a key", (unsigned)g_pw.standbyHours);
-        srow(RK_ACTION, "Switch off", "top button 2 s = on again");
+        if (g_offc.on) srow(RK_MENU, "Switch off", "storage; contact daily %02u:%02u", (unsigned)(g_offc.atMin / 60), (unsigned)(g_offc.atMin % 60));
+        else srow(RK_MENU, "Switch off", "for storage; daily contact");
         const uint32_t tot = g_pwAwakeMs + g_pwSleepMs;
         if (g_standby)               srow(RK_INFO, "Now", "STANDBY for %lu min, GPS off",
                                           (unsigned long)((millis() - g_standbySince) / 60000UL));
@@ -4870,6 +4892,22 @@ void buildSettingsRows(Page p) {
                            (unsigned)(g_capMah * 100u / kNominalMah));
         else srow(RK_INFO, "Learned capacity", "%s", g_capAnchor >= 0 ? "counting (needs 40% drop)" : "after a 40% drop");
         break;
+
+    case PG_OFF: {
+        srow(RK_ACTION, "Switch off now", "top button 2 s = on again");
+        srow(RK_TOGGLE, "Daily contact", g_offc.on ? "ON: starts daily, then off" : "OFF: off until the button");
+        srow(RK_PICK, "Contact time", "%02u:00", (unsigned)(g_offc.atMin / 60));
+        srow(RK_PICK, "Stay on for", "%u min", (unsigned)g_offc.stayMin);
+        if (ashareActive()) srow(RK_INFO, "Sends to", "%d with location auto-share", ashareActive());
+        else srow(RK_INFO, "Sends to", "nobody yet: chat, MIC, row 2");
+        {
+            const time_t now = time(nullptr);
+            if (now < 1600000000) srow(RK_INFO, "Clock", "not set: no daily contact");
+            else srow(RK_INFO, "Each contact uses", "~%u mAh (estimate)", (unsigned)(g_offc.stayMin * 70 / 60 + 2));
+        }
+        if (g_offReport[0]) srow(RK_INFO, "Last time", "%s", g_offReport);
+        break;
+    }
 
     case PG_LOWBAT: {
         if (g_cfg.lowBatPct) srow(RK_PICK, "Send at", "%u %%", (unsigned)g_cfg.lowBatPct);
@@ -5153,6 +5191,21 @@ void activateSetting(int idx) {
             saveConfig();
             Serial.printf("[CFG] coordinates %s\n", g_cfg.coordFmt == 2 ? "MGRS" : g_cfg.coordFmt == 1 ? "DMS" : "decimal");
             requestRedraw();
+        } else if (idx == 12) {
+            homeGo();
+        } else if (idx == 13) {
+            double la, lo;
+            if (!ownPosition(la, lo)) toast("No position yet (GPS or S.2 row 4)");
+            else if (confirmTwice(1213, "Home = here")) { homeSet(la, lo, "my position"); toast("Home set here"); }
+            requestRedraw();
+        } else if (idx == 14) {
+            if (confirmTwice(1214, "Home = map centre")) {
+                double la, lo;
+                mapview::getCentre(la, lo);
+                if (la == 0 && lo == 0) toast("Open the map first");
+                else { homeSet(la, lo, "map centre"); toast("Home set to the map centre"); }
+            }
+            requestRedraw();
         }
         break;
 
@@ -5408,7 +5461,7 @@ void activateSetting(int idx) {
             Serial.printf("[STANDBY] option %s, after %u h\n", g_pw.standby ? "on" : "off", (unsigned)g_pw.standbyHours);
             requestRedraw();
         } else if (idx == power::MODE_CUSTOM + 5) {
-            if (confirmTwice(0x0FF, "switch off")) powerDown("menu", 12 * 60);
+            pushPage(PG_OFF);
         }
         break;
 
@@ -5528,6 +5581,23 @@ void activateSetting(int idx) {
             startEntry(Entry::FoundText, g_cfg.found[idx]);
             g_entryReplace = true;            // typing starts over, Backspace edits the old text
         }
+        break;
+
+    case PG_OFF:
+        if (idx == 0) {
+            if (confirmTwice(0x0FF, "switch off")) powerDown("menu", 12 * 60, false);
+        } else if (idx == 1) {
+            g_offc.on = !g_offc.on;
+            offcSave();
+            toast(g_offc.on ? "Daily contact on" : "Daily contact off");
+        } else if (idx == 2) {
+            g_offc.atMin = (uint16_t)((g_offc.atMin / 60 + 1) % 24 * 60);
+            offcSave();
+        } else if (idx == 3) {
+            g_offc.stayMin = g_offc.stayMin < 10 ? 10 : g_offc.stayMin < 15 ? 15 : 5;
+            offcSave();
+        }
+        requestRedraw();
         break;
 
     case PG_LOWBAT:
@@ -8518,10 +8588,37 @@ void wptSave() {
     p.end();
 }
 
+void homeSet(double lat, double lon, const char* how) {
+    g_home.lat = (float)lat; g_home.lon = (float)lon; g_home.set = true;
+    Preferences p;
+    if (p.begin("rs_wpt", false)) {
+        p.putBool("hset", true); p.putFloat("hlat", g_home.lat); p.putFloat("hlon", g_home.lon);
+        p.end();
+    }
+    Serial.printf("[HOME] set (%s): %.5f, %.5f%c", how, lat, lon, 10);
+}
+
+void homeClear() {
+    g_home = HomePt{};
+    Preferences p;
+    if (p.begin("rs_wpt", false)) { p.putBool("hset", false); p.end(); }
+    Serial.println("[HOME] cleared");
+}
+
+// "212 mi NE" from here to Home; false = no Home or no own position.
+bool homeText(char* out, size_t n) {
+    double la, lo;
+    if (!g_home.set || !ownPosition(la, lo)) return false;
+    distText(la, lo, g_home.lat, g_home.lon, out, n);
+    return true;
+}
+
 void wptLoad() {
     Preferences p;
     g_wptCount = 0;
     if (!p.begin("rs_wpt", true)) return;
+    g_home.set = p.getBool("hset", false);
+    g_home.lat = p.getFloat("hlat", 0); g_home.lon = p.getFloat("hlon", 0);
     const int n = p.getUChar("n", 0);
     if (n > 0 && n <= kWptMax && p.getBytes("list", g_wpt, sizeof(Wpt) * n) == sizeof(Wpt) * (size_t)n)
         g_wptCount = n;
@@ -12451,7 +12548,7 @@ int trackExportGpx() {
 // point, the distance and the age of a contact's fix. No compass on board: while you move
 // (GPS speed over 1 knot) the arrow is relative to your course over ground ("ahead" = up),
 // standing still it is north-up.
-enum NavKind : uint8_t { NAV_CONTACT, NAV_WPT, NAV_TRACK };
+enum NavKind : uint8_t { NAV_CONTACT, NAV_WPT, NAV_TRACK, NAV_HOME };
 NavKind g_navKind = NAV_CONTACT;
 int     g_navIdx = 0;
 bool    g_navArrowOk = false;
@@ -12514,6 +12611,11 @@ bool navTarget(double& la, double& lo, char* name, size_t n) {
             la = g_track[2 * g_navIdx]; lo = g_track[2 * g_navIdx + 1];
             snprintf(name, n, "Track back, point %d", g_navIdx + 1);
             return true;
+        case NAV_HOME:
+            if (!g_home.set) return false;
+            la = g_home.lat; lo = g_home.lon;
+            snprintf(name, n, "Home");
+            return true;
         case NAV_WPT:
             if (g_navIdx < 0 || g_navIdx >= g_wptCount) return false;
             la = g_wpt[g_navIdx].lat; lo = g_wpt[g_navIdx].lon;
@@ -12533,13 +12635,24 @@ void navOpen() {
     if (g_tbOn) { g_navKind = NAV_TRACK; g_navIdx = g_tbIdx; }
     else if (g_mapSel >= 0) { g_navKind = NAV_CONTACT; g_navIdx = g_mapSel; }
     else if (g_wptSel >= 0) { g_navKind = NAV_WPT; g_navIdx = g_wptSel; }
-    else { toast("Pick a contact (N) or waypoint (P) first"); requestRedraw(); return; }
+    else if (g_home.set) { g_navKind = NAV_HOME; g_navIdx = 0; }
+    else { toast("Pick a contact (N) or waypoint (P), or set Home (S.2)"); requestRedraw(); return; }
     g_navOpen = true;
     g_navKeysOpen = false;
     g_navShownM = -1;
     g_fullRefreshReq = true;
     requestRedraw();
     Serial.printf("[NAV] open kind=%d idx=%d\n", (int)g_navKind, g_navIdx);
+}
+
+// The arrow to Home, from anywhere (S.2 row 13, map Alt+H, console "home go").
+void homeGo() {
+    if (!g_home.set) { toast("Home is not set: M, S, 2, row 14"); requestRedraw(); return; }
+    if (g_tbOn) tbStop("going home");
+    if (!mapview::isOpen()) openMap();
+    g_mapSel = -1;
+    g_wptSel = -1;
+    navOpen();
 }
 
 void navClose() {
@@ -12994,6 +13107,8 @@ void paintIdle() {
     snprintf(line, sizeof(line), "%05luD : %02luH : %02luM", (unsigned long)(s / 86400UL),
              (unsigned long)((s / 3600UL) % 24UL), (unsigned long)((s / 60UL) % 60UL));
     label(0, y0 + 3 * step + 6, W, 16, line);   // (the time zone is beside the clock at the top)
+    char hd[24];
+    if (homeText(hd, sizeof(hd))) { snprintf(line, sizeof(line), "Home %s", hd); label(0, y0 + 4 * step + 8, W, 16, line); }
     drawIdleFoot("press a KEY to wake");
     lv_refr_now(nullptr);
     drawLogo(W / 2, kIdleMapTop + 50);       // stamped after LVGL so the clear does not wipe it
@@ -13342,11 +13457,72 @@ constexpr uint16_t kOffCheckMin = 12 * 60;   // battery look; console "poweroff 
 // and the lowest voltage one of them saw (the report shows both: proof the timer wake works).
 char g_offReport[72] = "";                   // "off 13.2 h, 4.05 -> 4.03 V, 3 mAh" (pw, Power page)
 
+void offcLoad() {
+    Preferences p;
+    if (!p.begin("rs_boot", true)) return;
+    g_offc.on = p.getUChar("dcOn", 0) != 0;
+    g_offc.atMin = (uint16_t)(p.getUShort("dcMin", 20 * 60) % 1440);
+    g_offc.stayMin = (uint8_t)constrain((int)p.getUChar("dcStay", 5), 2, 30);
+    p.end();
+}
+void offcSave() {
+    Preferences p;
+    if (!p.begin("rs_boot", false)) return;
+    p.putUChar("dcOn", g_offc.on ? 1 : 0);
+    p.putUShort("dcMin", g_offc.atMin);
+    p.putUChar("dcStay", g_offc.stayMin);
+    p.end();
+    offcPrint();
+}
+// Local minute of the day and day number; false = the clock is not set.
+bool offcClock(int& minOfDay, uint32_t& day) {
+    const time_t now = time(nullptr);
+    if (now < 1600000000) return false;
+    struct tm t;
+    localtime_r(&now, &t);
+    minOfDay = t.tm_hour * 60 + t.tm_min;
+    day = (uint32_t)(t.tm_year * 366 + t.tm_yday);
+    return true;
+}
+// Seconds until the next contact time; 0 = daily contact off or no clock.
+uint32_t offcSecsUntil() {
+    int m; uint32_t day;
+    if (!g_offc.on || !offcClock(m, day)) return 0;
+    int d = (int)g_offc.atMin - m;
+    if (d <= 0) d += 1440;
+    const time_t now = time(nullptr);
+    return (uint32_t)d * 60u - (uint32_t)(now % 60);
+}
+// A timer wake: is this the contact time (and not done today yet)? Marks today as done.
+bool offcDue() {
+    int m; uint32_t day;
+#if defined(SIMULATOR)
+    const char* e = getenv("RS_SIM_WAKE");
+    const bool force = e && !strcmp(e, "contact");
+#else
+    const bool force = false;
+#endif
+    if (!g_offc.on || !offcClock(m, day)) return false;
+    const int late = (m - (int)g_offc.atMin + 1440) % 1440;       // minutes after the contact time
+    Preferences p;
+    if (!p.begin("rs_boot", false)) return false;
+    const bool due = force || (late < 30 && p.getULong("dcDay", 0) != day);
+    if (due) p.putULong("dcDay", day);
+    p.end();
+    return due;
+}
+void offcPrint() {
+    Serial.printf("[CONTACT] daily contact %s, at %02u:%02u, stays on %u min, sends to %d, next in %lu s%c",
+                  g_offc.on ? "on" : "off", (unsigned)(g_offc.atMin / 60), (unsigned)(g_offc.atMin % 60),
+                  (unsigned)g_offc.stayMin, ashareActive(), (unsigned long)offcSecsUntil(), 10);
+}
+
 enum OffWake : uint8_t { OFF_WAKE_POWER, OFF_WAKE_BUTTON, OFF_WAKE_TIMER };
 OffWake offWakeCause() {
 #if defined(SIMULATOR)
     const char* e = getenv("RS_SIM_WAKE");   // "power" / "timer"; default = the button, held
-    return e && !strcmp(e, "power") ? OFF_WAKE_POWER : e && !strcmp(e, "timer") ? OFF_WAKE_TIMER : OFF_WAKE_BUTTON;
+    return e && !strcmp(e, "power") ? OFF_WAKE_POWER
+           : e && (!strcmp(e, "timer") || !strcmp(e, "contact")) ? OFF_WAKE_TIMER : OFF_WAKE_BUTTON;
 #else
     switch (esp_sleep_get_wakeup_cause()) {
         case ESP_SLEEP_WAKEUP_EXT0:  return OFF_WAKE_BUTTON;
@@ -13374,7 +13550,10 @@ OffWake offWakeCause() {
         Preferences p;
         uint16_t m = kOffCheckMin;
         if (p.begin("rs_boot", true)) { m = p.getUShort("offMin", kOffCheckMin); p.end(); }
-        esp_sleep_enable_timer_wakeup((uint64_t)(m ? m : kOffCheckMin) * 60ULL * 1000000ULL);
+        uint64_t secs = (uint64_t)(m ? m : kOffCheckMin) * 60ULL;
+        const uint32_t c = offcSecsUntil();              // wake for the daily contact, if sooner
+        if (c && c + 15 < secs) secs = c + 15;
+        esp_sleep_enable_timer_wakeup(secs * 1000000ULL);
     }
     esp_deep_sleep_start();
 #else
@@ -13385,12 +13564,14 @@ OffWake offWakeCause() {
 
 void offDrawScreen() {
     paintIdleEarly();
-    idleBanner("SWITCHED OFF", "HOLD TOP BUTTON 2 S = ON");
+    char l1[40] = "SWITCHED OFF";
+    if (g_offc.on) snprintf(l1, sizeof(l1), "OFF | CONTACT DAILY %02u:%02u", (unsigned)(g_offc.atMin / 60), (unsigned)(g_offc.atMin % 60));
+    idleBanner(l1, "HOLD TOP BUTTON 2 S = ON");
     g_display.fullRefresh();
 }
 
 // Switch off now (the owner asked). Saves what is pending first.
-[[noreturn]] void powerDown(const char* why, uint16_t lookMin = kOffCheckMin) {
+[[noreturn]] void powerDown(const char* why, uint16_t lookMin = kOffCheckMin, bool resume = false) {
     Serial.printf("[POWER] off (%s): battery %.2f V %d%%; top button 2 s = on%c", why, g_bat.volts, g_bat.pct, 10);
     soakLog("OFF (%s) %.3fV %d%%", why, g_bat.volts, g_bat.pct);
     saveConfig();
@@ -13398,7 +13579,7 @@ void offDrawScreen() {
     if (g_storeReady)
         for (uint32_t t0 = millis(); g_msgStore.writeQueue().drainCount() > 0 && millis() - t0 < 5000;) delay(20);
     readBattery();
-    {
+    if (!resume) {                               // (after a contact window the first numbers stay)
         Preferences p;
         if (p.begin("rs_boot", false)) {
             p.putUChar("off", 1);
@@ -13419,6 +13600,7 @@ void offDrawScreen() {
 // Boot, after the battery check: true = the radio was switched off and stays off.
 // A button wake that is held long enough clears the flag and writes the report.
 bool offStaysOff() {
+    offcLoad();
     if (bootNvsGetU8("off") != 1) return false;
     OffWake w = offWakeCause();
 #if !defined(SIMULATOR)
@@ -13470,10 +13652,57 @@ bool offStaysOff() {
             p.end();
         }
     }
+    if (w == OFF_WAKE_TIMER && offcDue()) {
+        g_contactWin = true;
+        Serial.printf("[CONTACT] daily contact: starting for %u min (battery %.2f V)%c", (unsigned)g_offc.stayMin,
+                      g_bat.volts, 10);
+        return false;
+    }
     Serial.printf("[POWER] off: %s, staying off (battery %.2f V%s)%c",
                   w == OFF_WAKE_TIMER ? "battery look" : "power or restart", g_bat.volts,
                   g_bat.usb ? ", charging" : "", 10);
     return true;
+}
+
+// The contact window after a daily-contact start: GPS on, the status goes to every contact
+// with location auto-share (at the first fresh fix, or after 150 s with the last position),
+// then off again when the time is up and nothing is waiting to be sent (2 min more at most).
+void contactTick() {
+    if (!g_contactWin || !g_protoReady) return;
+    static uint32_t start = 0, input0 = 0;
+    static bool sent = false;
+    if (!start) {
+        start = millis() | 1;
+        input0 = g_lastInputMs;
+        gpsRequestVisit("daily contact");
+        toast("Daily contact: %u min, then off", (unsigned)g_offc.stayMin);
+        return;
+    }
+    if (g_lastInputMs != input0) {               // somebody is using it: stay on
+        g_contactWin = false;
+        bootNvsSetU8("off", 0);
+        Serial.println("[CONTACT] key pressed: staying on");
+        toast("Staying on");
+        return;
+    }
+    const uint32_t el = millis() - start;
+    if (!sent && (gpsFresh() || el > 150000UL)) {
+        sent = true;
+        const uint32_t now = (uint32_t)time(nullptr);
+        int n = 0;
+        for (int i = 0; i < g_ashareCount; i++) {
+            if (g_ashare[i].until && g_ashare[i].until < now) continue;
+            shareMyStatus(g_ashare[i].dest, g_ashare[i].what ? g_ashare[i].what : (uint8_t)SH_POS);
+            n++;
+        }
+        Serial.printf("[CONTACT] status sent to %d contact%s (%s)%c", n, n == 1 ? "" : "s",
+                      gpsFresh() ? "fresh fix" : "no fresh fix", 10);
+    }
+    const uint32_t stay = (uint32_t)g_offc.stayMin * 60000UL;
+    if (el < stay) return;
+    if (g_proto.lxmfQueuedCount() > 0 && el < stay + 120000UL) return;
+    Serial.printf("[CONTACT] window over after %lu s: switching off%c", (unsigned long)(el / 1000), 10);
+    powerDown("daily contact done", kOffCheckMin, true);
 }
 
 // =============================================================================
@@ -14464,6 +14693,7 @@ void mapKey(const KeyEvent& ev) {
     if (mc == 'A') return;
     if (mc == kKeyBack) { if (g_tbOn) tbStop("stopped"); else tbStart(); requestRedraw(); return; }
     if (mc == kKeyGo) { navOpen(); return; }
+    if (mc == 'H' && ev.alt) { homeGo(); return; }        // Alt+H: the arrow to Home
     if (mc == kKeyFind) { startEntry(Entry::PlaceFind); return; }   // locate a place
     if (toupper((unsigned char)ev.character) == 'O' && !ev.alt) { layOpen(); return; }   // O: map layers
     if (markMapKey(ev)) return;                           // J marker list / Alt+J new marker
@@ -16647,8 +16877,32 @@ void handleSerialLine(char* p) {
     }
     if (!strcmp(p, "idle now")) { enterIdle(); return; }
     if (!strcmp(p, "btn")) { sideButtonAction("console"); return; }
+    if (!strncmp(p, "home", 4) && (p[4] == 0 || p[4] == ' ')) {   // home | home set <lat> <lon> | here | clear | go
+        const char* a = p[4] ? p + 5 : "";
+        double la, lo;
+        if (!strncmp(a, "set ", 4) && sscanf(a + 4, "%lf %lf", &la, &lo) == 2) homeSet(la, lo, "console");
+        else if (!strcmp(a, "here")) { if (ownPosition(la, lo)) homeSet(la, lo, "console, here"); }
+        else if (!strcmp(a, "clear")) homeClear();
+        else if (!strcmp(a, "go")) homeGo();
+        char hd[24] = "no own position";
+        homeText(hd, sizeof(hd));
+        if (g_home.set) Serial.printf("[HOME] %.5f, %.5f: %s%c", g_home.lat, g_home.lon, hd, 10);
+        else Serial.println("[HOME] not set");
+        requestRedraw();
+        return;
+    }
     if (!strncmp(p, "poweroff", 8) && (p[8] == 0 || p[8] == ' '))   // "poweroff 2": battery look every 2 min (test)
-        powerDown("console", p[8] ? (uint16_t)constrain(atoi(p + 9), 1, 1440) : 12 * 60);
+        powerDown("console", p[8] ? (uint16_t)constrain(atoi(p + 9), 1, 1440) : 12 * 60, false);
+    if (!strncmp(p, "offc", 4) && (p[4] == 0 || p[4] == ' ')) {      // offc | on | off | at <hhmm> | stay <min>
+        const char* a = p[4] ? p + 5 : "";
+        if (!strcmp(a, "on")) g_offc.on = true;
+        else if (!strcmp(a, "off")) g_offc.on = false;
+        else if (!strncmp(a, "at ", 3)) { const int v = atoi(a + 3); g_offc.atMin = (uint16_t)((v / 100 % 24) * 60 + v % 100 % 60); }
+        else if (!strncmp(a, "stay ", 5)) g_offc.stayMin = (uint8_t)constrain(atoi(a + 5), 2, 30);
+        if (a[0]) offcSave(); else offcPrint();
+        requestRedraw();
+        return;
+    }
     // S.5 Switch off; top button 2 s = on
     if (!strcmp(p, "btn hold")) { sosHold("console"); return; }
     if (!strcmp(p, "lib")) { libOpen(); return; }                          // the Library
@@ -17661,6 +17915,7 @@ void watchBattery() {
     capTick();
     lowBatTick();
     emptyBatteryTick();
+    contactTick();
     if (g_idleActive) return;
     const bool changed = chg != g_bat.charging || usb != g_bat.usb || wasValid != g_bat.valid ||
                          (g_screen == SCR_HOME && pct != g_bat.pct);

@@ -53,6 +53,9 @@ key V
 wait 250
 shot poweroff-01-row.png
 key ENTER
+wait 1000
+shot poweroff-01b-page.png
+key ENTER
 expect 3000 [UI] Enter again
 key ENTER
 expect 8000 [POWER] off (menu)
@@ -67,6 +70,32 @@ quit
 S_ON = """expect 60000 [BOOT] ready
 serial pw
 expect 3000 [POWER] last switched off
+quit
+"""
+S_DC_OFF = """expect 60000 [BOOT] ready
+serial wiz skip
+wait 500
+serial offc stay 2
+serial offc at 2000
+serial offc on
+expect 3000 [CONTACT] daily contact on
+serial poweroff
+expect 8000 [POWER] off: deep sleep
+wait 500
+quit
+"""
+S_DC_WIN = """expect 60000 [BOOT] ready
+expect 200000 [CONTACT] status sent to
+expect 400000 [CONTACT] window over
+expect 20000 [POWER] off: deep sleep
+wait 500
+quit
+"""
+S_DC_KEY = """expect 60000 [BOOT] ready
+wait 8000
+key BACK
+expect 20000 [CONTACT] key pressed: staying on
+wait 1000
 quit
 """
 S_PLAIN = """expect 60000 [BOOT] ready
@@ -119,6 +148,24 @@ def main():
     o = run("plain", S_PLAIN, "power")
     ok &= check("next start is normal",
                 "[BOOT] ready" in o and "staying off" not in o and "[POWER] on (top button)" not in o, o)
+    # Daily contact: switched off with "offc on"; the timer wake at the contact time starts
+    # the radio, it sends its status, stays on for the set minutes and switches off again.
+    o = run("dc_off", S_DC_OFF)
+    ok &= check("daily contact: set, switch off",
+                "[CONTACT] daily contact on" in o and "[POWER] off: deep sleep" in o, o)
+    o = run("dc_timer", S_STAY, "timer")
+    ok &= check("daily contact: an ordinary battery look stays off",
+                "battery look, staying off" in o and "[BOOT] ready" not in o, o)
+    o = run("dc_win", S_DC_WIN, "contact")
+    ok &= check("daily contact: starts, sends, switches off again",
+                "[CONTACT] daily contact: starting" in o and "[CONTACT] status sent to" in o
+                and "[CONTACT] window over" in o and "[POWER] off (daily contact done)" in o, o)
+    o = run("dc_key", S_DC_KEY, "contact")
+    ok &= check("daily contact: a key keeps it on",
+                "[CONTACT] key pressed: staying on" in o and "window over" not in o, o)
+    o = run("dc_plain", S_PLAIN, "power")
+    ok &= check("after staying on: a normal start",
+                "[BOOT] ready" in o and "staying off" not in o, o)
     print("ALL PASS" if ok else "SOME FAILED")
     return 0 if ok else 1
 
