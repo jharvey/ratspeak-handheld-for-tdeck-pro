@@ -2146,6 +2146,17 @@ struct HomePt { float lat = 0, lon = 0; bool set = false; } g_home;
 void homeSet(double lat, double lon, const char* how);
 void homeGo();
 bool homeText(char* out, size_t n);
+bool sunText(char* out, size_t n);
+extern bool g_heldOn;
+extern int g_heldCount;
+void heldSave();
+void heldPrint();
+// Trip check (S.10 Diagnostics > Ready for a trip?, console "trip"): what a person should
+// have set up before the radio goes away for months. OK / TO DO per line.
+struct TripItem { bool ok; char name[18]; char note[44]; };
+TripItem g_trip[12];
+int g_tripN = 0, g_tripTodo = 0;
+void tripRun();
 uint32_t g_wptDelAt = 0;                     // Del pressed once (confirm within 3 s)
 constexpr int kTrackRam = 1000;
 float* g_track = nullptr;                    // kTrackRam * 2 floats, in PSRAM (psramGlobals)
@@ -2160,6 +2171,7 @@ int  g_tbIdx = 0;                    // the track point being walked to
 bool tbStart();
 void tbStop(const char* why);
 int  trackExportGpx();
+int  gpxImport();
 enum MarkView : uint8_t { MK_NONE, MK_LIST, MK_ONE, MK_NEW, MK_SEND, MK_NEAR };
 MarkView g_mk = MK_NONE;            // marker pages (J on the Atlas)
 bool g_navOpen = false;              // bearing + distance screen (G on the Atlas)
@@ -3306,7 +3318,7 @@ enum Page : uint8_t {
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
     PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW, PG_LOWBAT, PG_OFF,
-    PG_BACKUPS, PG_FOUND, PG_MODE, PG_HAVOICE, PG_FEATURES, PG_SELFTEST
+    PG_BACKUPS, PG_FOUND, PG_MODE, PG_HAVOICE, PG_FEATURES, PG_SELFTEST, PG_TRIP
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -4403,6 +4415,7 @@ const char* pageTitle(Page p) {
         case PG_FEATURES:     return "Typical features";
         case PG_MODE:         return "Mode";
         case PG_SELFTEST:     return "Check this unit";
+        case PG_TRIP:         return "Ready for a trip?";
     }
     return "";
 }
@@ -4498,6 +4511,9 @@ void buildSettingsRows(Page p) {
             else srow(RK_ACTION, "Go Home", "%.4f, %.4f", g_home.lat, g_home.lon);
             srow(RK_ACTION, "Set Home here", "my position; Enter twice");
             srow(RK_ACTION, "Set Home = map centre", "Enter twice");
+            char sun[40];
+            if (sunText(sun, sizeof(sun))) srow(RK_INFO, "Sun today", "%s", sun);
+            else srow(RK_INFO, "Sun today", "needs the clock and a position");
         }
         break;
 
@@ -4507,6 +4523,7 @@ void buildSettingsRows(Page p) {
         else srow(RK_ACTION, "Track back", "guide me back along it");
         srow(RK_ACTION, "Export as GPX", "%s", g_trackGpx[0] ? g_trackGpx : "<SD>/ratdeckpro/tracks/");
         srow(RK_ACTION, "Clear track", "Enter twice");
+        srow(RK_ACTION, "Import route points", "GPX files in <SD>/ratdeckpro/routes/");
         srow(RK_INFO, "GPS for the track", "%s", g_pwEff.trackGps ? "wakes it every ~2 min" : "logs when it is on anyway");
         break;
 
@@ -4898,6 +4915,7 @@ void buildSettingsRows(Page p) {
         srow(RK_TOGGLE, "Daily contact", g_offc.on ? "ON: starts daily, then off" : "OFF: off until the button");
         srow(RK_PICK, "Contact time", "%02u:00", (unsigned)(g_offc.atMin / 60));
         srow(RK_PICK, "Stay on for", "%u min", (unsigned)g_offc.stayMin);
+        srow(RK_MENU, "Ready for a trip?", "what is set, what is to do");
         if (ashareActive()) srow(RK_INFO, "Sends to", "%d with location auto-share", ashareActive());
         else srow(RK_INFO, "Sends to", "nobody yet: chat, MIC, row 2");
         {
@@ -5038,8 +5056,14 @@ void buildSettingsRows(Page p) {
         if (soakIsOn()) srow(RK_TOGGLE, "Stress test", "ON  %u peers, Enter = off", (unsigned)soakPeerCount());
         else            srow(RK_TOGGLE, "Stress test", "OFF");
         srow(RK_MENU, "Check this unit", "hardware self-test");
+        srow(RK_MENU, "Ready for a trip?", "battery, maps, Home, contacts");
         break;
     }
+
+    case PG_TRIP:
+        srow(RK_ACTION, "Check again", g_tripTodo ? "%d to do" : "all OK", g_tripTodo);
+        for (int i = 0; i < g_tripN; i++) srow(RK_INFO, g_trip[i].name, "%s%s", g_trip[i].ok ? "OK: " : "TO DO: ", g_trip[i].note);
+        break;
 
     case PG_SELFTEST:
         selftestRows();
@@ -5224,6 +5248,11 @@ void activateSetting(int idx) {
             requestRedraw();
         } else if (idx == 3) {
             if (confirmTwice(1010, "clear the track")) { trackClear(); toast("Track cleared"); }
+        } else if (idx == 4) {
+            const int n = gpxImport();
+            if (n > 0) toast("%d waypoints added (P on the map)", n);
+            else if (n == 0) toast("Nothing new in routes/*.gpx");
+            requestRedraw();
         }
         break;
 
@@ -5596,6 +5625,10 @@ void activateSetting(int idx) {
         } else if (idx == 3) {
             g_offc.stayMin = g_offc.stayMin < 10 ? 10 : g_offc.stayMin < 15 ? 15 : 5;
             offcSave();
+        } else if (idx == 4) {
+            tripRun();
+            pushPage(PG_TRIP);
+            break;
         }
         requestRedraw();
         break;
@@ -5736,6 +5769,11 @@ void activateSetting(int idx) {
     case PG_DIAG:
         if (idx == 6) soakToggle();
         else if (idx == 7) { pushPage(PG_SELFTEST); if (!selftestRan()) selftestStart(false); }
+        else if (idx == 8) { tripRun(); pushPage(PG_TRIP); }
+        break;
+
+    case PG_TRIP:
+        if (idx == 0) { tripRun(); toast(g_tripTodo ? "%d to do" : "All OK", g_tripTodo); requestRedraw(); }
         break;
 
     case PG_SELFTEST:
@@ -8610,6 +8648,49 @@ bool homeText(char* out, size_t n) {
     double la, lo;
     if (!g_home.set || !ownPosition(la, lo)) return false;
     distText(la, lo, g_home.lat, g_home.lon, out, n);
+    return true;
+}
+
+// Sunrise and sunset today at the own position, local time "rise 07:02 set 16:31" (S.2 row
+// 16, console "sun"). The usual almanac method (zenith 90.833 deg), good to a minute or two;
+// "no sunrise today" / "no sunset today" inside the polar circles. false = no position or clock.
+bool sunUt(double lat, double lon, int dayOfYear, bool rise, double& utHours) {
+    const double r = 3.14159265358979 / 180.0, lngHour = lon / 15.0;
+    const double t = dayOfYear + ((rise ? 6.0 : 18.0) - lngHour) / 24.0;
+    const double M = 0.9856 * t - 3.289;
+    double L = fmod(M + 1.916 * sin(M * r) + 0.020 * sin(2 * M * r) + 282.634 + 720.0, 360.0);
+    double RA = fmod(atan(0.91764 * tan(L * r)) / r + 360.0, 360.0);
+    RA = (RA + (floor(L / 90.0) * 90.0 - floor(RA / 90.0) * 90.0)) / 15.0;
+    const double sinDec = 0.39782 * sin(L * r), cosDec = cos(asin(sinDec));
+    const double cosH = (cos(90.833 * r) - sinDec * sin(lat * r)) / (cosDec * cos(lat * r));
+    if (cosH > 1 || cosH < -1) return false;
+    const double H = (rise ? 360.0 - acos(cosH) / r : acos(cosH) / r) / 15.0;
+    utHours = fmod(H + RA - 0.06571 * t - 6.622 - lngHour + 48.0, 24.0);
+    return true;
+}
+
+bool sunText(char* out, size_t n) {
+    double la, lo;
+    const time_t now = time(nullptr);
+    if (now < 1600000000 || !ownPosition(la, lo)) return false;
+    struct tm g, l;
+    localtime_r(&now, &l);
+    // The local calendar day decides which sunrise: take noon local time, in UTC.
+    const time_t noon = now - (l.tm_hour * 3600 + l.tm_min * 60 + l.tm_sec) + 12 * 3600;
+    gmtime_r(&noon, &g);
+    const time_t utcMidnight = noon - (g.tm_hour * 3600 + g.tm_min * 60 + g.tm_sec);
+    char part[2][12];
+    for (int k = 0; k < 2; k++) {
+        double ut;
+        if (!sunUt(la, lo, g.tm_yday + 1, k == 0, ut)) { snprintf(out, n, k == 0 ? "no sunrise today" : "no sunset today"); return true; }
+        time_t at = utcMidnight + (time_t)(ut * 3600.0 + 0.5);
+        if (at < noon - 12 * 3600) at += 86400;          // keep it on the local day
+        if (at >= noon + 12 * 3600) at -= 86400;
+        struct tm e;
+        localtime_r(&at, &e);
+        snprintf(part[k], sizeof(part[k]), "%02d:%02d", e.tm_hour, e.tm_min);
+    }
+    snprintf(out, n, "rise %s  set %s", part[0], part[1]);
     return true;
 }
 
@@ -12541,6 +12622,76 @@ int trackExportGpx() {
     snprintf(g_trackGpx, sizeof(g_trackGpx), "tracks/%s", name);
     Serial.printf("[TRACK] %d points -> %s\n", n, path);
     return n;
+}
+
+// Route points from GPX files (S.2 Track page row 5, console "gpximport"): every <wpt> and
+// <rtept> of the .gpx files in <SD>/ratdeckpro/routes/ becomes a waypoint (name from <name>,
+// else R1, R2 ...), in file order, until the 32 waypoints are full. A point that is already
+// there (same name within 30 m) is skipped. Track points (<trkpt>) are not imported: plan a
+// route with route points. P on the map steps through them, G shows the arrow to the one
+// selected. Only the first 96 KB of a file are read. Returns the number added, -1 = no card.
+int gpxImport() {
+    if (!sdMount()) { toast("No SD card"); return -1; }
+    char dir[64];
+    snprintf(dir, sizeof(dir), "%s/routes", SD_PATH_ROOT);
+    g_sdStore.ensureDir(dir);
+    File d = g_sdStore.openDir(dir);
+    if (!d) { toast("No routes folder"); return -1; }
+    constexpr size_t kMax = 96 * 1024;
+    char* buf = (char*)heap_caps_malloc(kMax + 1, MALLOC_CAP_SPIRAM);
+    if (!buf) buf = (char*)malloc(kMax + 1);
+    if (!buf) { d.close(); return -1; }
+    int added = 0, files = 0, seen = 0;
+    for (File e = d.openNextFile(); e; e = d.openNextFile()) {
+        const char* fn = strrchr(e.name(), '/');
+        fn = fn ? fn + 1 : e.name();
+        const size_t fl = strlen(fn);
+        if (e.isDirectory() || fl < 5 || strcasecmp(fn + fl - 4, ".gpx") || fn[0] == '.') { e.close(); continue; }
+        const size_t got = e.read((uint8_t*)buf, kMax);
+        e.close();
+        buf[got] = 0;
+        files++;
+        for (char* p = buf; (p = strchr(p, '<')) != nullptr; p++) {
+            const bool wpt = !strncmp(p, "<wpt", 4) && (p[4] == ' ' || p[4] == '\n' || p[4] == '\r' || p[4] == '\t');
+            const bool rte = !strncmp(p, "<rtept", 6) && (p[6] == ' ' || p[6] == '\n' || p[6] == '\r' || p[6] == '\t');
+            if (!wpt && !rte) continue;
+            char* tagEnd = strchr(p, '>');
+            if (!tagEnd) break;
+            const char* la = strstr(p, "lat=");
+            const char* lo = strstr(p, "lon=");
+            if (!la || !lo || la > tagEnd || lo > tagEnd) continue;
+            const double lat = atof(la + 5), lon = atof(lo + 5);
+            if (lat < -90 || lat > 90 || lon < -180 || lon > 180 || (lat == 0 && lon == 0)) continue;
+            seen++;
+            char name[16];
+            snprintf(name, sizeof(name), "R%d", seen);
+            const char* close = strstr(tagEnd, wpt ? "</wpt>" : "</rtept>");
+            const bool selfClosed = tagEnd[-1] == '/';
+            const char* nm = selfClosed ? nullptr : strstr(tagEnd, "<name>");
+            if (nm && close && nm < close) {
+                nm += 6;
+                size_t k = 0;
+                for (; nm[k] && nm[k] != '<' && k < sizeof(name) - 1; k++) name[k] = (nm[k] >= 32 && nm[k] < 127) ? nm[k] : '?';
+                if (k) name[k] = 0;
+            }
+            bool dup = false;
+            for (int i = 0; i < g_wptCount; i++)
+                dup = dup || (!strcmp(g_wpt[i].name, name) && metersBetween(g_wpt[i].lat, g_wpt[i].lon, lat, lon) < 30.0);
+            if (dup) continue;
+            if (g_wptCount >= kWptMax) { Serial.println("[GPX] waypoints full (32)"); goto done; }
+            Wpt& w = g_wpt[g_wptCount++];
+            w.lat = (float)lat; w.lon = (float)lon; w.at = (uint32_t)time(nullptr);
+            strlcpy(w.name, name, sizeof(w.name));
+            added++;
+            Serial.printf("[GPX] W%d %s %.5f, %.5f (%s)%c", g_wptCount, name, lat, lon, fn, 10);
+        }
+    }
+done:
+    d.close();
+    free(buf);
+    if (added) wptSave();
+    Serial.printf("[GPX] %d file(s), %d point(s) read, %d waypoint(s) added, %d in all%c", files, seen, added, g_wptCount, 10);
+    return added;
 }
 
 // ---- Bearing + distance (G on the Atlas) ------------------------------------------------
@@ -16877,6 +17028,29 @@ void handleSerialLine(char* p) {
     }
     if (!strcmp(p, "idle now")) { enterIdle(); return; }
     if (!strcmp(p, "btn")) { sideButtonAction("console"); return; }
+    if (!strcmp(p, "gpximport")) { gpxImport(); return; }       // routes/*.gpx -> waypoints
+    if (!strncmp(p, "sun", 3) && (p[3] == 0 || p[3] == ' ')) {   // sun | sun <lat> <lon> <day of year>: UT hours
+        double la, lo, r1 = -1, r2 = -1; int doy;
+        if (sscanf(p + 3, "%lf %lf %d", &la, &lo, &doy) == 3) {
+            const bool a = sunUt(la, lo, doy, true, r1), b = sunUt(la, lo, doy, false, r2);
+            Serial.printf("[SUN] %.4f %.4f day %d: rise %s%.2f UT, set %s%.2f UT%c", la, lo, doy, a ? "" : "none ", r1, b ? "" : "none ", r2, 10);
+            return;
+        }
+        char sun[40] = "needs the clock and a position";
+        sunText(sun, sizeof(sun));
+        Serial.printf("[SUN] today: %s%c", sun, 10);
+        return;
+    }
+    if (!strcmp(p, "trip")) { tripRun(); return; }             // S.10 Ready for a trip?
+    if (!strncmp(p, "held", 4) && (p[4] == 0 || p[4] == ' ')) {   // held | held on | off | clear
+        const char* a = p[4] ? p + 5 : "";
+        if (!strcmp(a, "on")) g_heldOn = true;
+        else if (!strcmp(a, "off")) g_heldOn = false;
+        else if (!strcmp(a, "clear")) g_heldCount = 0;
+        if (a[0]) heldSave();
+        heldPrint();
+        return;
+    }
     if (!strncmp(p, "home", 4) && (p[4] == 0 || p[4] == ' ')) {   // home | home set <lat> <lon> | here | clear | go
         const char* a = p[4] ? p + 5 : "";
         double la, lo;
@@ -17904,6 +18078,66 @@ void lowBatTick() {
     }
 }
 
+void tripAdd(bool ok, const char* name, const char* fmt, ...) {
+    if (g_tripN >= (int)(sizeof(g_trip) / sizeof(g_trip[0]))) return;
+    TripItem& t = g_trip[g_tripN++];
+    t.ok = ok;
+    strlcpy(t.name, name, sizeof(t.name));
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(t.note, sizeof(t.note), fmt, ap);
+    va_end(ap);
+    if (!ok) g_tripTodo++;
+}
+
+void tripRun() {
+    g_tripN = g_tripTodo = 0;
+    readBattery();
+    if (!g_bat.valid) tripAdd(false, "Battery", "no reading");
+    else tripAdd(g_bat.pct >= 80, "Battery", g_bat.pct >= 80 ? "%d%%" : "%d%%, charge it first", g_bat.pct);
+    tripAdd(time(nullptr) > 1600000000, "Clock", time(nullptr) > 1600000000 ? "set" : "not set (S.2, or a GPS fix)");
+    if (gpsFresh()) tripAdd(true, "GPS", "fix, %u satellites", (unsigned)g_gpsSats);
+    else if (!g_cfg.gpsOn) tripAdd(false, "GPS", "switched off (S.2 row 3)");
+    else tripAdd(false, "GPS", "no fix now: try under open sky");
+    const bool sd = sdMount();
+    tripAdd(sd, "SD card", sd ? "present" : "none: no maps, no Library");
+    bool maps = false, plan = false;
+    int lib = 0;
+    if (sd) {
+        for (const char* d : {SD_PATH_ROOT "/packs", SD_PATH_ROOT "/maps"}) {
+            File f = g_sdStore.openDir(d);
+            if (f) { File e = f.openNextFile(); maps = maps || (bool)e; if (e) e.close(); f.close(); }
+        }
+        File d = g_sdStore.openDir(kLibDir);
+        if (d) {
+            for (File e = d.openNextFile(); e; e = d.openNextFile()) {
+                const char* nm = strrchr(e.name(), '/');
+                nm = nm ? nm + 1 : e.name();
+                if (!e.isDirectory() && nm[0] != '.') { lib++; plan = plan || !strncasecmp(nm, "Emergency", 9); }
+                e.close();
+            }
+            d.close();
+        }
+    }
+    tripAdd(maps, "Maps", maps ? "on the card (check your area: A)" : "none on the card");
+    char hd[24];
+    if (!g_home.set) tripAdd(false, "Home point", "not set (S.2 rows 14, 15)");
+    else if (homeText(hd, sizeof(hd))) tripAdd(true, "Home point", "set, %s from here", hd);
+    else tripAdd(true, "Home point", "set");
+    int contacts = 0;
+    for (const auto& node : g_announceMgr.nodes())
+        if (node.hash.size() == 16 && node.saved && !isSelf(node.hash.data())) contacts++;
+    tripAdd(contacts > 0, "Contacts", contacts ? "%d saved" : "none saved (meet a radio: Help-3)", contacts);
+    tripAdd(g_ashareCount > 0, "Daily contact to", g_ashareCount ? "%d with auto-share" : "nobody: chat, MIC, row 2", g_ashareCount);
+    tripAdd(g_offc.on, "Daily contact", g_offc.on ? "on, %02u:00 for %u min" : "off (S.5 row 13)",
+            (unsigned)(g_offc.atMin / 60), (unsigned)g_offc.stayMin);
+    tripAdd(foundCount() > 0, "If-found details", foundCount() ? "%d lines" : "empty (S.4, 2, row 9)", foundCount());
+    tripAdd(plan, "Emergency plan", plan ? "in the Library (is it filled in?)" : lib ? "no Emergency-plan.txt" : "Library is empty");
+    Serial.printf("[TRIP] %d checks, %d to do%c", g_tripN, g_tripTodo, 10);
+    for (int i = 0; i < g_tripN; i++)
+        Serial.printf("[TRIP] %-5s %s: %s%c", g_trip[i].ok ? "OK" : "TO DO", g_trip[i].name, g_trip[i].note, 10);
+}
+
 void watchBattery() {
     static uint32_t last = 0;
     if (millis() - last < 800) return;
@@ -17922,7 +18156,174 @@ void watchBattery() {
     if (changed && browseMode()) requestRedraw();
 }
 
+// ---- Held messages: for a contact that is switched off ---------------------------------
+// A message to a saved contact that failed (no path) or got no delivery proof is kept here
+// and sent again by itself when that contact's announce is heard (a radio announces when it
+// starts, so a daily-contact start or a switch-on brings its held messages). Up to 8
+// messages, 4 tries each, 14 days; NVS rs_held. Position / battery shares are not held (a
+// newer one replaces them anyway). A held message can arrive twice when only the delivery
+// proof was lost. Console "held" | "held on|off" | "held clear".
+struct HeldMsg { uint8_t dest[16]; char text[161]; uint32_t at, seenRef; uint8_t tries, state; };   // state 1 = resent, result open
+constexpr int kHeldCap = 8, kHeldTries = 4;
+constexpr uint32_t kHeldMaxAgeS = 14UL * 86400UL;
+HeldMsg g_held[kHeldCap];
+int g_heldCount = 0;
+bool g_heldOn = true;
+struct HeldEv { uint8_t peer[16]; uint32_t counter; uint8_t status; };
+HeldEv g_heldEv[8];
+volatile uint8_t g_heldEvHead = 0, g_heldEvTail = 0;
+
+void heldSave() {
+    Preferences p;
+    if (!p.begin("rs_held", false)) return;
+    p.putBool("on", g_heldOn);
+    p.putUChar("n", (uint8_t)g_heldCount);
+    if (g_heldCount) p.putBytes("q", g_held, sizeof(HeldMsg) * (size_t)g_heldCount);
+    else if (p.isKey("q")) p.remove("q");
+    p.end();
+}
+
+void heldLoad() {
+    Preferences p;
+    if (!p.begin("rs_held", true)) return;
+    g_heldOn = p.getBool("on", true);
+    const int n = p.getUChar("n", 0);
+    if (n > 0 && n <= kHeldCap && p.getBytes("q", g_held, sizeof(HeldMsg) * (size_t)n) == sizeof(HeldMsg) * (size_t)n)
+        g_heldCount = n;
+    p.end();
+    for (int i = 0; i < g_heldCount; i++) { g_held[i].seenRef = 0; g_held[i].state = 0; g_held[i].text[160] = 0; }
+    if (g_heldCount) Serial.printf("[HELD] %d message(s) waiting for their contact%c", g_heldCount, 10);
+}
+
+// The protocol's status callback: only notes it; heldTick does the work in the main loop.
+void heldOnStatus(const std::string& peerHex, double, uint32_t counter, LXMFStatus status) {
+    if (status != LXMFStatus::DELIVERED && status != LXMFStatus::FAILED && status != LXMFStatus::UNCONFIRMED) return;
+    if (peerHex.size() != 32) return;
+    const uint8_t next = (uint8_t)((g_heldEvHead + 1) % 8);
+    if (next == g_heldEvTail) return;            // full: this one is not held
+    HeldEv& e = g_heldEv[g_heldEvHead];
+    for (int i = 0; i < 16; i++) {
+        auto hx = [](char c) { return (uint8_t)(c >= 'a' ? c - 'a' + 10 : c >= 'A' ? c - 'A' + 10 : c - '0'); };
+        e.peer[i] = (uint8_t)(hx(peerHex[2 * i]) << 4 | hx(peerHex[2 * i + 1]));
+    }
+    e.counter = counter;
+    e.status = (uint8_t)status;
+    g_heldEvHead = next;
+}
+
+uint32_t heldSeen(const uint8_t dest[16]) {
+    const DiscoveredNode* node = g_announceMgr.findNode(rs::Bytes(dest, 16));
+    return node ? (uint32_t)node->lastSeen : 0;
+}
+
+void heldRemove(int i) {
+    for (int j = i; j + 1 < g_heldCount; j++) g_held[j] = g_held[j + 1];
+    g_heldCount--;
+}
+
+void heldPrint() {
+    Serial.printf("[HELD] %s, %d waiting%c", g_heldOn ? "on" : "off", g_heldCount, 10);
+    for (int i = 0; i < g_heldCount; i++) {
+        char nm[24];
+        peerName(g_held[i].dest, nm, sizeof(nm));
+        Serial.printf("[HELD]  %d to %s, try %u, %s: \"%s\"%c", i + 1, nm, (unsigned)g_held[i].tries,
+                      g_held[i].state ? "resent" : "waiting to hear them", g_held[i].text, 10);
+    }
+}
+
+void heldEvent(const HeldEv& ev) {
+    using namespace handheld::storage;
+    if (isGrpHash(ev.peer) || isSelf(ev.peer) || !cardIsSaved(ev.peer)) return;
+    int resent = 0;
+    for (int i = 0; i < g_heldCount; i++) resent += !memcmp(g_held[i].dest, ev.peer, 16) && g_held[i].state == 1;
+    const bool failed = ev.status != (uint8_t)LXMFStatus::DELIVERED;
+    if (!failed && !resent) return;              // an ordinary delivery: nothing to look up
+    RecordKey key{};
+    memcpy(key.peer, ev.peer, 16);
+    key.counter = ev.counter;
+    key.incoming = false;
+    StoredRecordHeader hdr;
+    char text[161];
+    size_t len = 0;
+    if (!readRecordText(key, hdr, text, sizeof(text), len) || !text[0]) return;
+    char nm[24];
+    peerName(ev.peer, nm, sizeof(nm));
+    int at = -1;
+    for (int i = 0; i < g_heldCount; i++)
+        if (!memcmp(g_held[i].dest, ev.peer, 16) && !strcmp(g_held[i].text, text)) { at = i; break; }
+    if (!failed) {
+        if (at < 0 || g_held[at].state != 1) return;
+        Serial.printf("[HELD] delivered to %s after %u resend(s): \"%s\"%c", nm, (unsigned)g_held[at].tries, text, 10);
+        toast("Held message reached %s", nm);
+        heldRemove(at);
+        heldSave();
+        return;
+    }
+    static const char* const kSkip[] = {kLocPrefix, kLocLastPrefix, kLocAutoPrefix, kBatPrefix, kBatAutoPrefix};
+    for (const char* k : kSkip) if (!strncmp(text, k, strlen(k))) return;
+    if (at >= 0) {                               // a resend that failed again
+        if (g_held[at].state != 1) return;
+        g_held[at].state = 0;
+        g_held[at].seenRef = heldSeen(ev.peer);
+        if (g_held[at].tries >= kHeldTries) {
+            Serial.printf("[HELD] gave up after %d tries, to %s: \"%s\"%c", kHeldTries, nm, text, 10);
+            heldRemove(at);
+        }
+        heldSave();
+        return;
+    }
+    if (g_heldCount >= kHeldCap) { Serial.println("[HELD] list full: the oldest is dropped"); heldRemove(0); }
+    HeldMsg& h = g_held[g_heldCount++];
+    memset(&h, 0, sizeof(h));
+    memcpy(h.dest, ev.peer, 16);
+    strlcpy(h.text, text, sizeof(h.text));
+    h.at = (uint32_t)time(nullptr);
+    h.seenRef = heldSeen(ev.peer);
+    heldSave();
+    Serial.printf("[HELD] kept for %s (%s): \"%s\"%c", nm,
+                  ev.status == (uint8_t)LXMFStatus::FAILED ? "not reached" : "no delivery proof", text, 10);
+    toast("Kept for %s: resends when heard", nm);
+}
+
+void heldTick() {
+    static uint32_t last = 0;
+    if (millis() - last < 2000 || !g_storeReady || !g_protoReady) return;
+    last = millis();
+    while (g_heldEvTail != g_heldEvHead) {
+        const HeldEv ev = g_heldEv[g_heldEvTail];
+        g_heldEvTail = (uint8_t)((g_heldEvTail + 1) % 8);
+        if (g_heldOn) heldEvent(ev);
+    }
+    if (!g_heldOn || !g_heldCount) return;
+    const uint32_t now = (uint32_t)time(nullptr);
+    for (int i = 0; i < g_heldCount; i++) {
+        HeldMsg& h = g_held[i];
+        if (now > 1600000000UL && h.at > 1600000000UL && now - h.at > kHeldMaxAgeS) {
+            Serial.printf("[HELD] too old, dropped: \"%s\"%c", h.text, 10);
+            heldRemove(i);
+            heldSave();
+            return;
+        }
+        if (h.state) continue;
+        const uint32_t seen = heldSeen(h.dest);
+        if (!seen || seen == h.seenRef || millis() - seen > 120000UL) continue;   // not heard since
+        char nm[24];
+        peerName(h.dest, nm, sizeof(nm));
+        if (!sendMessage(h.dest, h.text)) {
+            if (!g_txTransient) h.seenRef = seen;    // refused for good this time: wait for the next announce
+            return;
+        }
+        h.state = 1;
+        h.tries++;
+        h.seenRef = seen;
+        Serial.printf("[HELD] %s was heard: resent (try %u): \"%s\"%c", nm, (unsigned)h.tries, h.text, 10);
+        toast("%s is back: held message sent", nm);
+        return;                                  // one per tick (3 s spacing between sends)
+    }
+}
+
 void watchMessages() {
+    heldTick();
     if (!g_storeReady) return;
     // Alert on newly saved incoming messages (not on a rising unread count: a save that also
     // removed old unread messages for space leaves the count flat and the alert was missed).
@@ -18197,6 +18598,8 @@ bool begin() {
     bootMark("battery, power mode, GPS, vault, settings");
     mapview::setCoordFormatter(fmtCoord);
     g_proto.setMessageCallback(onCommittedMessage);
+    g_proto.setStatusCallback(heldOnStatus);
+    heldLoad();
     g_wifiNextAuto = millis() + 8000;    // auto-connect after the boot announce
     noteInput();
     pinMode(BOARD_BOOT_PIN, INPUT_PULLUP);             // top side button (lock); has a pull-up on the board too

@@ -13,7 +13,9 @@ SWITCH ON: hold the TOP side button about 2 seconds, until BOOTING shows. A shor
 If that does not work: press the BOTTOM (restart) button, then within 3 seconds hold the top button 2 seconds.
 
 WHILE IT IS OFF
-It does not send or receive. Messages sent to you meanwhile are not kept. Tell your people when you will switch on (for example every evening at 8), or use Check-in mode (Help-9) when you are switched on.
+It does not send or receive. A message another RatSpeak radio sends you meanwhile is kept by THEIR radio and sent again when yours is heard (at the daily contact or when you switch on), if theirs is on and in range then. Up to 8 messages, 14 days.
+Before the radio goes away: M, S, 5, row 13 (Switch off page), row 5 "Ready for a trip?" lists what is still to do. Fill in Emergency-plan.txt in this Library on a computer.
+Sunrise and sunset today: M, S, 2, row 16. Tell your people when you will switch on (for example every evening at 8), or use Check-in mode (Help-9) when you are switched on.
 Everything is powered down. How much it still uses is not measured yet; the aim is 4 months or more on a full battery.
 Twice a day it looks at the battery for a moment. Nearly empty: the screen changes to BATTERY EMPTY and the battery is cut off until USB power arrives.
 

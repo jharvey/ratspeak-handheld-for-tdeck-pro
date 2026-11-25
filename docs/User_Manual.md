@@ -422,7 +422,14 @@ row 14 (Set Home here: your position now) or row 15 (Set Home = map centre: move
 the map to the place first), **Enter** twice. Then row 13 (Go Home), or on the map **G** with
 nothing selected, or **Alt+H**, shows a big arrow, the distance and the compass direction.
 While you walk the arrow is relative to your direction of travel; standing still it is
-north-up. The idle screen shows "Home 212 mi NE".
+north-up. The idle screen shows "Home 212 mi NE". Row 16 on the same page shows sunrise and
+sunset today at your position (good to a minute or two).
+
+**Route points from a computer:** plan a route in any mapping program, save it as GPX with
+waypoints or route points, and copy the file to the SD card folder `ratdeckpro/routes/`.
+Then **M**, **S**, **2**, row 10 (Track), row 5 "Import route points". Each point becomes a
+waypoint with its name (up to 32 in all). On the map **P** steps to the next one and **G**
+shows the arrow and distance to it. Recorded tracks inside the file are not imported.
 
 **Breadcrumb track:** **M**, **S**, **2**, row 10 (Track), **1** (Record track). A point about
 every 25 m, drawn as a dotted line. **B** on the Atlas guides you back. The Track page also
@@ -717,8 +724,17 @@ shows **SWITCHED OFF / HOLD TOP BUTTON 2 S = ON** and keeps showing it with no p
 - **On again:** hold the **top side button** about 2 seconds, until BOOTING shows. A short
   press does nothing, so a bump in a bag does not start it. Start-up takes a minute or more;
   the first GPS fix after a long time off can take several minutes under open sky.
-- **While off** it does not receive or send anything. Messages sent to it meanwhile are not
-  kept for it.
+- **While off** it does not receive or send anything. A message sent to it from another
+  RatSpeak radio is **kept by the sender's radio** and sent again by itself when the
+  switched-off radio is heard again (at its daily contact, or when it is switched on). The
+  sender sees "Kept for *name*: resends when heard". Up to 8 messages are kept, for 14
+  days, 4 tries each; the sender's radio must be on and in range at that moment. If only
+  the delivery receipt was lost, the message can arrive twice. Position and battery
+  shares are not kept.
+- **Before it goes away:** row 5 of the Switch off page, "Ready for a trip?", lists what is set
+  and what is still to do (battery, clock, GPS, card, maps, Home, contacts, daily contact,
+  If-found details, emergency plan). The Library file `Emergency-plan.txt` is a page to
+  fill in on a computer: who to reach, where to meet, the way home.
 - **Charging while off:** a USB charger or a small solar panel on the USB socket charges the
   battery and does **not** switch the radio on.
 - **Battery while off:** everything is powered down. The draw while off is **not measured

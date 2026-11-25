@@ -1,0 +1,27 @@
+# Ready for a trip? (S.10 Diagnostics row 9, console "trip"): what should be set up before
+# the radio goes away for months. A fresh radio has things to do; setting Home and the daily
+# contact turns those lines to OK.
+expect 60000 [BOOT] ready
+wait 1500
+serial wiz skip
+wait 1000
+serial trip
+expect 5000 [TRIP] 11 checks
+expect 3000 [TRIP] TO DO Home point: not set
+expect 3000 [TRIP] TO DO Daily contact: off
+serial home set 41.8781 -87.6298
+expect 3000 [HOME] set
+serial offc on
+expect 3000 [CONTACT] daily contact on
+serial trip
+expect 5000 [TRIP] 11 checks
+expect 3000 [TRIP] OK    Home point: set
+expect 3000 [TRIP] OK    Daily contact: on, 20:00 for 5 min
+# Sunrise / sunset (S.2 row 16): Chicago on 21 June is 10:15 and 01:29 UT.
+serial sun 41.88 -87.63 172
+expect 3000 [SUN] 41.8800 -87.6300 day 172: rise 10.26 UT, set 1.49 UT
+serial sun 69.65 18.96 355
+expect 3000 rise none
+serial sun
+expect 3000 [SUN] today: rise
+quit

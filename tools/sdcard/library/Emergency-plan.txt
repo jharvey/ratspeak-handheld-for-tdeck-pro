@@ -1,0 +1,41 @@
+EMERGENCY PLAN  (fill this in before the radio is handed over)
+
+Edit this file on a computer (the SD card, folder ratdeckpro/library, or USB drive mode: M, S, 11, 5, row 6) and replace every line that starts with ">". Keep lines short. This page can be the idle screen: M, S, 4, 2, row 8 = Library page, so it is readable even with a flat battery.
+
+WHO I AM
+> Name:
+> Home address:
+> Blood type / allergies / medicines:
+
+WHO TO REACH (in this order)
+> 1. Name, phone, RatSpeak name:
+> 2. Name, phone, RatSpeak name:
+> 3. Out-of-town contact (name, phone):
+
+IF PHONES AND INTERNET ARE DOWN
+> We switch our radios on every day at (time):
+> The radio at home is always on: yes / no
+> If you cannot reach anyone for (days), do this:
+
+WHERE WE MEET
+> 1. First choice (place, address):
+> 2. If that is not possible:
+> 3. If you must leave the area, go towards:
+
+GETTING HOME
+Home is saved in this radio: M, S, 2, row 13 "Go Home" shows an arrow and the distance.
+> Route 1 (main roads):
+> Route 2 (if route 1 is closed):
+> Safe places on the way (friends, family, with address):
+> Do not go through:
+
+WHAT I CARRY
+> Water, food for (days), cash, charger and solar panel, paper map, first aid, ID copies.
+
+USING THIS RADIO (short)
+Switch on: hold the top side button 2 seconds.
+Map: A (or M, then A). Arrow home: M, S, 2, row 13.
+Message: C (contacts), pick a name, type, Enter. Quick answers: MIC, then Q.
+SOS: hold the top side button 3 seconds (sends your position to your SOS contacts).
+Switch off when done: M, S, 5, row 13. Off, the battery lasts months; on, a day or two.
+More: the Help pages in this Library, Help-16 for storage and solar.

@@ -310,6 +310,30 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        this small (deadband / offset). Real floor ~1-5 mA; needs a meter. BHI260 boot
        status 0x38 (firmware loaded) on COM3/COM5, 0x18 on COM6/COM9 - no visible
        difference. Only COM8/COM9 have SD cards. floor d <n> <secs> sets cycle length.
+[DONE] "Get home" set (2026-11-25, StandaloneApp.cpp), for a radio stored for months:
+       - Home point: g_home (NVS rs_wpt hset/hlat/hlon), NAV_HOME on the G arrow screen
+         (map G with nothing selected, map Alt+H, S.2 rows 13-15), idle splash line,
+         console "home [set <lat> <lon>|here|clear|go]". sim/scripts/home.txt.
+       - Daily contact while switched off: page PG_OFF (S.5.13): g_offc (NVS rs_boot dcOn /
+         dcMin / dcStay / dcDay). offSleep wakes at the contact time; offStaysOff + offcDue
+         start the radio with g_contactWin; contactTick sends shareMyStatus to every
+         auto-share contact (fresh fix or after 150 s), then powerDown(resume) when the
+         minutes are over; a key keeps it on. Console "offc [on|off|at <hhmm>|stay <min>]".
+         Sim: RS_SIM_WAKE=contact. sim/scripts/power_off.py (10 cases).
+       - Held messages: heldOnStatus (the protocol's status callback, registered in begin)
+         -> heldTick: a FAILED / UNCONFIRMED message to a saved contact is kept (NVS
+         rs_held, 8 x 4 tries x 14 days) and resent when that node's lastSeen changes
+         (AnnounceManager); DELIVERED of the resend clears it. Position / battery shares
+         are not kept. Console "held [on|off|clear]". sim/scripts/held_net.py.
+       - Trip check: tripRun (PG_TRIP; Switch off page row 5, Diagnostics row 9, console
+         "trip"): battery, clock, GPS, card, maps, Home, contacts, auto-share, daily
+         contact, If-found, Emergency-plan.txt. sim/scripts/trip.txt.
+       - Sun times: sunUt / sunText (S.2 row 16, console "sun [<lat> <lon> <day>]").
+       - GPX route points: gpxImport (<SD>/ratdeckpro/routes/*.gpx, <wpt> + <rtept> ->
+         waypoints; Track page row 5, console "gpximport"). sim/scripts/gpx_import.py.
+       - Library: Emergency-plan.txt (template), Help-16-Storage-and-solar.txt.
+       NOT on real hardware yet: all of the above (simulator only); deep-sleep wake by
+       timer at the contact time; clock drift over months of deep sleep.
 [DONE] Switch off for storage (2026-11-25; S.5 row 13, Enter twice; console "poweroff";
        StandaloneApp.cpp powerDown / offSleep / offStaysOff): saves, draws the idle screen +
        "SWITCHED OFF / HOLD TOP BUTTON 2 S = ON", all rails off + held, ESP32 deep sleep.
