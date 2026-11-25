@@ -1,0 +1,24 @@
+# A message that cannot be delivered (to a radio nobody hears) retries for minutes. Until
+# 2026-11-24 any queued message kept the radio awake; now it sleeps while the message only
+# waits (path requests 10 s apart, proof waits), and the message still ends as before.
+expect 60000 [BOOT] ready
+wait 1500
+serial wiz skip
+wait 1000
+serial pm1
+expect 3000 [POWER] Balanced
+serial msg 0123456789abcdef0123456789abcdef never delivered
+expect 5000 [MSG] send queued
+# give it 30 s past the 15 s Balanced stays awake after input, while it is still retrying
+wait 45000
+serial pw
+expect 3000 lxmf_queue=1
+serial pw
+expect 3000 [POWER] asleep
+# the path search gives up after ~70 s as before: the queue is empty again, still sleeping
+wait 30000
+serial pw
+expect 3000 lxmf_queue=0
+serial pw
+expect 3000 blocker=none
+quit

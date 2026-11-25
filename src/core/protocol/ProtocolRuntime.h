@@ -111,6 +111,7 @@ public:
     bool lxmfBeginPeerDelete(const uint8_t peer[16]) override;
     void lxmfFinishPeerDelete(const uint8_t peer[16], const handheld::storage::Result&) override;
     int lxmfQueuedCount() const override { return _enginesUp ? _lxmf.queuedCount() : 0; }
+    uint32_t lxmfMsUntilDue() const { return _enginesUp ? _lxmf.msUntilDue() : UINT32_MAX; }
     bool lxmfRecovering() const { return _enginesUp && _lxmf.recovering(); }
     size_t lxmfDescribeRows(char* out, size_t capacity) const {
         if (capacity) out[0] = 0;

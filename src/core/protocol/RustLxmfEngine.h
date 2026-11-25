@@ -54,6 +54,11 @@ public:
     bool beginPeerDelete(const uint8_t peer[16]);
     void finishPeerDelete(const uint8_t peer[16], const handheld::storage::Result&);
     int queuedCount() const;
+    // Power: ms until a queued row next needs the CPU (0 = it is working now: saving, reading,
+    // preparing, a link transfer, or its retry is due). UINT32_MAX = nothing queued. Rows that
+    // only wait (a retry or path request later, a delivery proof) report when their wait ends,
+    // so the radio can sleep meanwhile; a packet for them wakes it over LoRa anyway.
+    uint32_t msUntilDue() const;
     // Diagnostics: one line for each outgoing row in use (why a row cannot be reused).
     size_t describeRows(char* out, size_t capacity) const;
     bool recovering() const { return _recovering; }   // still reading persisted outgoing records

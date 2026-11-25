@@ -14952,7 +14952,12 @@ const char* powerSleepBlocker() {
             }
         }
     }
-    if (g_protoReady && g_proto.lxmfQueuedCount() > 0) return "lxmf queue";
+    // Outgoing messages: awake only while one is being worked on or its next step is due within
+    // 1.5 s. A message that only waits (a retry or path request 1-10 s later, a delivery proof
+    // up to ~28 s) let the radio sleep in 1 s steps (powerIdle); a packet wakes it over LoRa.
+    // Before 2026-11-24 any queued message kept the CPU awake: a message to someone out of
+    // reach, or a status report every 5 min, held Balanced and Eco at 50-90 mA (battery run 2).
+    if (g_protoReady && g_proto.lxmfQueuedCount() > 0 && g_proto.lxmfMsUntilDue() < 1500) return "lxmf queue";
     if (g_radio && (g_radio->packetAvailable || g_radio->isTxBusy())) return "lora busy";
     if (g_loraIf && !g_loraIf->txIdle()) return "lora tx queue";
     // A received message is proven only after it is durably stored, and the write queue's
@@ -15834,6 +15839,11 @@ void powerIdle() {
         const uint32_t soak = soakMsUntilNext();
         if (soak < ms) ms = soak;
     }
+    if (g_protoReady && g_proto.lxmfQueuedCount() > 0) {   // outgoing messages waiting: wake for
+        uint32_t due = g_proto.lxmfMsUntilDue();             // the next step, at least every 1 s
+        if (due > 1000) due = 1000;
+        if (due < ms) ms = due;
+    }
     if (g_protoReady) {                                // wake for a scheduled path response
         const uint32_t due = g_proto.msUntilScheduledTx();
         if (due < 50) { delay(5); return; }           // due now: stay awake and send it
@@ -15900,7 +15910,11 @@ void powerStatus() {
                                (unsigned long)(g_radio->rxDcListenUs() / 1000), (unsigned long)(g_radio->rxDcSleepUs() / 1000),
                                (unsigned long)g_radio->rxDcArms, (unsigned long)g_radio->rxDcHeals,
                                g_radio->rxDutyCycleTcxoFailed() ? " TCXO-FAIL" : "");
-    if (g_storeReady) Serial.printf("[POWER] storage writes pending=%d\n", g_msgStore.writeQueue().drainCount());
+    if (g_storeReady) {
+        char wq[40];
+        g_msgStore.writeQueue().describe(wq, sizeof(wq));   // F free Q queued R running D done (result not taken)
+        Serial.printf("[POWER] storage writes pending=%d slots %s\n", g_msgStore.writeQueue().drainCount(), wq);
+    }
     Serial.printf("[POWER] messages unread=%d lxmf_queue=%d uptime=%lu s\n",
                   g_storeReady ? g_msgStore.totalUnreadCount() : -1, g_protoReady ? g_proto.lxmfQueuedCount() : -1,
                   (unsigned long)(millis() / 1000));

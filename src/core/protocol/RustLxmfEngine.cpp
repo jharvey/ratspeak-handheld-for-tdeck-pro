@@ -226,6 +226,30 @@ int RustLxmfEngine::queuedCount() const {
         if (value.phase != Phase::Free && value.phase != Phase::Settled && value.phase != Phase::Grace) ++count;
     return count;
 }
+uint32_t RustLxmfEngine::msUntilDue() const {
+    if (!_d.clock) return 0;
+    const uint64_t now = _d.clock->nowMs();
+    uint64_t best = UINT64_MAX;
+    auto due = [&](uint64_t at) { const uint64_t left = at > now ? at - now : 0; if (left < best) best = left; };
+    for (const auto& value : _rows) {
+        if (value.phase == Phase::Free || value.phase == Phase::Settled || value.phase == Phase::Grace) continue;
+        if (value.storageSequence) return 0;                    // a store operation is in flight
+        if (value.counter && value.desired != value.durable && !(value.flags & (Deleted | DeletePending)))
+            due(value.statusRetry);                             // a status write to retry
+        switch (value.phase) {
+        case Phase::Ready:
+            if (value.flags & Suppressed) break;                // parked: nothing to do on a timer
+            due(value.nextAttempt);
+            break;
+        case Phase::AwaitProof:
+            due(value.receiptSince + value.proofWait + 1);      // advance() acts once it is exceeded
+            break;
+        default:                                                // Saving, Query, Reading, Prepared, Resource
+            return 0;
+        }
+    }
+    return best > UINT32_MAX ? UINT32_MAX : (uint32_t)best;
+}
 void RustLxmfEngine::setStatus(Ticket ticket, LXMFStatus status) {
     auto* value = row(ticket);
     if (!value || (value->flags & Deleted) || value->desired == LXMFStatus::DELIVERED || value->desired == status) return;
