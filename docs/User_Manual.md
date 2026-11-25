@@ -167,7 +167,8 @@ look wrong. Battery page row 10 resets the calibration.
 |---|---|
 | **Top side button**, short press | Locks the radio and shows the idle screen (with no password: just the idle screen). Acts when you let go |
 | **Top side button**, held 3 s | SOS ([4.7](#47-sos)). Can be turned off: Alerts row 8 |
-| **Bottom side button** | Restarts the radio |
+| **Top side button**, held 2 s while the screen says SWITCHED OFF | Switches the radio on ([section 6](#6-battery-charging-and-energy-modes)) |
+| **Bottom side button** | Restarts the radio (a radio that is switched off stays off) |
 | **Top + bottom** (hold top, tap bottom, let go of top) | USB download mode, for installing firmware |
 
 | Key | Does |
@@ -626,7 +627,7 @@ Entry (type a value), Action, Info. Rows a mode hides keep their numbers.
 | 3 | **WiFi** | 1 Status · 2 IP address · 3 Scan networks · 4 Saved networks · 5 Disconnect · 6 TCP hub (Advanced) · 7 Home Assistant voice · 8 Mesh over WiFi · 9 ATAK feed (CoT) · 10 ATAK link to phone (WiFi / Bluetooth) · 11 Bluetooth (name, pairing code) |
 | 4 | **Screen & I/O** | 1 Theme (White paper / Black ink) · 2 Idle splash · 3 Key backlight |
 | 4.2 | Idle splash | 1 Off · 2 On, no password · 3 On + password · 4 Timeout (10-99999 s) · 5 Set / Change password · 6 Remove password · 7 Lock now · 8 Idle screen · 9 If-found details · 10 If found: my address shown / hidden |
-| 5 | **Power** | 1 Full power · 2 Balanced · 3 Eco · 4 Saver · 5 Ultra-low · 6 On demand · 7 Check-in (and its schedule) · 8 Custom · 9 Energy monitor · 10 Full power on USB · 11 Standby when idle · 12 Standby after · 13 Now · 14 Battery draw · 15 Capacity used for estimates |
+| 5 | **Power** | 1 Full power · 2 Balanced · 3 Eco · 4 Saver · 5 Ultra-low · 6 On demand · 7 Check-in (and its schedule) · 8 Custom · 9 Energy monitor · 10 Full power on USB · 11 Standby when idle · 12 Standby after · 13 Switch off (storage) · 14 Now · 15 Battery draw · 16 Capacity used for estimates |
 | 6 | **Battery** | 1 Voltage · 2 Charge · 3 Avg current · 4 Status · 5 USB power · 6 Gauge flags · 7 Capacity · 8 Battery log · 9 Full-charge cal · 10 Reset calibration · 11 Time left (measured) · 12 Low-battery notice · 13 Learned capacity |
 | 7 | **Identity** | 1 Address 1-16 · 2 Display name · 3 Address 17-32 · 4 Announce ID · 5 Identities · 6 Run setup wizard · 7 Share all contacts · 8 Export contacts (SD) · 9 Import contacts (SD) |
 | 8 | **LoRa** (Advanced) | 1 Radio · 2 Frequency · 3 Link preset (Long Fast, Long Slow, Medium, Fast Short) · 4 Last RSSI · 5 Last SNR · 6 Range test · 7 Relay for others |
@@ -700,6 +701,26 @@ is picked.
 **Standby when idle** (rows 11 and 12, off by default): after 1, 3, 6 (default), 12 or 24 hours
 without a key, GPS, WiFi, touch and the key light go off and the radio wakes every 5 minutes.
 LoRa keeps listening, so messages still arrive. A key ends standby.
+
+**Switch off (row 13), for storage:** for a radio that is put away for weeks or months and
+used now and then. **M**, **S**, **5**, move to row 13 with **V**, **Enter** twice. The screen
+shows **SWITCHED OFF / HOLD TOP BUTTON 2 S = ON** and keeps showing it with no power.
+
+- **On again:** hold the **top side button** about 2 seconds, until BOOTING shows. A short
+  press does nothing, so a bump in a bag does not start it. Start-up takes a minute or more;
+  the first GPS fix after a long time off can take several minutes under open sky.
+- **While off** it does not receive or send anything. Messages sent to it meanwhile are not
+  kept for it.
+- **Charging while off:** a USB charger or a small solar panel on the USB socket charges the
+  battery and does **not** switch the radio on.
+- **Battery while off:** everything is powered down. The draw while off is **not measured
+  yet** (expected well under 1 mA, which would be months on a full battery). After you
+  switch on, row "Last time" on the Power page shows how long it was off and the battery
+  voltage before and after. Twice a day it looks at the battery for a moment; if the
+  battery is nearly empty it changes to BATTERY EMPTY and cuts the battery off completely
+  until USB power arrives.
+- **If the top button does not start it:** press the bottom (restart) button, then within
+  3 seconds hold the top button for 2 seconds.
 
 **What to expect:** the draw figures above are bench measurements (estimates where marked).
 A full battery from charged to empty has **not yet been measured** in each mode; those runs

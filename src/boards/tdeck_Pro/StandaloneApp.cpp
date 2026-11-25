@@ -40,6 +40,8 @@
 #if !defined(SIMULATOR)
 #include <soc/gpio_periph.h>
 #include <driver/gpio.h>
+#include <driver/rtc_io.h>
+#include <esp_sleep.h>
 #endif
 #include <LittleFS.h>
 
@@ -4125,6 +4127,8 @@ void meshTick() {
 // Destructive actions need Enter twice within 5 s.
 int      g_idSel = 0;                 // slot shown on PG_ID_ONE
 void popPage();
+[[noreturn]] void powerDown(const char* why);
+extern char g_offReport[72];
 int      g_confirmKey = -1;
 uint32_t g_confirmAt = 0;
 
@@ -4664,6 +4668,7 @@ void buildSettingsRows(Page p) {
         srow(RK_TOGGLE, "Standby when idle", g_pw.standby ? "ON: GPS off after %u h idle" : "OFF",
              (unsigned)g_pw.standbyHours);
         srow(RK_PICK, "Standby after", "%u h without a key", (unsigned)g_pw.standbyHours);
+        srow(RK_ACTION, "Switch off", "top button 2 s = on again");
         const uint32_t tot = g_pwAwakeMs + g_pwSleepMs;
         if (g_standby)               srow(RK_INFO, "Now", "STANDBY for %lu min, GPS off",
                                           (unsigned long)((millis() - g_standbySince) / 60000UL));
@@ -4682,6 +4687,7 @@ void buildSettingsRows(Page p) {
                  (unsigned)(g_bat.tteMin / 60), (unsigned)(g_bat.tteMin % 60));
         else                                       srow(RK_INFO, "Battery draw", "%d mA", (int)-g_bat.avgMa);
         srow(RK_INFO, "Times use", capLearned ? "%u mAh (learned)" : "%u mAh (nominal)", (unsigned)cap);
+        if (g_offReport[0]) srow(RK_INFO, "Last time", "%s", g_offReport);
         break;
     }
 
@@ -5401,6 +5407,8 @@ void activateSetting(int idx) {
             power::save(g_pw);
             Serial.printf("[STANDBY] option %s, after %u h\n", g_pw.standby ? "on" : "off", (unsigned)g_pw.standbyHours);
             requestRedraw();
+        } else if (idx == power::MODE_CUSTOM + 5) {
+            if (confirmTwice(0x0FF, "switch off")) powerDown("menu");
         }
         break;
 
@@ -13318,6 +13326,134 @@ void emptyBatteryTick() {
 #endif
 }
 
+// ---- Switched off (S.5 "Switch off", console "poweroff") -------------------------------
+// For a radio that is stored for weeks or months and used now and then: everything is
+// powered down and the ESP32 is in deep sleep (a few hundred uA for the whole board, not
+// measured yet). The panel keeps showing the idle screen with "SWITCHED OFF". On again:
+// hold the top side button ~2 s. A charger or solar panel on USB charges the battery
+// meanwhile (the charger chip works alone) and does NOT switch the radio on. Every 12 h it
+// wakes for under a second to look at the battery: under kBatEmptyV the normal empty
+// switch-off (ship mode) takes over, so a long storage cannot drain the cell flat.
+// NVS rs_boot "off": 1 = switched off by the owner. "offT" / "offMv" / "offMah": clock,
+// battery voltage and gauge charge at switch-off, for the report at the next switch-on.
+constexpr uint32_t kOffHoldMs = 1200;        // button still down this long after the wake
+constexpr uint64_t kOffCheckUs = 12ULL * 3600ULL * 1000000ULL;
+char g_offReport[72] = "";                   // "off 13.2 h, 4.05 -> 4.03 V, 3 mAh" (pw, Power page)
+
+enum OffWake : uint8_t { OFF_WAKE_POWER, OFF_WAKE_BUTTON, OFF_WAKE_TIMER };
+OffWake offWakeCause() {
+#if defined(SIMULATOR)
+    const char* e = getenv("RS_SIM_WAKE");   // "power" / "timer"; default = the button, held
+    return e && !strcmp(e, "power") ? OFF_WAKE_POWER : e && !strcmp(e, "timer") ? OFF_WAKE_TIMER : OFF_WAKE_BUTTON;
+#else
+    switch (esp_sleep_get_wakeup_cause()) {
+        case ESP_SLEEP_WAKEUP_EXT0:  return OFF_WAKE_BUTTON;
+        case ESP_SLEEP_WAKEUP_TIMER: return OFF_WAKE_TIMER;
+        default:                     return OFF_WAKE_POWER;   // power came back, restart button
+    }
+#endif
+}
+
+// Deep sleep until the top button (or the 12 h battery look). Nothing is drawn here.
+[[noreturn]] void offSleep() {
+    Serial.flush();
+#if !defined(SIMULATOR)
+    g_display.hibernate();
+    static const int kOff[] = {BOARD_LORA_EN, BOARD_GPS_EN, BOARD_6609_EN, BOARD_1V8_EN, BOARD_EPD_BACKLIGHT,
+                               BOARD_KEYBOARD_LED, BOARD_MOTOR_PIN};
+    for (int p : kOff) { pinMode(p, OUTPUT); digitalWrite(p, LOW); gpio_hold_en((gpio_num_t)p); }
+    gpio_deep_sleep_hold_en();
+    pinMode(BOARD_BOOT_PIN, INPUT_PULLUP);
+    for (uint32_t t0 = millis(); digitalRead(BOARD_BOOT_PIN) == LOW && millis() - t0 < 10000;) delay(20);
+    rtc_gpio_pullup_en((gpio_num_t)BOARD_BOOT_PIN);
+    rtc_gpio_pulldown_dis((gpio_num_t)BOARD_BOOT_PIN);
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)BOARD_BOOT_PIN, 0);
+    esp_sleep_enable_timer_wakeup(kOffCheckUs);
+    esp_deep_sleep_start();
+#else
+    ESP.restart();                           // the simulator ends here; the next run is the wake
+#endif
+    for (;;) delay(1000);
+}
+
+void offDrawScreen() {
+    paintIdleEarly();
+    idleBanner("SWITCHED OFF", "HOLD TOP BUTTON 2 S = ON");
+    g_display.fullRefresh();
+}
+
+// Switch off now (the owner asked). Saves what is pending first.
+[[noreturn]] void powerDown(const char* why) {
+    Serial.printf("[POWER] off (%s): battery %.2f V %d%%; top button 2 s = on%c", why, g_bat.volts, g_bat.pct, 10);
+    soakLog("OFF (%s) %.3fV %d%%", why, g_bat.volts, g_bat.pct);
+    saveConfig();
+    g_idMgr.flushPending();
+    if (g_storeReady)
+        for (uint32_t t0 = millis(); g_msgStore.writeQueue().drainCount() > 0 && millis() - t0 < 5000;) delay(20);
+    readBattery();
+    {
+        Preferences p;
+        if (p.begin("rs_boot", false)) {
+            p.putUChar("off", 1);
+            p.putULong("offT", (uint32_t)time(nullptr));
+            p.putUShort("offMv", g_bat.valid ? (uint16_t)(g_bat.volts * 1000.0f + 0.5f) : 0);
+            p.putUShort("offMah", g_bat.valid ? g_bat.remMah : 0);
+            p.end();
+        }
+    }
+    offDrawScreen();
+    Serial.println("[POWER] off: deep sleep");
+    offSleep();
+}
+
+// Boot, after the battery check: true = the radio was switched off and stays off.
+// A button wake that is held long enough clears the flag and writes the report.
+bool offStaysOff() {
+    if (bootNvsGetU8("off") != 1) return false;
+    OffWake w = offWakeCause();
+#if !defined(SIMULATOR)
+    pinMode(BOARD_BOOT_PIN, INPUT_PULLUP);
+    // After the restart button (or power coming back) the top button is watched for 3 s,
+    // so "restart, then hold the top button" also switches on.
+    if (w == OFF_WAKE_POWER)
+        for (uint32_t t0 = millis(); millis() - t0 < 3000; delay(10))
+            if (digitalRead(BOARD_BOOT_PIN) == LOW) { w = OFF_WAKE_BUTTON; break; }
+#endif
+    if (w == OFF_WAKE_BUTTON) {
+        bool held = true;
+#if !defined(SIMULATOR)
+        for (uint32_t t0 = millis(); millis() - t0 < kOffHoldMs;) {
+            if (digitalRead(BOARD_BOOT_PIN) != LOW) { held = false; break; }
+            delay(10);
+        }
+#endif
+        if (held) {
+            Preferences p;
+            uint32_t t = 0; uint16_t mv = 0, mah = 0;
+            if (p.begin("rs_boot", false)) {
+                t = p.getULong("offT", 0); mv = p.getUShort("offMv", 0); mah = p.getUShort("offMah", 0);
+                p.putUChar("off", 0);
+                p.end();
+            }
+            const uint32_t now = (uint32_t)time(nullptr);
+            char dur[20] = "off";
+            if (t > 1600000000UL && now > t) snprintf(dur, sizeof(dur), "off %.1f h", (now - t) / 3600.0f);
+            if (mv && g_bat.valid)
+                snprintf(g_offReport, sizeof(g_offReport), "%s, %.2f -> %.2f V, %d mAh", dur, mv / 1000.0f,
+                         g_bat.volts, (int)mah - (int)g_bat.remMah);
+            else snprintf(g_offReport, sizeof(g_offReport), "%s", dur);
+            Serial.printf("[POWER] on (top button): %s%c", g_offReport, 10);
+            return false;
+        }
+        Serial.println("[POWER] off: button let go too soon, staying off");
+        return true;
+    }
+    Serial.printf("[POWER] off: %s, staying off (battery %.2f V%s)%c",
+                  w == OFF_WAKE_TIMER ? "12 h battery look" : "power or restart", g_bat.volts,
+                  g_bat.usb ? ", charging" : "", 10);
+    return true;
+}
+
 // =============================================================================
 // 7. Input — handlers only mutate state and request redraws
 // =============================================================================
@@ -15915,6 +16051,7 @@ void powerStatus() {
         g_msgStore.writeQueue().describe(wq, sizeof(wq));   // F free Q queued R running D done (result not taken)
         Serial.printf("[POWER] storage writes pending=%d slots %s\n", g_msgStore.writeQueue().drainCount(), wq);
     }
+    if (g_offReport[0]) Serial.printf("[POWER] last switched off: %s%c", g_offReport, 10);
     Serial.printf("[POWER] messages unread=%d lxmf_queue=%d uptime=%lu s\n",
                   g_storeReady ? g_msgStore.totalUnreadCount() : -1, g_protoReady ? g_proto.lxmfQueuedCount() : -1,
                   (unsigned long)(millis() / 1000));
@@ -16487,7 +16624,8 @@ void handleSerialLine(char* p) {
         return;
     }
     if (!strcmp(p, "idle now")) { enterIdle(); return; }
-    if (!strcmp(p, "btn")) { sideButtonAction("console"); return; }   // the top side button (lock)
+    if (!strcmp(p, "btn")) { sideButtonAction("console"); return; }
+    if (!strcmp(p, "poweroff")) powerDown("console");   // S.5 Switch off; top button 2 s = on   // the top side button (lock)
     if (!strcmp(p, "btn hold")) { sosHold("console"); return; }
     if (!strcmp(p, "lib")) { libOpen(); return; }                          // the Library
     if (!strcmp(p, "libnote")) { libOpen(); startEntry(Entry::Note, ""); requestRedraw(); return; }   // + New note        // the top button held 3 s (SOS)
@@ -17695,7 +17833,12 @@ bool begin() {
     // Empty battery and no USB: do not start (and do not draw "BOOTING" over the idle screen).
     loadBatteryCal();
     bool panelShowsEmpty = false;
+    const bool panelShowedEmpty = bootNvsGetU8("empty") == 2;
     const bool batOk = bootBatteryOk(panelShowsEmpty);
+    // Switched off by the owner: only the top button (held) starts it. The panel still shows
+    // the off screen, unless an empty battery wrote over it in between.
+    const bool stayOff = batOk && offStaysOff();
+    if (stayOff && !panelShowedEmpty) offSleep();
 
     // Boot screen first, so the unit shows it is starting (~1 s after power-on). The radio
     // shares this SPI bus; its own SPI.begin() later is then a no-op.
@@ -17704,6 +17847,7 @@ bool begin() {
     if (!g_display.begin()) { Serial.println("[BOOT] display failed"); return false; }
     if (!LvglPort::begin(g_display)) { Serial.println("[BOOT] LVGL failed"); return false; }
     if (!batOk) batteryShutdown(true, true);
+    if (stayOff) { offDrawScreen(); offSleep(); }
     drawBootSplash();
     bootMark("display, splash");
 

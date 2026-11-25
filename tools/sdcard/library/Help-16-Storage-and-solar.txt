@@ -1,0 +1,30 @@
+HELP: STORAGE, SWITCH OFF AND SOLAR
+
+For a radio that is put away for weeks or months and used now and then (an emergency radio in a bag, a car, a dorm room).
+
+SWITCH OFF: M, S, 5 (Power), V down to row 13 "Switch off", Enter, Enter again.
+The screen shows SWITCHED OFF and keeps showing it. The e-ink needs no power for that.
+
+SWITCH ON: hold the TOP side button about 2 seconds, until BOOTING shows. A short press does nothing, so a bump in a bag does not start it. Start-up takes a minute or more.
+If that does not work: press the BOTTOM (restart) button, then within 3 seconds hold the top button 2 seconds.
+
+WHILE IT IS OFF
+It does not send or receive. Messages sent to you meanwhile are not kept. Tell your people when you will switch on (for example every evening at 8), or use Check-in mode (Help-9) when you are switched on.
+Everything is powered down. How much it still uses is not measured yet; the aim is months on a full battery.
+Twice a day it looks at the battery for a moment. Nearly empty: the screen changes to BATTERY EMPTY and the battery is cut off until USB power arrives.
+
+CHARGING AND SOLAR
+A USB charger, a power bank or a small 5 V USB solar panel on the USB socket charges the battery. It does NOT switch the radio on.
+A solar panel only charges well in direct sun, facing the sun, not behind glass. A 5 W panel (about the size of this radio or a little larger) refills an hour of use in roughly an hour or two of good sun. Not measured with this radio yet.
+Best for long storage: charge it fully, switch it off, and top it up every few months.
+
+USING IT FOR AN HOUR A DAY
+Switch on, wait for the clock and the GPS (open sky; the first fix after a long time off can take several minutes).
+Map: M, then Map. Your position needs GPS; the maps are on the card and need no network.
+When you are done: switch off again (M, S, 5, row 13). Do not just leave it on the idle screen: there it keeps listening and the battery lasts a day or two, not months.
+To use less while it is on: Eco or Saver mode (M, S, 5), WiFi off.
+An hour of use takes very roughly 5 to 8 % of the battery.
+
+AFTER A LONG TIME OFF
+The clock keeps running while it is off. If the battery went completely empty the clock is wrong until the GPS has a fix.
+The Power page, row "Last time", shows how long it was off and the battery voltage before and after.

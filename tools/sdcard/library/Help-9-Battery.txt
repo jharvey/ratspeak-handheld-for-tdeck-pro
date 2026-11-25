@@ -10,6 +10,7 @@ Eco: the step down from Balanced; quick like it, but no WiFi and GPS hourly.
 Saver: longer; wakes once a minute, GPS hourly, no WiFi or key light.
 Custom: pick each setting. (Also Ultra-low, On demand, Check-in.)
 Keys and incoming messages stay instant in every mode. On USB power it runs Full anyway.
+Switch off for storage: M, S, 5, row 13 (V to it), Enter twice. On again: hold the top side button 2 seconds. See Help-16.
 
 No GPS fix? Go outside with a view of the sky and wait a few minutes. In Eco and Saver the GPS looks only hourly: switch to Full for a while.
 WiFi joined, or the ATAK feed on Bluetooth, keeps the radio awake in every mode: about 13 hours of battery. The Power page says "awake: WiFi".

@@ -310,6 +310,18 @@ ENERGY MODES  (Settings S.5 Power; power/PowerModes.*, power/LightSleep.*)
        this small (deadband / offset). Real floor ~1-5 mA; needs a meter. BHI260 boot
        status 0x38 (firmware loaded) on COM3/COM5, 0x18 on COM6/COM9 - no visible
        difference. Only COM8/COM9 have SD cards. floor d <n> <secs> sets cycle length.
+[DONE] Switch off for storage (2026-11-25; S.5 row 13, Enter twice; console "poweroff";
+       StandaloneApp.cpp powerDown / offSleep / offStaysOff): saves, draws the idle screen +
+       "SWITCHED OFF / HOLD TOP BUTTON 2 S = ON", all rails off + held, ESP32 deep sleep.
+       Wake: ext0 on the top button (GPIO0), must stay down 1.2 s more, else back to sleep
+       with nothing drawn. Power-on / restart button: stays off (watches the top button 3 s
+       first), so a solar panel or charger does not start it. Timer wake every 12 h: the boot
+       battery check runs (empty -> ship mode as usual), then back to sleep. NVS rs_boot
+       "off" = 1, offT / offMv / offMah for the report ("[POWER] on (top button): off 13.2 h,
+       4.05 -> 4.03 V, 3 mAh"; pw; Power page "Last time"). Sim: the process ends at the
+       sleep; RS_SIM_WAKE=power|timer|button picks the wake of the next run.
+       sim/scripts/power_off.py. NOT MEASURED: draw while off (the gauge may not count
+       currents this small: compare the voltage over days), wake on the real button.
 [DONE] Mode ladder (power/PowerModes.*): Full, Balanced (DEFAULT), Eco (2026-11-24: Balanced
        without WiFi, GPS hourly), Saver, Ultra-low
        (LoRa only, 5 min wakes), On demand (Profile.loraOnUse: LoRa 2 min after a key;
