@@ -461,6 +461,27 @@ still joined to the WiFi with the ATAK feed on (left from the ATAK test), and Wi
 awake. So run 1 measures **Balanced + WiFi + ATAK feed** (the worst case); a run with WiFi off
 is still needed for the plain Balanced figure.
 
+### 2026-11-24/25: battery run 2, COM3 result (Balanced, WiFi off, ATAK off)
+
+Firmware 1921bc8, `wifi off` and `cot off`, soak chat every ~30 min. Read from the COM8 listener
+log (unit 67a7). There was one boot for the whole run, so WiFi stayed off.
+
+| | COM3 (Balanced) |
+|---|---|
+| On battery (first "dsg" report) | 2026-11-24 ~19:58 |
+| Switched itself off ("dark") | 2026-11-25 08:34 |
+| Runtime on battery | **~12 h 36 m** |
+| Average draw | 88-91 mA, a few 95-117 mA peaks |
+| Voltage at off | 3.39 V |
+| Gauge | 50 % at ~6 h; jumped about near the end (19 % → 15 % → 27 %), **23 % at off** |
+
+- **WiFi off saved almost nothing in Balanced.** The draw was the same as run 1 (~90 mA)
+  because Balanced keeps GPS on and the CPU awake ("sleep=never"). The Power-page estimate for
+  plain Balanced (~67 mA) is optimistic and should be about 90 mA. Not changed yet.
+- The gauge again reads ~20 % at the 3.40 V cut-off (see run 1).
+- COM5 (Eco) has no clean result: it restarted during the run, and the PC listener stopped
+  logging from 2026-11-25 17:57 until 2026-11-26 08:44 (restarted). Eco needs a new run.
+
 ### 2026-11-23 night: ATAK feed over Bluetooth; big buffers to PSRAM
 
 - New: ATAK link to phone = Bluetooth (BLE, NimBLE, paired with a passkey, encrypted) plus the
