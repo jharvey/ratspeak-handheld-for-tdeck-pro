@@ -135,7 +135,7 @@ and so on. **Enter** keeps what is shown and goes on, **^** goes back, a number 
 | 6 | Idle screen: Splash, Map, Library page, If found |
 | 7 | Minimal, Typical or Everything |
 | 8 | Password lock: none, or set one |
-| 9 | Import contacts: listen over the radio, or read `ratdeckpro/contacts.txt` from the card |
+| 9 | Import contacts: listen over the radio (1: this radio announces, so the other can pick it), or read `ratdeckpro/contacts.txt` from the card |
 | 10 | Done. **Enter** announces the radio and finishes |
 
 Everything can be changed later in Settings. To run the wizard again: **M**, **S**, **7**

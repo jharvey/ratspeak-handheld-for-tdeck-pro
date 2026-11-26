@@ -11832,11 +11832,14 @@ void shareSendTo(int idx) {
     const power::CheckinPhase ph = checkinNow();
     if (g_pwEff.checkin && !(ph.inWindow && ph.sinceS >= (int32_t)power::kCheckinSendS)) {
         if (outboxAdd(to, body)) toast("Card queued (check-in)"); else toast("Outbox full (%d)", kOutboxCap);
-    } else if (sendMessage(to, body)) {
-        Serial.printf("[CARD] sent \"%s\" to %s\n", nm, toName);
-        toast("Card sent to %.12s", toName);
     } else {
-        toast("Not sent: %s", g_txStr);
+        doAnnounce();                                   // so the recipient knows us: see shareAllTo
+        if (sendMessage(to, body)) {
+            Serial.printf("[CARD] sent \"%s\" to %s\n", nm, toName);
+            toast("Card sent to %.12s", toName);
+        } else {
+            toast("Not sent: %s", g_txStr);
+        }
     }
     loadRows(g_screen);
     requestRedraw();
@@ -11859,13 +11862,20 @@ constexpr const char* kContactsFile = SD_PATH_ROOT "/contacts.txt";   // "name<T
 void shareAllTo(const uint8_t to[16]) {
     g_shareActive = false;
     g_shareAll = false;
+    // Announce first (it leaves before the cards: one radio queue): a radio that started after
+    // this one's last announce (a new radio in its setup wizard) does not know this radio's
+    // identity yet, and the first cards from an unknown sender were lost
+    // (tools/stress/fresh_fleet.py, late radio: 1 of 4 cards arrived).
+    doAnnounce();
     loadRows(SCR_CONTACTS);
     static uint8_t peers[MAX_ROWS][16];
     static char names[MAX_ROWS][24];
     int n = 0;
     for (int i = 0; i < g_rowCount && n < MAX_ROWS; i++) {
         const uint8_t* h = g_rows[i].peer;
-        if (isSelf(h) || !memcmp(h, to, 16)) continue;
+        // This radio's own card (MyID, row 0) goes too: a new radio importing contacts in
+        // its setup wizard should get the radio it imports from, not only that radio's list.
+        if (!memcmp(h, to, 16)) continue;
         memcpy(peers[n], h, 16);
         peerName(h, names[n], sizeof(names[n]));
         n++;
@@ -12432,7 +12442,9 @@ bool wizPick(int k) {
             if (k == 2) { startEntry(Entry::PassNew, nullptr, 2); toast("Choose a password"); }
             return false;
         case WZ_IMPORT:
-            if (k == 1) wizListen(!g_wizListen);
+            // Listening also announces: a new radio has not announced yet, so the other radio
+            // could not pick it for S.7 "Share all contacts" (it was not on its Peers list).
+            if (k == 1) { wizListen(!g_wizListen); if (g_wizListen) doAnnounce(); }
             else if (k == 2) { const int n = contactsImport(); if (n >= 0) { g_wizGot += n; toast("%d contacts imported", n); } }
             requestRedraw();
             return false;
@@ -14435,11 +14447,14 @@ void entryKey(const KeyEvent& ev) {
     if (g_entry == Entry::Name && g_bufLen >= 23) { toast("Max 23 chars"); return; }
     if (g_entry == Entry::GroupName && g_bufLen >= 16) { toast("Max 16 chars"); return; }
     if (g_entry == Entry::Name && isSelf(g_nameTarget)) {
-        // Own name: short enough for the idle screen's second line at its widest,
-        // "12/31/2026  <name>  999 NEW", so the name is never cut there.
-        char probe[64];
-        snprintf(probe, sizeof(probe), "12/31/2026  %.*s%c  999 NEW", (int)g_bufLen, g_buf, c);
-        if (textW(probe) > W - 6) { toast("Max length (idle screen)"); return; }
+        // Own name: short enough for the idle screen's bottom line beside the widest count,
+        // "<name>  999 NEW" (drawIdle: nameW), so the name is never cut there. This used to
+        // measure an older layout with the date on the same line, which stopped typed names at
+        // 4-5 letters (a default name like TDP-1448 could not be typed back).
+        char probe[32];
+        snprintf(probe, sizeof(probe), "%.*s%c", (int)g_bufLen, g_buf, c);
+        const int nameW = W - 5 - (textW("999 NEW") + 2) - 10 - 5;
+        if (textW(probe) + 2 > nameW) { toast("Max length (idle screen)"); return; }
     }
     if (g_entry == Entry::WifiPass && g_bufLen >= WIFI_PASS_MAX) { toast("Max 63 chars"); return; }
     if (passEntry(g_entry) && g_bufLen >= kLockPassMax) { toast("Max 32 chars"); return; }
@@ -16620,6 +16635,44 @@ void handleSerialLine(char* p) {
         bool ok = false;
         for (const char* k : kOk) ok |= !strcmp(p, k);
         if (!ok) { Serial.println("[CMD] locked: unlock on the device first"); return; }
+    }
+    if (!strcmp(p, "ui")) {   // what is on screen, for test tools (tools/stress/fresh_fleet.py)
+        const bool list = g_screen == SCR_INBOX || g_screen == SCR_CONTACTS || g_screen == SCR_PEERS;
+        if (list && !g_threadOpen && !g_cardOpen) loadRows(g_screen);
+        if (g_screen == SCR_SETTINGS) buildSettingsRows(g_page);
+        char th[33] = "-";
+        if (g_threadOpen) hashToHex(g_threadPeer, th);
+        Serial.printf("[UI] screen=%s sel=%d rows=%d menu=%d share=%d card=%d wiz=%d entry=%d thread=%s tcard=%d "
+                      "lib=%d page=%d mode=%d wizdone=%d idle=%d\n",
+                      screenName(g_screen), g_screen == SCR_SETTINGS ? g_sel : g_listSel,
+                      g_screen == SCR_SETTINGS ? g_srowCount : g_rowCount, g_menuOpen, g_shareActive, g_cardOpen,
+                      g_wizOpen ? g_wizStep : -1, (int)g_entry, th, g_threadCard.valid, g_libOpen, (int)g_page,
+                      (int)g_cfg.opMode, g_cfg.wizDone, g_idleActive);
+        if (g_screen == SCR_SETTINGS) {
+            for (int i = 0; i < g_srowCount; i++)
+                Serial.printf("[UI] srow %d %s | %s\n", i, g_srows[i].title, g_srows[i].sub);
+        } else if (list) {
+            for (int i = 0; i < g_rowCount; i++) {
+                char hx[33];
+                hashToHex(g_rows[i].peer, hx);
+                Serial.printf("[UI] row %d %s %s saved=%d self=%d\n", i, hx, g_rows[i].name, g_rows[i].saved,
+                              g_rows[i].self);
+            }
+        }
+        return;
+    }
+    if (!strcmp(p, "contacts")) {   // saved contacts: hash and the name shown
+        int n = 0;
+        for (const auto& node : g_announceMgr.nodes()) {
+            if (node.hash.size() != 16 || !node.saved) continue;
+            char hx[33], nm[24];
+            hashToHex(node.hash.data(), hx);
+            peerName(node.hash.data(), nm, sizeof(nm));
+            Serial.printf("[CONTACT] %s %s%s\n", hx, nm, isSelf(node.hash.data()) ? " (self)" : "");
+            n++;
+        }
+        Serial.printf("[CONTACT] %d saved\n", n);
+        return;
     }
     if (!strncmp(p, "wiz", 3) && (p[3] == 0 || p[3] == ' ')) {   // wiz [start|skip|listen|step <n>]
         if (!strcmp(p, "wiz start")) wizStart();

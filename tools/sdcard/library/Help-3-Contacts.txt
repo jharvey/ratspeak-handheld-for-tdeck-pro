@@ -13,5 +13,5 @@ Name this radio: C, row 0 (MyID), Enter, 2, type, Enter.
 
 Got a contact card ([card] Alice in a chat)? Open that chat and press Enter on the empty message line to save it.
 
-Move all your contacts to another radio: on the new radio, setup wizard step 9, 1 (Listen). On the old one: M, S, 7 (Identity), row 7 Share all contacts, pick the new radio. Each contact arrives as a card and is saved.
+Move all your contacts to another radio: on the new radio, setup wizard step 9, 1 (Listen). On the old one: M, S, 7 (Identity), row 7 Share all contacts, pick the new radio (Listen announces it, so it shows on Peers: P). Each contact arrives as a card and is saved, and so does the old radio itself.
 Or by SD card: M, S, 7, row 8 Export writes ratdeckpro/contacts.txt; on the other radio row 9 Import reads it (one "name<TAB>address" per line).
