@@ -95,7 +95,12 @@ class Radio:
         """A key on a screen that may have gone idle meanwhile: wake it first (the waking key
         does nothing else), then the key."""
         self.wake()
+        start = self.dev.mark()
         self.key(k, pause)
+        with self.dev.lock:      # it went idle just before the key: the key only woke it
+            woke = any("[IDLE] wake" in ln for ln in self.dev.lines[start:])
+        if woke:
+            self.key(k, pause)
 
     def type(self, text):
         for ch in text:

@@ -278,6 +278,66 @@ real sun a day keeps up; a 1 W panel behind a window does not.
 Not run yet: 16 or more radios, relays between groups that cannot hear each other, lost
 packets, and all of section 4c on real radios.
 
+## 4d. Fresh start: new radios set up and meet each other (2026-11-26)
+
+Asked by the owner after a field day with two freshly wiped units (a peer showed as
+"6ad3c377..", sharing a card was confusing). `tools/stress/fresh_fleet.py` does what a person
+does with new radios, through the screens, along random paths (seeded):
+
+1. **New radio:** empty flash (simulator: a new data folder; units: `flash_new_device.py --erase`)
+   and the library on the SD card (copied into the card folder; units: `push_files.py`).
+2. **Setup wizard with keys:** all defaults (Enter x9), own picks (typed name, time zone,
+   12/24 h, energy mode, idle screen, Minimal / Typical / Everything, no password), or 0 = skip,
+   then a name in S.7.2 and an announce by M H N, M P R or S.7.4.
+3. **Every pair becomes contacts**, each direction by a path the mode allows: Peers, the row,
+   Enter, 2 Rename (keep the announced name or type a nickname); or the other radio sends its
+   own card (C, MyID, Enter, 3 Share, the recipient from Contacts or P Peers) and Enter on the
+   empty line of the chat saves it. Minimal (no Peers) only receives cards.
+4. **A late radio** starts afterwards, walks the wizard to Import, 1 = Listen, and another radio
+   sends it S.7, row 7 Share all contacts.
+5. **Checks:** everyone heard everyone by the announced name (not the address), every contact
+   saved with the expected name, nobody lists itself, nothing extra, wizard done, Library has
+   the uploaded files, no crash or restart.
+
+Keys go in as `@K <raw>` console lines (the live-device protocol); the screens are read back
+with the console commands `ui` (screen, selection, list rows) and `contacts`.
+Ports: TCP 5861+ (one per radio), air 48471. In the regression (3 radios + late radio).
+
+    python tools/stress/fresh_fleet.py --radios 4 --seed 7
+    python tools/stress/fresh_fleet.py --ports COM3 COM5 COM6    # units: ERASED first; the last
+                                                                 # port is the late radio
+
+**Found and fixed** (09ceb7f, 17e62e0):
+- Announces carried no name: other radios showed the address (owner's field report).
+- Typing your own name stopped at the 5th letter (the length check measured an old idle
+  screen layout): a name like TDP-1448 could not be typed back.
+- Wizard Import / Listen could not work: the new radio had not announced, so the other radio
+  could not pick it for Share all. Listen now announces.
+- Share all to a new radio: 1 of 4 cards arrived; the new radio did not know the sender yet
+  and the first cards from an unknown sender were lost. Card sends now announce first, and
+  Share all includes the sender's own card. Now 4 of 4.
+
+**Results, 2026-11-26** (simulator, 4 radios + 1 late radio, firmware 17e62e0, image 8febd36):
+
+| Seed | Radios (mode, setup path) | Result |
+|---|---|---|
+| 1 (3 radios, no late radio) | E skip+announce M H N, E defaults, E custom | PASS 143 s (before the fixes) |
+| 2 | M custom, T custom, E skip, T custom; late imports 4 of 4 | PASS 360 s |
+| 3 | E defaults, E skip (S.7.4), E custom, M custom; late 4 of 4 | PASS 343 s |
+| 4 | E skip x3, E defaults; late 4 of 4 | before the fixes: FAIL (names cut to "NODE", late radio 1 of 4 cards); after: PASS 297 s |
+| 5 | E defaults x2, E skip x2; late 4 of 4 | PASS 356 s |
+| 6 | E skip x3, E defaults; late 4 of 4 | first run: harness (the screen went idle just as Enter was pressed, so the key only woke it; the test presses again now); rerun PASS 284 s |
+| 7 | T custom, E skip, E defaults, E skip; late 4 of 4 | PASS 340 s |
+| 8 | E defaults x2, E skip, T custom; late 4 of 4 | PASS 267 s |
+| 9 (3 radios, regression size) | E defaults, E skip (M P R), T custom; late 3 of 3 | PASS 186 s |
+
+Not run: the `--ports` mode on units (written, needs 3 units on USB; it erases them).
+
+Open: a message from a radio the receiver has never heard can still be lost the same way
+outside card sharing (the receiver asks for the sender's path, but the message that started
+it is not kept). Seen only with link delivery right after the receiver started; a plain
+first message to a radio that heard the sender's start-up announce arrived every time.
+
 ## 5. Order of work
 
 1. Add the `heap` heartbeat line (firmware) and the PC logger (also used for the units).
