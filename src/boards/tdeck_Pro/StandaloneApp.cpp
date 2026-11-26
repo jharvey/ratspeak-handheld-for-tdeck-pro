@@ -944,6 +944,18 @@ void sdUnmount() {
     Serial.println("[SD] unmounted");
 }
 
+// Is the mounted card still there? sdMount() trusts an earlier mount, so a card pulled while
+// the radio runs looked present until a restart. One stat over SPI; used where a person asks
+// (trip check, console sdinfo), not on every card access.
+bool sdProbe() {
+    if (!g_sdMounted) return sdMount();
+    if (g_sdStore.exists(SD_PATH_ROOT)) return true;
+    Serial.println("[SD] card removed");
+    sdUnmount();
+    snprintf(g_sdStatus, sizeof(g_sdStatus), "no card");
+    return sdMount();                        // another card may be in by now
+}
+
 void batLogSample() {
     BatLogSample s{};
     s.ms = millis();
@@ -17587,8 +17599,8 @@ void handleSerialLine(char* p) {
         ESP.restart();
 #endif
     } else if (!strcmp(p, "sdinfo")) {
-        Serial.printf("[SD] %s (mounting to check)%c", g_sdStatus, 10);
-        sdMount();
+        Serial.printf("[SD] %s (checking the card)%c", g_sdStatus, 10);
+        sdProbe();
         Serial.printf("[SD] %s; message archive %s%c", g_sdStatus,
                       g_sdArchiveActive ? "active" : sdArchiveEnabled() ? "on, not active" : "off", 10);
 #if !defined(SIMULATOR)
@@ -18110,7 +18122,7 @@ void tripRun() {
     if (gpsFresh()) tripAdd(true, "GPS", "fix, %u satellites", (unsigned)g_gpsSats);
     else if (!g_cfg.gpsOn) tripAdd(false, "GPS", "switched off (S.2 row 3)");
     else tripAdd(false, "GPS", "no fix now: try under open sky");
-    const bool sd = sdMount();
+    const bool sd = sdProbe();
     tripAdd(sd, "SD card", sd ? "present" : "none: no maps, no Library");
     bool maps = false, plan = false;
     int lib = 0;

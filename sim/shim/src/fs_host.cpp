@@ -199,15 +199,28 @@ std::string normV(const char* p) {
 namespace fs {
 
 std::string FS::root() const { return (fsx::path(sim::dataRoot()) / sub_).string(); }
+// A card taken out while mounted ("sd out", SD card > Inserted): every call on it fails, as
+// SPI reads would on the unit. (Before 2026-11-25 only the next mount noticed.)
+static bool cardGone(const std::string& sub) {
+    if (sub != "sd") return false;
+    std::lock_guard<std::mutex> l(sim::hw().mu);
+    return !sim::hw().sdPresent;
+}
 std::string FS::hostPath(const char* path) const {
     return (fsx::path(root()) / fsx::path(normV(path)).relative_path()).string();
 }
 File FS::open(const char* path, const char* mode, const bool create) {
+    if (cardGone(sub_)) return File();
     const std::string v = normV(path);
     return File(openHost(v, hostPath(v.c_str()), mode, create, sub_ == "littlefs"));
 }
-bool FS::exists(const char* path) { std::error_code ec; return fsx::exists(hostPath(path), ec); }
+bool FS::exists(const char* path) {
+    if (cardGone(sub_)) return false;
+    std::error_code ec;
+    return fsx::exists(hostPath(path), ec);
+}
 bool FS::remove(const char* path) {
+    if (cardGone(sub_)) return false;
     std::error_code ec;
     const auto h = hostPath(path);
     if (fsx::is_directory(h, ec) || !fsx::exists(h, ec)) return false;
@@ -217,6 +230,7 @@ bool FS::remove(const char* path) {
     return true;
 }
 bool FS::rename(const char* a, const char* b) {
+    if (cardGone(sub_)) return false;
     std::error_code ec;
     const auto ha = hostPath(a), hb = hostPath(b);
     if (!fsx::exists(ha, ec)) return false;
@@ -228,6 +242,7 @@ bool FS::rename(const char* a, const char* b) {
     return !ec;
 }
 bool FS::mkdir(const char* path) {
+    if (cardGone(sub_)) return false;
     std::error_code ec;
     const auto h = hostPath(path);
     if (fsx::is_directory(h, ec)) return true;
@@ -237,6 +252,7 @@ bool FS::mkdir(const char* path) {
     return false;
 }
 bool FS::rmdir(const char* path) {
+    if (cardGone(sub_)) return false;
     std::error_code ec;
     const auto h = hostPath(path);
     if (!(fsx::is_directory(h, ec) && fsx::is_empty(h, ec) && fsx::remove(h, ec))) return false;

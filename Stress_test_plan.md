@@ -272,10 +272,11 @@ real sun a day keeps up; a 1 W panel behind a window does not.
 | 8 radios on one channel, each sends to the next, 3 rounds, sends 3 s apart | `python tools/stress/mesh_many.py --radios 8 --rounds 3` | 24 of 24 delivered; median 16-18 s, worst 30 s |
 | 10 days of stored life: a battery look and a daily contact every day, a use by hand on days 5 and 10 | `python tools/stress/off_cycles.py --days 10` | every day passed; the simulator's data folder went from 2 KB to 3 KB (11 to 18 files) |
 | Message to a contact that is off, then on again | `python sim/scripts/held_net.py` | kept, resent on the contact's announce, delivered, list empty |
+| Power cut while switching off (kill 0-1.5 s after `poweroff`), then a start by power or by the top button | `python tools/stress/offcut.py --cycles 30` | 30 of 30: the button always starts it; power coming back left it off 15 times and on 15 times (cut before the off mark was saved); Home and daily contact kept every time |
+| SD card pulled while running, then put back | `sim/scripts/card_out.txt` (in the regression) | Found a gap: a card pulled after mounting still showed as present until a restart (also before today). Fixed: `sdProbe()` checks the card for the trip check and `sdinfo`; the simulator's card now fails file calls while it is out |
 
 Not run yet: 16 or more radios, relays between groups that cannot hear each other, lost
-packets, a power cut during a save while switching off, the SD card pulled during a GPX
-import, and all of section 4c on real radios.
+packets, and all of section 4c on real radios.
 
 ## 5. Order of work
 

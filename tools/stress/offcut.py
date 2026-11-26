@@ -18,10 +18,10 @@ Each cycle on the same data folder:
 Logs: <out>/cycle_NNN.log (kept only for failed cycles unless --keep-logs), summary.txt.
 Exit 0 = every cycle passed.
 """
-import argparse, os, random, shutil, sys, time
+import argparse, os, random, shutil, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from pingpong import ROOT, SimDevice  # noqa: E402
+from pingpong import ROOT, SIM, SimDevice  # noqa: E402
 
 OUT_DEFAULT = os.path.join(ROOT, "sim", "build", "offcut")
 
@@ -70,6 +70,8 @@ def main():
         d = start("offcut", data, log, a.tcp, a.air, "button")
         try:
             i, _ = d.wait_for(r"\[BOOT\] ready", 150)
+            if i is None and d.command("pw", r"\[POWER\] mode=", 15):
+                i = 0                    # booted before the TCP console connected
             if i is None:
                 why = "no boot on the top button"
                 raise RuntimeError
@@ -91,6 +93,7 @@ def main():
             d.alive = False
             try:
                 d.proc.kill()
+                d.proc.wait(15)          # the next start must not meet this one's TCP port
             except Exception:
                 pass
             try:
@@ -101,19 +104,31 @@ def main():
         if not why:
             # 3. the next start: power came back, or the button
             wake = random.choice(["power", "button"])
-            d = start("offcut", data, log + ".2", a.tcp, a.air, wake)
+            time.sleep(1)
+            # Script mode: every line from the first moment of boot is captured (a radio that
+            # stays off says so before a TCP console could connect).
+            sc = os.path.join(a.out, "next.txt")
+            with open(sc, "w") as f:
+                f.write("expect 150000 [BOOT] ready\nwait 500\nquit\n")
+            env = dict(os.environ, QT_QPA_PLATFORM="offscreen", RS_SIM_WAKE=wake, RS_SIM_AIR_PORT=str(a.air),
+                       QT_QPA_FONTDIR=os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts"))
             try:
-                i, m = d.wait_for(r"\[BOOT\] ready|staying off", 150)
-                if i is None:
-                    why = "next start (%s): neither ready nor off" % wake
-                elif wake == "button" and "staying off" in m.group(0):
-                    why = "button start stayed off"
-                elif "staying off" in m.group(0):
-                    stats["stayed_off"] += 1
-                else:
-                    stats["came_on"] += 1
-            finally:
-                d.close()
+                r = subprocess.run([SIM, "--name", "offcut", "--data", data, "--fast", "--script", sc, "--quit"],
+                                   env=env, capture_output=True, text=True, timeout=240)
+                out = r.stdout + r.stderr
+            except subprocess.TimeoutExpired:
+                out = ""
+            with open(log + ".2", "w", encoding="utf-8", errors="replace") as f:
+                f.write(out)
+            ready, off = "[BOOT] ready" in out, "staying off" in out
+            if not ready and not off:
+                why = "next start (%s): neither ready nor off" % wake
+            elif wake == "button" and not ready:
+                why = "button start stayed off"
+            elif off:
+                stats["stayed_off"] += 1
+            else:
+                stats["came_on"] += 1
         if why:
             fails.append((c, why))
             print("cycle %d: FAIL %s" % (c, why), flush=True)
