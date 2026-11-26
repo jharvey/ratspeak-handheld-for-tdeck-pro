@@ -58,6 +58,7 @@
 #include "voice/VoiceCodec.h"
 #include "voice/Walkie.h"
 #include "protocol/LxmfFields.h"
+#include "util/AnnounceData.h"
 
 // Shown on the boot screen and in Settings (bump with each release to the units).
 #define RATSPEAK_FW_VERSION "v0.1"
@@ -1677,6 +1678,10 @@ void initStorageAndProto() {
         g_announceMgr.setLocalDestHash(rs::Bytes(d, 16));
     }
     Serial.printf("[PROTO] up dest=%s\n", g_destHex);
+    {   // path responses (a radio asking for our route) carry the name too, before any announce
+        const rs::Bytes app = encodeAnnounceName(String(g_selfName));
+        g_proto.seedAnnounceAppData(app.data(), app.size());
+    }
 }
 
 extern uint32_t g_lastInputMs;
@@ -1701,7 +1706,11 @@ void doAnnounce() {
         return;
     }
     last = millis();
-    switch (g_proto.announce(nullptr, 0)) {
+    // The display name goes with the announce (LXMF app_data, as Sideband / NomadNet and the
+    // other boards send it): other radios show "TDP-1448", not "6ad3c377..". Before
+    // 2026-11-26 this sent no app_data at all.
+    const rs::Bytes app = encodeAnnounceName(String(g_selfName));
+    switch (g_proto.announce(app.size() ? app.data() : nullptr, app.size())) {
         case ProtocolBackend::AnnounceResult::Sent:     snprintf(g_announceStr, sizeof(g_announceStr), "sent"); break;
         case ProtocolBackend::AnnounceResult::Deferred: snprintf(g_announceStr, sizeof(g_announceStr), "deferred"); break;
         default:                                        snprintf(g_announceStr, sizeof(g_announceStr), "failed"); break;
