@@ -15923,13 +15923,13 @@ void selftestRows() {
 // report every <min> (default 5), at boot, at the first low battery, and "dark" just before
 // the empty-battery switch-off. It does not answer (it ignores "PS").
 constexpr int kSoakPeers = 6;
-// TEST FIRMWARE: a unit with no soak setting yet starts with the soak ON, chatting with the
-// test units below (all but itself). Settings > Diagnostics > Stress test turns it off (kept).
-// Set kSoakDefaultOn = false before a release.
+// A unit with no soak setting yet (new, or wiped) starts with the stress test OFF, like a unit
+// out of the box (owner, 2026-11-26). Test units turn it on with "soak on ..." or Settings >
+// Diagnostics > Stress test (kept in NVS). true = new units chat with the test units below.
 #if defined(SIMULATOR)
 constexpr bool kSoakDefaultOn = false;   // simulated radios (how-to videos, tests) never chat by themselves
 #else
-constexpr bool kSoakDefaultOn = true;
+constexpr bool kSoakDefaultOn = false;
 #endif
 constexpr uint8_t kSoakDefaultMean = 2;
 const char* const kSoakFleet[] = {
