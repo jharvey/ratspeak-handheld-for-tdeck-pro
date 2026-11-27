@@ -1130,6 +1130,91 @@ uint32_t g_gpsLastSyncMs = 0;
 // What the receiver hears (from GSV), per constellation talker, plus link health.
 struct GpsSky { char talker[3]; uint8_t inView, heard, heardAcc, bestSnr, bestAcc, inViewAcc; bool seenAcc; uint32_t atMs; };
 GpsSky   g_gpsSky[6] = {};
+// Every satellite of the last second (GSV): S.10.10 GPS signals, console "gpssky" / "gpslive".
+// sys: G GPS, R GLONASS, E Galileo, C BeiDou, J QZSS. snr 0 = known but not heard.
+struct GpsSat { char sys; uint8_t id, snr, elev; };
+constexpr int kGpsSatMax = 48;
+GpsSat   g_gpsSat[kGpsSatMax], g_gpsSatAcc[kGpsSatMax];
+uint8_t  g_gpsSatN = 0, g_gpsSatAccN = 0;
+uint32_t g_gpsSatAt = 0, g_gpsSatSerial = 0;
+uint32_t g_gpsFixChangeMs = 0;     // millis() when the fix came or went
+bool     g_gpsFixWas = false;
+int      g_gpsLiveLeft = 0;        // console "gpslive <s>": a line a second for s seconds
+
+char gpsSysLetter(const char* talker) {
+    switch (talker[1]) {
+        case 'P': return 'G';
+        case 'L': return 'R';
+        case 'A': return 'E';
+        case 'B': case 'D': return 'C';
+        case 'Q': return 'J';
+    }
+    return '?';
+}
+const char* gpsSysName(char sys) {
+    switch (sys) {
+        case 'G': return "GPS";
+        case 'R': return "GLO";
+        case 'E': return "GAL";
+        case 'C': return "BDS";
+        case 'J': return "QZS";
+    }
+    return "?";
+}
+int gpsSysOrder(char sys) { const char* o = "GREJC?"; const char* f = strchr(o, sys); return f ? (int)(f - o) : 9; }
+
+void gpsSatNote(char sys, int id, int snr, int elev) {
+    if (id <= 0 || id > 255) return;
+    if (snr < 0) snr = 0;
+    if (snr > 99) snr = 99;
+    if (elev < 0) elev = 0;
+    for (int i = 0; i < g_gpsSatAccN; i++)
+        if (g_gpsSatAcc[i].sys == sys && g_gpsSatAcc[i].id == id) {      // same satellite on a second signal
+            if (snr > g_gpsSatAcc[i].snr) g_gpsSatAcc[i].snr = (uint8_t)snr;
+            return;
+        }
+    if (g_gpsSatAccN >= kGpsSatMax) return;
+    g_gpsSatAcc[g_gpsSatAccN++] = {sys, (uint8_t)id, (uint8_t)snr, (uint8_t)elev};
+}
+
+// The published list, heard ones only, by system and then strongest first. Returns the count.
+int gpsSatSorted(GpsSat* out, int& known) {
+    known = 0;
+    if (!g_gpsSatAt || millis() - g_gpsSatAt > 5000) return 0;
+    int n = 0;
+    known = g_gpsSatN;
+    for (int i = 0; i < g_gpsSatN; i++) {
+        const GpsSat& a = g_gpsSat[i];
+        if (!a.snr) continue;
+        int j = n++;
+        while (j > 0 && (gpsSysOrder(out[j - 1].sys) > gpsSysOrder(a.sys) ||
+                         (out[j - 1].sys == a.sys && out[j - 1].snr < a.snr))) { out[j] = out[j - 1]; j--; }
+        out[j] = a;
+    }
+    return n;
+}
+
+// "4:07" (minutes:seconds) or "2 h 05" since ms.
+void gpsAgeText(uint32_t sinceMs, char* out, size_t n) {
+    const uint32_t s = (millis() - sinceMs) / 1000;
+    if (s < 3600) snprintf(out, n, "%lu:%02lu", (unsigned long)(s / 60), (unsigned long)(s % 60));
+    else snprintf(out, n, "%lu h %02lu", (unsigned long)(s / 3600), (unsigned long)((s / 60) % 60));
+}
+
+void gpsSkyPrint(const char* tag) {
+    GpsSat s[kGpsSatMax];
+    int known = 0;
+    const int n = gpsSatSorted(s, known);
+    char line[400];
+    size_t len = 0;
+    for (int i = 0; i < n && len + 10 < sizeof(line); i++)
+        len += snprintf(line + len, sizeof(line) - len, " %c%u:%u", s[i].sys, (unsigned)s[i].id, (unsigned)s[i].snr);
+    line[len] = 0;
+    char age[16];
+    gpsAgeText(g_gpsFixChangeMs, age, sizeof(age));
+    Serial.printf("[%s] %s %s used=%u hdop=%.1f heard=%d known=%d |%s\n", tag, g_gpsFix ? "FIX" : "nofix", age,
+                  (unsigned)g_gpsSats, g_gpsHdop, n, known, line);
+}
 uint32_t g_gpsBytes = 0, g_gpsGood = 0, g_gpsBad = 0;
 char     g_gpsLastGga[96] = "", g_gpsLastRmc[96] = "";
 
@@ -1430,8 +1515,10 @@ void gpsHandleSentence(char* line) {
         // second and shown when the next second starts (RMC, below); taking the last group
         // alone made the counts jump (6 heard shown as "1 in view, 0 heard").
         const int msgNum = atoi(fld[2]), numMsgs = atoi(fld[1]);
+        const char sys = gpsSysLetter(fld[0] + 1);
         for (int i = 7; i < n; i += 4) {
             const int snr = fld[i][0] ? atoi(fld[i]) : 0;
+            gpsSatNote(sys, atoi(fld[i - 3]), snr, atoi(fld[i - 2]));
             if (snr > 0) { if (k->heardAcc < 255) k->heardAcc++; if (snr > k->bestAcc) k->bestAcc = (uint8_t)snr; }
         }
         if (msgNum >= numMsgs) {
@@ -1445,11 +1532,20 @@ void gpsHandleSentence(char* line) {
     const bool rmc = !strncmp(fld[0], "$GPRMC", 6) || !strncmp(fld[0], "$GNRMC", 6);
     const bool gga = !strncmp(fld[0], "$GPGGA", 6) || !strncmp(fld[0], "$GNGGA", 6);
     if (rmc && n > 9) {
+        bool anySky = false;
         for (auto& k : g_gpsSky) {               // a new second: publish the last one's satellites
-            if (k.seenAcc) { k.inView = k.inViewAcc; k.heard = k.heardAcc; k.bestSnr = k.bestAcc; k.atMs = millis(); }
+            if (k.seenAcc) { k.inView = k.inViewAcc; k.heard = k.heardAcc; k.bestSnr = k.bestAcc; k.atMs = millis(); anySky = true; }
             k.inViewAcc = k.heardAcc = k.bestAcc = 0;
             k.seenAcc = false;
         }
+        if (anySky) {
+            memcpy(g_gpsSat, g_gpsSatAcc, sizeof(g_gpsSat));
+            g_gpsSatN = g_gpsSatAccN;
+            g_gpsSatAt = millis() | 1;
+            g_gpsSatSerial++;
+        }
+        g_gpsSatAccN = 0;
+        if (g_gpsLiveLeft > 0) { g_gpsLiveLeft--; gpsSkyPrint("GPSLIVE"); }
         g_gpsRmcAt = millis() | 1;
         // Receiver power save (PSMCT) stays off: without a fix the M10 then stops and restarts
         // its search every 15 s ("Stopping GNSS" / "Starting GNSS"), loses every satellite and
@@ -1483,6 +1579,7 @@ void gpsHandleSentence(char* line) {
         return;
     }
     snprintf(g_gpsStatus, sizeof(g_gpsStatus), "%s", g_gpsFix ? "fix" : g_gpsBbrFault ? "backup low" : "searching");
+    if (g_gpsFix != g_gpsFixWas) { g_gpsFixWas = g_gpsFix; g_gpsFixChangeMs = millis(); }
 
     // Auto sync: once after boot, then daily.
     if (g_cfg.gpsAutoSync && g_gpsFix && g_gpsUtcValid) {
@@ -3381,7 +3478,7 @@ enum Page : uint8_t {
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
     PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW, PG_LOWBAT, PG_OFF,
-    PG_BACKUPS, PG_FOUND, PG_MODE, PG_HAVOICE, PG_FEATURES, PG_SELFTEST, PG_TRIP
+    PG_BACKUPS, PG_FOUND, PG_MODE, PG_HAVOICE, PG_FEATURES, PG_SELFTEST, PG_TRIP, PG_GPSSKY
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -4479,6 +4576,7 @@ const char* pageTitle(Page p) {
         case PG_MODE:         return "Mode";
         case PG_SELFTEST:     return "Check this unit";
         case PG_TRIP:         return "Ready for a trip?";
+        case PG_GPSSKY:       return "GPS signals";
     }
     return "";
 }
@@ -4881,6 +4979,9 @@ void buildSettingsRows(Page p) {
     case PG_ENERGY_GRAPH:
         break;                                          // drawn by renderEnergyGraph()
 
+    case PG_GPSSKY:
+        break;                                          // drawn by renderGpsSky()
+
     case PG_POWER_CUSTOM: {
         const power::Profile& c = g_pw.custom;
         srow(RK_PICK, "CPU speed", "%u MHz", (unsigned)c.cpuMhz);
@@ -5129,6 +5230,12 @@ void buildSettingsRows(Page p) {
         else            srow(RK_TOGGLE, "Stress test", "OFF");
         srow(RK_MENU, "Check this unit", "hardware self-test");
         srow(RK_MENU, "Ready for a trip?", "battery, maps, Home, contacts");
+        {
+            int inView, heard, best;
+            gpsSkySummary(inView, heard, best);
+            if (!g_cfg.gpsOn) srow(RK_MENU, "GPS signals", "GPS is off");
+            else srow(RK_MENU, "GPS signals", "%s, %d of %d heard, best %d", g_gpsFix ? "fix" : "no fix", heard, inView, best);
+        }
         break;
     }
 
@@ -5843,6 +5950,7 @@ void activateSetting(int idx) {
         if (idx == 6) soakToggle();
         else if (idx == 7) { pushPage(PG_SELFTEST); if (!selftestRan()) selftestStart(false); }
         else if (idx == 8) { tripRun(); pushPage(PG_TRIP); }
+        else if (idx == 9) pushPage(PG_GPSSKY);
         break;
 
     case PG_TRIP:
@@ -6303,9 +6411,11 @@ void renderHome() {
 
 // ---- Settings ---------------------------------------------------------------------
 void renderEnergyGraph();
+void renderGpsSky();
 
 void renderSettings() {
     if (g_page == PG_ENERGY_GRAPH) { renderEnergyGraph(); return; }
+    if (g_page == PG_GPSSKY) { renderGpsSky(); return; }
     buildSettingsRows(g_page);
     clampScroll(g_sel, g_scroll, g_srowCount);
     char path[24], hdr[48];
@@ -6477,6 +6587,109 @@ void renderEnergyGraph() {
         y += 18;
     }
     drawFooter();
+}
+
+// ---- GPS signals (S.10.10) -------------------------------------------------------------
+// A bar per satellite the receiver hears, by system, strongest first: height = signal strength
+// (dB-Hz, 0-50). The dotted line is 25: a first fix needs about four satellites above it. The
+// satellite number is under each bar, the exact strengths per system are below. Redrawn every
+// 2 s while it is open (gpsSkyTick), and the unit stays awake and off the idle screen.
+uint32_t g_gpsSkyShown = 0, g_gpsSkyDrawnAt = 0;
+
+void renderGpsSky() {
+    g_srowCount = 0;
+    g_srowNext = 0;
+    g_graphLabelN = 0;
+    char path[24], hdr[48], t[64], age[16];
+    settingsPath(path, sizeof(path));
+    snprintf(hdr, sizeof(hdr), "%s %s", path, pageTitle(g_page));
+    drawHeader(hdr, false);
+    g_gpsSkyShown = g_gpsSatSerial;
+    g_gpsSkyDrawnAt = millis();
+
+    GpsSat s[kGpsSatMax];
+    int known = 0;
+    const int n = gpsSatSorted(s, known);
+    int best = 0;
+    for (int i = 0; i < n; i++) if (s[i].snr > best) best = s[i].snr;
+    gpsAgeText(g_gpsFixChangeMs, age, sizeof(age));
+    const char* pwr = g_bat.valid && g_bat.usb ? "USB" : "battery";
+    if (!g_cfg.gpsOn)          snprintf(t, sizeof(t), "GPS is off: M.S.2.3");
+    else if (!g_gpsAllowed)    snprintf(t, sizeof(t), "GPS resting (energy mode)");
+    else if (g_gpsBbrFault)    snprintf(t, sizeof(t), "Receiver: backup cell low");
+    else if (millis() - g_gpsLastGoodMs > 5000) snprintf(t, sizeof(t), "Receiver silent  %s", pwr);
+    else if (g_gpsFix)         snprintf(t, sizeof(t), "FIX %s  %u used  %s", age, (unsigned)g_gpsSats, pwr);
+    else                       snprintf(t, sizeof(t), "NO FIX %s  %s", age, pwr);
+    text(6, LIST_TOP, t, true, W - 12);
+    if (g_gpsFix) snprintf(t, sizeof(t), "Heard %d of %d  best %d  HDOP %.1f", n, known, best, g_gpsHdop);
+    else          snprintf(t, sizeof(t), "Heard %d of %d  best %d dB", n, known, best);
+    text(6, LIST_TOP + 17, t, false, W - 12);
+
+    const int gx = 24, gy = LIST_TOP + 38, gw = W - gx - 6, gh = 62;
+    box(gx, gy, gw, gh + 2, 1);
+    for (int k = 0; k <= 2; k++) {                  // 0, 25, 50 dB-Hz
+        const int ty = gy + 1 + gh - gh * k / 2;
+        fillRect(gx - 4, ty, 4, 1);
+        if (k == 1) for (int x = gx + 2; x < gx + gw - 2; x += 4) fillRect(x, ty, 1, 1);
+        snprintf(t, sizeof(t), "%d", k * 25);
+        const int w = lv_txt_get_width(t, strlen(t), &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
+        smallText(gx - 6 - w, ty - 7, t, false);
+    }
+    if (!n) text(gx + 10, gy + gh / 2 - 8, known ? "No satellite heard yet" : "No satellite data", false, gw - 14);
+    int bw = (gw - 4) / (n < 12 ? 12 : n);
+    if (bw < 4) bw = 4;
+    const int maxBars = (gw - 4) / bw;
+    const int every = bw >= 8 ? 1 : (8 + bw - 1) / bw;
+    const int labelTop = gy + gh + 6;
+    int groupX = gx + 2, nameRight = 0;
+    for (int i = 0; i < n && i < maxBars; i++) {
+        const int v = s[i].snr > 50 ? 50 : s[i].snr;
+        int h = v * gh / 50;
+        if (h < 1) h = 1;
+        const int x = gx + 2 + i * bw;
+        fillRect(x, gy + 1 + gh - h, bw - 2 > 1 ? bw - 2 : 1, h);
+        if (i % every == 0 && g_graphLabelN < (int)(sizeof(g_graphLabels) / sizeof(g_graphLabels[0]))) {
+            GraphLabel& L = g_graphLabels[g_graphLabelN++];
+            snprintf(L.t, sizeof(L.t), "%u", (unsigned)s[i].id);
+            L.x = (int16_t)(x + (bw - 2) / 2 - 3);
+            L.y = (int16_t)(labelTop + (int)strlen(L.t) * 6);
+        }
+        const bool last = i + 1 >= n || i + 1 >= maxBars || s[i + 1].sys != s[i].sys;
+        if (last) {                                  // a line and the system's name under its bars
+            const int gwid = x + bw - 2 - groupX;
+            fillRect(groupX, gy + gh + 26, gwid > 1 ? gwid : 1, 1);
+            const char* nm = gpsSysName(s[i].sys);
+            const int w = lv_txt_get_width(nm, strlen(nm), &lv_font_montserrat_12, 0, LV_TEXT_FLAG_NONE);
+            int nx = groupX + (gwid - w) / 2;        // centred, but clear of the name before it
+            if (nx < nameRight + 4) nx = nameRight + 4;
+            if (nx <= groupX + gwid && nx + w <= W - 2) { smallText(nx, gy + gh + 28, nm, false); nameRight = nx + w; }
+            groupX = x + bw;
+        }
+    }
+    // Exact strengths, a line per system.
+    int y = gy + gh + 44;
+    for (int i = 0; i < n && y + 13 <= FOOT_Y;) {
+        size_t len = (size_t)snprintf(t, sizeof(t), "%s", gpsSysName(s[i].sys));
+        const char sys = s[i].sys;
+        for (; i < n && s[i].sys == sys; i++)
+            if (len + 4 < sizeof(t)) len += snprintf(t + len, sizeof(t) - len, " %u", (unsigned)s[i].snr);
+        smallText(6, y, t, false);
+        y += 14;
+    }
+    drawFooter();
+}
+
+bool gpsSkyPageOpen() {
+    return g_screen == SCR_SETTINGS && g_page == PG_GPSSKY && !g_idleActive && !g_menuOpen &&
+           millis() - g_lastInputMs < 30UL * 60UL * 1000UL;      // 30 min after the last key
+}
+
+void gpsSkyTick() {
+    if (!gpsSkyPageOpen()) return;
+    const uint32_t since = millis() - g_gpsSkyDrawnAt;
+    if (since < 2000 || (g_gpsSatSerial == g_gpsSkyShown && since < 5000)) return;
+    g_gpsSkyDrawnAt = millis();
+    requestRedraw();
 }
 
 // ---- SD tools: back up / restore, firmware update (S.11.5 rows 8-10) ------------------------
@@ -13235,7 +13448,7 @@ void render() {
         !g_wizOpen && g_entry != Entry::Name)
         stampChess();
     if (g_navOpen && !g_menuOpen) stampNav();
-    if (g_screen == SCR_SETTINGS && g_page == PG_ENERGY_GRAPH && !g_menuOpen && !g_threadOpen && !mapview::isOpen() &&
+    if (g_screen == SCR_SETTINGS && (g_page == PG_ENERGY_GRAPH || g_page == PG_GPSSKY) && !g_menuOpen && !g_threadOpen && !mapview::isOpen() &&
         !g_libOpen && !g_gameOpen && !g_chessOpen && !g_wizOpen && !g_rtOpen)
         stampGraphLabels();
     const uint32_t t1 = millis();
@@ -15508,6 +15721,7 @@ void powerTick() {
     checkinTick();
     usbDriveTick();
     digitPendTick();
+    gpsSkyTick();
     chessTick();
     txLateTick();
     markReadTick();
@@ -15601,6 +15815,7 @@ const char* powerSleepBlocker() {
     if (now < 15000) return "boot";
     if (now - g_lastInputMs < (uint32_t)g_pwEff.awakeSecs * 1000UL) return "recent input";
     if (g_usbDrive) return "USB drive";
+    if (gpsSkyPageOpen()) return "GPS signals page";
     if (havoice::busy()) return "HA voice";
     if (walkie::state() != walkie::State::Idle || g_wtOpen) return "walkie-talkie";
     if (g_vmOpen) return "voice message";
@@ -17338,6 +17553,14 @@ void handleSerialLine(char* p) {
         batLogDump();
     } else if (!strcmp(p, "g")) {
         gpsDump();
+    } else if (!strcmp(p, "gpssky")) {
+        gpsSkyPrint("GPSSKY");
+        for (int i = 0; i < g_gpsSatN && g_gpsSatAt && millis() - g_gpsSatAt < 5000; i++)
+            Serial.printf("[GPSSKY] %s %u: %u dB-Hz, elevation %u\n", gpsSysName(g_gpsSat[i].sys), (unsigned)g_gpsSat[i].id,
+                          (unsigned)g_gpsSat[i].snr, (unsigned)g_gpsSat[i].elev);
+    } else if (!strncmp(p, "gpslive", 7)) {
+        g_gpsLiveLeft = p[7] ? atoi(p + 8) : 30;
+        Serial.printf("[GPSLIVE] a line a second for %d s (sys+number:strength, G GPS R GLONASS E Galileo C BeiDou J QZSS)\n", g_gpsLiveLeft);
     } else if (!strncmp(p, "gpsraw", 6)) {
         g_gpsRawLeft = p[6] ? atoi(p + 7) : 40;
     } else if (!strcmp(p, "gp")) {
@@ -18598,6 +18821,7 @@ void watchIdle() {
         return;
     }
     if (g_cfg.idleMode == 0) return;
+    if (gpsSkyPageOpen()) return;                      // S.10.10 GPS signals is watched, not typed on
     // Keys still waiting (the loop was busy drawing): the user is typing. Going idle here made
     // the first of them the wake key, which is swallowed - a lost letter (stress test 2026-11-16).
     if (g_keyqTail != g_keyqHead) return;

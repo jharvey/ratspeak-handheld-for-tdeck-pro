@@ -444,6 +444,8 @@ S     Settings                      ← M then S
 ├── S.9   Alerts                    beep, vibrate, volume 0 (silent) / 20 … 80 (default) / 100 %
 │                                   (plays the new level), test
 ├── S.10  Diagnostics  (key 0)      paths/links, LXMF queue, peers, uptime
+│   └── S.10.10 GPS signals         live: a bar per satellite heard (strength 0-50 dB-Hz, number
+│                                   below, by system), fix / no fix and for how long, USB or battery
 └── S.11  Storage  (no number key: T / V to it, Enter)
                                     heap, PSRAM, flash, messages, SD card (+ S.11.5 SD), secrets key
 ```
@@ -818,7 +820,12 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
   …14:48, …17:CC). Suspected cause: the J6 cell or its D8 / R15 charge path on COM8.
 - **Bench check of any unit:** `tools/gpscheck/check.sh COMx` flashes a tiny check app
   (LoRa kept off), listens 70 s and prints `VERDICT: GPS OK / GPS FAULT / NO DATA`.
-- Console: `g` (status dump), `gp` (power-cycle the receiver), `gr` (hardware reset).
+- Console: `g` (status dump), `gp` (power-cycle the receiver), `gr` (hardware reset),
+  `gpssky` (every satellite: system, number, strength, elevation), `gpslive <s>` (one line a
+  second for s seconds: fix, satellites used, each heard satellite and its strength),
+  `gpsraw <n>` (the next n NMEA sentences as received).
+- **S.10.10 GPS signals** shows the same on the screen, redrawn every 2 s; while it is open the
+  unit does not sleep or go to the idle screen (for 30 min after the last key).
 - The position (GGA / RMC with a fix) is kept for the map (§8.1).
 
 ### 8.1 Offline map — Works (simulator; COM9 with test tiles on its card, 2026-11-11)
