@@ -171,7 +171,7 @@ struct Config {
     uint8_t  idleScreen  = 0;       // IdleScreen: splash, map, library page, if-found
     char     found[10][41] = {};    // if-found screen: name, phone, address 1-2, town, state, zip,
                                     // country, misc 1-2 (S.4.2.9); NVS fnd0..fnd9
-    bool     touchOff    = false;   // S.1.4: touch screen off, keys only
+    bool     touchOff    = true;    // S.1.4: touch screen off, keys only (the default since 2026-11-27)
     bool     haVoice     = false;   // S.3.7: Home Assistant voice satellite (WiFi, ESPHome API)
     uint8_t  haWake      = 0;       // S.3.7 row 7: wake word 0 off, 1 on USB power only, 2 always
     uint8_t  haSensors   = 0;       // S.3.7 row 8: sensors for HA 0 off, 1 battery, 2 battery + position
@@ -371,7 +371,7 @@ void loadConfig() {
             strlcat(dst, tok, sizeof(g_cfg.found[0]));
         }
     }
-    g_cfg.touchOff    = p.getBool("touchOff", false);
+    g_cfg.touchOff    = p.getBool("touchOff", true);
     g_cfg.haVoice     = p.getBool("haVoice", false);
     g_cfg.haWake      = p.getUChar("haWake", 0);
     g_cfg.haSensors   = p.getUChar("haSens", 0);
@@ -882,6 +882,19 @@ void sdArchiveSet(bool on) {
     if (p.begin("rs_sd", false)) { p.putBool("msgs", on); p.end(); }
 }
 bool g_sdArchiveActive = false;   // the store was started with the card as its archive
+// USB drive mode also offers a COM port with the console (S.11.5 last row; off by default: that
+// port dies with a hung firmware, see hal/UsbDrive.h). NVS rs_sd/drvcom.
+bool usbDriveComEnabled() {
+    Preferences p;
+    if (!p.begin("rs_sd", true)) return false;
+    const bool on = p.getBool("drvcom", false);
+    p.end();
+    return on;
+}
+void usbDriveComSet(bool on) {
+    Preferences p;
+    if (p.begin("rs_sd", false)) { p.putBool("drvcom", on); p.end(); }
+}
 
 void sdStatusRefresh() {
     if (!g_sdStore.isReady()) { snprintf(g_sdStatus, sizeof(g_sdStatus), "not mounted"); return; }
@@ -1200,6 +1213,7 @@ void ubxSend(uint8_t cls, uint8_t id, const uint8_t* payload, uint16_t len);
 // GPS on while the CPU sleeps (Balanced): the receiver may use its own power-save mode
 // (u-blox M10 PSMCT: about half the current once it has a fix). Full keeps full power.
 bool gpsSleepsWithCpu() { return g_pwEff.gps == power::GPS_ON && g_pwEff.wakeSecs != 0; }
+constexpr bool kGpsReceiverPsm = false;      // see the RMC handler
 
 void gpsSetPowerSave(bool on) {
     if (!g_gpsSerial) return;
@@ -1313,7 +1327,9 @@ void gpsWatchLink() {
         }
         return;
     }
-    if (now - g_gpsLastGoodMs < 3000) return;         // navigation sentences are arriving
+    // 10 s of silence, not 3: the step below ends in a cold start, which throws away every
+    // satellite the receiver had. A short gap in the sentences must not trigger it.
+    if (now - g_gpsLastGoodMs < 10000) return;        // navigation sentences are arriving
     const uint32_t wait = g_gpsStep < 6 ? 2500 : 20000;
     if (now - g_gpsStepAt < wait) return;
     g_gpsStepAt = now;
@@ -1424,7 +1440,10 @@ void gpsHandleSentence(char* line) {
     const bool gga = !strncmp(fld[0], "$GPGGA", 6) || !strncmp(fld[0], "$GNGGA", 6);
     if (rmc && n > 9) {
         g_gpsRmcAt = millis() | 1;
-        if (g_gpsPsmSent != (gpsSleepsWithCpu() ? 1 : 0)) gpsSetPowerSave(gpsSleepsWithCpu());
+        // Receiver power save (PSMCT) stays off: without a fix the M10 then stops and restarts
+        // its search every 15 s ("Stopping GNSS" / "Starting GNSS"), loses every satellite and
+        // never gets a first fix on battery (bench COM6 + field, 2026-11-27).
+        if (g_gpsPsmSent != (kGpsReceiverPsm && gpsSleepsWithCpu() ? 1 : 0)) gpsSetPowerSave(kGpsReceiverPsm && gpsSleepsWithCpu());
         const bool valid = fld[2][0] == 'A';
         if (valid && strlen(fld[1]) >= 6 && strlen(fld[9]) >= 6) {
             g_gpsUtc[3] = twoDigits(fld[1]);
@@ -4910,7 +4929,7 @@ void buildSettingsRows(Page p) {
         for (int i = 0; i < 10; i++) {
             const char* e = g_foundField == i ? editingSub(Entry::FoundText) : nullptr;
             if (e) srow(RK_ENTRY, kFoundLabel[i], "%s", e);
-            else   srow(RK_ENTRY, kFoundLabel[i], "%s", g_cfg.found[i][0] ? g_cfg.found[i] : "-");
+            else   srow(RK_ENTRY, kFoundLabel[i], "%s", g_cfg.found[i][0] ? g_cfg.found[i] : "not entered yet");
         }
         break;
 
@@ -5133,6 +5152,7 @@ void buildSettingsRows(Page p) {
         else if (!g_fwName[0]) srow(RK_ACTION, "Update firmware", "no .bin in /firmware");
         else srow(RK_ACTION, "Update firmware", g_fwInstalled ? "%.13s (installed)" : "%.17s %u KB",
                   g_fwName, (unsigned)(g_fwSize >> 10));
+        srow(RK_ACTION, "Drive + COM port", "%s", usbDriveComEnabled() ? "On" : "Off");
         break;
 
     case PG_BACKUPS:
@@ -5833,6 +5853,10 @@ void activateSetting(int idx) {
             backupsOpen();
         } else if (idx == 9) {
             fwUpdateKey();
+        } else if (idx == 10) {
+            usbDriveComSet(!usbDriveComEnabled());
+            toast(usbDriveComEnabled() ? "USB drive keeps a COM port" : "USB drive: no COM port");
+            requestRedraw();
         } else if (idx == 5) {
             sdArchiveSet(!sdArchiveEnabled());
             toast(sdArchiveEnabled() ? "Archive on: reboot to apply" : "Archive off: reboot to apply");
@@ -6976,7 +7000,7 @@ void usbDriveStart() {
     if (g_bat.valid && !g_bat.usb) { toast("Plug into a PC first"); return; }
     sdUnmount();
     g_usbDrive = true;                  // sdMount() now refuses
-    if (!usbdrive::start(SD_CS)) {
+    if (!usbdrive::start(SD_CS, usbDriveComEnabled())) {
         g_usbDrive = false;
         toast("USB drive: %s", usbdrive::message());
         return;
@@ -6995,8 +7019,11 @@ void usbDriveStart() {
     usbdrive::restartToNormal();
 }
 
+uint32_t g_usbDriveStopAt = 0;      // console "usbdrive <seconds>": leave drive mode by itself (tests)
+
 void usbDriveTick() {
     if (!g_usbDrive) return;
+    if (g_usbDriveStopAt && (int32_t)(millis() - g_usbDriveStopAt) > 0) usbDriveStop();
     static usbdrive::State shown = usbdrive::OFF;
     const usbdrive::State st = usbdrive::state();
     if (st != shown) { shown = st; requestRedraw(); }
@@ -7030,7 +7057,7 @@ void renderUsbDrive() {
     else snprintf(t, sizeof(t), "read %lu KB, written %lu KB", (unsigned long)r, (unsigned long)w);
     text(8, y, t, false, W - 16); y += 28;
     text(8, y, "Messages still arrive.", false, W - 16); y += 20;
-    text(8, y, "No COM port until restart.", false, W - 16);
+    text(8, y, usbdrive::comOn() ? "New COM port on the PC." : "No COM port until restart.", false, W - 16);
     box(0, FOOT_Y, W, FOOT_H, 1);
     const bool recent = usbdrive::lastWriteMs() && millis() - usbdrive::lastWriteMs() < 3000;
     label(0, FOOT_Y - 1, W, FOOT_H, g_toast[0] ? g_toast : recent ? "Writing... wait" : "Enter = stop (eject first)");
@@ -13396,8 +13423,8 @@ void paintIdleFound() {
             }
         }
     } else {
-        label(0, y, W, 20, "(details not set:");
-        label(0, y + 22, W, 20, "Settings S.4.2.9)");
+        label(0, y, W, 20, "not entered yet");
+        label(0, y + 22, W, 20, "configure M.S.4.2.9");
         y += 44;
     }
     if (g_cfg.foundAddr) {
@@ -14045,18 +14072,58 @@ void activateCurrent() {
     }
 }
 
+// Settings rows 10 and up: a first digit that could start a two-digit row number (1 on a
+// page with rows 10-19, 2 with 20-29) waits kDigitWaitMs for the second digit, so "10" opens
+// row 10 and not row 1. Alone, it opens its own row when the time is up. 0 alone = row 10.
+constexpr uint32_t kDigitWaitMs = 1200;
+int      g_digitPend = -1;           // first digit waiting for a second one (-1: none)
+uint32_t g_digitPendAt = 0;
+
+int settingsShownRow(int num) {      // index of the shown row with that number, -1 = none / hidden
+    const int n = settingsRowCount();
+    for (int i = 0; i < g_srowCount && i < n; i++) if (g_srows[i].num == num) return i;
+    return -1;
+}
+
+bool settingsOpenRow(int num) {      // num 0 = row 1
+    const int row = settingsShownRow(num);
+    if (row < 0) return false;                     // no clamping to "nearest" row
+    g_sel = row;
+    clampScroll(g_sel, g_scroll, settingsRowCount());
+    activateSetting(num);
+    requestRedraw();
+    return true;
+}
+
+void digitPendTick() {
+    if (g_digitPend < 0) return;
+    if (g_screen != SCR_SETTINGS) { g_digitPend = -1; return; }
+    if (millis() - g_digitPendAt < kDigitWaitMs) return;
+    const int d = g_digitPend;
+    g_digitPend = -1;
+    settingsOpenRow(d - 1);
+}
+
 // Digits: lists select (Enter activates); Settings select + activate.
 void digitPressed(int d) {
     if (g_screen == SCR_SETTINGS) {
-        int idx = d == 0 ? 9 : d - 1;           // 1..9 = rows 1..9, 0 = row 10
-        int n = settingsRowCount();
-        int row = -1;                              // the shown row with that number (hidden: none)
-        for (int i = 0; i < g_srowCount; i++) if (g_srows[i].num == idx) { row = i; break; }
-        if (row < 0 || row >= n) return;           // no clamping to "nearest" row
-        g_sel = row;
-        clampScroll(g_sel, g_scroll, n);
-        activateSetting(idx);
-        requestRedraw();
+        if (g_digitPend >= 0) {                    // second digit
+            const int first = g_digitPend;
+            g_digitPend = -1;
+            if (settingsOpenRow(first * 10 + d - 1)) return;
+            settingsOpenRow(first - 1);            // no such row: two separate picks, as typed
+            if (g_screen != SCR_SETTINGS) return;
+        }
+        bool twoDigit = false;                     // rows d0..d9 on this page?
+        if (d >= 1) for (int k = d * 10 - 1; k <= d * 10 + 8 && !twoDigit; k++) twoDigit = settingsShownRow(k) >= 0;
+        if (twoDigit) {
+            g_digitPend = d;
+            g_digitPendAt = millis();
+            const int row = settingsShownRow(d - 1);   // show where it will go if nothing follows
+            if (row >= 0) { g_sel = row; clampScroll(g_sel, g_scroll, settingsRowCount()); requestRedraw(); }
+            return;
+        }
+        settingsOpenRow(d == 0 ? 9 : d - 1);       // 1..9 = rows 1..9, 0 = row 10
         return;
     }
     if (g_screen == SCR_HOME) return;
@@ -14501,9 +14568,10 @@ void menuKey(const KeyEvent& ev) {
 void browseKey(const KeyEvent& ev) {
     if (g_cardOpen) { cardKey(ev); return; }
     if (g_gv != GV_NONE) { grpKey(ev); return; }
+    const char raw = ev.character;
+    if (!(raw >= '0' && raw <= '9')) g_digitPend = -1;   // any other key: the waiting digit is dropped
     if (ev.enter) { activateCurrent(); return; }
     if (ev.del || ev.space) return;
-    const char raw = ev.character;
     if (raw >= '0' && raw <= '9') { digitPressed(raw - '0'); return; }
     switch (toupper((unsigned char)raw)) {
         case 'T': moveSelection(-1); break;
@@ -15405,6 +15473,7 @@ void powerTick() {
 #endif
     checkinTick();
     usbDriveTick();
+    digitPendTick();
     chessTick();
     txLateTick();
     markReadTick();
@@ -17806,9 +17875,20 @@ void handleSerialLine(char* p) {
         sdMount();
         sdToolsScan(true);
         fwUpdate();
-    } else if (!strcmp(p, "usbdrive")) {
+    } else if (!strcmp(p, "usbdrive com") || !strcmp(p, "usbdrive com 0") || !strcmp(p, "usbdrive com 1")) {
+        // Drive + COM port option (S.11.5 last row): usbdrive com | usbdrive com <0|1>
+        if (p[12]) usbDriveComSet(p[13] == '1');
+        Serial.printf("[USB] drive + COM port: %s%c", usbDriveComEnabled() ? "on" : "off", 10);
+    } else if (!strcmp(p, "usbdrive stat")) {
+        const uint32_t* st = usbdrive::comStat();
+        if (!st) Serial.println("[USB] no drive + COM port run since power-on");
+        else Serial.printf("[USB] last drive + COM port run: %lu bytes to the PC, %lu from it, %lu writes with the port open, %lu cut short%c",
+                           (unsigned long)st[1], (unsigned long)st[2], (unsigned long)st[3], (unsigned long)st[4], 10);
+    } else if (!strcmp(p, "usbdrive") || (!strncmp(p, "usbdrive ", 9) && atoi(p + 9) > 0)) {
         // The SD card becomes a USB drive on the PC (as S.11.5 row 6); this COM port goes away.
+        // usbdrive <seconds>: back to normal by itself after that time (for tests).
         usbDriveStart();
+        if (g_usbDrive && p[8]) g_usbDriveStopAt = millis() + (uint32_t)atoi(p + 9) * 1000u;
         if (!g_usbDrive) Serial.printf("[USB] drive mode not started: %s\n", usbdrive::message());
 #if defined(SIMULATOR)
     } else if (!strcmp(p, "usbeject")) {
@@ -18081,9 +18161,16 @@ void pollSerial() {
     static char line[180];
     static size_t len = 0;
     if (sdputPoll()) return;
-    while (Serial.available()) {
-        if (g_putActive) { if (sdputPoll()) return; continue; }
-        char c = (char)Serial.read();
+    for (;;) {
+        int ci = -1;
+        if (Serial.available()) {
+            if (g_putActive) { if (sdputPoll()) return; continue; }
+            ci = Serial.read();
+        } else {
+            ci = usbdrive::comRead();           // drive + COM port mode: the console is on that port
+        }
+        if (ci < 0) break;
+        char c = (char)ci;
         if (c == '\r' || c == '\n') {
             if (!len) continue;
             line[len] = 0;

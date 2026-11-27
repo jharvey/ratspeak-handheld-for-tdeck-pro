@@ -8,6 +8,12 @@
 // the unit restarts. restartToNormal() hands the port back to USB-Serial/JTAG and
 // restarts, so the next boot is a normal one with the console back.
 //
+// start(cs, true) = "drive + COM port" (off by default): the PC also gets a COM port from the
+// same USB block, and the console is copied to it (printf / print output; typed lines come
+// back through comRead()). That port is run by the firmware, not by the chip: when the
+// firmware hangs it is gone too, and flashing then needs the BOOT button. Windows gives it a
+// new COM number.
+//
 // The caller must unmount the card first (the firmware must not use the file system while
 // the PC writes to it) and keep it unmounted until the restart.
 #include <stdint.h>
@@ -21,7 +27,10 @@ enum State : uint8_t {
     FAILED      // card or USB start failed
 };
 
-bool start(int csPin);          // card must be unmounted; false = FAILED (see message())
+bool start(int csPin, bool withCom = false);   // card must be unmounted; false = FAILED (see message())
+bool comOn();                   // drive + COM port mode is running
+int comRead();                  // next console byte from that COM port, -1 = none
+const uint32_t* comStat();      // counters of the last drive + COM run (see UsbDrive.cpp), null = none
 State state();
 const char* message();          // short status / failure text
 uint32_t sectors();             // card size in 512-byte sectors
@@ -29,6 +38,7 @@ uint32_t readKb();              // KB the PC read / wrote since start()
 uint32_t writtenKb();
 uint32_t lastWriteMs();         // millis() of the last write (0 = none)
 [[noreturn]] void restartToNormal();
+void recoverConsoleAtBoot();    // first thing in setup(): pins still on OTG after a crash -> hand back + restart
 #if defined(SIMULATOR)
 void simEject();                // console "usbeject": plays the PC's Eject
 #endif

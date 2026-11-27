@@ -2,8 +2,10 @@
 #include <esp_heap_caps.h>
 #include <Arduino.h>
 #include "StandaloneApp.h"
+#include "hal/UsbDrive.h"
 
 void setup() {
+    usbdrive::recoverConsoleAtBoot();
 #if !defined(SIMULATOR)
     // Allocations from 1024 bytes up go to PSRAM instead of the scarce internal RAM (framework
     // default 4096): on COM8 the lowest internal free went 5.9 KB -> 33.9 KB under the ATAK /

@@ -13,7 +13,10 @@ const char* g_msg = "off";
 uint32_t g_sectors = 0;
 }
 
-bool start(int) {
+bool comOn() { return false; }      // no USB in the sim: the console stays where it is
+int comRead() { return -1; }
+const uint32_t* comStat() { return nullptr; }
+bool start(int, bool) {
     g_sectors = (uint32_t)(SD.cardSize() / 512);
     if (!g_sectors) { g_state = FAILED; g_msg = "no SD card"; return false; }
     g_state = ACTIVE;
@@ -29,5 +32,6 @@ uint32_t writtenKb() { return 0; }
 uint32_t lastWriteMs() { return 0; }
 void simEject() { if (g_state == ACTIVE) { g_state = EJECTED; g_msg = "ejected"; } }
 void restartToNormal() { ESP.restart(); }
+void recoverConsoleAtBoot() {}
 
 }  // namespace usbdrive
