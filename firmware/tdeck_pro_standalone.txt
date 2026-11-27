@@ -1,8 +1,7 @@
 env tdeck_pro_standalone
-source 17e62e0165570dccd136ffdbe06b9d34275e5c1c + uncommitted changes
-built 2026-11-26 13:07 on debian-build (tools/vm_build.py)
-size 2633968
-sha256 3f99a09c975b3a0b21a83a88990fae27f16dba49389d5a8690a8f5ce378588e0
+source d498e761dfd164892bce2895181d7ce5166ce3f9
+built 2026-11-26 23:25 on debian-build (tools/vm_build.py)
+size 2634048
+sha256 bf9131d4b31b32a4c922ef4267fde8170470b11bbb67113a21303e369fb4e5da
 uncommitted changes in the build:
-   M Stress_test_plan.md
-   M tools/stress/fresh_fleet.py
+  none
