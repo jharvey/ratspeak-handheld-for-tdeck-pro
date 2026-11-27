@@ -824,6 +824,19 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
   `gpssky` (every satellite: system, number, strength, elevation), `gpslive <s>` (one line a
   second for s seconds: fix, satellites used, each heard satellite and its strength),
   `gpsraw <n>` (the next n NMEA sentences as received).
+- **Fix levels:** the receiver's error estimate (NMEA GST, switched on at power-on; HDOP x 5 m without
+  it) gives good (<= 30 m), fair (<= 300 m) or rough. The receiver's report limit
+  (CFG-NAVSPG-OUTFIL_PACC) is raised from 100 m to 1600 m, so rough positions are reported too;
+  they are shown and shared with their error but kept out of the track (> 100 m).
+- **Last position kept:** the last fix survives restarts (RTC memory) and power-off (NVS `gpslast`,
+  at most every 10 min); it is restored at boot with its age. Console `gpslast clear` forgets it.
+- **Warm start:** at each receiver power-on without an immediate fix the firmware sends the time
+  (UBX-MGA-INI-TIME_UTC, error 10 s + 1 % of the time since the last GPS clock set), the last
+  position (UBX-MGA-INI-POS_LLH, 5 km / 100 km / 300 km by age) and the receiver's own navigation
+  database (UBX-MGA-DBD), which is read out after a fix has held 15 s (then every 30 min) into
+  `/gpsdb.bin` in flash. Console: `g` shows what was sent and accepted, `gpsdb dump`,
+  `gpsdb restore`, `gpscfg` (reads the settings back), `gpsinject <sentence>` (a test sentence;
+  the receiver's own are skipped for 20 s).
 - **S.10.10 GPS signals** shows the same on the screen, redrawn every 2 s; while it is open the
   unit does not sleep or go to the idle screen (for 30 min after the last key).
 - The position (GGA / RMC with a fix) is kept for the map (§8.1).

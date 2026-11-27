@@ -29,4 +29,8 @@ ATAK: phones running ATAK on the same WiFi can see this unit, your contacts' sha
 
 GPS needs open sky. Indoors it often gets no fix.
 
+How good is the fix: good = within about 30 m (100 ft), fair = up to 300 m (1000 ft), rough = worse, up to about a mile. The level and the estimated error ("~12 m") show in M, S, 2, row 3 and on the GPS signals page; the map footer shows the error after the coordinates, or "rough". A rough fix is shown and can be shared, but it does not go into the track. "TIME ONLY" on the GPS signals page: the receiver has the time (the clock is set from it) but no position yet.
+
+Before a new fix comes, the radio uses the last one and says how old it is ("fix 3h old"). It keeps the last position when switched off or restarted. It also keeps the receiver's satellite data and hands it back, with the time and the last position, each time the receiver is switched on, so the next fix comes sooner.
+
 Watch the satellites: M, S, 1 0 (Diagnostics), 1 0 (GPS signals). A bar for every satellite the receiver hears, taller = stronger, with the satellite's number under it. It redraws every 2 seconds and the radio stays awake while it shows. A first fix needs about four bars above the dotted line (25) for a minute or two. Few or short bars: move to open sky, away from metal and other electronics. The top line says FIX or NO FIX, for how long, and whether the radio runs on USB or battery.
