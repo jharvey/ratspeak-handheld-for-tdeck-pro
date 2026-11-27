@@ -100,6 +100,7 @@ private:
     void notifyReceipt(handheld::TxReceipt, handheld::TxReceiptEvent);
     float packetAirtimeMs(size_t len) const;
     bool pacingReady() const;
+    void holdTxAfterRx();
     void refreshRadioTiming(bool forceLog = false);
     unsigned long computeSplitRxTimeoutMs(float frameAirtimeMs) const;
 
@@ -167,4 +168,8 @@ private:
     static constexpr unsigned long AIRTIME_WINDOW_MS = 60000;
 public:
     static constexpr float AIRTIME_THROTTLE = 0.25f;
+    // A radio that has just transmitted drifts 50-80 Hz for about a second (TCXO warmed by the PA).
+    // A long reply that starts within ~100 ms of the end of its frame arrives as CRC FAIL (units,
+    // 2026-11-26: link proofs lost 4 of 5 times; clean from 0.5 s on). So wait before answering.
+    static constexpr uint32_t RX_TURNAROUND_MS = 500;
 };

@@ -214,6 +214,11 @@ bool LoRaInterface::pacingReady() const {
     return !_pacingActive || (int32_t)((uint32_t)millis() - _nextTxMs) >= 0;
 }
 
+void LoRaInterface::holdTxAfterRx() {
+    const uint32_t t = (uint32_t)millis() + RX_TURNAROUND_MS;
+    if (!_pacingActive || (int32_t)(t - _nextTxMs) > 0) { _nextTxMs = t; _pacingActive = true; }
+}
+
 float LoRaInterface::packetAirtimeMs(size_t len) const {
     if (!_radio) return 0;
     if (len <= RNODE_SINGLE_MTU) return _radio->getAirtime(len + RNODE_HEADER_L);
@@ -466,6 +471,7 @@ void LoRaInterface::loop() {
             }
             memcpy(_splitRxBuffer.data() + _splitRxLength, raw + RNODE_HEADER_L, payloadSize);
 
+            holdTxAfterRx();
             if (_rawSink) {
                 _rawSink(_splitRxBuffer.data(), totalSize);
             }
@@ -500,6 +506,7 @@ void LoRaInterface::loop() {
                   packetSize, header, payloadSize,
                   _lastRxRssi, _lastRxSnr);
 
+    holdTxAfterRx();   // the sender has just transmitted: give its receiver time to settle
     if (_rxTap && _rxTap(raw + RNODE_HEADER_L, payloadSize, _lastRxRssi, _lastRxSnr)) {
         // consumed by the application (not a Reticulum frame)
     } else if (_rawSink) {
