@@ -112,6 +112,14 @@ class Radio:
         start = self.dev.mark()
         self.dev.send("ui")
         i, m = self.dev.wait_for(r"\[UI\] screen=", timeout, start)
+        if i is None and self.dev.reopen():
+            # 2026-11-26 units: a long-open USB serial port sometimes stops delivering (no error) while
+            # the unit runs on and answers a fresh open at once. Reopen, note it, ask again.
+            self.dev.quiet_reopens = getattr(self.dev, "quiet_reopens", 0) + 1
+            self.dev.log.write("%s [HOST] no answer for %d s: port reopened\n" % (time.strftime("%H:%M:%S"), timeout))
+            start = self.dev.mark()
+            self.dev.send("ui")
+            i, m = self.dev.wait_for(r"\[UI\] screen=", timeout, start)
         if i is None:
             raise Fail("%s: no answer to 'ui'" % self.label())
         head = dict(re.findall(r"(\w+)=(\S+)", self.dev.lines[i]))
@@ -631,6 +639,9 @@ def main():
                 pass
     summary = "fresh_fleet seed %d: %d radios, %s in %.0f s" % (
         a.seed, len(radios) or n, "PASS" if not fails else "FAIL (%d)" % len(fails), time.time() - t0)
+    quiet = sum(getattr(r.dev, "quiet_reopens", 0) for r in radios)
+    if quiet:
+        summary += "; serial port reopened %d time(s) after going quiet" % quiet
     with open(os.path.join(a.out, "summary.txt"), "w", encoding="utf-8") as f:
         f.write(summary + "\n" + "\n".join("FAIL " + x for x in fails) + "\n\n" + "\n".join(notes) + "\n")
     for x in fails:

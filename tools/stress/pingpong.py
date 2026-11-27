@@ -47,13 +47,24 @@ class Device:
         self.proc = None
         self.alive = True
         self.boots = 0
+        self.gen = 0             # bumped when the port is reopened on purpose
+        self.reopening = False   # a reopen is in progress: the old handle is closed, the new not yet set
 
     def _reader(self, read_chunk):
         buf = b""
         while self.alive:
+            g = self.gen
             try:
                 chunk = read_chunk()
-            except Exception:
+            except Exception as e:
+                if self.gen != g or self.reopening:  # reopened under us on purpose: wait for the new handle
+                    time.sleep(0.2)
+                    continue
+                # say why: a silent stop looked exactly like a hung unit (fresh_fleet COM5, 2026-11-26)
+                self.log.write("%s [HOST] serial read failed: %r\n" % (time.strftime("%H:%M:%S"), e))
+                self.log.flush()
+                if self.alive and self.reopen():
+                    continue
                 break
             if not chunk:
                 if self.proc is not None:  # TCP closed
@@ -71,6 +82,10 @@ class Device:
                         self.boots += 1
                 self.log.write("%s %s\n" % (stamp, line))
                 self.log.flush()
+
+    def reopen(self):
+        """Reconnect after a read error; only a serial port can."""
+        return False
 
     def start_reader(self, read_chunk):
         threading.Thread(target=self._reader, args=(read_chunk,), daemon=True).start()
@@ -147,11 +162,52 @@ class SerialDevice(Device):
     def __init__(self, name, port, log_path):
         super().__init__(name, log_path)
         import serial  # pyserial
-        self.ser = serial.Serial(port, 115200, timeout=0.5)
+        self.port = port
+        self.ser = serial.Serial()            # DTR/RTS low before open: opening or closing must not reset
+        self.ser.port, self.ser.baudrate, self.ser.timeout = port, 115200, 0.5
+        self.ser.dtr = False; self.ser.rts = False
+        self.ser.open()
         self.start_reader(lambda: self.ser.read(4096))
 
+    def reopen(self):
+        import serial
+        if self.reopening:                  # the other thread is already on it: wait for its result
+            while self.reopening:
+                time.sleep(0.2)
+            return self.ser.is_open
+        self.reopening = True
+        try:
+            return self._reopen(serial)
+        finally:
+            self.reopening = False
+
+    def _reopen(self, serial):
+        self.gen += 1
+        try:
+            self.ser.close()
+        except Exception:
+            pass
+        for _ in range(30):                 # USB re-enumeration takes a few seconds
+            time.sleep(1)
+            try:
+                s = serial.Serial()
+                s.port, s.baudrate, s.timeout = self.port, 115200, 0.5
+                s.dtr = False; s.rts = False  # reopening must not reset the unit
+                s.open()
+                self.ser = s
+                self.log.write("%s [HOST] serial reopened\n" % time.strftime("%H:%M:%S"))
+                self.log.flush()
+                return True
+            except Exception:
+                pass
+        return False
+
     def send(self, text):
-        self.ser.write((text + "\n").encode())
+        try:
+            self.ser.write((text + "\n").encode())
+        except Exception as e:
+            self.log.write("%s [HOST] serial write failed: %r\n" % (time.strftime("%H:%M:%S"), e))
+            self.log.flush()
 
     def close(self):
         self.alive = False
