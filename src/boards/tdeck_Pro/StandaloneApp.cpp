@@ -1972,11 +1972,21 @@ void appendConversations(int limit) {
         if (PeerRow* r = addRow(g_convCache[i].peer)) r->unread = g_convCache[i].unread;
 }
 
+// Peers list: only radios heard within this many minutes (0 = all). Key H on Peers steps
+// through all / 10 min / 1 h / 24 h; not saved, a restart shows all again. A peer known only
+// from storage (not heard since this start) has no time and is hidden while a limit is set.
+uint16_t g_peersHeardMin = 0;
+const char* peersHeardText() {
+    return g_peersHeardMin == 10 ? "10 min" : g_peersHeardMin == 60 ? "1 h" : g_peersHeardMin == 1440 ? "24 h" : "all";
+}
+
 void appendAnnounced(bool savedOnly, bool withSignal) {
     for (const auto& node : g_announceMgr.nodes()) {
         if (node.hash.size() != 16) continue;
         if (savedOnly && !node.saved) continue;
         if (isSelf(node.hash.data())) continue;
+        if (withSignal && g_peersHeardMin &&
+            (!node.lastSeen || millis() - node.lastSeen > (uint32_t)g_peersHeardMin * 60000UL)) continue;
         PeerRow* r = addRow(node.hash.data());
         if (!r || !withSignal) continue;
         char hex[33];
@@ -6005,7 +6015,11 @@ void renderList() {
         snprintf(hdr, sizeof(hdr), "Send %.12s to:", nm);
     } else {
         snprintf(hdr, sizeof(hdr), pages > 1 ? "%s %d%s" : "%s (%d)%s", screenName(g_screen), g_rowCount, pg);
-        if (g_screen == SCR_PEERS && strlen(hdr) + 13 < sizeof(hdr)) strlcat(hdr, "  R=announce", sizeof(hdr));
+        if (g_screen == SCR_PEERS && g_peersHeardMin) {
+            snprintf(hdr, sizeof(hdr), "Peers %d%s H=%s", g_rowCount, pg, peersHeardText());
+        } else if (g_screen == SCR_PEERS && strlen(hdr) + 15 < sizeof(hdr)) {
+            strlcat(hdr, " R=ann H=heard", sizeof(hdr));
+        }
         if (g_screen == SCR_CONTACTS && pages <= 1) strlcat(hdr, "  G=groups", sizeof(hdr));
     }
     drawHeader(hdr, g_listScroll > 0);
@@ -6013,7 +6027,7 @@ void renderList() {
     if (g_rowCount == 0) {
         const char* empty = g_filter[0] || g_entry == Entry::Search ? "No match"
                           : g_screen == SCR_CONTACTS ? "No contacts - see Peers"
-                          : g_screen == SCR_PEERS    ? "No peers yet: R = announce"
+                          : g_screen == SCR_PEERS    ? (g_peersHeardMin ? "None heard in that time: H" : "No peers yet: R = announce")
                                                      : "No chats yet";
         text(8, LIST_TOP + 8, empty);
     }
@@ -14611,6 +14625,15 @@ void browseKey(const KeyEvent& ev) {
             else pageJump(+1);
             break;
         case 'B': pageJump(-1); break;
+        case 'H':                                   // Peers: only those heard in the last 10 min / 1 h / 24 h
+            if (g_screen == SCR_PEERS && !g_shareActive) {
+                g_peersHeardMin = g_peersHeardMin == 0 ? 10 : g_peersHeardMin == 10 ? 60 : g_peersHeardMin == 60 ? 1440 : 0;
+                loadRows(SCR_PEERS);
+                toast(g_peersHeardMin ? "Peers heard in %s" : "Peers: %s", peersHeardText());
+                Serial.printf("[PEERS] heard within: %s, %d rows%c", peersHeardText(), g_rowCount, 10);
+                requestRedraw();
+            }
+            break;
         case 'R':                                   // Peers: announce this radio (as Home's button)
             if (g_screen == SCR_PEERS) {
                 doAnnounce();
