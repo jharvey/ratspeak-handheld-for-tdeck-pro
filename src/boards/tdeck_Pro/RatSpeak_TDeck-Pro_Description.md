@@ -42,6 +42,10 @@ I  →  select  →  type  →  Enter  →  ^ (optional)
 **Discover first (two radios):** on each device, Home (**M** then **H**) → **N** Announce ID (or Peers → **R**), then open
 **Peers** (**P**) and confirm the other appears.
 
+**Which peers are around now:** on Peers, **H** steps the list through radios heard in the
+last **10 min**, **1 h**, **24 h**, then all again (the header shows the limit, e.g.
+`Peers 3 H=10 min`). Handy with a long list. Not saved: a restart shows all.
+
 1. **C** → Contacts *(or **P** Peers if they are not saved yet)*.
 2. Select the device (touch, **T**/**V**, or **SYM** + digit).
 3. **Enter** opens the contact page: **1 Message · 2 Rename · 3 Share · 4 Map number**.

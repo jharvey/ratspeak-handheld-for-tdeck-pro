@@ -6,7 +6,7 @@ Underlined letters jump there.
 M = Menu
 I = Inbox
 C = Contacts
-P = Peers (also M then P). R on Peers = Announce ID
+P = Peers (also M then P). R on Peers = Announce ID. H on Peers = only radios heard in the last 10 min / 1 h / 24 h / all
 A = Atlas, the offline map (its own keys: K on the map)
 M then H = Home
 R = Library (in the Menu)
