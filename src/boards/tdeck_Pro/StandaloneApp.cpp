@@ -1128,7 +1128,7 @@ bool    g_gpsSyncedOnce = false;
 uint32_t g_gpsLastSyncMs = 0;
 
 // What the receiver hears (from GSV), per constellation talker, plus link health.
-struct GpsSky { char talker[3]; uint8_t inView, heard, heardAcc, bestSnr, bestAcc; uint32_t atMs; };
+struct GpsSky { char talker[3]; uint8_t inView, heard, heardAcc, bestSnr, bestAcc, inViewAcc; bool seenAcc; uint32_t atMs; };
 GpsSky   g_gpsSky[6] = {};
 uint32_t g_gpsBytes = 0, g_gpsGood = 0, g_gpsBad = 0;
 char     g_gpsLastGga[96] = "", g_gpsLastRmc[96] = "";
@@ -1388,7 +1388,10 @@ bool nmeaChecksumOk(char* line) {
     return ok;
 }
 
+int g_gpsRawLeft = 0;               // console "gpsraw <n>": print the next n sentences as received
+
 void gpsHandleSentence(char* line) {
+    if (g_gpsRawLeft > 0) { g_gpsRawLeft--; Serial.printf("[GPSRAW] %s%c", line, 10); }
     if (!nmeaChecksumOk(line)) { g_gpsBad++; return; }
     g_gpsGood++;
     if (!strncmp(line + 3, "TXT", 3)) {          // receiver notices: antenna status, firmware...
@@ -1421,17 +1424,20 @@ void gpsHandleSentence(char* line) {
         // $xxGSV,numMsgs,msgNum,inView,(id,elev,az,snr)x4[,signalId]
         GpsSky* k = gpsSkyFor(fld[0] + 1);
         if (!k) return;
+        // The M10 sends one GSV group per signal for each system every second: first the
+        // satellites it tracks (signal id 1 / 7, with SNR), then the ones it only knows of
+        // (signal id 0, no SNR). Each group has its own count. They are added up over the
+        // second and shown when the next second starts (RMC, below); taking the last group
+        // alone made the counts jump (6 heard shown as "1 in view, 0 heard").
         const int msgNum = atoi(fld[2]), numMsgs = atoi(fld[1]);
-        if (msgNum == 1) { k->heardAcc = 0; k->bestAcc = 0; }
         for (int i = 7; i < n; i += 4) {
             const int snr = fld[i][0] ? atoi(fld[i]) : 0;
-            if (snr > 0) { k->heardAcc++; if (snr > k->bestAcc) k->bestAcc = (uint8_t)snr; }
+            if (snr > 0) { if (k->heardAcc < 255) k->heardAcc++; if (snr > k->bestAcc) k->bestAcc = (uint8_t)snr; }
         }
         if (msgNum >= numMsgs) {
-            k->inView = (uint8_t)atoi(fld[3]);
-            k->heard = k->heardAcc;
-            k->bestSnr = k->bestAcc;
-            k->atMs = millis();
+            const int v = k->inViewAcc + atoi(fld[3]);
+            k->inViewAcc = (uint8_t)(v > 255 ? 255 : v);
+            k->seenAcc = true;
         }
         return;
     }
@@ -1439,6 +1445,11 @@ void gpsHandleSentence(char* line) {
     const bool rmc = !strncmp(fld[0], "$GPRMC", 6) || !strncmp(fld[0], "$GNRMC", 6);
     const bool gga = !strncmp(fld[0], "$GPGGA", 6) || !strncmp(fld[0], "$GNGGA", 6);
     if (rmc && n > 9) {
+        for (auto& k : g_gpsSky) {               // a new second: publish the last one's satellites
+            if (k.seenAcc) { k.inView = k.inViewAcc; k.heard = k.heardAcc; k.bestSnr = k.bestAcc; k.atMs = millis(); }
+            k.inViewAcc = k.heardAcc = k.bestAcc = 0;
+            k.seenAcc = false;
+        }
         g_gpsRmcAt = millis() | 1;
         // Receiver power save (PSMCT) stays off: without a fix the M10 then stops and restarts
         // its search every 15 s ("Stopping GNSS" / "Starting GNSS"), loses every satellite and
@@ -17304,6 +17315,8 @@ void handleSerialLine(char* p) {
         batLogDump();
     } else if (!strcmp(p, "g")) {
         gpsDump();
+    } else if (!strncmp(p, "gpsraw", 6)) {
+        g_gpsRawLeft = p[6] ? atoi(p + 7) : 40;
     } else if (!strcmp(p, "gp")) {
         gpsPowerCycle("console");
     } else if (!strcmp(p, "gr")) {
