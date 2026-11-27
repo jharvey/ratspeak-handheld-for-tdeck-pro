@@ -837,6 +837,11 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
   `/gpsdb.bin` in flash. Console: `g` shows what was sent and accepted, `gpsdb dump`,
   `gpsdb restore`, `gpscfg` (reads the settings back), `gpsinject <sentence>` (a test sentence;
   the receiver's own are skipped for 20 s).
+- **Field log** (S.10 row 11, console `fieldlog 0|1`, `fieldlog dump [KB]`, `fieldlog now`): a line a
+  minute, and one when the fix comes or goes or USB power changes, in `<SD>/ratdeckpro/field.log`
+  (no card: `/field.log` in flash, 300 KB): fix level and error, satellites heard and the eight
+  strongest, position, USB, battery, power mode, receiver resets, warm-start result. On except
+  in Minimal mode.
 - **S.10.10 GPS signals** shows the same on the screen, redrawn every 2 s; while it is open the
   unit does not sleep or go to the idle screen (for 30 min after the last key).
 - The position (GGA / RMC with a fix) is kept for the map (§8.1).

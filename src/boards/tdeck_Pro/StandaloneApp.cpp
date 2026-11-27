@@ -125,6 +125,9 @@ uint32_t soakGoingDark();
 bool soakIsOn();
 uint8_t soakPeerCount();
 void soakToggle();
+bool fieldLogOn();
+void fieldLogTick();
+void bootNvsSetU8(const char* k, uint8_t v);
 // Hardware self-test (Settings > Diagnostics > Check this unit, console "selftest").
 void selftestStart(bool console);
 void selftestRows();
@@ -1150,6 +1153,7 @@ int     g_gpsUtc[6] = {0};       // y mo d hh mm ss of last valid RMC
 bool    g_gpsUtcValid = false;
 bool    g_gpsSyncedOnce = false;
 uint32_t g_gpsLastSyncMs = 0;
+uint32_t g_gpsLinkResets = 0;        // times the link watch reset the receiver (cold start) since boot
 uint32_t g_gpsClockSetEpoch = 0;     // when the clock was last set from GPS time (for the warm-start time hint)
 
 // What the receiver hears (from GSV), per constellation talker, plus link health.
@@ -1673,6 +1677,7 @@ void gpsWatchLink() {
     g_gpsSerial->updateBaudRate(g_gpsBaud);
     gpsSendDefaults();
     g_gpsSetupSent = false;
+    g_gpsLinkResets++;
     Serial.printf("[GPS] no NMEA (%lu bytes so far) - reset receiver config, listening at %lu baud\n",
                   (unsigned long)g_gpsBytes, (unsigned long)g_gpsBaud);
     if (g_gpsStep < 255) g_gpsStep++;
@@ -5511,6 +5516,7 @@ void buildSettingsRows(Page p) {
             if (!g_cfg.gpsOn) srow(RK_MENU, "GPS signals", "GPS is off");
             else srow(RK_MENU, "GPS signals", "%s, %d of %d heard, best %d", g_gpsFix ? "fix" : "no fix", heard, inView, best);
         }
+        srow(RK_TOGGLE, "Field log", "%s", fieldLogOn() ? "ON  a line a minute to the card" : minimalMode() ? "off in Minimal mode" : "OFF");
         break;
     }
 
@@ -6226,6 +6232,7 @@ void activateSetting(int idx) {
         else if (idx == 7) { pushPage(PG_SELFTEST); if (!selftestRan()) selftestStart(false); }
         else if (idx == 8) { tripRun(); pushPage(PG_TRIP); }
         else if (idx == 9) pushPage(PG_GPSSKY);
+        else if (idx == 10 && !minimalMode()) { bootNvsSetU8("flogoff", fieldLogOn() ? 1 : 0); requestRedraw(); }
         break;
 
     case PG_TRIP:
@@ -16007,6 +16014,7 @@ void powerTick() {
     usbDriveTick();
     digitPendTick();
     gpsSkyTick();
+    fieldLogTick();
     chessTick();
     txLateTick();
     markReadTick();
@@ -16626,6 +16634,98 @@ void soakLog(const char* fmt, ...) {
         LittleFS.remove("/soak.old");
         LittleFS.rename("/soak.log", "/soak.old");
     }
+}
+
+// ---- Field log -----------------------------------------------------------------------------
+// A line a minute, and one when the fix comes or goes or USB power changes, in
+// <SD>/ratdeckpro/field.log (no card: /field.log in the flash, moved to /field.old at 300 KB):
+// what the GPS, the power and the battery did on a trip, to read afterwards (USB drive mode,
+// console "fieldlog dump"). Not in Minimal mode; off with "fieldlog 0" or S.10 row 11.
+bool fieldLogOn() { return !minimalMode() && !bootNvsGetU8("flogoff"); }
+
+void fieldLogLine(const char* why) {
+    char ts[24] = "--";
+    struct tm lt;
+    if (localNow(lt)) strftime(ts, sizeof(ts), "%m-%d %H:%M:%S", &lt);
+    GpsSat sat[kGpsSatMax];
+    int known = 0;
+    const int n = gpsSatSorted(sat, known);
+    for (int i = 1; i < n; i++) {                       // strongest first, all systems together
+        const GpsSat a = sat[i];
+        int j = i;
+        while (j > 0 && sat[j - 1].snr < a.snr) { sat[j] = sat[j - 1]; j--; }
+        sat[j] = a;
+    }
+    char top[80] = "";
+    size_t len = 0;
+    for (int i = 0; i < n && i < 8; i++)
+        len += snprintf(top + len, sizeof(top) - len, "%s%c%u:%u", i ? " " : "", sat[i].sys, (unsigned)sat[i].id, (unsigned)sat[i].snr);
+    char age[16], gps[40], pos[40] = "-";
+    gpsAgeText(g_gpsFixChangeMs, age, sizeof(age));
+    if (!g_cfg.gpsOn) snprintf(gps, sizeof(gps), "off");
+    else if (!g_gpsAllowed) snprintf(gps, sizeof(gps), "resting");
+    else if (g_gpsFix) snprintf(gps, sizeof(gps), "FIX-%s acc=%.0fm used=%u", gpsLevel(), gpsAccM(), (unsigned)g_gpsSats);
+    else snprintf(gps, sizeof(gps), "nofix");
+    if (g_gpsFix && g_gpsPosValid) snprintf(pos, sizeof(pos), "%.5f,%.5f", g_gpsLat, g_gpsLon);
+    char line[330];
+    snprintf(line, sizeof(line), "%s up=%lu %s gps=%s for=%s heard=%d/%d top=[%s] pos=%s usb=%d bat=%d%% %.3fV %dmA mode=%s%s resets=%lu bbr=%lu warm=[%s; db %u/%u]",
+             ts, (unsigned long)(millis() / 1000), why, gps, age, n, known, top, pos, g_bat.usb ? 1 : 0, g_bat.pct, g_bat.volts,
+             (int)g_bat.avgMa, power::modeName(g_pw.mode), g_pwOnUsb ? "(USB:Full)" : "", (unsigned long)g_gpsLinkResets,
+             (unsigned long)g_gpsBbrFaultCount, g_gpsAssistNote, (unsigned)g_mgaAck, (unsigned)g_dbdSent);
+    static int8_t sd = -1;
+    if (sd < 0) sd = (g_sdMounted || sdMount()) ? 1 : 0;
+    if (sd == 1 && g_sdMounted) {
+        File f = g_sdStore.openFile(SD_PATH_ROOT "/field.log", FILE_APPEND);
+        if (f) { f.println(line); f.close(); }
+        return;
+    }
+    if (!g_storeReady) return;
+    File f = LittleFS.open("/field.log", FILE_APPEND);
+    if (!f) return;
+    f.println(line);
+    const size_t size = f.size();
+    f.close();
+    if (size > 300000) { LittleFS.remove("/field.old"); LittleFS.rename("/field.log", "/field.old"); }
+}
+
+void fieldLogTick() {
+    static uint32_t last = 0;
+    static bool booted = false, wasFix = false, wasUsb = false;
+    const uint32_t now = millis();
+    if (now < 20000 || !fieldLogOn()) return;           // after the boot work
+    if (!booted) {
+        booted = true; wasFix = g_gpsFix; wasUsb = g_bat.usb; last = now | 1;
+        char why[24];
+        snprintf(why, sizeof(why), "BOOT(reset %d)", (int)esp_reset_reason());
+        fieldLogLine(why);
+        return;
+    }
+    const char* why = nullptr;
+    // A weak fix comes and goes every few seconds: at most one such line every 20 s.
+    if (g_gpsFix != wasFix) { if (now - last >= 20000) why = g_gpsFix ? "FIX-CAME" : "FIX-LOST"; }
+    else if (g_bat.valid && g_bat.usb != wasUsb) why = g_bat.usb ? "USB-IN" : "USB-OUT";
+    else if (now - last >= 60000) why = "min";
+    if (!why) return;
+    wasFix = g_gpsFix; wasUsb = g_bat.usb; last = now | 1;
+    fieldLogLine(why);
+}
+
+void fieldLogDump(uint32_t kb) {
+    File f;
+    if (g_sdMounted || sdMount()) f = g_sdStore.openFile(SD_PATH_ROOT "/field.log", FILE_READ);
+    if (!f && g_storeReady) f = LittleFS.open("/field.log", FILE_READ);
+    if (!f) { Serial.println("[FIELD] no log"); return; }
+    const size_t size = f.size(), want = (size_t)kb * 1024;
+    if (size > want) { f.seek(size - want); f.readStringUntil((char)10); }
+    Serial.printf("[FIELD] %u bytes, the last %u:%c", (unsigned)size, (unsigned)(size > want ? want : size), 10);
+    char buf[256];
+    while (f.available()) {
+        const size_t got = f.readBytes(buf, sizeof(buf));
+        Serial.write((const uint8_t*)buf, got);
+        yield();
+    }
+    f.close();
+    Serial.println("[FIELD] end");
 }
 
 int soakPeerIndex(const uint8_t peer[16]) {
@@ -17838,6 +17938,13 @@ void handleSerialLine(char* p) {
         batLogDump();
     } else if (!strcmp(p, "g")) {
         gpsDump();
+    } else if (!strncmp(p, "fieldlog", 8)) {        // fieldlog 0|1, fieldlog dump [KB], fieldlog now
+        if (!strncmp(p + 8, " dump", 5)) fieldLogDump(p[13] ? (uint32_t)atoi(p + 14) : 16);
+        else if (!strcmp(p + 8, " now")) fieldLogLine("console");
+        else {
+            if (p[8] == ' ') bootNvsSetU8("flogoff", atoi(p + 9) ? 0 : 1);
+            Serial.printf("[FIELD] log %s%s%c", fieldLogOn() ? "on" : "off", minimalMode() ? " (never in Minimal mode)" : "", 10);
+        }
     } else if (!strcmp(p, "gpscfg")) {            // read back what gpsSetup set (GST, PACC, ACKAIDING)
         if (g_gpsSerial) {
             static const uint8_t q[] = {0, 0, 0, 0, 0xd4, 0x00, 0x91, 0x20, 0xb3, 0x00, 0x11, 0x30, 0x25, 0x00, 0x11, 0x10};
