@@ -409,7 +409,8 @@ S     Settings                      ← M then S
 │   ├── S.3.6  TCP hub              Reticulum TCP client while WiFi is up: on/off, host, port,
 │   │                               status, "Use RatSpeak hub" (rns.ratspeak.org:4242); default off
 │   └── S.3.12 Remote console       the serial console over WiFi to a relay (tools/netcon):
-│                                   on/off, relay host, port (4404), key, status, KB sent; default off
+│                                   on/off, home relay host, port (4404), key, internet relay
+│                                   (host[:port], TLS), status, KB sent; default off
 ├── S.4   Screen & I/O
 │   ├── S.4.1  Theme                White paper / Black ink
 │   ├── S.4.2  Idle splash          Off / On (no password) / On + password / timeout /
@@ -849,8 +850,13 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
   relay (tools/netcon/relay.py, a service on the build VM, port 4404) and carries the console both
   ways: everything printed is copied there (24 KB ring in PSRAM, so a new connection starts with
   the latest lines), and lines from the relay run like typed ones (lock rules apply; no `sdput`).
-  Both ends prove the shared key (HMAC-SHA256 over two nonces); the data is not encrypted, so
-  home network only for now. Relay side: `rscon.py list | run <unit> <s> <cmd> | send | follow |
+  Both ends prove the shared key (HMAC-SHA256 over two nonces). Two relay addresses: the home
+  one (plain TCP, tried first, 3 s timeout) and the internet one (`netcon pub <host[:port]>`,
+  TLS checked against the Let's Encrypt roots ISRG X1/X2): Tailscale Funnel on the build VM,
+  `rscon-relay.taila0ffb1.ts.net:8443` (TLS-terminated TCP to port 4404), so a radio on a phone
+  hotspot reaches the same relay. TLS buffers come from PSRAM (mbedTLS allocator switched on
+  first use); the console task has a 12 KB stack (internal RAM: this framework refuses PSRAM
+  task stacks). Status shows "connected (home)" or "connected (internet)". Relay side: `rscon.py list | run <unit> <s> <cmd> | send | follow |
   recent`, logs in `~/rscon/logs/<name>.log`; from the PC `tools/netcon/shot.py <unit> out.png`
   takes a screenshot through the mirror. Off by default; not in Minimal (no WiFi page there).
   WiFi on costs battery: no battery tests with it on.
@@ -1197,7 +1203,7 @@ the device does not light-sleep.
 | `btn` | press the top side button: lock and show the idle screen (no password: just the idle screen); allowed while locked |
 | `lock` / `lock now` | password lock status (locked, password set, idle mode, wrong tries, wait) / lock now |
 | `ids` | identity slots (active marked) and TCP hub status |
-| `netcon` | remote console over WiFi: status; `netcon on` / `off`, `netcon host <ip> [port]`, `netcon key <key>` (8-47 chars, same as the relay's) |
+| `netcon` | remote console over WiFi: status and last error; `netcon on` / `off`, `netcon host <ip> [port]`, `netcon key <key>` (8-47 chars, same as the relay's), `netcon pub <host[:port]>` (internet relay, TLS; `-` = none) |
 | `contact <32 hex> <name>` | bench: save a contact (list tests) |
 | `grp` | groups (§1.2a2): list; `grp new <name>`, `grp add <n> <32 hex>`, `grp rm <n> <32 hex>`, `grp del <n>`, `grp send <n> <text>`, `grp share <n> <32 hex>`, `grp open <n>` (the group chat), `grp who` (who got the last message), `grp hist` (rows of the open chat) |
 | `FORMAT` | erase and format the data partition |

@@ -3720,7 +3720,7 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              FoundText,                         // idle "If found": owner text
                              CheckinTime,                       // S.5.8: hhmm
                              HaKey,                             // S.3.7: HA encryption key
-                             NetHost, NetPort, NetKey,          // S.3 Remote console
+                             NetHost, NetPort, NetKey, NetPub,  // S.3 Remote console
                              GroupName };                       // Groups: new group / rename (arg = group, -1 new)
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
@@ -5053,6 +5053,8 @@ void buildSettingsRows(Page p) {
         e = editingSub(Entry::NetKey);
         if (e) srow(RK_ENTRY, "Key", "%s", e);
         else srow(RK_ENTRY, "Key", "%s", nc.key[0] ? "set (Enter = type a new one)" : "not set");
+        e = editingSub(Entry::NetPub);
+        srow(RK_ENTRY, "Internet relay", "%s", e ? e : nc.pub[0] ? nc.pub : "not set (home only)");
         srow(RK_INFO, "Status", "%s", nc.on ? netcon::status() : "off");
         srow(RK_INFO, "Sent", "%lu KB, %lu connections", (unsigned long)netcon::sentKb(), (unsigned long)netcon::connects());
         break;
@@ -5821,6 +5823,8 @@ void activateSetting(int idx) {
             char pb[8]; snprintf(pb, sizeof(pb), "%u", (unsigned)nc.port); startEntry(Entry::NetPort, pb);
         } else if (idx == 3) {
             startEntry(Entry::NetKey, "");
+        } else if (idx == 4) {
+            startEntry(Entry::NetPub, nc.pub);
         }
         break;
     }
@@ -14960,6 +14964,14 @@ void commitEntry() {
         netcon::set(nc);
         return;
     }
+    case Entry::NetPub: {                        // empty = home relay only
+        if (g_bufLen >= sizeof(netcon::Cfg::pub) || strchr(g_buf, ' ')) { toast("1-63 chars, no spaces"); return; }
+        netcon::Cfg nc = netcon::cfg();
+        strlcpy(nc.pub, g_buf, sizeof(nc.pub));
+        endEntry();
+        netcon::set(nc);
+        return;
+    }
     case Entry::NetKey: {
         if (g_bufLen < 8 || g_bufLen >= sizeof(netcon::Cfg::key) || strchr(g_buf, ' ')) { toast("Key: 8-47 chars, no spaces"); return; }
         netcon::Cfg nc = netcon::cfg();
@@ -15131,6 +15143,7 @@ void entryKey(const KeyEvent& ev) {
     if (g_entry == Entry::TcpHost && g_bufLen >= sizeof(g_tcpCfg.host) - 1) { toast("Max 63 chars"); return; }
     if (g_entry == Entry::NetHost && g_bufLen >= sizeof(netcon::Cfg::host) - 1) { toast("Max 63 chars"); return; }
     if (g_entry == Entry::NetKey && g_bufLen >= sizeof(netcon::Cfg::key) - 1) { toast("Max 47 chars"); return; }
+    if (g_entry == Entry::NetPub && g_bufLen >= sizeof(netcon::Cfg::pub) - 1) { toast("Max 63 chars"); return; }
     if (g_entry == Entry::HaKey && g_bufLen >= havoice::kKeyB64Len) { toast("Key: 44 chars"); return; }
     if (g_entry == Entry::FoundText && g_bufLen >= sizeof(g_cfg.found[0]) - 1) { toast("Max 40 chars"); return; }
     bufAppend(c);
@@ -18896,6 +18909,7 @@ void handleSerialLine(char* p) {
         // netcon on | off
         // netcon host <host> [port]
         // netcon key <key>           8-47 chars, the same as the relay's
+        // netcon pub <host[:port]>   internet relay (TLS), "netcon pub -" = none
         netcon::Cfg nc = netcon::cfg();
         const char* a = p[6] ? p + 7 : "";
         bool changed = true;
@@ -18906,14 +18920,18 @@ void handleSerialLine(char* p) {
             const int n = sscanf(a + 5, "%63s %u", h, &pt);
             if (n >= 1) strlcpy(nc.host, h, sizeof(nc.host));
             if (n == 2 && pt >= 1 && pt <= 65535) nc.port = (uint16_t)pt;
+        } else if (!strncmp(a, "pub ", 4) && strlen(a + 4) < sizeof(nc.pub) && !strchr(a + 4, ' ')) {
+            strlcpy(nc.pub, strcmp(a + 4, "-") ? a + 4 : "", sizeof(nc.pub));
         } else if (!strncmp(a, "key ", 4) && strlen(a + 4) >= 8 && strlen(a + 4) < sizeof(nc.key) && !strchr(a + 4, ' ')) {
             strlcpy(nc.key, a + 4, sizeof(nc.key));
         } else changed = false;
         if (changed) netcon::set(nc);
-        else Serial.printf("[NETCON] %s, %s, relay %s:%u, key %s, sent %lu KB, %lu connections\n",
+        else Serial.printf("[NETCON] %s, %s, home relay %s:%u, internet relay %s, key %s, sent %lu KB, "
+                           "%lu connections, last error: %s\n",
                            nc.on ? "on" : "off", nc.on ? netcon::status() : "-", nc.host[0] ? nc.host : "-",
-                           (unsigned)nc.port, nc.key[0] ? "set" : "not set", (unsigned long)netcon::sentKb(),
-                           (unsigned long)netcon::connects());
+                           (unsigned)nc.port, nc.pub[0] ? nc.pub : "-", nc.key[0] ? "set" : "not set",
+                           (unsigned long)netcon::sentKb(), (unsigned long)netcon::connects(),
+                           netcon::lastError()[0] ? netcon::lastError() : "none");
     } else if (!strcmp(p, "FORMAT")) {
         Serial.println(recoverCorruptLittleFS() ? "[FLASH] formatted - reboot now" : "[FLASH] format failed");
     } else {

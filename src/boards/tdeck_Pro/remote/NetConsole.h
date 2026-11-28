@@ -8,8 +8,11 @@
 // "rs_ncon" (on, host, port, key).
 //
 // The unit makes the connection, so nothing on the PC or the phone has to accept one.
+// Two relay addresses: the home one (plain TCP on the home network, tried first) and an
+// internet one (TLS, checked against the Let's Encrypt roots: Tailscale Funnel on the relay
+// machine), tried when the home one does not answer, e.g. on a phone hotspot.
 // Both ends prove they know the shared key (HMAC-SHA256 over two random nonces) before
-// any console data flows; the data itself is not encrypted (home network).
+// any console data flows.
 //
 //   unit  -> relay   RSCON1 <name> <dest> <nonceU>
 //   relay -> unit    AUTH <nonceR> <hmac(key, "relay|" nonceU "|" nonceR)>
@@ -44,6 +47,7 @@ struct Cfg {
     char host[64] = "";
     uint16_t port = kDefaultPort;
     char key[48] = "";
+    char pub[64] = "";          // internet relay, "host[:port]" (port 443 if left out); TLS
 };
 
 #if defined(SIMULATOR)
@@ -53,6 +57,7 @@ inline void set(const Cfg&) {}
 inline void tick(bool, const char*, const char*) {}
 inline int read() { return -1; }
 inline const char* status() { return "not in simulator"; }
+inline const char* lastError() { return ""; }
 inline uint32_t sentKb() { return 0; }
 inline uint32_t connects() { return 0; }
 #else
@@ -63,6 +68,7 @@ void set(const Cfg& c);         // save to NVS and apply (reconnects)
 void tick(bool wifiUp, const char* name, const char* dest);
 int read();                     // next byte the relay sent, -1 = none
 const char* status();           // short status for the settings page / console
+const char* lastError();        // why the last connection attempt failed
 uint32_t sentKb();              // console KB sent since boot
 uint32_t connects();            // connections made since boot
 #endif

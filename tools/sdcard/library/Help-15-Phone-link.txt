@@ -128,4 +128,6 @@ Settings > WiFi > Remote console sends the radio's test
 console over WiFi to a relay on the home network, so the
 radio can be checked without a USB cable. Off unless you
 turn it on. Needs the relay's address and key (the same key
-on every radio). Uses more battery while on.
+on every radio). Away from home it can use an internet
+relay address instead (encrypted), e.g. through a phone
+hotspot. Uses more battery while on.
