@@ -65,6 +65,7 @@ struct LayPack {
     uint8_t layers = 0, ctxMask = 0;
     uint8_t show = 0;            // layers to draw (bit = layer index), from g_layerMask and the names
     int8_t woods = -1;           // index of the layer stored solid and drawn hatched
+    int8_t labels = -1;          // index of the names layer (drawn last, in a white halo)
     uint32_t used = 0;
     int64_t lookedAt = 0;        // when a missing pack was looked for (it is looked for again later)
     uint16_t priorAt[kLayMaxLayers] = {};   // offset in head of each coded layer's table
@@ -75,7 +76,11 @@ struct LayPack {
 TileReader g_reader = nullptr;
 LayPack g_lays[kLaySlots];
 uint8_t* g_layBits = nullptr;    // one overlay layer while it is decoded
-uint32_t g_layerMask = kLayerAll;
+uint8_t* g_labBits = nullptr;    // the names layer of the tile being drawn
+uint8_t* g_haloBits = nullptr;   // scratch for the names' halo
+uint8_t* g_gapA = nullptr;       // the woods' gap around base ink (2 px), two passes
+uint8_t* g_gapB = nullptr;
+uint32_t g_layerMask = 0;        // base map only until the owner turns layers on (O on the Atlas), 2026-11-28
 uint32_t g_layTiles = 0, g_layStreams = 0, g_layCoded = 0, g_layBad = 0;
 uint32_t g_layReadFails = 0;     // streams the card did not give (busy): the tile is looked up again
 char g_layBadWhat[72] = "";      // the last layer stream that failed: where and why
@@ -227,11 +232,13 @@ uint32_t layerBit(const uint8_t* name) {
 void layShow(LayPack& p) {
     p.show = 1;                                   // the base is always drawn
     p.woods = -1;
+    p.labels = -1;
     for (int i = 1; i < p.layers; i++) {
         const uint8_t* name = p.head + kLayNames + 8 * i;
         const uint32_t bit = layerBit(name);
         if (g_layerMask & bit) p.show |= (uint8_t)(1u << i);
         if (bit == kLayerWoods) p.woods = (int8_t)i;
+        if (bit == kLayerLabels) p.labels = (int8_t)i;
     }
 }
 
@@ -297,8 +304,26 @@ bool unRle(const uint8_t* s, size_t len, uint8_t* out) {
     return o == kTileBytes;
 }
 
-// A tile out of a layered pack: the base, then every shown overlay layer ORed in (woods
-// only on its hatch lines, (x - y) % 8 == 0). A layer that fails to decode is left out.
+// One pixel grown in all 8 directions (1-bit rows of 32 bytes, MSB = leftmost pixel).
+void grow1(const uint8_t* in, uint8_t* out) {
+    uint8_t v[32];
+    for (int y = 0; y < kTileSize; y++) {
+        const uint8_t* r = in + y * 32;
+        const uint8_t* up = y ? r - 32 : nullptr;
+        const uint8_t* dn = y + 1 < kTileSize ? r + 32 : nullptr;
+        for (int i = 0; i < 32; i++) v[i] = r[i] | (up ? up[i] : 0) | (dn ? dn[i] : 0);
+        uint8_t* o = out + y * 32;
+        for (int i = 0; i < 32; i++) {
+            const uint8_t b = v[i];
+            o[i] = (uint8_t)(b | (b >> 1) | (b << 1) | (i ? (v[i - 1] & 1) << 7 : 0) | (i < 31 ? v[i + 1] >> 7 : 0));
+        }
+    }
+}
+
+// A tile out of a layered pack: the base, then every shown overlay layer ORed in. Woods only
+// on its hatch lines, (x - y) % 16 == 0 (every 8th pixel looked like a grey wash over whole
+// forested screens, 2026-11-28). The names go on last, in a 2 px white halo, so they stay
+// readable over woods, water dots and contours. A layer that fails to decode is left out.
 bool readLayered(int z, int x, int y, uint8_t* out) {
     LayPack* p = layPack(z, (uint32_t)x / kLaySide, (uint32_t)y / kLaySide);
     if (!p || !p->present) return false;
@@ -309,6 +334,7 @@ bool readLayered(int z, int x, int y, uint8_t* out) {
     if (!(rd32(e + 4) & 0x7FFFFFFFu)) return false;          // no base: no tile here
     if (!g_layBits) g_layBits = bigAlloc(kTileBytes);
     if (!g_layBits) return false;
+    bool haveLab = false;
     for (int li = 0; li < p->layers; li++, e += 8) {
         if (!(p->show >> li & 1)) continue;
         const uint32_t off = rd32(e), word = rd32(e + 4), len = word & 0x7FFFFFFFu;
@@ -344,15 +370,37 @@ bool readLayered(int z, int x, int y, uint8_t* out) {
             continue;
         }
         if (!li) continue;
-        if (li == p->woods) {
+        if (li == p->labels) {
+            if (!g_labBits) g_labBits = bigAlloc(kTileBytes);
+            if (!g_haloBits) g_haloBits = bigAlloc(kTileBytes);
+            if (g_labBits && g_haloBits) {
+                memcpy(g_labBits, g_layBits, kTileBytes);   // drawn after the others, with its halo
+                haveLab = true;
+            } else {
+                for (size_t i = 0; i < kTileBytes; i++) out[i] |= g_layBits[i];
+            }
+        } else if (li == p->woods) {
+            // Keep the stripes 2 px away from ink already drawn (on US topo tiles the place
+            // names are part of the base image, so the names layer's halo cannot help them).
+            if (!g_gapA) g_gapA = bigAlloc(kTileBytes);
+            if (!g_gapB) g_gapB = bigAlloc(kTileBytes);
+            const bool gap = g_gapA && g_gapB;
+            if (gap) { grow1(out, g_gapA); grow1(g_gapA, g_gapB); }
             for (int yy = 0; yy < kTileSize; yy++) {
-                const uint8_t m = (uint8_t)(0x80 >> (yy & 7));
+                const int pos = yy & 15;                     // x = y (mod 16): byte parity + bit
+                const uint8_t m = (uint8_t)(0x80 >> (pos & 7));
                 uint8_t* o = out + yy * 32; const uint8_t* s = g_layBits + yy * 32;
-                for (int i = 0; i < 32; i++) o[i] |= s[i] & m;
+                const uint8_t* h = gap ? g_gapB + yy * 32 : nullptr;
+                for (int i = pos >> 3; i < 32; i += 2) o[i] |= s[i] & m & (h ? (uint8_t)~h[i] : 0xFF);
             }
         } else {
             for (size_t i = 0; i < kTileBytes; i++) out[i] |= g_layBits[i];
         }
+    }
+    if (haveLab) {
+        grow1(g_labBits, g_layBits);                       // 2 px around every letter
+        grow1(g_layBits, g_haloBits);
+        for (size_t i = 0; i < kTileBytes; i++) out[i] = (uint8_t)((out[i] & ~g_haloBits[i]) | g_labBits[i]);
     }
     ++g_layTiles;
     return true;

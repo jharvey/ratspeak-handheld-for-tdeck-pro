@@ -416,7 +416,10 @@ or a compass.
 
 **Map layers (O):** turn layers on or off by their number (for example place names,
 contours, woods, hill shading, and a radio coverage overlay made by
-`tools/maptiles/rf_coverage.py`). **^** goes back to the map.
+`tools/maptiles/rf_coverage.py`). **^** goes back to the map. A new radio shows the base map
+only (roads, water, trails): turn on what you want, and it is remembered. Place names are drawn
+in a white border, woods are light stripes kept clear of names, roads and trails, so text
+stays readable.
 
 **Waypoints:** bring the place to the middle, **Alt+P**, type a name, **Enter**. **P** steps
 through them; **Alt+SYM** twice removes the selected one. The list: **M**, **S**, **2**,

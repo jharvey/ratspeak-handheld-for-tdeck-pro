@@ -956,7 +956,7 @@ Tiles can go onto the card over USB with the card left in the unit:
 **T F V H** move up / left / down / right half a screen (a diamond around G), **D** or
 **Enter** back to your position (following again), **Z** zoom in, **W** zoom out (wider),
 **N** next contact, **P** next waypoint, **Alt+P** add a waypoint, **Alt+SYM** (twice) delete
-the selected waypoint, **J** the marker list, **Alt+J** a new marker at the map cross (§1.2e), **O** the map layers (names, contours, woods, marsh marks, hill shading, other, radio coverage; saved in NVS rs_map), **L** locate a place, **G** arrow + distance (§8.1b), **B** track back,
+the selected waypoint, **J** the marker list, **Alt+J** a new marker at the map cross (§1.2e), **O** the map layers (names, contours, woods, marsh marks, hill shading, other, radio coverage; saved in NVS rs_map; default base map only, 2026-11-28; names drawn last in a 2 px white halo, woods hatched every 16 px), **L** locate a place, **G** arrow + distance (§8.1b), **B** track back,
 a number + **Enter** opens that contact's chat,
 **M** the MENU, **Shift (^)** closes. **C I H** leave the map for Contacts / Inbox / Home;
 Peers is **M → P** from the Atlas (P is next waypoint there). **A** does nothing on the Atlas

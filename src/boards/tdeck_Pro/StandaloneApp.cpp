@@ -10575,7 +10575,7 @@ void laySave() {
 void layLoad() {
     Preferences p;
     if (!p.begin("rs_map", true)) return;
-    const uint32_t m = p.getUInt("layers", mapview::kLayerAll);
+    const uint32_t m = p.getUInt("layers", 0);   // default: base map only (names, woods ... off; O on the Atlas)
     p.end();
     mapview::setLayers(m & (mapview::kLayerAll | mapview::kLayerCoverage));
 }
