@@ -1,8 +1,7 @@
 env tdeck_pro_standalone
-source f9f42dcf0aaa46a21e6a8a3a761ba24665fdc019 + uncommitted changes
-built 2026-11-28 09:59 on debian-build (tools/vm_build.py)
-size 2782368
-sha256 bd2f2f789e8fb78ebbe84b747e211c87e5d384b55cafa90cf3686adb36f31386
+source 5e78c435d9811e8df8706e738f75929ee6395c30
+built 2026-11-28 12:58 on debian-build (tools/vm_build.py)
+size 2783488
+sha256 1b99eaefee6ba106f746eba5ce3d24f0fb5632b89f5bd8047b9c1fcf74675b5b
 uncommitted changes in the build:
-   M sim/scripts/howto/Energy_modes.txt
-   M sim/scripts/howto/Settings_tour.txt
+  none
