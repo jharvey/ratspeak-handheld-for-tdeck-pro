@@ -19,7 +19,7 @@
 //   unit  -> relay   OK <hmac(key, "unit|" nonceR "|" nonceU)>
 //   then the console, both ways, as text lines.
 //
-// Output is kept in a 24 KB ring (PSRAM) while the setting is on, so a new connection
+// Output is kept in a 64 KB ring (PSRAM) while the setting is on, so a new connection
 // starts with the most recent console lines.
 #include <stddef.h>
 #include <stdint.h>

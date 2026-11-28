@@ -29,7 +29,7 @@ char g_name[32] = "?";
 char g_dest[40] = "?";
 
 // ---- output ring (oldest bytes overwritten) -----------------------------------------------
-constexpr size_t kOut = 24 * 1024;
+constexpr size_t kOut = 64 * 1024;          // PSRAM
 uint8_t* g_out = nullptr;
 size_t g_outHead = 0, g_outTail = 0;     // head = next write, tail = next send; equal = empty
 volatile uint32_t g_lost = 0;            // bytes overwritten before they were sent (while connected)
@@ -49,6 +49,19 @@ bool g_teeOn = false;
 
 void outPush(const uint8_t* b, size_t n) {
     if (!g_on || !g_out || !b || !n || xPortInIsrContext()) return;
+    // While connected, a writer (not the console task itself) waits up to 300 ms for room,
+    // so a burst (a log dump) goes out at network speed instead of overwriting itself.
+    // Unconnected, the ring just keeps the latest output.
+    if (g_live && n < kOut / 2 && xTaskGetSchedulerState() == taskSCHEDULER_RUNNING &&
+        xTaskGetCurrentTaskHandle() != g_task) {
+        for (int i = 0; i < 150; i++) {
+            portENTER_CRITICAL(&g_outMux);
+            const size_t used = (g_outHead + kOut - g_outTail) % kOut;
+            portEXIT_CRITICAL(&g_outMux);
+            if (used + n < kOut - 1) break;
+            vTaskDelay(pdMS_TO_TICKS(2));
+        }
+    }
     portENTER_CRITICAL(&g_outMux);
     for (size_t i = 0; i < n; i++) {
         g_out[g_outHead] = b[i];
@@ -105,7 +118,6 @@ public:
 void teeInstall() {
     if (g_teeOn) return;
     if (!g_out) g_out = (uint8_t*)heap_caps_malloc(kOut, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!g_out) g_out = (uint8_t*)malloc(kOut / 4 * 4);
     if (!g_out) return;
     static NetTee tee;
     memcpy(static_cast<void*>(&Serial), static_cast<void*>(&tee), sizeof(void*));

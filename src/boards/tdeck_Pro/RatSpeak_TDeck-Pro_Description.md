@@ -848,7 +848,8 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
 - **Remote console over WiFi** (S.3.12, console `netcon`, `netcon on|off`, `netcon host <ip> [port]`,
   `netcon key <key>`; remote/NetConsole.h): while on and WiFi is up, the unit dials out to the
   relay (tools/netcon/relay.py, a service on the build VM, port 4404) and carries the console both
-  ways: everything printed is copied there (24 KB ring in PSRAM, so a new connection starts with
+  ways: everything printed is copied there (64 KB ring in PSRAM; while connected a writer waits up to
+  300 ms for room, so a dump goes out at network speed; a new connection starts with
   the latest lines), and lines from the relay run like typed ones (lock rules apply; no `sdput`).
   Both ends prove the shared key (HMAC-SHA256 over two nonces). Two relay addresses: the home
   one (plain TCP, tried first, 3 s timeout) and the internet one (`netcon pub <host[:port]>`,
