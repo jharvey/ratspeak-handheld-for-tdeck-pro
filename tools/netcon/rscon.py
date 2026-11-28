@@ -27,8 +27,11 @@ def main():
         for raw in f:
             sys.stdout.write(raw.decode("utf-8", "replace"))
             sys.stdout.flush()
-    except KeyboardInterrupt:
-        pass
+    except (KeyboardInterrupt, BrokenPipeError):     # Ctrl+C, or piped into head / grep -m1
+        try:
+            sys.stdout.close()
+        except BrokenPipeError:
+            pass
 
 
 if __name__ == "__main__":
