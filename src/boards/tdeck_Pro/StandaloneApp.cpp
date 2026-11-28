@@ -16755,8 +16755,15 @@ void fieldLogLine(const char* why) {
     static int8_t sd = -1;
     if (sd < 0) sd = (g_sdMounted || sdMount()) ? 1 : 0;
     if (sd == 1 && g_sdMounted) {
-        File f = g_sdStore.openFile(SD_PATH_ROOT "/field.log", FILE_APPEND);
+        // The card shares the SPI bus with the e-ink and LoRa: an open can fail while the bus
+        // is busy (seen twice in a night on COM9). A few tries, so a line is not lost.
+        File f;
+        for (int t = 0; t < 4 && !f; t++) {
+            if (t) delay(40);
+            f = g_sdStore.openFile(SD_PATH_ROOT "/field.log", FILE_APPEND);
+        }
         if (f) { f.println(line); f.close(); }
+        else Serial.println("[FIELD] SD busy: line not written");
         return;
     }
     if (!g_storeReady) return;
@@ -16792,7 +16799,12 @@ void fieldLogTick() {
 
 void fieldLogDump(uint32_t kb) {
     File f;
-    if (g_sdMounted || sdMount()) f = g_sdStore.openFile(SD_PATH_ROOT "/field.log", FILE_READ);
+    if (g_sdMounted || sdMount()) {
+        for (int t = 0; t < 4 && !f; t++) {                 // bus busy: try again (see fieldLogLine)
+            if (t) delay(40);
+            f = g_sdStore.openFile(SD_PATH_ROOT "/field.log", FILE_READ);
+        }
+    }
     if (!f && g_storeReady) f = LittleFS.open("/field.log", FILE_READ);
     if (!f) { Serial.println("[FIELD] no log"); return; }
     const size_t size = f.size(), want = (size_t)kb * 1024;
