@@ -7,6 +7,8 @@ shows above the keyboard, and you hear a click.
 A 90-second tour of everything: [Overview.mp4](videos/Overview.mp4) (clips from the videos below,
 joined by ffmpeg; no sound).
 
+Every screen, one picture each with the keys that reach it: [screens/index.md](screens/index.md) (also [index.html](screens/index.html), and a 3-minute walk through all of them: [Screen_catalog.mp4](videos/Screen_catalog.mp4); remade with `tools/howto/make_catalog.py`).
+
 Keys as of 28 Nov 2026.
 
 ## The keys you need
