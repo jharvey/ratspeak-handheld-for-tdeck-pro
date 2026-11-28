@@ -1552,7 +1552,44 @@ void gpsAssistTick() {
 }
 
 // Log the receiver's binary replies: ACK/NAK of our commands and the MON-VER strings.
+// Receiver RF health (UBX-MON-RF, polled every minute by the field log, console "gpsrf"):
+// antenna state, noise level, AGC and the jamming indicator. Weak signals everywhere with
+// high noise point at interference from the radio's own electronics; an OPEN / SHORT
+// antenna or low noise with weak signals at the antenna itself.
+bool g_gpsRfPrint = false;            // console "gpsrf": print the next answer
+struct GpsRf { uint32_t at = 0; uint8_t ant = 0, antPwr = 2, jamState = 0, jamInd = 0; uint16_t noise = 0, agc = 0; };
+GpsRf g_gpsRf;
+const char* gpsAntName(uint8_t a) {
+    static const char* n[] = {"init", "unknown", "OK", "SHORT", "OPEN"};
+    return a < 5 ? n[a] : "?";
+}
+void gpsRfText(char* out, size_t n) {
+    if (!g_gpsRf.at) { snprintf(out, n, "-"); return; }
+    static const char* js[] = {"?", "ok", "warning", "critical"};
+    snprintf(out, n, "ant:%s noise:%u agc:%u%% jam:%u/%s age:%lus", gpsAntName(g_gpsRf.ant), (unsigned)g_gpsRf.noise,
+             (unsigned)(g_gpsRf.agc * 100 / 8191), (unsigned)g_gpsRf.jamInd, js[g_gpsRf.jamState & 3],
+             (unsigned long)((millis() - g_gpsRf.at) / 1000));
+}
+
 void gpsHandleUbx(uint8_t cls, uint8_t id, const uint8_t* p, uint16_t len) {
+    if (cls == 0x0A && id == 0x38 && len >= 4 + 24) {  // UBX-MON-RF, first RF block
+        const uint8_t* b = p + 4;
+        g_gpsRf.jamState = b[1] & 3;
+        g_gpsRf.ant = b[2];
+        g_gpsRf.antPwr = b[3];
+        g_gpsRf.noise = (uint16_t)(b[12] | b[13] << 8);
+        g_gpsRf.agc = (uint16_t)(b[14] | b[15] << 8);
+        g_gpsRf.jamInd = b[16];
+        g_gpsRf.at = millis() | 1;
+        if (g_gpsRfPrint) {
+            g_gpsRfPrint = false;
+            char t[96];
+            gpsRfText(t, sizeof(t));
+            Serial.printf("[GPS] RF %s (blocks %u; antenna power %s)\n", t, (unsigned)p[1],
+                          g_gpsRf.antPwr == 0 ? "off" : g_gpsRf.antPwr == 1 ? "on" : "unknown");
+        }
+        return;
+    }
     if (cls == 0x13 && id == 0x80) {                   // a navigation database entry
         if (g_dbdState == DBD_DUMP && g_dbd && g_dbdLen + 2 + len <= kDbdMax) {
             memcpy(g_dbd + g_dbdLen, &len, 2);
@@ -1870,6 +1907,7 @@ void gpsDump() {
                   g_gpsFix ? gpsAccM() : 0.0f, g_gpsGstAt && millis() - g_gpsGstAt < 5000 ? "receiver" : "from HDOP", (unsigned)kGpsPaccM);
     Serial.printf("[GPS] warm start: %s; database entries sent %u, accepted %u, refused %u\n", g_gpsAssistNote,
                   (unsigned)g_dbdSent, (unsigned)g_mgaAck, (unsigned)g_mgaNak);
+    { char rf[96]; gpsRfText(rf, sizeof(rf)); Serial.printf("[GPS] RF (last poll): %s\n", rf); }
     Serial.printf("[GPS] backup supply fault: %s (seen %lu times)\n", g_gpsBbrFault ? "YES" : "no",
                   (unsigned long)g_gpsBbrFaultCount);
     for (auto& k : g_gpsSky)
@@ -16748,11 +16786,14 @@ void fieldLogLine(const char* why) {
     else if (g_gpsFix) snprintf(gps, sizeof(gps), "FIX-%s acc=%.0fm used=%u", gpsLevel(), gpsAccM(), (unsigned)g_gpsSats);
     else snprintf(gps, sizeof(gps), "nofix");
     if (g_gpsFix && g_gpsPosValid) snprintf(pos, sizeof(pos), "%.5f,%.5f", g_gpsLat, g_gpsLon);
-    char line[330];
-    snprintf(line, sizeof(line), "%s up=%lu %s gps=%s for=%s heard=%d/%d top=[%s] pos=%s usb=%d bat=%d%% %.3fV %dmA mode=%s%s resets=%lu bbr=%lu warm=[%s; db %u/%u]",
+    char rf[96];
+    gpsRfText(rf, sizeof(rf));
+    if (g_gpsSerial) ubxSend(0x0A, 0x38, nullptr, 0);   // fresh RF numbers for the next line
+    char line[430];
+    snprintf(line, sizeof(line), "%s up=%lu %s gps=%s for=%s heard=%d/%d top=[%s] pos=%s usb=%d bat=%d%% %.3fV %dmA mode=%s%s resets=%lu bbr=%lu warm=[%s; db %u/%u] rf=[%s]",
              ts, (unsigned long)(millis() / 1000), why, gps, age, n, known, top, pos, g_bat.usb ? 1 : 0, g_bat.pct, g_bat.volts,
              (int)g_bat.avgMa, power::modeName(g_pw.mode), g_pwOnUsb ? "(USB:Full)" : "", (unsigned long)g_gpsLinkResets,
-             (unsigned long)g_gpsBbrFaultCount, g_gpsAssistNote, (unsigned)g_mgaAck, (unsigned)g_dbdSent);
+             (unsigned long)g_gpsBbrFaultCount, g_gpsAssistNote, (unsigned)g_mgaAck, (unsigned)g_dbdSent, rf);
     static int8_t sd = -1;
     if (sd < 0) sd = (g_sdMounted || sdMount()) ? 1 : 0;
     if (sd == 1 && g_sdMounted) {
@@ -18038,6 +18079,9 @@ void handleSerialLine(char* p) {
             if (p[8] == ' ') bootNvsSetU8("flogoff", atoi(p + 9) ? 0 : 1);
             Serial.printf("[FIELD] log %s%s%c", fieldLogOn() ? "on" : "off", minimalMode() ? " (never in Minimal mode)" : "", 10);
         }
+    } else if (!strcmp(p, "gpsrf")) {             // antenna, noise, AGC, jamming (UBX-MON-RF)
+        if (g_gpsSerial) { g_gpsRfPrint = true; ubxSend(0x0A, 0x38, nullptr, 0); }
+        else Serial.println("[GPS] RF: receiver not running");
     } else if (!strcmp(p, "gpscfg")) {            // read back what gpsSetup set (GST, PACC, ACKAIDING)
         if (g_gpsSerial) {
             static const uint8_t q[] = {0, 0, 0, 0, 0xd4, 0x00, 0x91, 0x20, 0xb3, 0x00, 0x11, 0x30, 0x25, 0x00, 0x11, 0x10};

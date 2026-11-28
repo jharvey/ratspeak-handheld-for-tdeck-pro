@@ -847,6 +847,7 @@ GPS_EN 39) with a ceramic patch antenna, and a small rechargeable **MS621FE** ba
   `/gpsdb.bin` in flash. Console: `g` shows what was sent and accepted, `gpsdb dump`,
   `gpsdb restore`, `gpscfg` (reads the settings back), `gpsinject <sentence>` (a test sentence;
   the receiver's own are skipped for 20 s).
+- **Receiver RF health** (console `gpsrf`, also `rf=[...]` on each field-log line and in `g`): UBX-MON-RF polled once a minute: antenna state (OK / SHORT / OPEN) and power, noise per ms, AGC (%), jamming indicator. Measured 28 Nov 2026 on TDP-17CC indoors: antenna OK, noise ~70, AGC 6 %, jamming 7/255, the same with WiFi on or off; satellites at 8-25 dB-Hz with no fix. A weak antenna (owner's conclusion), not a firmware fault: no receiver restarts overnight on battery.
 - **Field log** (S.10 row 11, console `fieldlog 0|1`, `fieldlog dump [KB]`, `fieldlog now`): a line a
   minute, and one when the fix comes or goes or USB power changes, in `<SD>/ratdeckpro/field.log`
   (no card: `/field.log` in flash, 300 KB): fix level and error, satellites heard and the eight
