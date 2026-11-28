@@ -75,7 +75,7 @@ key 9
 wait 4000
 key BACK
 wait 1200
-caption Row 10 is Diagnostics: press 0 (SYM + MIC). Radio details, the stress test, and Check this unit.
+caption Row 10 is Diagnostics: 1 then 0, or 0 alone (SYM + MIC). Radio details, Check this unit, the trip check, GPS signals and the field log.
 wait 1500
 key 0
 wait 4000

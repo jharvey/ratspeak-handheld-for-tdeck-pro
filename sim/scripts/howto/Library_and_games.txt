@@ -49,7 +49,7 @@ key K
 wait 4000
 key K
 wait 1500
-caption ^ (Shift) goes back to the list. The last two rows are games: V goes down to Rat Trap. Enter opens it.
+caption ^ (Shift) goes back to the list. After the files come two games (Rat Trap, Chess) and New note: V goes down to Rat Trap, Enter opens it.
 wait 1500
 key BACK
 wait 1500
@@ -77,6 +77,12 @@ key V
 wait 250
 key V
 wait 1500
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
 key ENTER
 wait 3000
 caption Rat Trap: find the squares with no trap. T F V H move, D or Enter opens a square; a number says how many traps touch it.
@@ -91,7 +97,7 @@ key T
 wait 800
 key ENTER
 wait 3500
-caption ^ back to the list. The row after Rat Trap is Chess: you play the radio.
+caption ^ back to the list (it starts at the top again). V down to Chess, the row after Rat Trap: you play the radio.
 wait 1500
 key BACK
 wait 1500
@@ -120,7 +126,13 @@ wait 250
 key V
 wait 250
 key V
-wait 1500
+wait 250
+key V
+wait 250
+key V
+wait 250
+key V
+wait 250
 key ENTER
 expect 5000 [CHESS] open
 wait 3000

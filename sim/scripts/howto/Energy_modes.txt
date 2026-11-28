@@ -40,7 +40,7 @@ caption 2 Balanced, the everyday mode.
 wait 1500
 key 2
 wait 2500
-note 8500 Balanced: sleeps between wake-ups one second apart. The GPS stays on in its own power-save mode. WiFi and the key light are allowed.
+note 8500 Balanced: sleeps between wake-ups one second apart. The GPS stays on. WiFi and the key light are allowed.
 wait 9000
 caption 3 Eco: the next step down.
 wait 1500
