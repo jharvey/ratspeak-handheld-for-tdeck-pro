@@ -1446,6 +1446,7 @@ void gpsDbdDumpStart() {
 void gpsDbdFinish() {
     g_dbdState = DBD_IDLE;
     g_dbdSavedAt = millis() | 1;
+    g_gpsLastGoodMs = millis();      // the link watch counts its 10 s of silence from the end of the dump
     if (!g_dbdCount || !g_storeReady) { Serial.printf("[GPS] navigation database: %u entries, not saved\n", (unsigned)g_dbdCount); return; }
     const uint32_t t = (uint32_t)time(nullptr);
     memcpy(g_dbd, &kDbdMagic, 4); memcpy(g_dbd + 4, &t, 4);
@@ -1943,7 +1944,21 @@ void gpsPoll() {
                 default:
                     if (upos < sizeof(ubuf)) ubuf[upos] = u;
                     if (++upos >= ulen + 2) {             // payload + 2 checksum bytes
-                        if (ulen + 2 <= (int)sizeof(ubuf)) gpsHandleUbx(ucls, uid, ubuf, ulen);
+                        if (ulen + 2 <= (int)sizeof(ubuf)) {
+                            // Fletcher checksum over class, id, length and payload
+                            uint8_t a = 0, b = 0;
+                            const uint8_t hdr[4] = {ucls, uid, (uint8_t)ulen, (uint8_t)(ulen >> 8)};
+                            for (uint8_t h : hdr) { a += h; b += a; }
+                            for (uint16_t k = 0; k < ulen; k++) { a += ubuf[k]; b += a; }
+                            if (a == ubuf[ulen] && b == ubuf[ulen + 1]) {
+                                // A valid UBX frame proves the link is alive too: while the
+                                // receiver dumps its navigation database it may send no NMEA
+                                // for over 10 s (seen 28 Nov on COM9: a false "no NMEA" cold
+                                // start right after a database save).
+                                g_gpsLastGoodMs = millis();
+                                gpsHandleUbx(ucls, uid, ubuf, ulen);
+                            }
+                        }
                         ust = 0;
                     }
                     break;
