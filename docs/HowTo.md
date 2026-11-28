@@ -7,7 +7,7 @@ shows above the keyboard, and you hear a click.
 A 90-second tour of everything: [Overview.mp4](videos/Overview.mp4) (clips from the videos below,
 joined by ffmpeg; no sound).
 
-Keys as of 23 Nov 2026.
+Keys as of 28 Nov 2026.
 
 ## The keys you need
 
@@ -205,7 +205,7 @@ Video: [mode_touch.mp4](videos/mode_touch.mp4)
 1. **M**, **S**, **1** (Mode).
 2. Pick: **1** Minimal (only Inbox, Contacts, Settings row 1 and the walkie-talkie: the
    radio wakes to the Inbox), **2** Typical (the features picked on row 5), **3** Everything.
-3. **4** turns the touch screen off (keys only); **4** again turns it on.
+3. **4** turns the touch screen on or off (a new radio starts with it off: keys only).
 4. **5** Typical features: turn each one on or off (walkie-talkie, voice messages, Home
    Assistant voice, WiFi settings, Atlas, Library & games, Peers & announce, Advanced).
 
@@ -243,7 +243,9 @@ Announce tells radios nearby who you are, so they can find you and message you. 
 that announced and was heard shows in **Peers**, with its signal and how long ago.
 
 1. **M**, then **P**: Peers. **R** announces this radio.
-2. When a new radio announces, it shows in the list (press **P** again to refresh).
+2. When a new radio announces, it shows in the list with its name (press **P** again to
+   refresh). **H** shows only the radios heard in the last 10 minutes, 1 hour or 24 hours
+   (press again for the next, then all).
 3. Pick it and press **Enter**: its contact page. **2** (Rename), type a name, **Enter**:
    it is now a contact.
 4. **Enter** again, **1** (Message): type and **Enter** to send.
@@ -477,8 +479,8 @@ Video: [Library_and_games.mp4](videos/Library_and_games.mp4); notes:
 Video: [Settings_tour.mp4](videos/Settings_tour.mp4)
 
 One pass through every Settings row: 1 Mode, 2 Time & Location, 3 WiFi, 4 Screen & I/O,
-5 Power, 6 Battery, 7 Identity, 8 LoRa, 9 Alerts, 10 Diagnostics (**0**), 11 Storage (**V**
-down to it, **Enter**).
+5 Power, 6 Battery, 7 Identity, 8 LoRa, 9 Alerts, 10 Diagnostics, 11 Storage. Rows 10 and
+up take both digits: **1** **0** opens row 10, **1** **1** row 11 (**0** alone is row 10 too).
 
 ---
 
@@ -502,6 +504,21 @@ Video: [voice_message.mp4](videos/voice_message.mp4)
 3. To listen: **MIC**, **5**, **P** plays the newest one.
 
 More on the card: `library/Help-12-Voice-messages.txt`.
+
+## Check the GPS
+
+1. **M**, **S**, **2** (Time & Location): row 3 shows the fix level and the error, e.g.
+   "ON  good ~12 m  9 sats". **good** = within about 30 m, **fair** = up to 300 m, **rough** =
+   worse (up to about a mile), **TIME ONLY** = no position yet, but the clock is set.
+2. To watch the satellites live: **M**, **S**, **1** **0** (Diagnostics), **1** **0** (GPS
+   signals). One bar per satellite, taller = stronger, grouped by system. About 25 is enough
+   for a fix; under 15 is weak. It redraws every 2 seconds and keeps the radio awake while open.
+3. The radio keeps its last position across a restart (shown with its age) and gives the GPS
+   what it learned about the satellites, so the next fix comes sooner.
+
+**Field log:** Diagnostics, row 11 (on by default except in Minimal). A line a minute on the
+SD card in `ratdeckpro/field.log`: fix level, satellites and their strength, position, USB or
+battery, battery %. Read it on a PC after a drive or a walk.
 
 ## Battery empty
 

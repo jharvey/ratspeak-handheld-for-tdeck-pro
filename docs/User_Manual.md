@@ -1,6 +1,6 @@
 # RatSpeak for the LilyGO T-Deck Pro: User Manual
 
-Firmware as of 23 November 2026 (beta). Keys, menus and limits in this manual are taken from
+Firmware as of 28 November 2026 (beta). Keys, menus and limits in this manual are taken from
 the firmware source. Where a feature has only been tested in the desktop simulator, it says
 so.
 
@@ -247,7 +247,7 @@ without it ([7](#7-troubleshooting-and-questions)).
   and Switch off; Ultra-low, On demand, Check-in, Custom, the energy monitor and standby
   are in Everything.
 - **3 Everything:** all features.
-- **4** Touch screen on / off (off = keys only).
+- **4** Touch screen on / off (off = keys only; a new radio starts with it off).
 - **5** Typical features: Walkie-talkie, Voice messages, Home Assistant voice, WiFi settings,
   Atlas (maps), Library & games, Peers & announce, Advanced (LoRa, diagnostics).
 
@@ -294,7 +294,8 @@ Its number sends it at once. Any other key closes the list. Works in group chats
 A new radio is not saved by itself: you save it by giving it a name.
 
 1. Both radios announce once: **M**, **H** (Home), **N** (Announce ID). Or **P**, then **R**.
-2. **P** (Peers): every radio heard, with its signal and how long ago.
+2. **P** (Peers): every radio heard, with its name, signal and how long ago. **H** steps
+   through: heard in the last 10 minutes, 1 hour, 24 hours, all.
 3. Pick the new radio, **Enter**: its page (**1** Message, **2** Rename, **3** Share,
    **4** Map number).
 4. **2**, type a name, **Enter**. It is now in Contacts (**C**). Peers marks saved radios
@@ -522,6 +523,12 @@ Up to 8 saved networks (row 4), passwords stored encrypted. Row 5 disconnects. O
 RatSpeak radios on the same network also talk to each other directly (row 8, Mesh over WiFi,
 on by default). Eco, Saver, Ultra-low, On demand and Check-in turn WiFi off.
 
+Row 12, **Remote console** (Everything, or Typical with "Advanced" on), is a test tool: while
+on, the radio sends its USB console over WiFi to a relay program on a PC or server, so the
+radio can be checked without a cable. It needs the relay's address and a shared key; away from
+home it can use an internet relay address instead (encrypted). Off by default. It keeps WiFi
+joined, so it costs battery.
+
 ### 4.12 Walkie-talkie
 
 Talk live with another RatSpeak radio, over WiFi.
@@ -630,29 +637,61 @@ saved ones, or erase one. Each step asks for **Enter** twice and restarts the ra
 
 If the new firmware does not start properly, the radio goes back to the old one by itself.
 
+### 4.22 GPS: fix levels, signals and the field log
+
+The radio uses a position as soon as it is roughly right, and says how good it is:
+
+| Level | Error | Used for |
+|---|---|---|
+| **good** | within about 30 m (100 ft) | everything, including the breadcrumb track |
+| **fair** | up to about 300 m (1000 ft) | map, shares, SOS (the share says "~250 m") |
+| **rough** | worse, up to about a mile | map and shares, marked "rough"; not the track |
+| **time only** | no position yet | the clock is set from the satellites |
+
+**M**, **S**, **2**, row 3 shows the level and the error ("ON  good ~12 m  9 sats").
+
+- **Last position kept:** after a restart the radio shows its last fix, with its age, until
+  the GPS has a new one.
+- **Faster restarts:** the radio saves what the GPS has learned about the satellites and gives
+  it back after a restart or power-up (no internet needed), so the next fix usually comes
+  sooner.
+- **GPS signals** (**M**, **S**, **1** **0** (Diagnostics), **1** **0**): a live bar for every
+  satellite heard, taller = stronger, grouped by system (GPS, GLONASS, Galileo, BeiDou,
+  QZSS). It redraws every 2 seconds. About 25 is enough for a fix; under 15 the signal is weak
+  (indoors, in a car without a view of the sky). While this page is open the radio stays awake
+  (for up to 30 minutes after the last key).
+- **Field log** (Diagnostics, row 11, on by default except in Minimal): a line a minute on the
+  SD card (`ratdeckpro/field.log`, or in flash without a card): fix level and error,
+  satellites heard and the strongest ones, position, USB or battery, battery %, energy mode.
+  Also a line when the fix comes or goes and when USB is plugged in or out. Useful after a
+  drive or a walk to see where and when the GPS worked.
+
 ---
 
 ## 5. Settings reference
 
-**M**, then **S**. A row's number opens it (**0** = row 10; later rows: **T** / **V**, then
-**Enter**). Kinds: Menu (opens a page), Toggle, Pick (**Enter** steps to the next value),
-Entry (type a value), Action, Info. Rows a mode hides keep their numbers.
+**M**, then **S**. A row's number opens it. Rows 10 and up: type both digits (**1** **0** =
+row 10, **1** **2** = row 12); a **1** alone opens row 1 after a moment, and **0** alone is
+row 10. Or **T** / **V**, then **Enter**. Kinds: Menu (opens a page), Toggle, Pick (**Enter**
+steps to the next value), Entry (type a value), Action, Info. Rows a mode hides keep their
+numbers. In Typical, LoRa (8) and Diagnostics (10) are shown only with "Advanced" on (Mode,
+row 5); in Minimal only row 1 (Mode) is there.
 
 | # | Page | Rows |
 |---|---|---|
 | 1 | **Mode** | 1 Minimal · 2 Typical · 3 Everything · 4 Touch screen · 5 Typical features |
-| 2 | **Time & Location** | 1 Set RTC · 2 Time zone · 3 Enable GPS · 4 Manual location · 5 Sync GPS now · 6 Auto GPS sync (boot + daily) · 7 GPS position · 8 Location auto-share (stop all) · 9 Waypoints · 10 Track (breadcrumbs) · 11 Units (m/km or ft/mi) · 12 Coordinates (decimal, deg min sec, MGRS) |
-| 3 | **WiFi** | 1 Status · 2 IP address · 3 Scan networks · 4 Saved networks · 5 Disconnect · 6 TCP hub (Advanced) · 7 Home Assistant voice · 8 Mesh over WiFi · 9 ATAK feed (CoT) · 10 ATAK link to phone (WiFi / Bluetooth) · 11 Bluetooth (name, pairing code) |
+| 2 | **Time & Location** | 1 Set RTC · 2 Time zone · 3 Enable GPS (level, error, satellites) · 4 Manual location · 5 Sync GPS now · 6 Auto GPS sync (boot + daily) · 7 GPS position · 8 Location auto-share (stop all) · 9 Waypoints · 10 Track (breadcrumbs) · 11 Units (m/km or ft/mi) · 12 Coordinates (decimal, deg min sec, MGRS) · 13 Go Home · 14 Set Home here · 15 Set Home = map centre · 16 Sun today (rise, set) |
+| 3 | **WiFi** | 1 Status · 2 IP address · 3 Scan networks · 4 Saved networks · 5 Disconnect · 6 TCP hub (Advanced) · 7 Home Assistant voice · 8 Mesh over WiFi · 9 ATAK feed (CoT) · 10 ATAK link to phone (WiFi / Bluetooth) · 11 Bluetooth (name, pairing code) · 12 Remote console (Advanced) |
 | 4 | **Screen & I/O** | 1 Theme (White paper / Black ink) · 2 Idle splash · 3 Key backlight |
 | 4.2 | Idle splash | 1 Off · 2 On, no password · 3 On + password · 4 Timeout (10-99999 s) · 5 Set / Change password · 6 Remove password · 7 Lock now · 8 Idle screen · 9 If-found details · 10 If found: my address shown / hidden |
-| 5 | **Power** | 1 Full power · 2 Balanced · 3 Eco · 4 Saver · 5 Ultra-low · 6 On demand · 7 Check-in (and its schedule) · 8 Custom · 9 Energy monitor · 10 Full power on USB · 11 Standby when idle · 12 Standby after · 13 Switch off (storage) · 14 Now · 15 Battery draw · 16 Capacity used for estimates |
+| 5 | **Power** | 1 Full power · 2 Balanced · 3 Eco · 4 Saver · 5 Ultra-low · 6 On demand · 7 Check-in (and its schedule) · 8 Custom · 9 Energy monitor · 10 Full power on USB · 11 Standby when idle · 12 Standby after · 13 Switch off (storage; daily contact) · 14 Now · 15 Battery draw · 16 Capacity the times use |
 | 6 | **Battery** | 1 Voltage · 2 Charge · 3 Avg current · 4 Status · 5 USB power · 6 Gauge flags · 7 Capacity · 8 Battery log · 9 Full-charge cal · 10 Reset calibration · 11 Time left (measured) · 12 Low-battery notice · 13 Learned capacity |
 | 7 | **Identity** | 1 Address 1-16 · 2 Display name · 3 Address 17-32 · 4 Announce ID · 5 Identities · 6 Run setup wizard · 7 Share all contacts · 8 Export contacts (SD) · 9 Import contacts (SD) |
 | 8 | **LoRa** (Advanced) | 1 Radio · 2 Frequency · 3 Link preset (Long Fast, Long Slow, Medium, Fast Short) · 4 Last RSSI · 5 Last SNR · 6 Range test · 7 Relay for others |
 | 9 | **Alerts** | 1 Beep on message · 2 Vibrate on message · 3 Volume · 4 Test alert · 5 Arrival alerts · 6 Quiet hours · 7 SOS sends to · 8 SOS button (hold 3 s) |
-| 10 | **Diagnostics** (Advanced) | 1 Paths / links · 2 LXMF queue · 3 Peers heard · 4 Protocol · 5 Pauses over 0.2 s · 6 Uptime · 7 Stress test · 8 Check this unit (hardware self-test) |
+| 10 | **Diagnostics** (Advanced) | 1 Paths / links · 2 LXMF queue · 3 Peers heard · 4 Protocol · 5 Pauses over 0.2 s · 6 Uptime · 7 Stress test · 8 Check this unit (hardware self-test) · 9 Ready for a trip? · 10 GPS signals · 11 Field log |
 | 11 | **Storage** | 1 Free heap · 2 Free PSRAM · 3 Flash · 4 Messages · 5 SD card · 6 Secrets key |
-| 11.5 | SD card | 1 Status · 2 Mount · 3 Unmount · 4 Reset log file · 5 Log file · 6 Message archive · 7 USB drive (the card on the PC) · 8 Back up now · 9 Restore backup · 10 Update firmware |
+| 11.5 | SD card | 1 Status · 2 Mount · 3 Unmount · 4 Reset log file · 5 Log file · 6 Message archive · 7 USB drive (the card on the PC) · 8 Back up now · 9 Restore backup · 10 Update firmware · 11 Drive + COM port (off; for testing) |
 
 Sub-pages worth knowing:
 
@@ -660,6 +699,8 @@ Sub-pages worth knowing:
 - **WiFi, TCP hub:** a Reticulum TCP connection while WiFi is up (off by default); host, port,
   "Use RatSpeak hub".
 - **WiFi, Home Assistant voice:** see [4.14](#414-home-assistant-voice).
+- **WiFi, Remote console:** Remote console on/off · Relay host · Relay port · Key · Internet
+  relay · Status · Sent (see [4.11](#411-wifi)).
 - **Power, Custom:** CPU speed · Sleep, wake every · Awake after key · LoRa radio · GPS ·
   WiFi · Key backlight · Touch · Map wakes GPS · Track wakes GPS · Reset to Balanced.
 - **Power, Check-in:** Use Check-in mode · Check-in time · am / pm · Every · Next check-in ·
@@ -686,7 +727,7 @@ drain after 30 minutes on battery.
 | Mode | Sleeps, wakes every | LoRa receive | GPS | WiFi | Battery draw (bench) |
 |---|---|---|---|---|---|
 | Full power | never | on | always on | yes | ~48 mA, ~67 mA with GPS |
-| Balanced (default) | 1 s (wakes ~every 30 s to read the GPS) | on | always on, in its own power-save | yes | not measured yet (see below) |
+| Balanced (default) | 1 s (wakes ~every 30 s to read the GPS) | on | always on | yes | ~90 mA (~12.6 h) |
 | Eco | 1 s | on | every hour | off | ~12 mA (estimate) |
 | Saver | 60 s | on | every hour | off | ~7 mA |
 | Ultra-low | 5 min | on | off | off | ~7 mA (estimate) |
@@ -697,9 +738,10 @@ drain after 30 minutes on battery.
 **WiFi or Bluetooth keeps the radio awake.** While WiFi is joined, or the ATAK feed uses
 Bluetooth, the radio cannot sleep in any mode. The Power page says so ("ON ~16 h, awake: WiFi";
 row "Now": "kept awake by WiFi"), and the current mode's runtime counts it. Measured 23-24 Nov
-2026: Balanced with WiFi joined and the ATAK feed on drew ~90 mA and ran 12.6 and 13.5 hours on a full battery (two radios). Balanced
-without WiFi has not been measured yet: the runtime the Power page shows for it (~21 h) assumes
-the GPS keeps the CPU awake, which is pessimistic since the GPS got its own power-save mode.
+2026: Balanced with WiFi joined and the ATAK feed on drew ~90 mA and ran 12.6 and 13.5 hours on a full battery (two radios).
+Balanced without WiFi measured about the same (~90 mA, ~12.6 h, 25-26 Nov): the GPS, always on,
+is most of it. (The GPS's own power-save mode was turned off on 27 Nov 2026: on battery it
+kept losing the satellites and restarting its search.)
 WiFi that is allowed but not joined costs little: with no saved network in reach the WiFi
 radio is off and looks for a few seconds every 3 minutes (about 1-2 mA on average). Only a
 joined network keeps the radio awake. (Before 24 Nov 2026 a failed join, such as walking out of
@@ -800,7 +842,9 @@ that place or zoom. See [2.2](#22-prepare-the-sd-card-optional).
 **No GPS fix.** In Full and Balanced the GPS is always on; in Eco and Saver it looks every hour. Go
 outside with a view of the sky and give it a few minutes (in Eco or Saver, up to an hour, or switch to
 Full power for a while). **M**, **S**, **2**, row 3
-shows the satellites heard.
+shows the fix level and the satellites; Diagnostics, **GPS signals** shows each satellite's
+strength live (see [4.22](#422-gps-fix-levels-signals-and-the-field-log)). In a car the GPS
+often hears too little; near a window helps.
 
 **WiFi does not connect.** Check the password (WiFi, Saved networks, the network, Password).
 Eco, Saver, Ultra-low, On demand, Check-in and standby turn WiFi off. With a password lock set,

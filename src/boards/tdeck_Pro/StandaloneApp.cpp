@@ -5040,7 +5040,8 @@ void buildSettingsRows(Page p) {
             cotBleName(nm, sizeof(nm));
             srow(RK_ACTION, "Bluetooth", "%s PIN %06lu", nm, (unsigned long)cotble::passkey());
         }
-        srow(RK_MENU, "Remote console", "%s", netcon::cfg().on ? netcon::status() : "OFF");
+        if (feature(F_ADVANCED)) srow(RK_MENU, "Remote console", "%s", netcon::cfg().on ? netcon::status() : "OFF");
+        else srowSkip();                             // a test tool: with the TCP hub (Advanced)
         break;
 
     case PG_NETCON: {                                // S.3: console over WiFi to a relay
@@ -5804,7 +5805,7 @@ void activateSetting(int idx) {
                 toast("Paired phones forgotten");
             }
             requestRedraw();
-        } else if (idx == 11) {
+        } else if (idx == 11 && feature(F_ADVANCED)) {
             pushPage(PG_NETCON);
         }
         break;

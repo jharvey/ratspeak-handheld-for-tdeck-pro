@@ -378,12 +378,15 @@ Simulator screenshots (`sim/scripts/power.txt`): Saver selected; Custom with CPU
 
 ```
 S     Settings                      ← M then S
-├── S.1   Mode                      Minimal / Normal / Advanced (default; kept over a power cycle),
-│                                   Touch screen ON / OFF (keys only). Minimal: the menu has
-│                                   Settings, Contacts, Inbox only; Settings shows S.1 only;
-│                                   P / A do nothing; the middle tab is Menu; waking from the
-│                                   idle screen (or unlocking) goes to the Inbox. Normal = Advanced
-│                                   for now (2026-11-14).
+├── S.1   Mode                      Minimal / Typical / Everything (default; kept over a power
+│                                   cycle), Touch screen ON / OFF (keys only; OFF on a new unit),
+│                                   S.1.5 Typical features. Minimal: the menu has Settings,
+│                                   Contacts, Inbox only; Settings shows S.1 only; P / A do
+│                                   nothing; the middle tab is Menu; waking from the idle screen
+│                                   (or unlocking) goes to the Inbox. Typical: the features of
+│                                   S.1.5; LoRa (S.8), Diagnostics (S.10), TCP hub and Remote
+│                                   console only with "Advanced". Row numbers 10+: two digits
+│                                   ("1 0"; a lone 1 waits 1.2 s, then opens row 1); 0 = row 10.
 ├── S.2   Time & Location
 │   ├── S.2.1  Set RTC              hour, minute, month, day, year → Apply
 │   ├── S.2.2  Time zone            18 zones (EST … UTC+9)
@@ -408,7 +411,7 @@ S     Settings                      ← M then S
 │   ├── S.3.5  Disconnect           radio off, auto-connect paused until a manual join
 │   ├── S.3.6  TCP hub              Reticulum TCP client while WiFi is up: on/off, host, port,
 │   │                               status, "Use RatSpeak hub" (rns.ratspeak.org:4242); default off
-│   └── S.3.12 Remote console       the serial console over WiFi to a relay (tools/netcon):
+│   └── S.3.12 Remote console       (Advanced) the serial console over WiFi to a relay (tools/netcon):
 │                                   on/off, home relay host, port (4404), key, internet relay
 │                                   (host[:port], TLS), status, KB sent; default off
 ├── S.4   Screen & I/O
@@ -446,11 +449,15 @@ S     Settings                      ← M then S
 ├── S.8   LoRa                      915 MHz; link preset (Long Fast / Long Slow / Medium / Fast Short)
 ├── S.9   Alerts                    beep, vibrate, volume 0 (silent) / 20 … 80 (default) / 100 %
 │                                   (plays the new level), test
-├── S.10  Diagnostics  (key 0)      paths/links, LXMF queue, peers, uptime
-│   └── S.10.10 GPS signals         live: a bar per satellite heard (strength 0-50 dB-Hz, number
-│                                   below, by system), fix / no fix and for how long, USB or battery
-└── S.11  Storage  (no number key: T / V to it, Enter)
-                                    heap, PSRAM, flash, messages, SD card (+ S.11.5 SD), secrets key
+├── S.10  Diagnostics  (keys 1 0, or 0)  paths/links, LXMF queue, peers, protocol, pauses,
+│   │                               uptime, stress test, S.10.8 Check this unit (self-test),
+│   │                               S.10.9 Ready for a trip?
+│   ├── S.10.10 GPS signals         live: a bar per satellite heard (strength 0-50 dB-Hz, number
+│   │                               below, by system), fix / no fix and for how long, USB or battery
+│   └── S.10.11 Field log           a line a minute to <SD>/ratdeckpro/field.log (§ GPS); not in Minimal
+└── S.11  Storage  (keys 1 1)       heap, PSRAM, flash, messages, SD card (+ S.11.5 SD: status,
+                                    mount, unmount, log file, archive, USB drive, back up, restore,
+                                    update firmware, S.11.5.11 Drive + COM port), secrets key
 ```
 
 ---

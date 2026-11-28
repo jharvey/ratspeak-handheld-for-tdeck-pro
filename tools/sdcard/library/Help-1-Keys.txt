@@ -29,4 +29,6 @@ Settings is M then S. There is no S hotkey on its own.
 
 On the idle screen any key wakes the radio.
 
-Mode (M, S, 1): 1 Minimal (only Inbox, Contacts, Settings), 2 Normal, 3 Advanced (everything). 4 turns the touch screen off (keys only) or on again.
+Mode (M, S, 1): 1 Minimal (only Inbox, Contacts, Settings), 2 Typical (the features picked on row 5), 3 Everything. 4 turns the touch screen on or off (off when new: keys only).
+
+Settings rows 10 and up: type both digits (1 then 0 = row 10, 1 then 2 = row 12). A 1 alone opens row 1 after a moment. 0 alone = row 10.
