@@ -7509,6 +7509,51 @@ void restoreAtBoot() {
     ESP.restart();
 }
 
+// Factory reset that keeps WiFi (console "factory keepwifi", 2026-11-28): at the next boot,
+// before anything opens the flash, every flash file and every settings namespace is wiped
+// except the saved WiFi networks (rs_wifi), the key they are sealed with (rs_vault) and the
+// remote console set-up (rs_ncon). The unit then starts like a new one (new identity, setup
+// wizard) but rejoins its networks. The SD card is not touched (maps, library, packs stay;
+// old messages / contacts / identity files on the card are removed by the caller first).
+bool factoryKeepNs(const char* ns) {
+    return !strcmp(ns, "rs_wifi") || !strcmp(ns, "rs_vault") || !strcmp(ns, "rs_ncon");
+}
+
+void factoryAtBoot() {
+    {
+        Preferences p;
+        if (!p.begin("rs_restore", false)) return;
+        const bool want = p.getUChar("factory", 0) != 0;
+        if (want) p.remove("factory");                  // once only, even if this fails half-way
+        p.end();
+        if (!want) return;
+    }
+    Serial.println("[FACTORY] reset: flash files and settings, keeping WiFi networks and the SD card");
+    int wiped = 0;
+    if (g_flash.begin() || recoverCorruptLittleFS()) {
+        if (!wipeFlashDir("/")) Serial.println("[FACTORY] flash wipe incomplete");
+    }
+    char names[32][16];
+    int nn = 0;
+    struct Ctx { char (*names)[16]; int* nn; } c{names, &nn};
+    sysimg::nvsForEach([](const char* ns, const char*, uint8_t, const uint8_t*, size_t, void* v) {
+        auto* c = (Ctx*)v;
+        for (int i = 0; i < *c->nn; i++) if (!strcmp(c->names[i], ns)) return true;
+        if (*c->nn < 32) snprintf(c->names[(*c->nn)++], 16, "%s", ns);
+        return true;
+    }, &c);
+    for (int i = 0; i < nn; i++) {
+        const bool ours = backupNs(names[i]) || !strcmp(names[i], "rs_ota");
+        if (ours && !factoryKeepNs(names[i])) { sysimg::nvsEraseNamespace(names[i]); wiped++; }
+    }
+    Serial.printf("[FACTORY] %d settings groups wiped (kept rs_wifi, rs_vault, rs_ncon); restarting\n", wiped);
+    Preferences p;
+    if (p.begin("rs_restore", false)) { p.putString("msg", "Factory reset (WiFi kept)"); p.end(); }
+    Serial.flush();
+    delay(50);
+    ESP.restart();
+}
+
 // After "[BOOT] ready": the result of a restore that ran before the last restart.
 void restoreReport() {
     Preferences p;
@@ -18976,6 +19021,15 @@ void handleSerialLine(char* p) {
         g_cfg.kbLight = !g_cfg.kbLight;
         applyKeyLight();
         requestRedraw();
+    } else if (!strcmp(p, "factory keepwifi")) {
+        // like a new unit, but the saved WiFi networks (and the remote console set-up) stay;
+        // the SD card is not touched (tools/sdcard: clean its messages / contacts first)
+        Preferences pr;
+        if (pr.begin("rs_restore", false)) { pr.putUChar("factory", 1); pr.end(); }
+        Serial.println("[FACTORY] reset at the next boot: restarting now");
+        Serial.flush();
+        delay(100);
+        ESP.restart();
     } else if (!strcmp(p, "netcon") || !strncmp(p, "netcon ", 7)) {
         // netcon                     status
         // netcon on | off
@@ -19585,6 +19639,7 @@ bool begin() {
     if (!initRadio()) Serial.println("[BOOT] radio failed");
 #endif
     bootMark("radio");
+    factoryAtBoot();                    // "factory keepwifi" asked for before the restart (restarts again)
     restoreAtBoot();                    // a restore asked for before the restart (restarts again)
     initStorageAndProto();
     bootMark("flash, messages, protocol");
