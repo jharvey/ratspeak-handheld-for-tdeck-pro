@@ -43,14 +43,17 @@ also has its own short how-to video ([docs/HowTo.md](docs/HowTo.md)).
 | | **Status sharing.** Send your position and battery % to a contact or a group, once or automatically (off by default; sends only when you moved 50 m or the battery changed by 5 points, plus a keep-alive). One-time shares also carry Sideband's telemetry field, and incoming telemetry (from Sideband too) puts the sender on the map. |
 | | **ATAK feed.** The unit sends itself, its contacts' positions and the markers as Cursor-on-Target, and takes in what ATAK sends: ATAK users (squares) and their markers show on the Atlas. No TAK server needed. Two links to the phone: **WiFi** (multicast 239.2.3.1:6969 on the same network) or **Bluetooth** (paired and encrypted, no network at all, through the small Android app [RatSpeak ATAK bridge](tools/android/atak-bridge/README.md)). *(WiFi: a PC received every event as valid CoT. Bluetooth: simulator and radio side tested. Not yet seen with a real ATAK phone.)* |
 | <img src="docs/images/energy_modes.png" width="200" alt="Energy modes"> | **Days on a charge.** Energy modes from Full power to Check-in (LoRa only at set times), standby when idle, a battery gauge with time left, a low-battery notice to a contact. The idle screen shows a splash, your "If found" details, or the map. |
-| <img src="docs/images/chess.png" width="200" alt="Chess"> | **And also:** password lock, walkie-talkie and voice messages over WiFi, Home Assistant voice (push-to-talk or a wake word, announcements, opt-in battery / position sensors), quiet hours, a Library of text files on the SD card where you can also write notes (with a frequency quick reference and the NOAA Weather Radio stations nearest you), games (Rat Trap, chess), SD backup and restore, firmware update from the SD card, a two-unit range test. |
+| <img src="docs/images/chess.png" width="200" alt="Chess"> | **And also:** password lock, walkie-talkie and voice messages over WiFi, Home Assistant voice (push-to-talk or a wake word, announcements, opt-in battery / position sensors), quiet hours, a Library of text files on the SD card where you can also write notes (with a frequency quick reference and the NOAA Weather Radio stations nearest you), games (Rat Trap, chess), SD backup and restore, firmware update from the SD card, a two-unit range test, a "Ready for a trip?" check, switch-off for storage with a daily contact window. |
+| | **GPS you can see.** A position is used as soon as it is roughly right, with its level (good / fair / rough) and error; the last fix is kept across a restart and the receiver gets back what it learned about the satellites, so fixes come sooner. A live page shows every satellite's signal, and a field log writes a line a minute to the SD card for checking a drive or a walk afterwards. |
 
 ## State
 
-Beta, on five test units and a desktop simulator (23 Nov 2026). The newest features (groups,
+Beta, on five test units and a desktop simulator (28 Nov 2026). The newest features (groups,
 status sharing, markers, the ATAK feed) pass their simulator tests; on real radios a marker
 and status updates went through, while larger multi-unit runs are still in progress (see
-[Stress_test_plan.md](Stress_test_plan.md)). Expect changes in menus and storage formats.
+[Stress_test_plan.md](Stress_test_plan.md)). For testing, radios can send their console over
+WiFi to a relay (`tools/netcon`), at home or through a phone hotspot. Expect changes in menus
+and storage formats.
 
 ## Hardware
 
