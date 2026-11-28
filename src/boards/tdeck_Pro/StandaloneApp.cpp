@@ -89,6 +89,7 @@
 #include "hal/SharedSPIBus.h"
 #include "security/SecretVault.h"
 #include "remote/ScreenMirror.h"
+#include "remote/NetConsole.h"
 #include "power/PowerModes.h"
 #include "power/LightSleep.h"
 #include "power/RtcLog.h"
@@ -3719,6 +3720,7 @@ enum class Entry : uint8_t { None, Message, Name, RtcField, IdleSecs, Latitude, 
                              FoundText,                         // idle "If found": owner text
                              CheckinTime,                       // S.5.8: hhmm
                              HaKey,                             // S.3.7: HA encryption key
+                             NetHost, NetPort, NetKey,          // S.3 Remote console
                              GroupName };                       // Groups: new group / rename (arg = group, -1 new)
 Entry   g_entry = Entry::None;
 int     g_entryArg = 0;              // RtcField index
@@ -3731,7 +3733,7 @@ bool entryActive() { return g_entry != Entry::None; }
 bool passEntry(Entry e) { return e == Entry::PassOld || e == Entry::PassNew || e == Entry::PassConfirm; }
 bool browseMode()  { return !entryActive(); }
 bool entryNumeric() {
-    return g_entry == Entry::RtcField || g_entry == Entry::IdleSecs || g_entry == Entry::TcpPort ||
+    return g_entry == Entry::RtcField || g_entry == Entry::IdleSecs || g_entry == Entry::TcpPort || g_entry == Entry::NetPort ||
            g_entry == Entry::CheckinTime ||
            g_entry == Entry::MapNum || g_entry == Entry::MarkDist ||
            g_entry == Entry::Latitude || g_entry == Entry::Longitude;
@@ -3753,7 +3755,7 @@ enum Page : uint8_t {
     PG_BATTERY, PG_BATLOG, PG_IDENTITY, PG_LORA, PG_ALERTS, PG_DIAG, PG_STORAGE, PG_SD,
     PG_WIFI_SCAN, PG_WIFI_SAVED, PG_WIFI_NET, PG_WIFI_JOIN, PG_POWER, PG_POWER_CUSTOM, PG_ENERGY, PG_ENERGY_GRAPH,
     PG_CHECKIN, PG_TCP, PG_IDS, PG_ID_ONE, PG_WPTS, PG_TRACK, PG_GEOFS, PG_GEOF_NEW, PG_LOWBAT, PG_OFF,
-    PG_BACKUPS, PG_FOUND, PG_MODE, PG_HAVOICE, PG_FEATURES, PG_SELFTEST, PG_TRIP, PG_GPSSKY
+    PG_BACKUPS, PG_FOUND, PG_MODE, PG_HAVOICE, PG_FEATURES, PG_SELFTEST, PG_TRIP, PG_GPSSKY, PG_NETCON
 };
 struct NavFrame { Page page; int sel; int scroll; };
 constexpr int NAV_DEPTH = 6;
@@ -3868,7 +3870,7 @@ bool     g_joinAuto = true;
 
 bool isWifiPage(Page p) {
     return p == PG_WIFI || p == PG_WIFI_SCAN || p == PG_WIFI_SAVED ||
-           p == PG_WIFI_NET || p == PG_WIFI_JOIN || p == PG_TCP || p == PG_HAVOICE;
+           p == PG_WIFI_NET || p == PG_WIFI_JOIN || p == PG_TCP || p == PG_HAVOICE || p == PG_NETCON;
 }
 
 void wifiUiChanged() {
@@ -4852,6 +4854,7 @@ const char* pageTitle(Page p) {
         case PG_SELFTEST:     return "Check this unit";
         case PG_TRIP:         return "Ready for a trip?";
         case PG_GPSSKY:       return "GPS signals";
+        case PG_NETCON:       return "Remote console";
     }
     return "";
 }
@@ -5037,7 +5040,23 @@ void buildSettingsRows(Page p) {
             cotBleName(nm, sizeof(nm));
             srow(RK_ACTION, "Bluetooth", "%s PIN %06lu", nm, (unsigned long)cotble::passkey());
         }
+        srow(RK_MENU, "Remote console", "%s", netcon::cfg().on ? netcon::status() : "OFF");
         break;
+
+    case PG_NETCON: {                                // S.3: console over WiFi to a relay
+        const netcon::Cfg nc = netcon::cfg();
+        srow(RK_TOGGLE, "Remote console", "%s", nc.on ? "ON (while WiFi is up)" : "OFF");
+        e = editingSub(Entry::NetHost);
+        srow(RK_ENTRY, "Relay host", "%s", e ? e : nc.host[0] ? nc.host : "not set");
+        e = editingSub(Entry::NetPort);
+        if (e) srow(RK_ENTRY, "Relay port", "%s", e); else srow(RK_ENTRY, "Relay port", "%u", (unsigned)nc.port);
+        e = editingSub(Entry::NetKey);
+        if (e) srow(RK_ENTRY, "Key", "%s", e);
+        else srow(RK_ENTRY, "Key", "%s", nc.key[0] ? "set (Enter = type a new one)" : "not set");
+        srow(RK_INFO, "Status", "%s", nc.on ? netcon::status() : "off");
+        srow(RK_INFO, "Sent", "%lu KB, %lu connections", (unsigned long)netcon::sentKb(), (unsigned long)netcon::connects());
+        break;
+    }
 
     case PG_HAVOICE: {                               // S.3.7: on / off, the encryption key
         srow(RK_TOGGLE, "Voice for Home Assistant", "%s", g_cfg.haVoice ? havoice::status() : "OFF");
@@ -5783,8 +5802,28 @@ void activateSetting(int idx) {
                 toast("Paired phones forgotten");
             }
             requestRedraw();
+        } else if (idx == 11) {
+            pushPage(PG_NETCON);
         }
         break;
+
+    case PG_NETCON: {
+        netcon::Cfg nc = netcon::cfg();
+        if (idx == 0) {
+            nc.on = !nc.on;
+            netcon::set(nc);
+            if (nc.on && (!nc.host[0] || !nc.key[0])) toast("Set the relay host and key");
+            else if (nc.on && !wifiConnected()) toast("Starts when WiFi is up");
+            requestRedraw();
+        } else if (idx == 1) {
+            startEntry(Entry::NetHost, nc.host);
+        } else if (idx == 2) {
+            char pb[8]; snprintf(pb, sizeof(pb), "%u", (unsigned)nc.port); startEntry(Entry::NetPort, pb);
+        } else if (idx == 3) {
+            startEntry(Entry::NetKey, "");
+        }
+        break;
+    }
 
     case PG_HAVOICE: {
         static uint32_t armed = 0;               // Enter twice within 3 s for the key actions
@@ -14904,6 +14943,32 @@ void commitEntry() {
         tcpSave();
         return;
     }
+    case Entry::NetHost: {
+        if (!g_bufLen || g_bufLen >= sizeof(netcon::Cfg::host) || strchr(g_buf, ' ')) { toast("Host: 1-63 chars, no spaces"); return; }
+        netcon::Cfg nc = netcon::cfg();
+        strlcpy(nc.host, g_buf, sizeof(nc.host));
+        endEntry();
+        netcon::set(nc);
+        return;
+    }
+    case Entry::NetPort: {
+        long v;
+        if (!parseLong(g_buf, v) || v < 1 || v > 65535) { toast("Port 1-65535"); return; }
+        netcon::Cfg nc = netcon::cfg();
+        nc.port = (uint16_t)v;
+        endEntry();
+        netcon::set(nc);
+        return;
+    }
+    case Entry::NetKey: {
+        if (g_bufLen < 8 || g_bufLen >= sizeof(netcon::Cfg::key) || strchr(g_buf, ' ')) { toast("Key: 8-47 chars, no spaces"); return; }
+        netcon::Cfg nc = netcon::cfg();
+        strlcpy(nc.key, g_buf, sizeof(nc.key));
+        endEntry();
+        netcon::set(nc);
+        toast("Key saved");
+        return;
+    }
     case Entry::TcpPort: {
         long v;
         if (!parseLong(g_buf, v) || v < 1 || v > 65535) { toast("Port 1-65535"); return; }
@@ -15064,6 +15129,8 @@ void entryKey(const KeyEvent& ev) {
     if (g_entry == Entry::MarkNote && g_bufLen >= 23) { toast("Max 23 chars"); return; }
     if (g_entry == Entry::MarkDist && g_bufLen >= 5) return;
     if (g_entry == Entry::TcpHost && g_bufLen >= sizeof(g_tcpCfg.host) - 1) { toast("Max 63 chars"); return; }
+    if (g_entry == Entry::NetHost && g_bufLen >= sizeof(netcon::Cfg::host) - 1) { toast("Max 63 chars"); return; }
+    if (g_entry == Entry::NetKey && g_bufLen >= sizeof(netcon::Cfg::key) - 1) { toast("Max 47 chars"); return; }
     if (g_entry == Entry::HaKey && g_bufLen >= havoice::kKeyB64Len) { toast("Key: 44 chars"); return; }
     if (g_entry == Entry::FoundText && g_bufLen >= sizeof(g_cfg.found[0]) - 1) { toast("Max 40 chars"); return; }
     bufAppend(c);
@@ -16721,7 +16788,7 @@ void fieldLogDump(uint32_t kb) {
     char buf[256];
     while (f.available()) {
         const size_t got = f.readBytes(buf, sizeof(buf));
-        Serial.write((const uint8_t*)buf, got);
+        consoleWrite((const uint8_t*)buf, got);
         yield();
     }
     f.close();
@@ -17532,7 +17599,7 @@ void handleSerialLine(char* p) {
             if (!f) { Serial.println("[SOAK] no log"); return; }
             Serial.printf("[SOAK] ---- log %u bytes ----\n", (unsigned)f.size());
             char buf[256];
-            while (f.available()) { const size_t n = f.read((uint8_t*)buf, sizeof(buf)); Serial.write((const uint8_t*)buf, n); }
+            while (f.available()) { const size_t n = f.read((uint8_t*)buf, sizeof(buf)); consoleWrite((const uint8_t*)buf, n); }
             f.close();
             Serial.println("[SOAK] ---- end ----");
         } else if (!strcmp(q, "clear")) {            // soak clear: start a fresh log
@@ -18824,6 +18891,29 @@ void handleSerialLine(char* p) {
         g_cfg.kbLight = !g_cfg.kbLight;
         applyKeyLight();
         requestRedraw();
+    } else if (!strcmp(p, "netcon") || !strncmp(p, "netcon ", 7)) {
+        // netcon                     status
+        // netcon on | off
+        // netcon host <host> [port]
+        // netcon key <key>           8-47 chars, the same as the relay's
+        netcon::Cfg nc = netcon::cfg();
+        const char* a = p[6] ? p + 7 : "";
+        bool changed = true;
+        if (!strcmp(a, "on")) nc.on = true;
+        else if (!strcmp(a, "off")) nc.on = false;
+        else if (!strncmp(a, "host ", 5)) {
+            char h[64] = ""; unsigned pt = 0;
+            const int n = sscanf(a + 5, "%63s %u", h, &pt);
+            if (n >= 1) strlcpy(nc.host, h, sizeof(nc.host));
+            if (n == 2 && pt >= 1 && pt <= 65535) nc.port = (uint16_t)pt;
+        } else if (!strncmp(a, "key ", 4) && strlen(a + 4) >= 8 && strlen(a + 4) < sizeof(nc.key) && !strchr(a + 4, ' ')) {
+            strlcpy(nc.key, a + 4, sizeof(nc.key));
+        } else changed = false;
+        if (changed) netcon::set(nc);
+        else Serial.printf("[NETCON] %s, %s, relay %s:%u, key %s, sent %lu KB, %lu connections\n",
+                           nc.on ? "on" : "off", nc.on ? netcon::status() : "-", nc.host[0] ? nc.host : "-",
+                           (unsigned)nc.port, nc.key[0] ? "set" : "not set", (unsigned long)netcon::sentKb(),
+                           (unsigned long)netcon::connects());
     } else if (!strcmp(p, "FORMAT")) {
         Serial.println(recoverCorruptLittleFS() ? "[FLASH] formatted - reboot now" : "[FLASH] format failed");
     } else {
@@ -18831,7 +18921,28 @@ void handleSerialLine(char* p) {
     }
 }
 
+// Lines from the WiFi remote console (remote/NetConsole.h): own buffer, so bytes from the
+// USB port and the relay never mix inside one line. No sdput payloads on this path.
+void pollNetConsole() {
+    static char line[180];
+    static size_t len = 0;
+    for (int n = 0; n < 512; n++) {
+        const int ci = netcon::read();
+        if (ci < 0) break;
+        const char c = (char)ci;
+        if (c == '\r' || c == '\n') {
+            if (!len) continue;
+            line[len] = 0;
+            len = 0;
+            handleSerialLine(line);
+        } else if (c >= 32 && c < 127 && len + 1 < sizeof(line)) {
+            line[len++] = c;
+        }
+    }
+}
+
 void pollSerial() {
+    pollNetConsole();
     static char line[180];
     static size_t len = 0;
     if (sdputPoll()) return;
@@ -19434,6 +19545,7 @@ bool begin() {
     bootNvsSetU8("lock", lockHasPassword() ? 1 : 0);   // the next boot screen shows LOCKED too
     if (vault::unlocked()) wifiLoad();    // else after unlock (lockTry)
     tcpLoad();
+    netcon::load();
     ashareLoad();
     markLoad();
     cotLoad();
@@ -19588,6 +19700,14 @@ void loop() {
     SLOW_STEP("watchClockAndToast", watchClockAndToast());
     SLOW_STEP("watchWifi", watchWifi());
     SLOW_STEP("tcpTick", tcpTick());
+    {
+        netcon::tick(wifiConnected(), g_selfName, g_destHex);
+        static const char* ncWas = nullptr;              // status changed: refresh the page
+        if (netcon::status() != ncWas) {
+            ncWas = netcon::status();
+            if (g_screen == SCR_SETTINGS && (g_page == PG_NETCON || g_page == PG_WIFI) && !g_idleActive) requestRedraw();
+        }
+    }
     SLOW_STEP("meshTick", meshTick());
     SLOW_STEP("autoShareTick", autoShareTick());
     SLOW_STEP("inboundTick", inboundTick());

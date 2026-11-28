@@ -123,3 +123,9 @@ TROUBLE?
 - WiFi link, ATAK shows nothing: same network? Hotspot or home
   WiFi, not a guest network.
 More: Help-14-ATAK (what ATAK is), Help-9-Battery (modes).
+REMOTE CONSOLE (for testing)
+Settings > WiFi > Remote console sends the radio's test
+console over WiFi to a relay on the home network, so the
+radio can be checked without a USB cable. Off unless you
+turn it on. Needs the relay's address and key (the same key
+on every radio). Uses more battery while on.

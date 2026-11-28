@@ -1,4 +1,5 @@
 #include "remote/ScreenMirror.h"
+#include "remote/NetConsole.h"
 
 #include <Arduino.h>
 #include <stdlib.h>
@@ -41,7 +42,7 @@ void sendBand(const uint8_t* fb, int stride, int y, int rows) {
     int len = snprintf(line, sizeof(line), "@FB %d %d %04X ", y, rows, crc16(p, n));
     len += (int)b64(p, n, line + len);
     line[len++] = '\n';
-    Serial.write((const uint8_t*)line, len);
+    consoleWrite((const uint8_t*)line, len);
     memcpy(g_sent + (size_t)y * stride, p, n);
 }
 
